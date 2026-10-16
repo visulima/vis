@@ -19,5 +19,5 @@ export { applyContext, assertNoConflictingPendingStages } from "./orchestrator/a
 export type { BuildContextOptions, OrchestratorContext } from "./orchestrator/context";
 export { buildContext } from "./orchestrator/context";
 export { applyReleaseNoteTemplate, composeRelatedReleasesBlock, extractInternalAuthors } from "./orchestrator/notes";
-export type { PublishContextOptions, PublishContextResult } from "./orchestrator/publish";
+export type { PublishContextOptions, PublishContextResult } from "./orchestrator/publish-types";
 export { publishContext } from "./orchestrator/publish";

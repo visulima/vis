@@ -2,7 +2,7 @@ import { collectContributors } from "../release-note-template";
 import type { createShellRunner } from "../shell-runner";
 import type { OrchestratorContext } from "./context";
 import { applyReleaseNoteTemplate, composeRelatedReleasesBlock, extractInternalAuthors } from "./notes";
-import type { PublishContextResult } from "./publish";
+import type { PublishContextResult } from "./publish-types";
 
 /**
  * Create per-package GH releases (or one aggregated release if `aggregateRelease`
@@ -233,10 +233,4 @@ export const createRemoteReleases = async (
             console.warn(`createRelease failed for ${item.name}@${item.version} (tag ${tag}): ${(error as Error).message}`);
         }
     }
-};
-
-export const shouldProvenance = (context: OrchestratorContext): boolean => {
-    const args = context.config.publish?.publishArgs ?? [];
-
-    return args.includes("--provenance") && context.pm.id !== "bun";
 };

@@ -8,6 +8,7 @@ import { applyReleasePlan } from "../apply-release-plan";
 import { RELEASE_PLAN_ORDER } from "../ecosystems";
 import { createShellRunner } from "../shell-runner";
 import type { OrchestratorContext } from "./context";
+import { runHook } from "./hooks";
 
 // ── Apply phase ─────────────────────────────────────────────────────
 export interface ApplyOptions {
@@ -25,37 +26,6 @@ export interface ApplyResult {
     deletedFiles: string[];
     plan: ReleasePlan;
 }
-
-/**
- * Apply a release plan to disk: write package.json bumps + prepended
- * CHANGELOGs, delete consumed change files. Honors `dryRun`.
- *
- * Lockfile sync (RFC §14 step 6) runs after the writes complete.
- */
-
-/**
- * Run a configured shell hook command (preVersionCommand / postVersionCommand /
- * prePublishCommand / postPublishCommand). Empty string skips silently.
- * Throws if the command exits non-zero.
- *
- * Cross-platform: uses `cmd /c &lt;cmd>` on Windows, `sh -c &lt;cmd>` elsewhere.
- */
-export const runHook = async (cwd: string, command: string, label: string): Promise<void> => {
-    if (!command || command.trim() === "") {
-        return;
-    }
-
-    const runner = createShellRunner();
-    const isWindows = process.platform === "win32";
-    const shell = isWindows ? "cmd" : "sh";
-    const shellArgs = isWindows ? ["/c", command] : ["-c", command];
-
-    const result = await runner.run(shell, shellArgs, { cwd, silent: false });
-
-    if (result.exitCode !== 0) {
-        throw new Error(`${label} failed (exit ${result.exitCode}): ${command}`);
-    }
-};
 
 /**
  * Refuse to start a new version or publish wave when the staged-publish
@@ -184,6 +154,12 @@ export const assertNoConflictingPendingStages = async (
     });
 };
 
+/**
+ * Apply a release plan to disk: write package.json bumps + prepended
+ * CHANGELOGs, delete consumed change files. Honors `dryRun`.
+ *
+ * Lockfile sync (RFC §14 step 6) runs after the writes complete.
+ */
 export const applyContext = async (context: OrchestratorContext, options: ApplyOptions = {}): Promise<ApplyResult> => {
     if (context.plan.releases.length === 0) {
         return { changedFiles: [], deletedFiles: [], plan: context.plan };

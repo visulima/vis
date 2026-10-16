@@ -3,51 +3,19 @@ import { VisReleaseError } from "../../errors";
 import type { PackageManifest } from "../../types";
 import { parseCatalogs } from "../catalog";
 import { createShellRunner } from "../shell-runner";
-import type { VersionActions } from "../version-actions/interface";
 import { createVersionActions } from "../version-actions/registry";
 import { resolveVersionActionsId } from "../workspace";
-import { assertNoConflictingPendingStages, runHook } from "./apply";
+import { assertNoConflictingPendingStages } from "./apply";
 import type { OrchestratorContext } from "./context";
-import { createRemoteReleases, shouldProvenance } from "./remote-releases";
+import { runHook } from "./hooks";
+import type { PublishContextOptions, PublishContextResult } from "./publish-types";
+import { createRemoteReleases } from "./remote-releases";
 
-// ── Publish phase ──────────────────────────────────────────────────
-export interface PublishContextOptions {
-    dryRun?: boolean;
-    /** Skip `git push --tags` after publish. */
-    noPush?: boolean;
-    /** Skip local tag creation entirely. */
-    noTag?: boolean;
-    otp?: string;
+const shouldProvenance = (context: OrchestratorContext): boolean => {
+    const args = context.config.publish?.publishArgs ?? [];
 
-    /**
-     * Test-only override: use this `VersionActions` instance for every
-     * package in the wave instead of resolving from `versionActions` config.
-     * Production callers should leave this unset.
-     */
-    publishActionsOverride?: VersionActions;
-    /** Resume from previous run's state file. */
-    resume?: boolean;
-    tag?: string;
-}
-
-export interface PublishContextResult {
-    failed: { name: string; reason: string }[];
-    published: {
-        name: string;
-        /** Set when `publish.stage: true` — the npm stage id awaiting approval. */
-        stageId?: string;
-        /** Tarball hashes when publish.releaseAssets.stampHashes / uploadTarball are wanted. */
-        tarball?: { path: string; sha256: string; sha512: string; size: number };
-        /** Forge release URL — populated by `createRemoteReleases` for per-package releases. */
-        url?: string;
-        version: string;
-    }[];
-    skipped: { name: string; reason: string }[];
-    /** Tags created locally (not yet pushed). */
-    tags: string[];
-    /** Whether tags were successfully pushed to the remote. */
-    tagsPushed: boolean;
-}
+    return args.includes("--provenance") && context.pm.id !== "bun";
+};
 
 /**
  * Commit + push the git-tracked publish lock (`release.publish.lockInGit`).
