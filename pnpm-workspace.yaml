@@ -871,6 +871,8 @@ minimumReleaseAgeExclude:
   - brace-expansion@5.0.8
   # Renovate security update: nanoid@3.3.20
   - nanoid@3.3.20
+  # Renovate security update: @grpc/grpc-js@1.14.6
+  - "@grpc/grpc-js@1.14.6"
 
 # @visulima/packem imports `@visulima/cerebro/logger/pail` — cerebro's opt-in subpath —
 # but declares no dependency on @visulima/pail. cerebro is right to treat pail as an
@@ -938,7 +940,7 @@ overrides:
   'websocket-driver@<0.7.5': '>=0.7.5'
   '@anthropic-ai/sdk@>=0.79.0 <0.91.1': ^0.91.1
   '@eslint/plugin-kit@<0.3.4': '>=0.4.0'
-  '@grpc/grpc-js@<1.14.4': '>=1.14.4'
+  '@grpc/grpc-js@<1.14.4': '>=1.14.6'
   '@hapi/content@<=6.0.0': '>=6.0.1'
   '@hapi/wreck@<18.1.2': '>=18.1.2'
   '@hono/node-server@<1.19.10': '>=1.19.10'
