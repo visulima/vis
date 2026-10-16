@@ -5,6 +5,11 @@ set -euo pipefail
 
 # Resolve the package against the repository root, whatever the caller's working directory.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${1:-}" ]; then
+    echo "usage: run-bench.sh <package-dir>" >&2
+    exit 1
+fi
+
 dir="${root}/${1}"
 
 if [ -f "${dir}/__bench__/package.json" ]; then
