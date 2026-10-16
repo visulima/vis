@@ -1,0 +1,50 @@
+name: "CI"
+
+on: # yamllint disable-line rule:truthy
+    pull_request:
+        branches:
+            - "main"
+    push:
+        branches:
+            - "main"
+
+permissions:
+    actions: "read" # dawidd6 lists build-native.yml runs and downloads their artifacts
+    checks: "read" # wait-for-native-build polls the Check Native Build check run
+    contents: "read"
+
+jobs:
+    # build-native.yml runs on its own for every push and pull request. The test job
+    # waits for its check run on this commit and downloads the host-matching bindings,
+    # because the secret-scanner, task-runner, tui and vis suites load a compiled binding.
+    test:
+        name: "Test"
+        runs-on: "ubuntu-24.04"
+        timeout-minutes: 45
+        steps:
+            - name: "Checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "vis"
+                  skip-playwright: "true"
+                  enable-nx-cache: "false"
+                  upgrade-npm-version: false
+
+            - name: "Download native build artifacts"
+              uses: "./.github/actions/native-test-artifacts"
+              with:
+                  ref: "${{ github.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            - name: "Run tests"
+              env:
+                  # The terminal suites assert on ANSI output and fail when the runner is not a TTY.
+                  FORCE_COLOR: "3"
+              run: "pnpm -r run test"
