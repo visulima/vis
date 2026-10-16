@@ -1,4 +1,4 @@
-import type { ConstraintsConfig, NamedInputs, ProjectConfiguration, TargetConfiguration, TaskRunnerOptions } from "@visulima/task-runner";
+import type { ConstraintsConfig, NamedInputs, TaskRunnerOptions } from "@visulima/task-runner";
 
 import type { SimilarDepFamily } from "../deps/similar-deps";
 import type { FmtAdapterId, LintAdapterId } from "../lint-fmt/config-types";
@@ -8,223 +8,10 @@ import type { ToolchainConfig as InternalToolchainConfig, VersionManagerName } f
 import type { StagedConfig } from "../staged";
 import type { VisTargetConfiguration } from "../task/target-options";
 import type { VisPlugin } from "../util/hooks";
-
-/**
- * Per-adapter override applied by `vis lint` / `vis fmt`. Keyed by
- * adapter id under `lint.adapters` / `fmt.adapters`. Every field is
- * optional — set only what you need to change.
- */
-export interface LintFmtAdapterOverride {
-    /**
-     * Set to `false` to skip this adapter even when its config file or
-     * package.json entry is detected. Defaults to `true` (run when
-     * detected).
-     */
-    enabled?: boolean;
-
-    /**
-     * Extra arguments appended verbatim to every invocation of this
-     * adapter. Useful for tool-specific flags vis doesn't expose
-     * directly (e.g. `eslint --rulesdir`).
-     */
-    extraArgs?: string[];
-}
-
-interface NativeAuditExclusions {
-    /** Package names to exclude from audit (yarn berry only). */
-    excludedPackages: string[];
-    /** Advisory IDs to ignore (CVE-*, GHSA-*, or numeric IDs). */
-    ignoredAdvisories: string[];
-}
-
-/**
- * The 8 Socket.dev-style supply-chain policies. Used in `security.policies`
- * and `security.acceptedRisks[*].policies`. Kept as a const tuple so callers
- * can import the runtime array (`POLICY_NAMES`) for iteration without
- * drifting from the union type.
- */
-export const POLICY_NAMES = ["firstSeen", "installScripts", "license", "malware", "publisherChange", "score", "unexpectedDeps", "vulnerability"] as const;
-
-export type PolicyName = (typeof POLICY_NAMES)[number];
-
-/**
- * Recognised input sources for the codeowners aggregator.
- *
- * - `project-json` — owners declared on each project's `project.json`.
- *   Canonical source; takes precedence over the other two on path conflicts.
- * - `nested-codeowners` — `CODEOWNERS` files placed at arbitrary depth
- *   in the workspace tree (excluding the generated root file).
- * - `package-json-maintainers` — fallback that reads each project's
- *   `package.json#maintainers` and emits one entry per project root for
- *   projects with no `project.json owners`. GitHub handles are extracted
- *   from each maintainer's `url` (e.g. `https://github.com/&lt;handle&gt;`).
- */
-export type CodeownersSource = "nested-codeowners" | "package-json-maintainers" | "project-json";
-
-export interface CodeownersConfig {
-    /** Markers that bracket the generated block when `preserveBlock` is set. */
-    blockMarker?: { begin: string; end: string };
-    /** Workspace-level paths that apply outside any project (e.g., `.github/**`). */
-    globalPaths?: Record<string, string[]>;
-    /** Glob patterns used to discover nested `CODEOWNERS` files. Defaults to `["**\/CODEOWNERS"]`. */
-    nestedIncludes?: string[];
-    /** Sort order for generated entries — mirrors moon's `orderBy`. */
-    orderBy?: "file-source" | "project-id";
-
-    /**
-     * When set, the generated content is spliced between
-     * {@link CodeownersConfig.blockMarker} markers in the existing file
-     * (markers are appended if missing) instead of overwriting the file.
-     */
-    preserveBlock?: boolean;
-    /** Provider determines whether `channel` is emitted (GitHub supports it via comment). */
-    provider?: "bitbucket" | "github" | "gitlab" | "other";
-
-    /**
-     * Header instruction shown to reviewers. Replaces the default
-     * "Update each project's project.json `owners` field…" line. Useful
-     * when the canonical regenerate path is a custom script.
-     */
-    regenerationCommand?: string;
-    /** Enabled input sources. Defaults to `["project-json"]`. */
-    sources?: CodeownersSource[];
-}
-
-/**
- * One user-declared customTypes entry. See `policy.customTypes.extraTypes`
- * for the full contract — this is just the row shape.
- */
-export interface ExtraCustomType {
-    /**
-     * Required when `strategy === "string"`. The dep-cluster key the bare
-     * version string at `path` should be associated with.
-     */
-    depName?: string;
-
-    /**
-     * Display name for this customType. Used as the cluster key prefix in
-     * lint output and JSON. Must not collide with the built-in names.
-     */
-    name: string;
-    /** Dot-separated walk into package.json (e.g. `pnpm.overrides`, `myTool.runtime`). */
-    path: string;
-
-    /**
-     * How to interpret the JSON found at `path`.
-     * - `name@version` — single string `pnpm@9.0.0` (with optional `+sha512.…` hash).
-     * - `name~version` — single string `node~20.0.0`, mirrors syncpack's tilde form.
-     * - `string` — bare version literal (requires `depName`).
-     * - `versionsByName` — `{ name: version }` object such as `engines`.
-     */
-    strategy: "name@version" | "name~version" | "string" | "versionsByName";
-}
-
-interface PackageJson {
-    bin?: Record<string, string> | string;
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-    name?: string;
-    optionalDependencies?: Record<string, string>;
-    peerDependencies?: Record<string, string>;
-    scripts?: Record<string, string>;
-    workspaces?: string[] | { catalog?: Record<string, string>; packages?: string[] };
-}
-
-/**
- * Declared code-owner assignment for a path glob within a project.
- * Mirrors moon's `owners` shape so migrations can round-trip cleanly.
- */
-export interface OwnersEntry {
-    /** Optional notification channel (e.g. Slack, Teams). */
-    channel?: string;
-    /** Owner handles (e.g. `@visulima/core-team`). */
-    owners: string[];
-    /** File/glob pattern relative to the project root. */
-    path: string;
-}
-
-/**
- * Per-project TypeScript overlay loaded from `vis.task.ts`. Adds a
- * dynamic, type-safe layer for target overrides on top of `project.json`,
- * which stays the canonical home for static metadata (`tags`, `layer`,
- * `stack`, `language`, `owners`, `projectType`, `sourceRoot`,
- * `implicitDependencies`).
- *
- * `vis.task.ts` is opt-in. A package without one behaves identically to
- * before its introduction. Targets defined here merge over `project.json`'s
- * `targets` block — see `design-config-layering.md` for the full
- * precedence stack.
- */
-export interface VisTaskConfig {
-    /** Per-target overrides — same shape as `project.json#targets`. */
-    tasks?: Record<string, VisTargetConfiguration>;
-}
-
-/**
- * Per-project metadata surfaced by `project.json`. Extended beyond the
- * minimal `projectType` / `tags` / `sourceRoot` fields we historically
- * parsed to include targets, owners, and layer/stack classification.
- */
-export interface ProjectJson {
-    /** Implicit dependencies on other projects. */
-    implicitDependencies?: string[];
-    /** Primary language — informational and query-able. */
-    language?: string;
-
-    /**
-     * Architectural layer this project sits in. Purely declarative — set
-     * it here in `project.json` and nothing infers it, which is why the
-     * `Layer` column in `vis list` reads `—` until you do.
-     *
-     * Once set it becomes queryable (`--query "layer=library"`) and feeds
-     * `constraints`, where it is the natural way to express rules like
-     * "nothing in `library` may depend on an `application`".
-     * @example "library"
-     */
-    layer?: "application" | "automation" | "configuration" | "library" | "scaffolding" | "tool";
-
-    /**
-     * Project name. When set, takes precedence over `package.json#name`
-     * as the project's identity in the workspace graph and CLI filters.
-     * Falls back to `package.json#name` when omitted.
-     */
-    name?: string;
-    /** Code owners for paths inside this project. */
-    owners?: OwnersEntry[];
-    /** Project-level metadata. */
-    project?: {
-        channel?: string;
-        description?: string;
-        maintainers?: string[];
-        owner?: string;
-        title?: string;
-    };
-
-    /**
-     * Project type — `library`, `application`, `service`, or `tool`.
-     *
-     * - `library` — reusable code consumed by other workspace projects.
-     * - `application` — end-user-facing build target (web app, mobile app).
-     * - `service` — long-running HTTP / worker process deployed independently.
-     * - `tool` — CLI or developer tooling shipped as an executable.
-     */
-    projectType?: "application" | "library" | "service" | "tool";
-
-    /**
-     * Marks the project as write-restricted. Consumed by
-     * `vis sync codeowners --write-guard` to scope the generated
-     * Write Guard workflow to this project's paths.
-     */
-    restricted?: boolean;
-    /** Source root, used for display and language inference. */
-    sourceRoot?: string;
-    /** Tech stack. */
-    stack?: "backend" | "data" | "frontend" | "infrastructure" | "systems";
-    /** Filterable tags. */
-    tags?: string[];
-    /** Vis-style target definitions (merged on top of package.json scripts). */
-    targets?: Record<string, VisTargetConfiguration>;
-}
+import type { CodeownersConfig } from "./types-parts/codeowners";
+import type { LintFmtAdapterOverride } from "./types-parts/lint";
+import type { PolicyName } from "./types-parts/policies";
+import type { ExtraCustomType, ProjectJson, ScopedTasksBlock } from "./types-parts/project";
 
 /**
  * A predicate used by {@link VisConfig.scopedTasks}.
@@ -241,17 +28,6 @@ export interface ScopedTasksMatch {
     stack?: ProjectJson["stack"] | ProjectJson["stack"][];
     /** Match projects tagged with any of these tags. */
     tags?: string[];
-}
-
-/**
- * A single scoped-tasks block — a set of task defaults gated by an
- * optional match predicate.
- */
-export interface ScopedTasksBlock {
-    /** Optional match predicate; if omitted, the block applies universally. */
-    match?: ScopedTasksMatch;
-    /** Task default configurations, keyed by target name. */
-    tasks: Record<string, Partial<VisTargetConfiguration>>;
 }
 
 export interface VisConfig {
@@ -2254,47 +2030,8 @@ export interface VisConfig {
     zig?: { discover?: boolean };
 }
 
-/**
- * Extended project configuration exposed on the discovered workspace.
- * Adds vis-specific metadata (layer, stack, language, owners) on top of
- * the task-runner `ProjectConfiguration`.
- */
-export interface VisProjectConfiguration extends ProjectConfiguration {
-    /** Primary language identifier. */
-    language?: string;
-    /** Project layer classification (matches moon's layer hierarchy). */
-    layer?: ProjectJson["layer"];
-    /** Owners entries declared in project.json. */
-    owners?: OwnersEntry[];
-    /** Human-readable metadata block. */
-    project?: ProjectJson["project"];
-    /** Whether the project is write-restricted (Write Guard). */
-    restricted?: boolean;
-    /** Project stack classification. */
-    stack?: ProjectJson["stack"];
-    /** Raw targets with vis-specific options retained. */
-    targets?: Record<string, TargetConfiguration>;
-}
-
-/**
- * Per-project options cache indexed by project name. Used by the run
- * command to read vis-specific target options without reparsing.
- */
-export type ProjectOptionsIndex = Map<string, Record<string, VisTargetConfiguration>>;
-
-/**
- * Parsed `package.json` files from the discovery pass, keyed by
- * project name. `buildProjectGraph` consumes this to avoid
- * re-parsing every `package.json` just to extract dependency info.
- */
-export type PackageJsonIndex = Map<string, PackageJson>;
-
-/**
- * Pre-loaded `vis.task.ts` overlays keyed by *relative* project
- * directory (the same key that `resolveWorkspacePatterns` returns).
- * Callers that want the overlay applied must produce this map before
- * calling `discoverWorkspace` — see `loadVisTaskConfigsForWorkspace`.
- */
-export type VisTaskConfigIndex = Map<string, VisTaskConfig>;
-
-export type { NativeAuditExclusions, PackageJson };
+export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types-parts/codeowners";
+export type { LintFmtAdapterOverride } from "./types-parts/lint";
+export type { NativeAuditExclusions, PolicyName } from "./types-parts/policies";
+export { POLICY_NAMES } from "./types-parts/policies";
+export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types-parts/project";
