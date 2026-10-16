@@ -122,11 +122,10 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
         github-token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Build this bench's workspace dependencies
-      env:
-        BENCH_PROJECT: ${{ matrix.project }}
-      shell: bash
-      run: pnpm exec nx run-many --target=build:prod --projects="$BENCH_PROJECT" --with-deps --nxBail
+    - name: Build the publishable packages
+      # The benches import workspace packages through their dist output. Nx skips a bench
+      # project's dependencies when it has no build target, so the packages are built here.
+      run: pnpm exec nx run-many --target=build:prod --projects=tag:type:package --parallel
     - name: Run benchmark
       uses: "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286" # v4.18.5
       with:
