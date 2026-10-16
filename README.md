@@ -52,7 +52,7 @@ Requirements: Node.js `^22.14.0 || >=24.10.0`, pnpm `11.28.2`, and a stable Rust
 
 ```bash
 pnpm install
-pnpm --filter @visulima/secret-scanner run build:native:debug   # host Rust binding
+pnpm -r run build:native                                       # Rust bindings (release)
 pnpm -r run build
 FORCE_COLOR=3 pnpm -r run test
 ```
@@ -65,7 +65,7 @@ CI runs `build-native.yml` on pushes and pull requests to `main`. It compiles th
 
 ## Contributing
 
-Read the [contributing guide](https://github.com/visulima/visulima/blob/main/.github/CONTRIBUTING.md) first. Commits follow Angular-style conventional commits, scoped to the package name, for example `fix(secret-scanner): ...`.
+Read the [contributing guide](https://github.com/visulima/vis/blob/main/.github/CONTRIBUTING.md) first. Commits follow Angular-style conventional commits, scoped to the package name, for example `fix(secret-scanner): ...`.
 
 <div align="center">
 
@@ -91,7 +91,7 @@ Read the [contributing guide](https://github.com/visulima/visulima/blob/main/.gi
 [license-badge]: https://img.shields.io/badge/LICENSE-MIT-green?style=for-the-badge
 [license]: https://github.com/visulima/vis/blob/main/LICENSE.md
 [prs-welcome-badge]: https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge
-[prs-welcome]: https://github.com/visulima/visulima/blob/main/.github/CONTRIBUTING.md
+[prs-welcome]: https://github.com/visulima/vis/blob/main/.github/CONTRIBUTING.md
 [chat-badge]: https://img.shields.io/discord/902465130518949899.svg?style=for-the-badge
 [chat]: https://discord.gg/eajEZvk2PG
 [typescript-badge]: https://img.shields.io/badge/Typescript-294E80.svg?style=for-the-badge&logo=typescript
