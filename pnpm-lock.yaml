@@ -426,7 +426,7 @@ overrides:
   nuxt@>=4.0.0-alpha.1 <=4.4.5: ^4.4.6
   path-to-regexp@<0.1.13: '>=0.1.13 <0.2.0'
   path-to-regexp@>=8.0.0 <8.4.0: '>=8.4.0'
-  postcss@<8.5.10: '>=8.5.10'
+  postcss@<8.5.10: '>=8.5.30'
   prismjs@<1.30.0: '>=1.30.0'
   protobufjs@<7.5.5: '>=7.5.5'
   protobufjs@>=8.0.0 <8.2.0: ^8.2.0

@@ -862,7 +862,8 @@ minimumReleaseAgeExclude:
   - find-my-way@9.6.1
   - react-router@8.3.0
   - tar@7.5.21
-  - postcss@8.5.18
+  # Renovate security update: postcss@8.5.30
+  - postcss@8.5.18 || 8.5.30
   - valibot@1.4.2
   - brace-expansion@5.0.8
 
@@ -1057,7 +1058,7 @@ overrides:
   # picomatch security floors (<2.3.2, >=4.0.0 <4.0.4) are superseded by the exact
   # `picomatch: 4.0.5` pin above, which clears both. Keeping them here made pnpm resolve
   # some consumers to an unpatched 4.0.4 alongside the patched copy.
-  postcss@<8.5.10: '>=8.5.10'
+  postcss@<8.5.10: '>=8.5.30'
   prismjs@<1.30.0: '>=1.30.0'
   protobufjs@<7.5.5: '>=7.5.5'
   protobufjs@>=8.0.0 <8.2.0: ^8.2.0
