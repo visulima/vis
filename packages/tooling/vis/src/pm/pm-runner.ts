@@ -528,7 +528,9 @@ const runInstallCaptured = async (
  * Append `--silent`. npm/pnpm/bun/yarn (classic + berry) all accept it
  * (yarn berry treats it as an alias for `--quiet`).
  */
-const applySilent = (resolved: ResolvedCommand): ResolvedCommand => ({ ...resolved, args: [...resolved.args, "--silent"] });
+const applySilent = (resolved: ResolvedCommand): ResolvedCommand => {
+    return { ...resolved, args: [...resolved.args, "--silent"] };
+};
 
 /**
  * Append the PM-specific dry-run flag, or return `null` when the PM
