@@ -1,8 +1,8 @@
 import type { Task } from "@visulima/task-runner";
 
-import type { detectCurrentOs, VisTargetOptions } from "../../../task/target-options";
-import { resolveTargetShell } from "../../../task/target-options";
-import { getTaskOptions } from "../task-env";
+import type { detectCurrentOs, VisTargetOptions } from "../../task/target-options";
+import { resolveTargetShell } from "../../task/target-options";
+import { getTaskOptions } from "./task-env";
 
 /**
  * Wraps a string in single quotes for safe POSIX shell execution.

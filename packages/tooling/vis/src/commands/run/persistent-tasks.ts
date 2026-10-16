@@ -2,15 +2,15 @@ import { readFileSync, removeSync } from "@visulima/fs";
 import type { LifeCycleInterface, ProcessEvent, Task } from "@visulima/task-runner";
 import { runConcurrently, TerminalBuffer } from "@visulima/task-runner";
 
-import { decidePty } from "../../../task/pty-decision";
-import type { VisTargetOptions } from "../../../task/target-options";
-import { detectCurrentOs, resolveTaskCwd } from "../../../task/target-options";
-import type { TaskStore } from "../../../tui/components/task-store";
-import type { StdinEntry } from "../../../tui/types";
-import type { TaskSpawnContext } from "../task-env";
-import { resolveTaskSpawn } from "../task-env";
+import { decidePty } from "../../task/pty-decision";
+import type { VisTargetOptions } from "../../task/target-options";
+import { detectCurrentOs, resolveTaskCwd } from "../../task/target-options";
+import type { TaskStore } from "../../tui/components/task-store";
+import type { StdinEntry } from "../../tui/types";
 import { MAX_OUTPUT_BYTES } from "./output";
 import { resolveTaskCommand } from "./shell";
+import type { TaskSpawnContext } from "./task-env";
+import { resolveTaskSpawn } from "./task-env";
 
 /**
  * Per-service readiness re-check budget for the auto-attach probe.

@@ -2,14 +2,14 @@ import type { LifeCycleInterface, ProcessEvent, Task } from "@visulima/task-runn
 import { runConcurrently, TerminalBuffer } from "@visulima/task-runner";
 import type { Hookable } from "hookable";
 
-import { resolveTaskCwd } from "../../../task/target-options";
-import type { StdinEntry } from "../../../tui/types";
-import type { VisHooks } from "../../../util/hooks";
-import { scheduleTimeoutKill } from "../../../util/signal-escalation";
-import type { ServiceEventBridge } from "../service-event-bridge";
-import type { TaskSpawnContext } from "../task-env";
-import { getTaskOptions, resolveTaskSpawn } from "../task-env";
+import { resolveTaskCwd } from "../../task/target-options";
+import type { StdinEntry } from "../../tui/types";
+import type { VisHooks } from "../../util/hooks";
+import { scheduleTimeoutKill } from "../../util/signal-escalation";
 import { MAX_OUTPUT_BYTES, OutputRingBuffer } from "./output";
+import type { ServiceEventBridge } from "./service-event-bridge";
+import type { TaskSpawnContext } from "./task-env";
+import { getTaskOptions, resolveTaskSpawn } from "./task-env";
 
 /**
  * Serializes tasks that share a mutex name. Keyed by mutex name, each

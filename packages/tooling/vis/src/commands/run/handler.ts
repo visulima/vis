@@ -37,17 +37,17 @@ import { applyProjectFilter } from "../../watch/watch-filter";
 import type { KeybindHandle } from "../../watch/watch-keybinds";
 import { installKeybinds, writeHelp } from "../../watch/watch-keybinds";
 import { applyServiceRegistry } from "./apply-service-registry";
+import type { MutexPool } from "./executor";
+import { createConcurrentExecutor, createRetryBudget } from "./executor";
 import { applyFilterStrings } from "./filter";
-import type { MutexPool } from "./handler-parts/executor";
-import { createConcurrentExecutor, createRetryBudget } from "./handler-parts/executor";
-import { MAX_OUTPUT_BYTES } from "./handler-parts/output";
-import { parseCacheBackend, parseCacheMode, parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./handler-parts/parse";
-import { cleanupEphemeralServices, runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./handler-parts/persistent-tasks";
-import { FORWARDED_ARGS_KEY, resolveTaskCommand } from "./handler-parts/shell";
 import type { RunOptions } from "./index";
+import { MAX_OUTPUT_BYTES } from "./output";
+import { parseCacheBackend, parseCacheMode, parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./parse";
+import { cleanupEphemeralServices, runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
 import type { ServiceBridgeEntry } from "./service-event-bridge";
 import { ServiceEventBridge } from "./service-event-bridge";
 import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "./service-preflight";
+import { FORWARDED_ARGS_KEY, resolveTaskCommand } from "./shell";
 import { resolveTaskArguments } from "./task-arguments";
 import { AFFECTED_FILES_ENV, createTaskSpawnContext, effectiveChildEnvPolicy, getTaskOptions, resolveRetrySpawn, resolveTaskSpawn, TASK_ARG_ENV_KEY } from "./task-env";
 
@@ -2159,5 +2159,5 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
 export default execute as CommandExecute<Toolbox>;
 
-export type { RetryBudget } from "./handler-parts/executor";
-export { createRetryBudget } from "./handler-parts/executor";
+export type { RetryBudget } from "./executor";
+export { createRetryBudget } from "./executor";

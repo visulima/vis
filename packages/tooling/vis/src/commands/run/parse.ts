@@ -1,6 +1,6 @@
 import { getLastRunSummaryPath, readLastRunSummary } from "@visulima/task-runner";
 
-import { getVisWorkspaceDataDir } from "../../../util/vis-paths";
+import { getVisWorkspaceDataDir } from "../../util/vis-paths";
 
 /**
  * Parses the `VIS_RUN_CONCURRENCY_LIMIT` env var into a positive
