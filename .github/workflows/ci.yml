@@ -25,6 +25,8 @@ jobs:
             - name: "Checkout"
               uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
               with:
+                  # Full history, so pnpm can compare the pull request against its base.
+                  fetch-depth: 0
                   persist-credentials: false
 
             - name: "Setup resources and environment"
@@ -42,8 +44,18 @@ jobs:
                   ref: "${{ github.event.pull_request.head.sha || github.sha }}"
                   github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+            # Pull requests run the suites of the packages they affect, plus their dependents.
+            # Pushes to main run every suite.
             - name: "Run tests"
               env:
                   # The terminal suites assert on ANSI output and fail when the runner is not a TTY.
                   FORCE_COLOR: "3"
-              run: "pnpm -r run test"
+                  EVENT: "${{ github.event_name }}"
+              run: |
+                  set -euo pipefail
+
+                  if [ "$EVENT" = "pull_request" ]; then
+                      pnpm -r --filter "...[origin/main]" run test
+                  else
+                      pnpm -r run test
+                  fi
