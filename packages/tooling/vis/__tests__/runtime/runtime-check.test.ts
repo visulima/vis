@@ -136,5 +136,110 @@ describe("runtime-check", () => {
                 }
             }
         });
+
+        describe("devEngines", () => {
+            it.each([
+                [{ name: "node", onFail: "error", version: "<1" }, "error"],
+                [{ name: "node", version: "<1" }, "warning"],
+                [{ name: "node", onFail: "warn", version: "<1" }, "warning"],
+                [{ name: "node", onFail: "download", version: "<1" }, "warning"],
+            ])("reports an unsatisfied runtime with the severity its onFail picks: %j", (entry, severity) => {
+                expect.assertions(2);
+
+                writeFileSync(join(tmpDir, "package.json"), JSON.stringify({ devEngines: { runtime: entry } }));
+
+                const finding = checkRuntimeVersions(tmpDir).find((f) => f.kind === "node");
+
+                expect(finding?.severity).toBe(severity);
+                expect(finding?.expected).toBe("<1");
+            });
+
+            it("reports nothing when onFail is ignore", () => {
+                expect.assertions(1);
+
+                writeFileSync(join(tmpDir, "package.json"), JSON.stringify({ devEngines: { runtime: { name: "node", onFail: "ignore", version: "<1" } } }));
+
+                expect(checkRuntimeVersions(tmpDir)).toHaveLength(0);
+            });
+
+            it("reports nothing when one entry of an alternatives array is satisfied", () => {
+                expect.assertions(1);
+
+                const actualMajor = Number.parseInt(process.versions.node.split(".")[0]!, 10);
+
+                writeFileSync(
+                    join(tmpDir, "package.json"),
+                    JSON.stringify({ devEngines: { runtime: [{ name: "node", onFail: "error", version: "<1" }, { name: "node", version: `>=${actualMajor}` }] } }),
+                );
+
+                expect(checkRuntimeVersions(tmpDir)).toHaveLength(0);
+            });
+
+            it("reports a running package manager that the devEngines entry does not allow", () => {
+                expect.assertions(2);
+
+                const originalAgent = process.env["npm_config_user_agent"];
+
+                process.env["npm_config_user_agent"] = "pnpm/9.5.0 node/v24.0.0";
+
+                try {
+                    writeFileSync(join(tmpDir, "package.json"), JSON.stringify({ devEngines: { packageManager: { name: "pnpm", onFail: "error", version: "10.0.0" } } }));
+
+                    const finding = checkRuntimeVersions(tmpDir).find((f) => f.kind === "packageManager");
+
+                    expect(finding?.severity).toBe("error");
+                    expect(finding?.message).toContain("requires pnpm@10.0.0");
+                } finally {
+                    if (originalAgent === undefined) {
+                        delete process.env["npm_config_user_agent"];
+                    } else {
+                        process.env["npm_config_user_agent"] = originalAgent;
+                    }
+                }
+            });
+
+            it("does not judge a launcher that the devEngines entries do not name (npx under npm)", () => {
+                expect.assertions(1);
+
+                const originalAgent = process.env["npm_config_user_agent"];
+
+                process.env["npm_config_user_agent"] = "npm/10.0.0 node/v24.0.0";
+
+                try {
+                    writeFileSync(join(tmpDir, "package.json"), JSON.stringify({ devEngines: { packageManager: { name: "pnpm", onFail: "error", version: "^9" } } }));
+
+                    expect(checkRuntimeVersions(tmpDir).filter((f) => f.kind === "packageManager")).toHaveLength(0);
+                } finally {
+                    if (originalAgent === undefined) {
+                        delete process.env["npm_config_user_agent"];
+                    } else {
+                        process.env["npm_config_user_agent"] = originalAgent;
+                    }
+                }
+            });
+
+            it("skips the package-manager check when a top-level packageManager already pins the tool", () => {
+                expect.assertions(1);
+
+                const originalAgent = process.env["npm_config_user_agent"];
+
+                process.env["npm_config_user_agent"] = "pnpm/9.5.0 npm/? node/v24.0.0";
+
+                try {
+                    writeFileSync(
+                        join(tmpDir, "package.json"),
+                        JSON.stringify({ devEngines: { packageManager: { name: "pnpm", onFail: "error", version: "10.0.0" } }, packageManager: "pnpm@9.5.0" }),
+                    );
+
+                    expect(checkRuntimeVersions(tmpDir).filter((f) => f.kind === "packageManager")).toHaveLength(0);
+                } finally {
+                    if (originalAgent === undefined) {
+                        delete process.env["npm_config_user_agent"];
+                    } else {
+                        process.env["npm_config_user_agent"] = originalAgent;
+                    }
+                }
+            });
+        });
     });
 });

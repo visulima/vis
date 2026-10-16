@@ -21,11 +21,22 @@ export interface InstalledPackage {
 
 /** A package installed in multiple versions. */
 export interface DuplicatePackage {
+    /** Why the duplicate matters and how to fix it, for tooling packages that break when doubled. */
+    hint?: string;
     /** The package name. */
     name: string;
     /** Each installed version. */
     versions: string[];
 }
+
+/**
+ * Build tooling whose copies hold their own module state, so a doubled copy fails in confusing ways
+ * rather than loudly. Keyed by package name; each hint says what the duplicate breaks.
+ */
+const SINGLETON_HINTS: Readonly<Record<string, string>> = {
+    vite: "Separate vite copies each load their own plugin and config state. Pin one version with a package manager override.",
+    vitest: "Separate vitest copies each keep their own expect, mocks and runner state. Pin one version with a package manager override.",
+};
 
 export const LOCKFILE_NAMES: Record<string, { aliases?: ReadonlyArray<string>; file: string; type: LockFileType }> = {
     bun: { file: "bun.lock", type: "bun" },
@@ -314,7 +325,13 @@ export const findDuplicateDependencies = (workspaceRoot: string, pmName: string)
             continue;
         }
 
-        duplicates.push({ name, versions: [...versions] });
+        const duplicate: DuplicatePackage = { name, versions: [...versions] };
+
+        if (SINGLETON_HINTS[name]) {
+            duplicate.hint = SINGLETON_HINTS[name];
+        }
+
+        duplicates.push(duplicate);
     }
 
     return duplicates.sort((a, b) => a.name.localeCompare(b.name));

@@ -179,4 +179,29 @@ describe("npm-shrinkwrap precedence", () => {
         expect(dupes[0]?.name).toBe("dup");
         expect([...(dupes[0]?.versions ?? [])].sort()).toStrictEqual(["1.0.0", "2.0.0"]);
     });
+
+    it("adds a pin hint only when a doubled singleton tool such as vitest is installed", () => {
+        expect.assertions(3);
+
+        const dupLock = JSON.stringify({
+            lockfileVersion: 3,
+            name: "fixture",
+            packages: {
+                "": { name: "fixture", version: "0.0.0" },
+                "node_modules/dup": { version: "1.0.0" },
+                "node_modules/holder/node_modules/dup": { version: "2.0.0" },
+                "node_modules/holder/node_modules/vitest": { version: "3.0.0" },
+                "node_modules/vitest": { version: "4.0.0" },
+            },
+            version: "0.0.0",
+        });
+
+        writeFileSync(join(workspace, "package-lock.json"), dupLock);
+
+        const dupes = findDuplicateDependencies(workspace, "npm");
+
+        expect(dupes.find((d) => d.name === "vitest")?.hint).toContain("Separate vitest copies");
+        expect(dupes.find((d) => d.name === "dup")?.hint).toBeUndefined();
+        expect(dupes.find((d) => d.name === "dup")).not.toHaveProperty("hint");
+    });
 });
