@@ -1,3 +1,41 @@
+## @visulima/vis [6.0.1](https://github.com/visulima/vis/compare/@visulima/vis@6.0.0...@visulima/vis@6.0.1) (2026-10-16)
+
+### Bug Fixes
+
+* **ci:** resolve benches from the repo root and retry watcher writes ([5f2a7cd](https://github.com/visulima/vis/commit/5f2a7cda132bb624ac35ec4bc5230632530630fa))
+* **deps:** resolve audit findings in the benchmark fixtures ([aeec812](https://github.com/visulima/vis/commit/aeec812ff72973bea1d21f32775488388a1a7269))
+* **deps:** update dependency drizzle-orm to ^0.45.0 [security] ([7531967](https://github.com/visulima/vis/commit/7531967d48d9d4dbbdd15081a37db98577dfdedf))
+* **deps:** update dependency express to v4.20.0 [security] ([adbd076](https://github.com/visulima/vis/commit/adbd0768099f510ae43a341177b11d045b500c1b))
+* **deps:** update dependency next to v16.3.8 [security] ([bc83b50](https://github.com/visulima/vis/commit/bc83b508f863d0b565597c98dedea1e244eb3e93))
+* **deps:** update dependency next-auth to v5.0.0-beta.32 [security] ([9bb3876](https://github.com/visulima/vis/commit/9bb38767f93273c97c8404fd0b28b8b8eae83f84))
+* **deps:** update dependency postcss to v8.5.23 [security] ([bc4caac](https://github.com/visulima/vis/commit/bc4caace200682ac40b26e90193fe49394437544))
+* **vis:** satisfy arrow-body lint rule in pm-runner ([818a47d](https://github.com/visulima/vis/commit/818a47d67148c4957543d60049f287064739afe3))
+
+### Reverts
+
+* Revert "style(vis): format pm-runner to match prettier" ([beff276](https://github.com/visulima/vis/commit/beff276e3d3aaa90610a718d6724529511ca8362))
+
+### Styles
+
+* **vis:** format pm-runner to match prettier ([b6d57d6](https://github.com/visulima/vis/commit/b6d57d65fea5331c32b0e61aae42088e85bbe777))
+
+### Miscellaneous Chores
+
+* **deps:** merge renovate branch npm-drizzle-orm-vulnerability ([59de3b6](https://github.com/visulima/vis/commit/59de3b65acd9fd45574da4b5aa13a4ede87e83e2))
+* **deps:** merge renovate branch npm-next-auth-vulnerability ([2e94a35](https://github.com/visulima/vis/commit/2e94a3564a67f5ac571f0293730399498a66db89))
+* **deps:** merge renovate branch npm-next-vulnerability ([7fbd4f6](https://github.com/visulima/vis/commit/7fbd4f692ade178a5c94cd044ccef198ac115787))
+* **deps:** merge renovate branch npm-postcss-vulnerability ([e41310d](https://github.com/visulima/vis/commit/e41310d64d94593cb7f476b4b9b50aab4f90db40))
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
+### Tests
+
+* **vis:** skip cerebro env scan when its source is absent ([b3d3587](https://github.com/visulima/vis/commit/b3d35870c5c5552ab70c4fdd4128e433993ba3e3))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 2.0.2
+
 ## @visulima/vis [6.0.0](https://github.com/visulima/visulima/compare/@visulima/vis@5.0.0...@visulima/vis@6.0.0) (2026-10-15)
 
 ### ⚠ BREAKING CHANGES
