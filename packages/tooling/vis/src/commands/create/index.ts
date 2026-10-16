@@ -1,7 +1,15 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../util/negatable-option";
+
 const createOptionDefinitions = {
+    ...negatable({
+        defaultValue: true,
+        description: "Generate AI agent instructions in .ai/ (use --no-agent to skip)",
+        name: "agent",
+        type: Boolean,
+    }),
     editor: {
         description: "Generate editor configs (vscode)",
         type: String,

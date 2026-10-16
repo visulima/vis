@@ -13,6 +13,15 @@ import { defineCommand } from "@visulima/cerebro";
  * In non-interactive mode (CI, piped), creates a minimal config with secure defaults.
  */
 const initOptionDefinitions = {
+    agent: {
+        defaultValue: false,
+        description: "Generate AI agent instructions in .ai/ (opt-in)",
+        type: Boolean,
+    },
+    editor: {
+        description: "Generate editor configs (vscode)",
+        type: String,
+    },
     force: {
         defaultValue: false,
         description: "Overwrite existing config file",
