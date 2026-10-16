@@ -1,0 +1,81 @@
+name: "Lint"
+
+on: # yamllint disable-line rule:truthy
+    pull_request:
+        branches:
+            - "main"
+    push:
+        branches:
+            - "main"
+
+permissions:
+    contents: "read"
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    cancel-in-progress: true
+
+jobs:
+    ts-lint:
+        name: "Lint (eslint, types, attw, package.json)"
+        runs-on: "ubuntu-24.04"
+        timeout-minutes: 30
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "lint"
+                  skip-playwright: "true"
+                  upgrade-npm-version: false
+                  # TODO: re-enable once pnpm/npm audit works with unpublished @visulima/task-runner-binding-* packages.
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            # attw and publint check the packed output, so the packages are built first.
+            - name: "Build"
+              run: "pnpm -r run build"
+
+            - name: "Lint eslint"
+              run: "pnpm -r run lint:eslint"
+
+            - name: "Lint typescript types"
+              run: "pnpm -r run lint:types"
+
+            - name: "Lint attw"
+              run: "pnpm -r run lint:attw"
+
+            - name: "Lint package.json"
+              run: "pnpm -r run lint:package-json"
+
+    rust-fmt:
+        name: "Lint (cargo fmt)"
+        runs-on: "ubuntu-24.04"
+        timeout-minutes: 15
+        steps:
+            - name: "Git checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: "Check formatting of every native crate"
+              run: |
+                  set -euo pipefail
+                  for manifest in \
+                      packages/tooling/secret-scanner/native/Cargo.toml \
+                      packages/tooling/task-runner/native/Cargo.toml \
+                      packages/tooling/vis/native/Cargo.toml \
+                      packages/terminal/tui/native/Cargo.toml; do
+                    cargo fmt --check --manifest-path "$manifest"
+                  done
