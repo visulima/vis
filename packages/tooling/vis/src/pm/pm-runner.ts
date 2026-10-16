@@ -156,10 +156,10 @@ const detectLockfileDrift = (cwd: string, installer: InstallerInfo): string | un
     }
 
     return (
-        `Resolved installer is aube but the workspace has a ${detected} lockfile. `
-        + `Aube reads and writes ${detected}'s lockfile format in place, but its byte output may differ subtly — `
-        + "expect a one-time churn diff on the first install, and ongoing drift if your team mixes tools on the same lockfile. "
-        + "To pin the choice across the team, set `install.backend` in vis.config; to bypass aube for this run, pass --no-aube."
+        `Resolved installer is aube but the workspace has a ${detected} lockfile. ` +
+        `Aube reads and writes ${detected}'s lockfile format in place, but its byte output may differ subtly — ` +
+        "expect a one-time churn diff on the first install, and ongoing drift if your team mixes tools on the same lockfile. " +
+        "To pin the choice across the team, set `install.backend` in vis.config; to bypass aube for this run, pass --no-aube."
     );
 };
 
@@ -269,8 +269,8 @@ const resolveInstaller = (
     if (explicit && explicit !== "auto") {
         if (explicit === "aube" && !hasBinaryOnPath("aube")) {
             throw new Error(
-                "install.backend is set to \"aube\" but the `aube` binary is not on PATH. "
-                + "Install it via `npm i -g @endevco/aube`, `mise use -g aube`, or `brew install endevco/tap/aube`.",
+                'install.backend is set to "aube" but the `aube` binary is not on PATH. ' +
+                    "Install it via `npm i -g @endevco/aube`, `mise use -g aube`, or `brew install endevco/tap/aube`.",
             );
         }
 
@@ -463,8 +463,8 @@ const resolveInstallCommand = (pm: InstallerInfo, options: InstallOptions, extra
     // Aube's flag surface lives in TS (see `aube-resolver.ts`) until the
     // native binding learns about it. Short-circuit before the NAPI call
     // so we don't pay a cross-FFI hop for a 5-line argv build.
-    let resolved
-        = pm.name === "aube"
+    let resolved =
+        pm.name === "aube"
             ? resolveAubeInstall(options)
             : resolveInstall(pm.name, pm.version, { ...options, silent: options.silent || extras.silent === true });
 
