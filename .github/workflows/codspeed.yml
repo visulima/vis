@@ -72,10 +72,24 @@ jobs:
       shell: bash
       env:
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-      run: "base=\"$BASE_SHA\"\n\nif [ -z \"$base\" ] || [ \"$base\" = \"0000000000000000000000000000000000000000\" ]; then\n  base=\"HEAD~1\"\nfi\n\naffected=$(node scripts/affected-packages.mjs \"$base\"\
-        \ HEAD --bench | tail -n 1)\naffected=${affected:-'[]'}\n\nif [ \"$affected\" = \"[]\" ]; then\n  echo \"No affected bench projects.\"\n  echo \"has-benches=false\" >> \"$GITHUB_OUTPUT\"\n  echo\
-        \ \"matrix={\\\"include\\\":[]}\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\n\nmatrix=$(echo \"$affected\" | jq -c '{include: [.[] | {project: .}]}')\n\necho \"Affected bench projects: $affected\"\necho\
-        \ \"has-benches=true\" >> \"$GITHUB_OUTPUT\"\necho \"matrix=$matrix\" >> \"$GITHUB_OUTPUT\"\n"
+      run: |
+        # `pnpm exec` leaks workspace platform-mismatch warnings to stdout
+        # (one line per native NAPI sub-package). Keep only the JSON line.
+        affected=$(pnpm exec nx show projects --affected --withTarget=test:bench --json 2>/dev/null | grep -E '^\[' | tail -n 1)
+        affected=${affected:-'[]'}
+
+        if [ "$affected" = "[]" ]; then
+          echo "No affected bench projects."
+          echo "has-benches=false" >> "$GITHUB_OUTPUT"
+          echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        matrix=$(echo "$affected" | jq -c '{include: [.[] | {project: .}]}')
+
+        echo "Affected bench projects: $affected"
+        echo "has-benches=true" >> "$GITHUB_OUTPUT"
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
   benchmark:
     name: 'Bench: ${{ matrix.project }}'
     needs: discover
