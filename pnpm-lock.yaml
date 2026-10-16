@@ -463,7 +463,7 @@ overrides:
   uuid@>=13.0.0 <13.0.1: ^13.0.1
   valibot@>=0.31.0 <1.2.0: '>=1.2.0'
   vite@<=5.4.19: '>=7.1.11'
-  vite@>=6.0.0 <=6.4.1: '>=6.4.2'
+  vite@>=6.0.0 <=6.4.1: '>=6.4.4'
   vite@>=7.0.0 <=7.3.1: '>=7.3.2'
   vite@>=7.1.0 <=7.1.4: '>=7.1.11'
   ws@>=8.0.0 <8.20.1: ^8.20.1
@@ -6429,7 +6429,7 @@ packages:
     resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
     peerDependencies:
       msw: ^2.4.9
-      vite: '>=6.4.2'
+      vite: '>=6.4.4'
     peerDependenciesMeta:
       msw:
         optional: true
@@ -11861,7 +11861,7 @@ packages:
     engines: {node: '>18.0.0'}
     peerDependencies:
       rollup: ^4.59.0
-      vite: '>=6.4.2'
+      vite: '>=6.4.4'
     peerDependenciesMeta:
       rollup:
         optional: true
@@ -11973,7 +11973,7 @@ packages:
       '@vitest/ui': 4.1.11
       happy-dom: '>=20.8.8'
       jsdom: '*'
-      vite: '>=6.4.2'
+      vite: '>=6.4.4'
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
