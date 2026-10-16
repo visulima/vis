@@ -1,0 +1,72 @@
+diff --git a/lib/constants.js b/lib/constants.js
+index f0aeda7..4742bb2 100644
+--- a/lib/constants.js
++++ b/lib/constants.js
+@@ -5,6 +5,8 @@ const WIN_NO_SLASH = `[^${WIN_SLASH}]`;
+ 
+ const DEFAULT_MAX_EXTGLOB_RECURSION = 0;
+ 
++const UNIGNORE = Symbol('unignore');
++
+ /**
+  * Posix glob regex
+  */
+@@ -93,6 +95,9 @@ module.exports = {
+   MAX_LENGTH: 1024 * 64,
+   POSIX_REGEX_SOURCE,
+ 
++  // token to un-ignore results in onIgnore
++  UNIGNORE,
++
+   // regular expressions
+   REGEX_BACKSLASH: /\\(?![*+?^${}(|)[\]])/g,
+   REGEX_NON_SPECIAL_CHARS: /^[^@![\].,$*+?^{}()|\\/]+/,
+diff --git a/lib/parse.js b/lib/parse.js
+index a85bb2d..7a8d89f 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -1228,6 +1228,17 @@ const parse = (input, options) => {
+         continue;
+       }
+ 
++      if (isBrace && rest[0] === '/') {
++        prev.type = 'globstar';
++        prev.value += value;
++        prev.output = `(?:^|${SLASH_LITERAL}|${globstar(opts)}${SLASH_LITERAL})`;
++        state.output += prev.output;
++        state.globstar = true;
++        consume(value + advance());
++        push({ type: 'slash', value: '/', output: '' });
++        continue;
++      }
++
+       // remove single star from output
+       state.output = state.output.slice(0, -prev.output.length);
+ 
+diff --git a/lib/picomatch.js b/lib/picomatch.js
+index 9c2bfd5..0fe05e8 100644
+--- a/lib/picomatch.js
++++ b/lib/picomatch.js
+@@ -87,12 +87,17 @@ const picomatch = (glob, options, returnState = false) => {
+       return returnObject ? result : false;
+     }
+ 
+-    if (isIgnored(input)) {
+-      if (typeof opts.onIgnore === 'function') {
+-        opts.onIgnore(result);
++    ignored: {
++      if (isIgnored(input)) {
++        if (typeof opts.onIgnore === 'function') {
++          if (opts.onIgnore(result) === constants.UNIGNORE) {
++            result.isMatch = true;
++            break ignored;
++          }
++        }
++        result.isMatch = false;
++        return returnObject ? result : false;
+       }
+-      result.isMatch = false;
+-      return returnObject ? result : false;
+     }
+ 
+     if (typeof opts.onMatch === 'function') {
