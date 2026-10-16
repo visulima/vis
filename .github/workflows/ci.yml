@@ -44,6 +44,15 @@ jobs:
                   ref: "${{ github.event.pull_request.head.sha || github.sha }}"
                   github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+            - name: "Restore Nx cache"
+              id: "nx-cache"
+              uses: "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
+              with:
+                  path: ".nx/cache"
+                  key: "nx-test-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}"
+                  restore-keys: |
+                      nx-test-${{ runner.os }}-
+
             # Pull requests run the suites of the packages they affect, plus their dependents.
             # Pushes to main run every suite.
             - name: "Run tests"
@@ -55,7 +64,14 @@ jobs:
                   set -euo pipefail
 
                   if [ "$EVENT" = "pull_request" ]; then
-                      pnpm -r --filter "...[origin/main]" run test
+                      pnpm exec nx affected -t test --base=origin/main
                   else
-                      pnpm -r run test
+                      pnpm exec nx run-many -t test
                   fi
+
+            - name: "Save Nx cache"
+              if: "${{ !cancelled() }}"
+              uses: "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
+              with:
+                  path: ".nx/cache"
+                  key: "${{ steps.nx-cache.outputs.cache-primary-key }}"
