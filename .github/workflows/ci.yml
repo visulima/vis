@@ -57,8 +57,8 @@ jobs:
                   restore-keys: |
                       nx-test-${{ runner.os }}-
 
-            # Pull requests run the suites of the packages they affect, plus their dependents.
-            # Pushes to main run every suite.
+            # Runs the suites of the packages affected since the base commit, plus their dependents.
+            # On pushes to main the base is the last successful run, so unchanged packages are skipped.
             - name: "Build affected packages"
               run: "pnpm run build:affected:packages"
 
