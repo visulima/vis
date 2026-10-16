@@ -54,6 +54,10 @@ jobs:
                   GIT_AUTHOR_NAME: "GitHub Actions Shell"
                   EMAIL: "github-actions[bot]@users.noreply.github.com"
 
+            - name: "Derive appropriate SHAs for base and head for `nx affected` commands"
+              id: "setSHAs"
+              uses: "nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1" # v5.0.1
+
             - name: "Setup resources and environment"
               id: "setup"
               uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
@@ -82,9 +86,9 @@ jobs:
                   github-token: "${{ secrets.GITHUB_TOKEN }}"
 
             - name: "Build"
-              run: "pnpm -r run build:prod"
+              run: "pnpm run build:affected:prod:packages"
 
             - name: "Preview Release"
               env:
                   BASE_SHA: "${{ github.event.pull_request.base.sha }}"
-              run: "node ./scripts/publish-preview-release.mjs"
+              run: "node ./scripts/publish-preview-release.js"

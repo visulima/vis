@@ -75,7 +75,7 @@ jobs:
             # inputs are unchanged restores the very coverage it produced, so only
             # what changed actually runs - while the report still covers every package.
             - name: "Build packages"
-              run: "pnpm -r run build"
+              run: "pnpm run build:packages"
 
             # `test:coverage` over every package. A baseline must cover the whole repo,
             # not only what a single change touched.
@@ -83,7 +83,7 @@ jobs:
               env:
                   # The terminal suites assert on ANSI output and fail when the runner is not a TTY.
                   FORCE_COLOR: "3"
-              run: "pnpm -r run test:coverage"
+              run: "pnpm run test:coverage"
 
             - name: "Upload coverage to Codecov"
               continue-on-error: true

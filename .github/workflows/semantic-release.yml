@@ -177,7 +177,7 @@ jobs:
             # freshly generated loader (index.js / index.d.ts) differs from the committed one
             # is then built against it, so its published types match the binaries.
             - name: "Build Production"
-              run: "pnpm -r run build:prod"
+              run: "pnpm run build:packages:prod"
 
             - name: "Semantic Release"
               if: "success()"

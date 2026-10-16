@@ -43,9 +43,25 @@ jobs:
                   run-signatures-audit: false
                   run-npm-audit: false
 
-            # attw and publint check the packed output, so the packages are built first.
-            - name: "Build"
-              run: "pnpm -r run build"
+            - name: "Derive appropriate SHAs for base and head for `nx affected` commands"
+              id: "setSHAs"
+              uses: "nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1" # v5.0.1
+
+            # attw and publint check the packed output, so the affected packages are built first.
+            - name: "Build affected packages"
+              run: "pnpm run build:affected:packages"
+
+            - name: "Lint eslint"
+              run: "pnpm run lint:affected:eslint"
+
+            - name: "Lint typescript types"
+              run: "pnpm run lint:affected:types"
+
+            - name: "Lint attw"
+              run: "pnpm run lint:affected:attw"
+
+            - name: "Lint package.json"
+              run: "pnpm run lint:affected:package-json"
 
             - name: "Lint eslint"
               run: "pnpm -r run lint:eslint"

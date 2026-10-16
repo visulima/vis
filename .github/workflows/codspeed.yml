@@ -103,22 +103,20 @@ jobs:
                   run-signatures-audit: false
                   run-npm-audit: false
 
+            - name: "Derive appropriate SHAs for base and head for `nx affected` commands"
+              id: "setSHAs"
+              uses: "nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1" # v5.0.1
+
             - name: "Compute affected bench projects"
               id: "affected"
               shell: "bash"
-              env:
-                  BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before }}"
               run: |
-                  base="$BASE_SHA"
-
-                  if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-                    base="HEAD~1"
-                  fi
-
-                  affected=$(node scripts/affected-packages.mjs "$base" HEAD --bench | tail -n 1)
+                  # `pnpm exec` leaks workspace platform-mismatch warnings to stdout
+                  # (one line per native NAPI sub-package). Keep only the JSON line.
+                  affected=$(pnpm exec nx show projects --affected --withTarget=test:bench --json 2>/dev/null | grep -E '^\[' | tail -n 1)
                   affected=${affected:-'[]'}
 
-                  if [ "$affected" = "[]" ]; then
+                  if [ -z "$affected" ] || [ "$affected" = "[]" ]; then
                     echo "No affected bench projects."
                     echo "has-benches=false" >> "$GITHUB_OUTPUT"
                     echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
@@ -131,11 +129,20 @@ jobs:
                   echo "has-benches=true" >> "$GITHUB_OUTPUT"
                   echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-            - name: "Build this bench's workspace dependencies"
+            - name: "Build only this bench's library dependencies"
               env:
                   BENCH_PROJECT: "${{ matrix.project }}"
               shell: "bash"
-              run: 'pnpm -r --filter "{$BENCH_PROJECT}..." run build:prod'
+              run: |
+                  focused=$(pnpm exec nx show projects --withTarget=build:prod --json | grep -E '^\[' | tail -n 1 | jq -r '.[]' | sort -u)
+                  deps=$(pnpm exec nx graph --focus="$BENCH_PROJECT" --file=/tmp/bench-graph.json >/dev/null 2>&1 && jq -r '.graph.nodes | keys[]' /tmp/bench-graph.json | sort -u | comm -12 - <(echo "$focused") | paste -sd, -)
+
+                  if [ -z "$deps" ]; then
+                    echo "No buildable deps for $BENCH_PROJECT, skipping build."
+                    exit 0
+                  fi
+
+                  pnpm exec nx run-many --target=build:prod --projects="$deps" --nxBail
 
             - name: "Run benchmark"
               env:
@@ -143,4 +150,4 @@ jobs:
               uses: "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286" # v4.18.5
               with:
                   mode: "simulation"
-                  run: 'bash scripts/run-bench.sh "${{ matrix.project }}"'
+                  run: 'pnpm exec nx run "${{ matrix.project }}":test:bench'
