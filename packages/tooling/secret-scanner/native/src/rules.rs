@@ -285,7 +285,9 @@ impl CompiledRuleset {
         let mut regex_set_pattern_to_rule: Vec<usize> = Vec::new();
 
         for (i, rule) in rules.iter().enumerate() {
-            if let (Some(raw), true) = (cfg.rules.iter().find(|r| r.id == rule.id), rule.engine.as_ref().is_some_and(Engine::is_fast)) {
+            if let (Some(raw), true) =
+                (cfg.rules.iter().find(|r| r.id == rule.id), rule.engine.as_ref().is_some_and(Engine::is_fast))
+            {
                 if let Some(pattern) = raw.regex.as_ref() {
                     set_patterns.push(pattern.clone());
                     regex_set_pattern_to_rule.push(i);
@@ -343,16 +345,9 @@ fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let confidence = raw
-        .confidence
-        .as_deref()
-        .and_then(Confidence::parse)
-        .unwrap_or_default();
+    let confidence = raw.confidence.as_deref().and_then(Confidence::parse).unwrap_or_default();
 
-    let pattern_requirements = raw
-        .pattern_requirements
-        .as_ref()
-        .and_then(CompiledPatternRequirements::from_raw);
+    let pattern_requirements = raw.pattern_requirements.as_ref().and_then(CompiledPatternRequirements::from_raw);
 
     Ok(CompiledRule {
         id: raw.id.clone(),

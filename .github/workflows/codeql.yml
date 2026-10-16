@@ -22,5 +22,5 @@ jobs:
             contents: "read"
         uses: "anolilab/workflows/.github/workflows/codeql.yml@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5
         with:
-            languages: "[\"javascript-typescript\"]"
-            branches: "[\"main\"]"
+            languages: '["javascript-typescript"]'
+            branches: '["main"]'

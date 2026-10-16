@@ -28,14 +28,14 @@ Every package is still standalone. Install the one you need, and every other `@v
 
 ## Packages
 
-| Package                                                 | Description                                                                                           | npm                                                                                              |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| [`@visulima/vis`](packages/tooling/vis)                 | Monorepo dev toolkit: task runner, remote caching, security scanning, git hooks, and AI agent hooks.  | ![npm](https://img.shields.io/npm/v/@visulima/vis?style=flat-square&label=)                      |
-| [`@visulima/vis-mcp`](packages/tooling/vis-mcp)         | Model Context Protocol server that exposes `vis` tooling to AI agents over stdio.                     | ![npm](https://img.shields.io/npm/v/@visulima/vis-mcp?style=flat-square&label=)                  |
-| [`@visulima/task-runner`](packages/tooling/task-runner) | Task runner with caching for monorepo workspaces.                                                     | ![npm](https://img.shields.io/npm/v/@visulima/task-runner?style=flat-square&label=)              |
-| [`@visulima/task-runner-client`](packages/tooling/task-runner-client) | Zero-dependency client for giving `task-runner` cache-correctness hints from inside a task. | ![npm](https://img.shields.io/npm/v/@visulima/task-runner-client?style=flat-square&label=)       |
-| [`@visulima/secret-scanner`](packages/tooling/secret-scanner) | Fast secret and credential scanner, a Rust port of gitleaks detection.                          | ![npm](https://img.shields.io/npm/v/@visulima/secret-scanner?style=flat-square&label=)           |
-| [`@visulima/tui`](packages/terminal/tui)                | React terminal UI library with a native Rust diff engine and an Ink-compatible API.                   | ![npm](https://img.shields.io/npm/v/@visulima/tui?style=flat-square&label=)                      |
+| Package                                                               | Description                                                                                          | npm                                                                                        |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`@visulima/vis`](packages/tooling/vis)                               | Monorepo dev toolkit: task runner, remote caching, security scanning, git hooks, and AI agent hooks. | ![npm](https://img.shields.io/npm/v/@visulima/vis?style=flat-square&label=)                |
+| [`@visulima/vis-mcp`](packages/tooling/vis-mcp)                       | Model Context Protocol server that exposes `vis` tooling to AI agents over stdio.                    | ![npm](https://img.shields.io/npm/v/@visulima/vis-mcp?style=flat-square&label=)            |
+| [`@visulima/task-runner`](packages/tooling/task-runner)               | Task runner with caching for monorepo workspaces.                                                    | ![npm](https://img.shields.io/npm/v/@visulima/task-runner?style=flat-square&label=)        |
+| [`@visulima/task-runner-client`](packages/tooling/task-runner-client) | Zero-dependency client for giving `task-runner` cache-correctness hints from inside a task.          | ![npm](https://img.shields.io/npm/v/@visulima/task-runner-client?style=flat-square&label=) |
+| [`@visulima/secret-scanner`](packages/tooling/secret-scanner)         | Fast secret and credential scanner, a Rust port of gitleaks detection.                               | ![npm](https://img.shields.io/npm/v/@visulima/secret-scanner?style=flat-square&label=)     |
+| [`@visulima/tui`](packages/terminal/tui)                              | React terminal UI library with a native Rust diff engine and an Ink-compatible API.                  | ![npm](https://img.shields.io/npm/v/@visulima/tui?style=flat-square&label=)                |
 
 ## Quick start
 

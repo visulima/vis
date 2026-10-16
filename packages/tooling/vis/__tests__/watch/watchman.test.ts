@@ -77,16 +77,18 @@ describe(startWatcher, () => {
             setTimeout(resolve, 200);
         });
 
-        writeFileSync(join(directory, "a.txt"), "1");
-        writeFileSync(join(directory, "b.txt"), "2");
-
-        // Poll for the debounced delivery instead of a fixed sleep so we
-        // don't pessimise the fast path or starve a slow runner.
+        // Under a loaded runner the watcher can attach after a write, so the first
+        // write is dropped. Keep writing until a change is delivered, within the deadline.
         const deadline = Date.now() + 3000;
+        let attempt = 0;
 
         while (changed.length === 0 && Date.now() < deadline) {
+            writeFileSync(join(directory, "a.txt"), String(attempt));
+            writeFileSync(join(directory, "b.txt"), String(attempt));
+            attempt += 1;
+
             await new Promise((resolve) => {
-                setTimeout(resolve, 50);
+                setTimeout(resolve, 100);
             });
         }
 

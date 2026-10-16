@@ -202,8 +202,8 @@ jobs:
                   key: "${{ steps.cargo-cache.outputs.cache-primary-key }}"
 
     # Native criterion benches tracked on CodSpeed. Separate from the JS
-    # benches in codspeed.yml (those run `nx ...:test:bench` under the CodSpeed
-    # vitest plugin); these compile the crate's criterion benches via
+    # benches in codspeed.yml (those run each package's bench script under the
+    # CodSpeed vitest plugin); these compile the crate's criterion benches via
     # `cargo codspeed`. The bench sources depend on `codspeed-criterion-compat`
     # (a drop-in for criterion) so the same files run instrumented here and as
     # plain `cargo bench` locally. Not part of the required-check aggregation
