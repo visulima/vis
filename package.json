@@ -16,7 +16,15 @@
         "lint:types": "pnpm -r run lint:types"
     },
     "devDependencies": {
+        "@anolilab/multi-semantic-release": "catalog:prod",
+        "@anolilab/prettier-config": "catalog:lint",
+        "pkg-pr-new": "catalog:prod",
         "prettier": "catalog:lint",
+        "semantic-release": "catalog:cli",
         "typescript": "catalog:tsc"
-    }
+    },
+    "workspaces": [
+        "packages/*/*",
+        "shared/*"
+    ]
 }
