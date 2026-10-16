@@ -3,10 +3,12 @@
 # package's bench script; the others run their own test:bench script.
 set -euo pipefail
 
-dir="$1"
+# Resolve the package against the repository root, whatever the caller's working directory.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dir="${root}/${1}"
 
-if [ -f "$dir/__bench__/package.json" ]; then
-    exec pnpm --dir "$dir/__bench__" run bench
+if [ -f "${dir}/__bench__/package.json" ]; then
+    exec pnpm --dir "${dir}/__bench__" run bench
 fi
 
-exec pnpm --dir "$dir" run test:bench
+exec pnpm --dir "${dir}" run test:bench
