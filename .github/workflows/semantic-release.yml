@@ -1,0 +1,262 @@
+# https://help.github.com/en/categories/automating-your-workflow-with-github-actions
+
+name: "Semantic Release"
+
+on: # yamllint disable-line rule:truthy
+    push:
+        branches:
+            - "main"
+    workflow_dispatch: # yamllint disable-line rule:empty-values
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    # Never cancel a running release: a cancel mid multi-semantic-release leaves
+    # packages published on npm without their tags, changelog commits or GitHub
+    # releases. A newer push queues instead (and the "branch moved" step below
+    # re-dispatches if needed).
+    cancel-in-progress: false
+
+permissions:
+    contents: "read" # for checkout
+
+jobs:
+    # Wait runs in its own job so the prerequisite check-run polling can't eat
+    # into the release job's 30-minute budget. Previously a single job did
+    # both, and on a slow Build Native + CodSpeed run the wait would consume
+    # 20+ minutes — leaving the production build, tests,
+    # codecov upload and multi-semantic-release with too little time to finish
+    # before the job timeout cancelled the entire workflow.
+    wait-for-tests:
+        name: "Wait for tests to succeed"
+        # Skip when a push carries the `[skip release]` marker in its commit message.
+        # `head_commit` is null on workflow_dispatch, so manual runs are unaffected.
+        if: "github.repository == 'visulima/vis' && vars.RELEASES_ENABLED == 'true' && !contains(github.event.head_commit.message, '[skip release]')"
+        runs-on: "ubuntu-latest"
+        timeout-minutes: 60
+        permissions:
+            actions: "read" # to map Lint/Tests workflow runs to their job names
+            contents: "read"
+
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            - name: "Wait for tests to succeed"
+              # Replaces lewagon/wait-on-check-action: its bundler Gemfile.lock pins
+              # darwin-24/25 only, so macOS runners on darwin-23 fail bundle install.
+              # Plain shell + gh api waits for every check-run on the commit
+              # except this job, the release job, and the ignore list to terminate in success.
+              # Build Native alone takes ~40 minutes from the push, so the deadline is 55.
+              timeout-minutes: 58
+              shell: "bash"
+              env:
+                  GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+                  REF: "${{ github.event.pull_request.head.sha || github.sha }}"
+                  REPO: "${{ github.repository }}"
+                  SELF_CHECK_NAME: "Wait for tests to succeed"
+                  # Workflows that also run on pushes to main but must not gate the release:
+                  # Coverage baseline reports to Codecov and runs the full suite past this
+                  # deadline, and CodSpeed starts its benches only after CI has finished.
+                  IGNORE_WORKFLOWS: '["Coverage baseline","CodSpeed"]'
+                  IGNORE_CHECKS: '["Semantic Release","Build packages","lock-closed / lock-closed","Socket Security: Pull Request Alerts","Dependabot","CodSpeed Performance Analysis"]'
+              run: |
+                  set -euo pipefail
+                  deadline=$(( $(date +%s) + 3300 ))
+                  while :; do
+                      # Job (= check-run) names of every run of an ignored workflow for this commit.
+                      ignored_jobs=$(
+                          gh api -X GET "repos/${REPO}/actions/runs" -f head_sha="$REF" --paginate --jq '.workflow_runs[] | [.id, .name] | @tsv' \
+                              | while IFS=$'\t' read -r run_id run_name; do
+                                  if jq -e --arg n "$run_name" --argjson list "$IGNORE_WORKFLOWS" 'any($list[]; . == $n)' <<<"{}" >/dev/null; then
+                                      gh api -X GET "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[].name'
+                                  fi
+                              done | jq -Rsc 'split("\n") | map(select(length > 0))'
+                      )
+                      # Only the newest check-run of each name counts: a re-run, or a run set that
+                      # superseded a cancelled one, must clear the failure the older attempt left.
+                      runs=$(
+                          gh api -X GET "repos/${REPO}/commits/${REF}/check-runs" --paginate --jq '.check_runs[] | [.name, (.id | tostring), .status, .conclusion // ""] | @tsv' \
+                              | sort -t $'\t' -k1,1 -k2,2nr | awk -F '\t' '!seen[$1]++' | cut -f 1,3,4
+                      )
+                      pending=0
+                      pending_names=""
+                      failed=""
+                      while IFS=$'\t' read -r name status conclusion; do
+                          [ -z "${name:-}" ] && continue
+                          if [ "$name" = "$SELF_CHECK_NAME" ]; then continue; fi
+                          # A matrix job cancelled before its matrix expanded keeps the template as its
+                          # name; it never ran, and the run that superseded it reports the expanded jobs.
+                          case "$name" in *'{{'*'}}'*) continue ;; esac
+                          if jq -e --arg n "$name" --argjson list "$IGNORE_CHECKS" 'any($list[]; . == $n)' <<<"{}" >/dev/null; then continue; fi
+                          if jq -e --arg n "$name" --argjson list "$ignored_jobs" 'any($list[]; . == $n)' <<<"{}" >/dev/null; then continue; fi
+                          if [ "$status" != "completed" ]; then
+                              pending=$((pending + 1))
+                              pending_names+="$name, "
+                              continue
+                          fi
+                          case "$conclusion" in
+                              success|skipped|neutral) ;;
+                              *) failed+="$name:$conclusion "$'\n' ;;
+                          esac
+                      done <<< "$runs"
+                      if [ -n "$failed" ]; then
+                          echo "Failed checks:"
+                          printf '%s' "$failed"
+                          exit 1
+                      fi
+                      if [ "$pending" -eq 0 ]; then
+                          echo "All checks completed successfully"
+                          exit 0
+                      fi
+                      echo "$pending checks still pending (${pending_names%, }), waiting 30s..."
+                      if [ "$(date +%s)" -ge "$deadline" ]; then
+                          echo "Timed out after 55 minutes"
+                          exit 1
+                      fi
+                      sleep 30
+                  done
+
+    semantic-release:
+        name: "Semantic Release"
+        needs: ["wait-for-tests"]
+        if: "github.repository == 'visulima/vis' && vars.RELEASES_ENABLED == 'true' && !contains(github.event.head_commit.message, '[skip release]')"
+        runs-on: "ubuntu-latest"
+        # No explicit timeout: multi-semantic-release walks ~50 packages and
+        # commits/tags/publishes each one. A 30-minute cap previously cancelled
+        # the run partway through. GitHub's default job timeout (6h) is the
+        # safety net.
+        # Gate npm publishing behind a GitHub Environment so secrets are scoped and
+        # required-reviewer rules (configured in repo settings) can apply.
+        environment: "release"
+        permissions:
+            contents: "write" # to be able to publish a GitHub release
+            issues: "write" # to be able to comment on released issues
+            pull-requests: "write" # to be able to comment on released pull requests
+            id-token: "write" # to enable use of OIDC for npm provenance
+            actions: "write" # to re-dispatch this workflow when the branch moved during the run
+
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            # No persisted credentials: `pnpm install` below runs the whole dependency
+            # tree's lifecycle scripts, which must not find the release token in
+            # .git/config. The Semantic Release and lockfile commit steps pass the
+            # token to git per step / per command instead.
+            - name: "Git checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: "Setup resources and environment"
+              id: "setup"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "semantic-release"
+                  # TODO: re-enable once pnpm/npm audit works with unpublished @visulima/task-runner-binding-* packages and pnpm registry config
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            # Loaders + binaries + sidecars from this commit's Build Native run, laid out
+            # as published and verified complete (shared with preview-release.yaml).
+            # wait-for-tests already waited for Check Native Build on this commit.
+            - name: "Native release artifacts"
+              uses: "./.github/actions/native-release-artifacts"
+              with:
+                  ref: "${{ github.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            # Builds after the native artifacts are laid out on purpose: a package whose
+            # freshly generated loader (index.js / index.d.ts) differs from the committed one
+            # is then built against it, so its published types match the binaries.
+            - name: "Build Production"
+              run: "pnpm -r run build:prod"
+
+            - name: "Semantic Release"
+              if: "success()"
+              env:
+                  # npm auth is trusted publishing (OIDC via id-token: write), no NPM_TOKEN.
+                  GITHUB_TOKEN: "${{ secrets.SEMANTIC_RELEASE_GITHUB_TOKEN }}"
+                  GIT_AUTHOR_NAME: "github-actions-shell"
+                  GIT_AUTHOR_EMAIL: "github-actions[bot]@users.noreply.github.com"
+                  GIT_COMMITTER_NAME: "github-actions-shell"
+                  GIT_COMMITTER_EMAIL: "github-actions[bot]@users.noreply.github.com"
+              shell: "bash"
+              # multi-semantic-release hands @semantic-release/git the plain repository
+              # URL, so its tag/commit push needs git-level credentials. Pass them as
+              # env-only git config for this step: never written to .git/config, so
+              # nothing that ran earlier (install scripts, builds) could read them.
+              run: |
+                  set -euo pipefail
+                  auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+                  echo "::add-mask::${auth}"
+                  export GIT_CONFIG_COUNT=1
+                  export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+                  export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}"
+                  pnpm exec multi-semantic-release --ignore-packages='packages/tooling/task-runner/npm/**,packages/terminal/tui/npm/**,packages/tooling/vis/npm/**,packages/tooling/secret-scanner/npm/**'
+
+            # multi-semantic-release pushes per-package `chore(release)` commits that
+            # bump each package.json (and any cross-package dependency ranges), but
+            # @semantic-release/git only stages per-package assets — pnpm-lock.yaml
+            # lives at the root and drifts. Frozen-lockfile installs on the next push
+            # then fail with ERR_PNPM_OUTDATED_LOCKFILE. Refresh here.
+            - name: "Refresh pnpm-lock.yaml against released manifests"
+              if: "success()"
+              shell: "bash"
+              # --no-frozen-lockfile is intentional here: this step exists precisely to
+              # regenerate pnpm-lock.yaml after multi-semantic-release bumps versions.
+              # --ignore-scripts prevents any postinstall from running with the release
+              # token in env — --lockfile-only means no install happens anyway, but
+              # belt-and-suspenders for the security scanner.
+              run: "pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts"
+
+            # Checkout persists no credentials, so the token goes in as a per-command
+            # auth header and never lands in .git/config.
+            - name: "Commit refreshed lockfile"
+              if: "success()"
+              shell: "bash"
+              env:
+                  TOKEN: "${{ secrets.SEMANTIC_RELEASE_GITHUB_TOKEN }}"
+                  BRANCH: "${{ github.ref_name }}"
+              run: |
+                  set -euo pipefail
+                  if git diff --quiet -- pnpm-lock.yaml; then
+                      echo "pnpm-lock.yaml is already in sync."
+                      exit 0
+                  fi
+                  git add pnpm-lock.yaml
+                  git -c user.name="github-actions-shell" -c user.email="github-actions[bot]@users.noreply.github.com" \
+                      commit -m "chore(deps): sync pnpm-lock.yaml with released manifests [skip ci]"
+                  auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+                  echo "::add-mask::${auth}"
+                  git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" push origin "HEAD:refs/heads/${BRANCH}"
+
+            # semantic-release refuses to publish when the remote branch moved after this
+            # job checked out ("The local branch … is behind the remote one"), and the run
+            # still succeeds. Bot pushes like the lock-file maintenance commit carry
+            # [skip ci], so no later run would pick the release up. If the branch moved,
+            # start this workflow again on its current tip; a re-run with nothing new
+            # to release is a cheap no-op.
+            - name: "Re-run the release if the branch moved"
+              if: "success()"
+              shell: "bash"
+              env:
+                  GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+                  BRANCH: "${{ github.ref_name }}"
+                  REPO: "${{ github.repository }}"
+              run: |
+                  set -euo pipefail
+                  git fetch --quiet origin "$BRANCH"
+                  if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
+                      echo "${BRANCH} did not move during the release."
+                      exit 0
+                  fi
+                  echo "${BRANCH} moved to $(git rev-parse --short FETCH_HEAD) during the release; dispatching a new release run."
+                  gh workflow run semantic-release.yml --repo "$REPO" --ref "$BRANCH"

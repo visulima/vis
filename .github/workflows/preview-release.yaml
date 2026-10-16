@@ -1,0 +1,90 @@
+name: "Preview Release"
+
+on: # yamllint disable-line rule:truthy
+    pull_request:
+        branches:
+            - "main"
+
+permissions:
+    contents: "read" # to fetch code (actions/checkout)
+
+# Preview builds wait on Build Native and can run for many minutes; a new push
+# to the same PR should supersede the in-flight preview rather than stack on it.
+concurrency:
+    group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    cancel-in-progress: true
+
+env:
+    HEAD_REF: "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}"
+    HEAD_REPOSITORY: "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}"
+
+jobs:
+    preview:
+        name: "Preview Release"
+        # Fork PRs can't download this repo's Build Native artifacts (allow_forks:
+        # false) or write the PR comment, so they'd only fail.
+        if: "github.repository == 'visulima/vis' && github.event.pull_request.head.repo.full_name == github.repository"
+        runs-on: "ubuntu-latest"
+        # Wait-for-Build-Native can burn up to 55 min when runner queues
+        # back up; the publish step is fast (~3 min). 75 absorbs both
+        # with cushion.
+        timeout-minutes: 115
+        permissions:
+            # pkg-pr-new publish only writes a PR comment — it does not push commits.
+            contents: "read"
+            issues: "write"
+            checks: "write"
+            pull-requests: "write"
+
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  persist-credentials: false
+                  # Number of commits to fetch. 0 indicates all history for all branches and tags.
+                  # Full history, so the PR base commit is available to diff against
+                  fetch-depth: 0
+              env:
+                  GIT_COMMITTER_NAME: "GitHub Actions Shell"
+                  GIT_AUTHOR_NAME: "GitHub Actions Shell"
+                  EMAIL: "github-actions[bot]@users.noreply.github.com"
+
+            - name: "Setup resources and environment"
+              id: "setup"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "preview-release"
+                  # TODO: re-enable once pnpm/npm audit works with unpublished @visulima/task-runner-binding-* packages and pnpm registry config
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            # Publish only after every target of this commit's Build Native run has
+            # finished, with the same loaders, binaries and sidecars a release ships.
+            # Any missing artifact fails the job; a preview with a missing binary would
+            # be a broken package.
+            - name: "Wait for Build Native"
+              uses: "./.github/actions/wait-for-native-build"
+              with:
+                  ref: "${{ github.event.pull_request.head.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            - name: "Native release artifacts"
+              uses: "./.github/actions/native-release-artifacts"
+              with:
+                  ref: "${{ github.event.pull_request.head.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            - name: "Build"
+              run: "pnpm -r run build:prod"
+
+            - name: "Preview Release"
+              env:
+                  BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+              run: "node ./scripts/publish-preview-release.mjs"

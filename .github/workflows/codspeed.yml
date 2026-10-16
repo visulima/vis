@@ -1,0 +1,146 @@
+# https://help.github.com/en/categories/automating-your-workflow-with-github-actions
+
+name: "CodSpeed"
+
+on: # yamllint disable-line rule:truthy
+    push:
+        branches: ["main"]
+    pull_request:
+        types: ["opened", "synchronize", "reopened"]
+        branches: ["main"]
+    workflow_dispatch: # yamllint disable-line rule:empty-values
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    cancel-in-progress: true
+
+permissions:
+    actions: "read" # to find this commit's Tests / Preview Release runs and Build Native artifacts
+    contents: "read"
+    checks: "read" # to poll Check Native Build via gh api
+
+jobs:
+    discover:
+        name: "Discover affected benches"
+        runs-on: "ubuntu-latest"
+        # Waits for Build Native (up to 80 min on saturated runner queues) and
+        # then for this commit's Tests / Preview Release (up to 120 min) before
+        # the ~2 min of discovery itself.
+        timeout-minutes: 210
+        outputs:
+            matrix: "${{ steps.affected.outputs.matrix }}"
+            has-benches: "${{ steps.affected.outputs.has-benches }}"
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "anolilab/workflows/step/checkout-with-retry@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              with:
+                  fetch-depth: 0
+
+            - name: "Wait for Build Native"
+              uses: "./.github/actions/wait-for-native-build"
+              with:
+                  ref: "${{ github.event.pull_request.head.sha || github.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            # Benchmarks run last: wait until this commit's Tests (and, on PRs, the
+            # Preview Release) have finished, so the bench matrix doesn't compete with
+            # them for runners. Proceeds whatever their outcome; a workflow that never
+            # starts (e.g. filtered out) stops being waited for after 10 minutes.
+            - name: "Wait for Tests and Preview Release"
+              shell: "bash"
+              env:
+                  GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+                  REF: "${{ github.event.pull_request.head.sha || github.sha }}"
+                  REPO: "${{ github.repository }}"
+                  EVENT: "${{ github.event_name }}"
+              run: |
+                  set -euo pipefail
+                  case "$EVENT" in
+                      pull_request) workflows=("CI" "Preview Release") ;;
+                      push) workflows=("CI") ;;
+                      *) echo "Nothing to wait for on ${EVENT}"; exit 0 ;;
+                  esac
+                  started=$(date +%s)
+                  while :; do
+                      # Transient API errors (token blips) just mean "poll again".
+                      runs=$(gh api -X GET "repos/${REPO}/actions/runs" -f head_sha="$REF" --paginate --jq '.workflow_runs[] | [.name, .id, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true)
+                      pending=0
+                      missing=()
+                      for name in "${workflows[@]}"; do
+                          latest=$(printf '%s\n' "$runs" | awk -F'\t' -v n="$name" '$1 == n' | sort -t$'\t' -k2,2n | tail -n 1)
+                          if [ -z "$latest" ]; then
+                              missing+=("$name")
+                          elif [ "$(cut -f3 <<<"$latest")" != "completed" ]; then
+                              pending=$((pending + 1))
+                          fi
+                      done
+                      elapsed=$(( $(date +%s) - started ))
+                      if [ "$pending" -eq 0 ] && { [ "${#missing[@]}" -eq 0 ] || [ "$elapsed" -ge 600 ]; }; then
+                          [ "${#missing[@]}" -eq 0 ] || echo "Not waiting for workflow(s) that never started: ${missing[*]}"
+                          echo "Tests / Preview Release finished; starting benchmarks"
+                          exit 0
+                      fi
+                      if [ "$elapsed" -ge 7200 ]; then
+                          echo "Timed out after 120 minutes waiting for Tests / Preview Release"
+                          exit 1
+                      fi
+                      echo "Waiting: ${pending} running, missing: ${missing[*]:-none}"
+                      sleep 30
+                  done
+
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  skip-playwright: "true"
+                  # TODO: re-enable once pnpm/npm audit works with unpublished @visulima/task-runner-binding-* packages and pnpm registry config
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            - name: "Compute affected bench projects"
+              id: "affected"
+              shell: "bash"
+              env:
+                  BASE_SHA: "${{ github.event.pull_request.base.sha || github.event.before }}"
+              run: |
+                  base="$BASE_SHA"
+
+                  if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+                    base="HEAD~1"
+                  fi
+
+                  affected=$(node scripts/affected-packages.mjs "$base" HEAD --bench | tail -n 1)
+                  affected=${affected:-'[]'}
+
+                  if [ "$affected" = "[]" ]; then
+                    echo "No affected bench projects."
+                    echo "has-benches=false" >> "$GITHUB_OUTPUT"
+                    echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+
+                  matrix=$(echo "$affected" | jq -c '{include: [.[] | {project: .}]}')
+
+                  echo "Affected bench projects: $affected"
+                  echo "has-benches=true" >> "$GITHUB_OUTPUT"
+                  echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+            - name: "Build this bench's workspace dependencies"
+              env:
+                  BENCH_PROJECT: "${{ matrix.project }}"
+              shell: "bash"
+              run: 'pnpm -r --filter "{$BENCH_PROJECT}..." run build:prod'
+
+            - name: "Run benchmark"
+              env:
+                  BENCH_PROJECT: "${{ matrix.project }}"
+              uses: "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286" # v4.18.5
+              with:
+                  mode: "simulation"
+                  run: 'bash scripts/run-bench.sh "$BENCH_PROJECT"'
