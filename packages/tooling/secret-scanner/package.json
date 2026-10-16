@@ -93,7 +93,7 @@
         "@arethetypeswrong/cli": "catalog:dev",
         "@aws-sdk/client-sts": "3.1107.0",
         "@azure/storage-blob": "12.33.0",
-        "@grpc/grpc-js": "1.14.4",
+        "@grpc/grpc-js": "1.14.6",
         "@napi-rs/cli": "catalog:dev",
         "@secretlint/secretlint-rule-preset-recommend": "catalog:lint",
         "@semantic-release/exec": "catalog:dev",
