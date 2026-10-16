@@ -13,7 +13,6 @@
  * Pure orchestration — no business logic; that lives in the imported modules.
  */
 
-export { isGemVersionRbPath } from "./ecosystems";
 export type { ApplyOptions, ApplyResult, AssertNoConflictingPendingStagesOptions } from "./orchestrator/apply";
 export { applyContext, assertNoConflictingPendingStages } from "./orchestrator/apply";
 export type { BuildContextOptions, OrchestratorContext } from "./orchestrator/context";
