@@ -12,10 +12,10 @@
         "workspace"
     ],
     "homepage": "https://visulima.com/packages/task-runner",
-    "bugs": "https://github.com/visulima/visulima/issues",
+    "bugs": "https://github.com/visulima/vis/issues",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/visulima/visulima.git",
+        "url": "git+https://github.com/visulima/vis.git",
         "directory": "packages/tooling/task-runner"
     },
     "funding": [

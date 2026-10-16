@@ -12,7 +12,7 @@
         "visulima"
     ],
     "homepage": "https://visulima.com/packages/task-runner-client",
-    "bugs": "https://github.com/visulima/visulima/issues",
+    "bugs": "https://github.com/visulima/vis/issues",
     "license": "MIT",
     "author": {
         "name": "Daniel Bannert",
@@ -20,7 +20,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/visulima/visulima.git",
+        "url": "git+https://github.com/visulima/vis.git",
         "directory": "packages/tooling/task-runner-client"
     },
     "funding": [

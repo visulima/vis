@@ -5,7 +5,7 @@
     "homepage": "https://visulima.com",
     "repository": {
         "type": "git",
-        "url": "https://github.com/visulima/visulima.git",
+        "url": "https://github.com/visulima/vis.git",
         "directory": "packages/terminal/tui"
     },
     "license": "MIT",
