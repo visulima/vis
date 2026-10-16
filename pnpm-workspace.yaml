@@ -446,7 +446,7 @@ catalogs:
     json5: ^2.2.3
     jsonc-parser: ^3.3.1
     mjml: '>=5.4.0'
-    next: '>=16.3.3'
+    next: '>=16.3.8'
     pkijs: '>=3.4.0'
     rate-limiter-flexible: '>=11.2.0'
     redoc: '>=2.5.3'
@@ -793,6 +793,7 @@ minimumReleaseAgeExclude:
   # Renovate security update: next@16.0.11
   - next@16.2.6 || 16.0.11
   # Renovate security update: next@16.2.12
+  # Renovate security update: next@16.3.8
   - devalue@5.8.1
   - brace-expansion@5.0.6
   - ws@8.20.1
