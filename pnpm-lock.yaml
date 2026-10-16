@@ -1263,7 +1263,7 @@ importers:
         specifier: 6.1.0
         version: 6.1.0(ai@7.0.127(zod@4.6.5))
       '@visulima/secret-scanner':
-        specifier: 2.0.1
+        specifier: 2.0.2
         version: link:../secret-scanner
       '@visulima/source-map':
         specifier: 3.0.1
@@ -1625,7 +1625,7 @@ importers:
         specifier: 5.0.0
         version: 5.0.0
       '@visulima/vis':
-        specifier: 6.0.0
+        specifier: 6.0.1
         version: link:../vis
       zod:
         specifier: catalog:utils
