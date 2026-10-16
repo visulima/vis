@@ -201,6 +201,15 @@ describe(discoverTemplate, () => {
         expect(discoverTemplate("git:user/repo").type).toBe("remote:git");
     });
 
+    it("should keep the GitLab host, nested groups and #ref in the giget source", () => {
+        expect.assertions(4);
+
+        expect(discoverTemplate("gitlab:gitlab-org/project-templates/express").source).toBe("gitlab:gitlab-org/project-templates/express");
+        expect(discoverTemplate("gitlab://git.example.com/group/sub/repo").source).toBe("gitlab://git.example.com/group/sub/repo");
+        expect(discoverTemplate("git@gitlab.com:group/sub/repo.git#main").type).toBe("remote:git");
+        expect(discoverTemplate("gitlab.com/group/subgroup/repo").type).toBe("remote:git");
+    });
+
     it("should resolve bare names as remote:npm with create- expansion", () => {
         expect.assertions(2);
 

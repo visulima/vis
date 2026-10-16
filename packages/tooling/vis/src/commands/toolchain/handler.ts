@@ -247,9 +247,9 @@ const executeInstall = (workspaceRoot: string, toolchainConfig: ToolchainConfig 
             // something to self-activate from.
             for (const { expected } of tools) {
                 if (expected.source === "packageManager") {
-                    pail.info(`${dim("$")} (${expected.tool} will self-activate from packageManager on next invocation)`);
+                    pail.info(`${dim("$")} (${expected.tool} will self-activate from the package.json pin on next invocation)`);
                 } else {
-                    pail.info(`${dim("$")} Writing packageManager=${expected.tool}@${expected.version}`);
+                    pail.info(`${dim("$")} Pinning ${expected.tool}@${expected.version} in package.json`);
 
                     if (options.dryRun) {
                         ranAnything = true;
@@ -396,10 +396,10 @@ const executeUse = async (
     // self-activate: write packageManager ourselves so the pin is real,
     // not a suggestion. pnpm 10+ / yarn berry pick it up on next run.
     if (manager.name === "self-activate") {
-        pail.info(`${dim("→")} Writing packageManager field to package.json...`);
+        pail.info(`${dim("→")} Pinning the version in package.json...`);
 
         if (options.dryRun) {
-            pail.notice(`  Would set packageManager: "${spec.tool}@${spec.version}"`);
+            pail.notice(`  Would pin ${spec.tool}@${spec.version} in package.json`);
 
             return;
         }
@@ -408,13 +408,13 @@ const executeUse = async (
             const written = writePackageManagerField(workspaceRoot, spec);
 
             if (!written) {
-                pail.error(`Refusing to pin non-package-manager tool ${spec.tool} via the packageManager field.`);
+                pail.error(`Refusing to pin non-package-manager tool ${spec.tool} in package.json.`);
                 process.exitCode = 1;
 
                 return;
             }
 
-            pail.success(`Set packageManager: "${written}" — ${spec.tool} will activate this version on next invocation.`);
+            pail.success(`Pinned ${written} in package.json — ${spec.tool} will activate this version on next invocation.`);
 
             if (options.engines !== false) {
                 const updated = updateEnginesField(workspaceRoot, spec);

@@ -80,7 +80,7 @@ vis picks a manager **per tool**, not per workspace. Preference depends on where
 | `packageManager` — bun     | proto, mise, asdf                              |
 | `engines.*` / `vis.config` | proto, mise, fnm, volta, asdf, nvm, corepack   |
 
-The first installed + capable manager wins. If nothing is installed, vis names the first capable manager as a "suggested install." `self-activate` is a pseudo-manager that means _the pnpm/yarn binary itself will switch versions from the `packageManager` field on next invocation_ — no external manager required.
+The first installed + capable manager wins. If nothing is installed, vis names the first capable manager as a "suggested install." `self-activate` is a pseudo-manager that means _the pnpm/yarn binary itself will switch versions from the `packageManager` field on next invocation_ — no external manager required. When `package.json` has no top-level `packageManager` and declares `devEngines.packageManager` for pnpm, `vis toolchain use pnpm@<version>` updates that entry instead of adding a field. yarn, npm and bun still get a top-level `packageManager`.
 
 ## Tool pin priority (when the same tool is pinned in multiple places)
 

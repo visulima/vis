@@ -139,7 +139,7 @@ The check reads workspace config only and spawns nothing. It is recomputed on ev
 
 - Total installed packages and detected workspaces.
 - Outdated entries from `pnpm-workspace.yaml` catalogs (counts grouped by `major` / `minor` / `patch`).
-- Duplicate package versions across the lockfile.
+- Duplicate package versions across the lockfile. Doubled `vite` or `vitest` copies also get a hint: each copy keeps its own module state, so pin one version with a package manager override.
 
 ### Security
 
@@ -214,6 +214,8 @@ The runtime block also cross-checks what the workspace declares about its toolch
 | `env-declarations` | `ok` / `skip` | `ok` when every declaration agrees; `skip` when nothing is declared.                                                                                                                                                                                          |
 
 Comparison uses semver ranges. `.nvmrc` `20` against `engines.node` `>=18` agrees; `.nvmrc` `20` against `devEngines.runtime` `^22` conflicts. Values that are not semver (`lts/*`, `latest`) are ignored rather than guessed at. A `devEngines` array is read as alternatives, so one matching entry is enough. A `devEngines` entry without a `version` is compared by name only.
+
+When the running Node.js or package manager does not satisfy a `devEngines` entry, the entry's `onFail` sets the severity: `error` reports an error, `warn` or `download` a warning (vis does not install runtimes), and `ignore` reports nothing. Without `onFail` it is a warning. An array counts as alternatives, so only a mismatch with every entry is reported. A package manager that no entry names is not judged, because the process that launched vis (for example `npx`, which runs under npm) need not be the project's package manager.
 
 `.nvmrc` and `.node-version` are read separately, so a disagreement between them is reported even though the toolchain resolver prefers `.nvmrc`. `vis toolchain status` prints the same conflicts (and lists them under `declarationWarnings` in its JSON output).
 

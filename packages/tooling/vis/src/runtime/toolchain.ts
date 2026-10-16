@@ -980,7 +980,7 @@ export const resolveManagerFor = (spec: ToolSpec, detected: ReadonlyArray<Detect
                 return {
                     installed: true,
                     name: "self-activate",
-                    note: `${spec.tool} will activate ${spec.version} from the packageManager field on next invocation`,
+                    note: `${spec.tool} will activate ${spec.version} from the package.json pin on next invocation`,
                 };
             }
 
@@ -1230,7 +1230,7 @@ export const buildUseInvocation = (manager: VersionManagerName, spec: ToolSpec):
                 bin: spec.tool,
                 configChange: {
                     file: "package.json",
-                    hint: `Set packageManager: "${spec.tool}@${spec.version}" — ${spec.tool} will self-activate on next invocation`,
+                    hint: `Pin ${spec.tool}@${spec.version} in package.json — ${spec.tool} will self-activate on next invocation`,
                 },
             };
         }
@@ -1352,6 +1352,34 @@ const atomicWrite = (path: string, body: string): void => {
 };
 
 /**
+ * Updates the matching `devEngines.packageManager` entry when the manifest uses devEngines as its
+ * only package-manager pin. Limited to pnpm, the one manager verified to switch version from
+ * devEngines; yarn, npm and bun keep the top-level `packageManager` they read. A top-level
+ * `packageManager` always wins, so the field is never added next to an existing one. Other keys on
+ * the entry (such as `onFail`) are kept.
+ * @returns `true` when the entry was updated and the caller should skip inserting `packageManager`.
+ */
+const setDevEnginesPackageManager = (pkg: Record<string, unknown>, spec: ToolSpec): boolean => {
+    const devEngines = pkg.devEngines as Record<string, unknown> | undefined;
+
+    if (spec.tool !== "pnpm" || "packageManager" in pkg || devEngines?.packageManager === undefined) {
+        return false;
+    }
+
+    const declared = devEngines.packageManager;
+    const entries = (Array.isArray(declared) ? declared : [declared]) as Record<string, unknown>[];
+    const match = entries.find((entry) => entry?.name === spec.tool);
+
+    if (!match) {
+        return false;
+    }
+
+    match.version = spec.version;
+
+    return true;
+};
+
+/**
  * Inserts `pkg.packageManager` at a stable position when the field
  * doesn't yet exist: before `dependencies` / `devDependencies` if
  * present, otherwise at the end. Reduces noise in code review when
@@ -1437,7 +1465,7 @@ export const writePackageManagerField = (workspaceRoot: string, spec: ToolSpec):
     }
 
     const value = `${spec.tool}@${spec.version}`;
-    const updated = insertPackageManagerKey(pkg, value);
+    const updated = setDevEnginesPackageManager(pkg, spec) ? pkg : insertPackageManagerKey(pkg, value);
 
     const trailingNewline = raw.endsWith("\n") ? "\n" : "";
 

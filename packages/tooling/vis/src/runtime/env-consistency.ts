@@ -110,27 +110,34 @@ const toDeclaration = (label: string, raw: ReadonlyArray<{ name: string; version
     };
 };
 
+/** One `devEngines.&lt;tool>` entry. `onFail` is only the string value, when the entry sets one. */
+export interface DevEngineEntry {
+    readonly name: string;
+    readonly onFail?: string;
+    readonly version?: unknown;
+}
+
 /**
  * `devEngines.&lt;tool>` is either one object or an array of alternatives. An
  * array means "any of these", so it is one declaration whose entries are all
  * alternatives, not several declarations to compare with each other.
  */
-const devEnginesEntries = (value: unknown, tool?: string): { name: string; version?: unknown }[] => {
+export const devEnginesEntries = (value: unknown, tool?: string): DevEngineEntry[] => {
     const list = Array.isArray(value) ? value : [value];
-    const result: { name: string; version?: unknown }[] = [];
+    const result: DevEngineEntry[] = [];
 
     for (const item of list) {
         if (typeof item !== "object" || item === null) {
             continue;
         }
 
-        const { name, version } = item as { name?: unknown; version?: unknown };
+        const { name, onFail, version } = item as { name?: unknown; onFail?: unknown; version?: unknown };
 
         if (typeof name !== "string" || (tool !== undefined && name !== tool)) {
             continue;
         }
 
-        result.push({ name, version });
+        result.push({ name, onFail: typeof onFail === "string" ? onFail : undefined, version });
     }
 
     return result;

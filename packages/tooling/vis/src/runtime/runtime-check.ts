@@ -3,6 +3,9 @@ import { join } from "@visulima/path";
 
 import { whichBin } from "#native";
 
+import type { DevEngineEntry } from "./env-consistency";
+import { devEnginesEntries } from "./env-consistency";
+
 /**
  * Runtime-version mismatch finding. vis doesn't manage runtimes directly,
  * but it can warn when the currently running Node/Bun doesn't match
@@ -18,6 +21,7 @@ export interface RuntimeFinding {
 }
 
 interface RootPackageJson {
+    devEngines?: Record<string, unknown>;
     engines?: { bun?: string; node?: string; npm?: string; pnpm?: string; yarn?: string };
     packageManager?: string;
 }
@@ -115,6 +119,52 @@ export const satisfiesRange = (actual: string, range: string): boolean => {
 };
 
 /**
+ * Checks a `devEngines.runtime` or `devEngines.packageManager` declaration against the version
+ * that is running. An array is a list of alternatives, so the tool only fails when none of its
+ * entries is satisfied. The failing entry's `onFail` picks the severity.
+ *
+ * Unset `onFail` is a warning, not the spec default of `error`, so existing projects do not start
+ * failing on upgrade. `download` is a warning too, because vis does not install runtimes.
+ * @param value Raw `devEngines.&lt;kind>` value from package.json.
+ * @param tool Tool that is running (`node`, or the package manager name).
+ * @param actual Version that is running.
+ * @param kind Which devEngines field the value came from.
+ * @returns A finding when the declaration is violated, otherwise `undefined`.
+ */
+const checkDevEngines = (value: unknown, tool: string, actual: string, kind: "node" | "packageManager"): RuntimeFinding | undefined => {
+    const entries = devEnginesEntries(value);
+    const sameTool = entries.filter((entry): entry is DevEngineEntry & { version: string } => entry.name === tool && typeof entry.version === "string");
+
+    if (sameTool.some((entry) => satisfiesRange(actual, entry.version))) {
+        return undefined;
+    }
+
+    // Judged only against entries that name the running tool. The process that launched vis is not
+    // necessarily the project's package manager (`npx vis doctor` runs under npm).
+    const failing = sameTool.at(-1);
+
+    if (!failing?.version) {
+        return undefined;
+    }
+
+    const onFail = failing.onFail ?? "warn";
+
+    if (onFail === "ignore") {
+        return undefined;
+    }
+
+    const hint = onFail === "download" ? " vis does not install runtimes; install it yourself." : "";
+
+    return {
+        actual,
+        expected: failing.version,
+        kind,
+        message: `devEngines.${kind === "node" ? "runtime" : "packageManager"} requires ${failing.name ?? tool}@${failing.version}, but the current ${tool} is ${actual}.${hint}`,
+        severity: onFail === "error" ? "error" : "warning",
+    };
+};
+
+/**
  * Checks `engines.node`, `.nvmrc`, `.node-version`, and `packageManager`
  * against the running process.
  * @param workspaceRoot Absolute path to the workspace root.
@@ -133,6 +183,9 @@ export const checkRuntimeVersions = (workspaceRoot: string): RuntimeFinding[] =>
     }
 
     const actualNode = process.versions.node;
+    const { devEngines } = rootPkg;
+    // npm_config_user_agent looks like "pnpm/10.1.0 npm/? node/v24.0.0"; only the first token is the running manager.
+    const [runningPm = "", runningPmVersion = ""] = (process.env["npm_config_user_agent"] ?? "").split(" ")[0]?.split("/") ?? [];
 
     // engines.node
     if (rootPkg.engines?.node) {
@@ -147,6 +200,13 @@ export const checkRuntimeVersions = (workspaceRoot: string): RuntimeFinding[] =>
                 severity: "error",
             });
         }
+    }
+
+    // devEngines.runtime
+    const runtimeFinding = checkDevEngines(devEngines?.runtime, "node", actualNode, "node");
+
+    if (runtimeFinding) {
+        findings.push(runtimeFinding);
     }
 
     // .nvmrc / .node-version
@@ -171,8 +231,9 @@ export const checkRuntimeVersions = (workspaceRoot: string): RuntimeFinding[] =>
     // packageManager field
     if (rootPkg.packageManager) {
         const [expectedName, expectedVersion] = rootPkg.packageManager.split("@");
-        const detectedFromUserAgent = (process.env["npm_config_user_agent"] ?? "").split(" ")[0] ?? "";
-        const [detectedName, detectedVersion] = detectedFromUserAgent.split("/");
+        const detectedFromUserAgent = runningPm ? `${runningPm}/${runningPmVersion}` : "";
+        const detectedName = runningPm;
+        const detectedVersion = runningPmVersion;
 
         // Aube enforces its own `packageManagerStrict` setting (tri-state:
         // off | warn | error, defaulting to warn) and emits a clear
@@ -200,6 +261,15 @@ export const checkRuntimeVersions = (workspaceRoot: string): RuntimeFinding[] =>
                 message: `package.json packageManager pins ${expectedName}@${expectedVersion} but the current invocation uses ${expectedName}@${detectedVersion}.`,
                 severity: "warning",
             });
+        }
+    }
+
+    // devEngines.packageManager only applies when no top-level packageManager pins the tool.
+    if (!rootPkg.packageManager && runningPm && runningPmVersion) {
+        const pmFinding = checkDevEngines(devEngines?.packageManager, runningPm, runningPmVersion, "packageManager");
+
+        if (pmFinding) {
+            findings.push(pmFinding);
         }
     }
 

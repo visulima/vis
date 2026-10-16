@@ -598,6 +598,12 @@ const displayDependencies = (results: DoctorResults): void => {
 
     if (results.duplicates.length > 0) {
         pail.log(itemWarn(countLine(results.duplicates.length, "packages with duplicate versions")));
+
+        for (const pkg of results.duplicates) {
+            if (pkg.hint) {
+                pail.log(`  ${dim(SYMBOLS.arrow)} ${pkg.hint}`);
+            }
+        }
     } else {
         pail.log(itemOk("No duplicate dependencies"));
     }
