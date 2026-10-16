@@ -4,32 +4,13 @@ import { join } from "@visulima/path";
 import { readPnpmWorkspacePatterns, resolveWorkspacePatterns } from "../config/workspace";
 import { createBackup } from "./catalog/backup";
 import { applyBunCatalogUpdates, hasBunCatalogs, readBunCatalogs } from "./catalog/bun";
+import { DEFAULT_DEP_TYPES, parseCompositeCatalogName } from "./catalog/composite";
 import { matchesFilters, matchesPattern, resolvePackageTarget } from "./catalog/patterns";
 import { applyPnpmCatalogUpdates } from "./catalog/pnpm-updates";
 import { hasPnpmCatalogs, readPnpmCatalogs } from "./catalog/pnpm-yaml";
 import type { ApplyCatalogUpdatesOptions, InternalOutdatedOptions, OutdatedEntry, ReadCatalogOptions, UpdateTarget } from "./catalog/types";
 import { extractPrefix, getUpdateType, isNewer, parseVersion } from "./catalog/version";
 import { resolveIndentForExistingFile } from "./editorconfig";
-
-const DEFAULT_DEP_TYPES = ["dependencies", "devDependencies", "optionalDependencies"];
-
-const VALID_DEP_TYPES = new Set([...DEFAULT_DEP_TYPES, "overrides", "peerDependencies", "pnpm.overrides", "resolutions"]);
-
-const parseCompositeCatalogName = (name: string): { depType: string; relativePath: string } | undefined => {
-    const colonIndex = name.lastIndexOf(":");
-
-    if (colonIndex === -1) {
-        return undefined;
-    }
-
-    const depType = name.slice(colonIndex + 1);
-
-    if (!VALID_DEP_TYPES.has(depType)) {
-        return undefined;
-    }
-
-    return { depType, relativePath: name.slice(0, colonIndex) };
-};
 
 const getDepTypesToInclude = (options?: ReadCatalogOptions): string[] => {
     if (options?.dev) {
@@ -548,11 +529,12 @@ const applyCatalogUpdates = (
     return backupPath;
 };
 
-export { applyCatalogUpdates, applyPackageJsonUpdates, collectInternalOutdated, hasCatalogs, hasPackageJsonDeps, parseCompositeCatalogName, readCatalogs, readPackageJsonDeps, toFilterArray };
+export { applyCatalogUpdates, applyPackageJsonUpdates, collectInternalOutdated, hasCatalogs, hasPackageJsonDeps, readCatalogs, readPackageJsonDeps, toFilterArray };
 
 export { createBackup, hasBackup, restoreFromBackup } from "./catalog/backup";
 export { detectJsonIndent, parseBunCatalogs } from "./catalog/bun";
 export { fetchChangelogInfo } from "./catalog/changelog";
+export { parseCompositeCatalogName } from "./catalog/composite";
 export { formatOutdatedJson, formatOutdatedMinimal, formatOutdatedTable, formatSummary, groupByCatalog } from "./catalog/format";
 export { getRegistryForPackage, loadNpmrc, parseNpmrc } from "./catalog/npmrc";
 export { fetchVulnerabilities } from "./catalog/osv";

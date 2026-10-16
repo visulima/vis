@@ -5,7 +5,7 @@ import { Table } from "@visulima/tui-kit/table";
 import React from "react";
 
 import { DEFAULT_LOW_SCORE_THRESHOLD } from "../../security/socket-security";
-import { parseCompositeCatalogName } from "../catalog";
+import { parseCompositeCatalogName } from "./composite";
 import type { CheckOutdatedResult, OutdatedEntry } from "./types";
 
 export const formatOutdatedJson = (result: CheckOutdatedResult): string => JSON.stringify(result, undefined, 2);

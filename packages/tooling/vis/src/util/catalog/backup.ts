@@ -2,7 +2,7 @@ import { findCacheDirSync } from "@visulima/find-cache-dir";
 import { ensureDirSync, isAccessibleSync, readFileSync, removeSync, walkSync, writeFileSync } from "@visulima/fs";
 import { basename, dirname, join } from "@visulima/path";
 
-import { parseCompositeCatalogName } from "../catalog";
+import { parseCompositeCatalogName } from "./composite";
 import type { OutdatedEntry } from "./types";
 
 /**
