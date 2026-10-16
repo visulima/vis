@@ -7,8 +7,8 @@ mod rules;
 mod scanner;
 mod walker;
 
-use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -182,18 +182,10 @@ fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
 
     if let Some(floor) = min_conf_str {
         let floor = Confidence::parse(floor).ok_or_else(|| {
-            Error::from_reason(format!(
-                "min_confidence must be one of 'low' | 'medium' | 'high', got {floor:?}"
-            ))
+            Error::from_reason(format!("min_confidence must be one of 'low' | 'medium' | 'high', got {floor:?}"))
         })?;
 
-        cfg.rules.retain(|raw| {
-            raw.confidence
-                .as_deref()
-                .and_then(Confidence::parse)
-                .unwrap_or_default()
-                >= floor
-        });
+        cfg.rules.retain(|raw| raw.confidence.as_deref().and_then(Confidence::parse).unwrap_or_default() >= floor);
     }
 
     let ruleset = CompiledRuleset::compile(&cfg).map_err(|e| Error::from_reason(format!("compile rules: {e}")))?;
@@ -336,8 +328,7 @@ fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<Ra
 /// the deepest-matching root first (e.g. with roots `/a` and `/a/b`, a file under `/a/b/c`
 /// strips against `/a/b` → `c`, not `/a` → `b/c`).
 fn canonicalize_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut canon: Vec<PathBuf> =
-        roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
+    let mut canon: Vec<PathBuf> = roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
     canon.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
     canon
 }

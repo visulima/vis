@@ -1,0 +1,134 @@
+name: CodSpeed
+on: # yamllint disable-line rule:truthy
+  push:
+    branches:
+    - main
+  pull_request:
+    types:
+    - opened
+    - synchronize
+    - reopened
+    branches:
+    - main
+  workflow_dispatch: null
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  actions: read
+  contents: read
+  checks: read
+jobs:
+  discover:
+    name: Discover affected benches
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has-benches: ${{ steps.affected.outputs.has-benches }}
+    steps:
+    - &id001
+      name: Harden Runner
+      uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920"
+      with:
+        egress-policy: audit
+    - name: Git checkout
+      uses: "anolilab/workflows/step/checkout-with-retry@aa162a984a4909f412bc4dbae712def066a0a681"
+      with:
+        fetch-depth: 0
+    - name: Wait for Build Native
+      uses: ./.github/actions/wait-for-native-build
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Wait for Tests and Preview Release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        REPO: ${{ github.repository }}
+        EVENT: ${{ github.event_name }}
+      run: "set -euo pipefail\ncase \"$EVENT\" in\n    pull_request) workflows=(\"CI\" \"Preview Release\") ;;\n    push) workflows=(\"CI\") ;;\n    *) echo \"Nothing to wait for on ${EVENT}\"; exit 0 ;;\n\
+        esac\nstarted=$(date +%s)\nwhile :; do\n    # Transient API errors (token blips) just mean \"poll again\".\n    runs=$(gh api -X GET \"repos/${REPO}/actions/runs\" -f head_sha=\"$REF\" --paginate\
+        \ --jq '.workflow_runs[] | [.name, .id, .status, (.conclusion // \"\")] | @tsv' 2>/dev/null || true)\n    pending=0\n    missing=()\n    for name in \"${workflows[@]}\"; do\n        latest=$(printf\
+        \ '%s\\n' \"$runs\" | awk -F'\\t' -v n=\"$name\" '$1 == n' | sort -t$'\\t' -k2,2n | tail -n 1)\n        if [ -z \"$latest\" ]; then\n            missing+=(\"$name\")\n        elif [ \"$(cut -f3\
+        \ <<<\"$latest\")\" != \"completed\" ]; then\n            pending=$((pending + 1))\n        fi\n    done\n    elapsed=$(( $(date +%s) - started ))\n    if [ \"$pending\" -eq 0 ] && { [ \"${#missing[@]}\"\
+        \ -eq 0 ] || [ \"$elapsed\" -ge 600 ]; }; then\n        [ \"${#missing[@]}\" -eq 0 ] || echo \"Not waiting for workflow(s) that never started: ${missing[*]}\"\n        echo \"Tests / Preview Release\
+        \ finished; starting benchmarks\"\n        exit 0\n    fi\n    if [ \"$elapsed\" -ge 7200 ]; then\n        echo \"Timed out after 120 minutes waiting for Tests / Preview Release\"\n        exit\
+        \ 1\n    fi\n    echo \"Waiting: ${pending} running, missing: ${missing[*]:-none}\"\n    sleep 30\ndone\n"
+    - name: Setup resources and environment
+      uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681"
+      with:
+        node-version: '24'
+        install-node-gyp: 'true'
+        skip-playwright: 'true'
+        run-signatures-audit: false
+        run-npm-audit: false
+    - name: Derive appropriate SHAs for base and head for `nx affected` commands
+      id: setSHAs
+      uses: "nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1" # v5.0.1
+    - name: Compute affected bench projects
+      id: affected
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      run: |
+        # `pnpm exec` leaks workspace platform-mismatch warnings to stdout
+        # (one line per native NAPI sub-package). Keep only the JSON line.
+        affected=$(pnpm exec nx show projects --affected --withTarget=test:bench --json 2>/dev/null | grep -E '^\[' | tail -n 1)
+        affected=${affected:-'[]'}
+
+        if [ "$affected" = "[]" ]; then
+          echo "No affected bench projects."
+          echo "has-benches=false" >> "$GITHUB_OUTPUT"
+          echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        matrix=$(echo "$affected" | jq -c '{include: [.[] | {project: .}]}')
+
+        echo "Affected bench projects: $affected"
+        echo "has-benches=true" >> "$GITHUB_OUTPUT"
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+  benchmark:
+    name: 'Bench: ${{ matrix.project }}'
+    needs: discover
+    if: ${{ needs.discover.outputs.has-benches == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+    - *id001
+    - name: Git checkout
+      uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup resources and environment
+      uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+      with:
+        node-version: '24'
+        install-node-gyp: 'true'
+        skip-playwright: 'true'
+        run-signatures-audit: false
+        run-npm-audit: false
+    - name: Native test artifacts
+      uses: ./.github/actions/native-test-artifacts
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build this bench's workspace dependencies
+      env:
+        BENCH_PROJECT: ${{ matrix.project }}
+      shell: bash
+      run: pnpm exec nx run-many --target=build:prod --projects="$BENCH_PROJECT" --with-deps --nxBail
+    - name: Run benchmark
+      uses: "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286" # v4.18.5
+      with:
+        mode: simulation
+        run: pnpm exec nx run "${{ matrix.project }}":test:bench
