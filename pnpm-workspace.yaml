@@ -446,7 +446,7 @@ catalogs:
     json5: ^2.2.3
     jsonc-parser: ^3.3.1
     mjml: '>=5.4.0'
-    next: '>=16.3.3'
+    next: '>=16.3.8'
     pkijs: '>=3.4.0'
     rate-limiter-flexible: '>=11.2.0'
     redoc: '>=2.5.3'
@@ -790,7 +790,10 @@ minimumReleaseAgeExclude:
   - '@visulima/*'
   - '@tootallnate/once@3.0.1'
   - svelte@5.55.7
-  - next@16.2.6
+  # Renovate security update: next@16.0.11
+  - next@16.2.6 || 16.0.11
+  # Renovate security update: next@16.2.12
+  # Renovate security update: next@16.3.8
   - devalue@5.8.1
   - brace-expansion@5.0.6
   - ws@8.20.1
@@ -816,10 +819,13 @@ minimumReleaseAgeExclude:
   - form-data@4.0.6
   - form-data@2.5.6
   - tar@7.5.16
-  - vite@7.3.5
+  # Renovate security update: vite@6.4.4
+  - vite@7.3.5 || 6.4.4
   - vite@8.0.16
   - launch-editor@2.14.1
-  - js-yaml@4.1.2
+  # Renovate security update: js-yaml@3.15.2
+  - js-yaml@4.1.2 || 3.15.2
+  # Renovate security update: js-yaml@4.3.2
   - '@babel/core@7.29.1'
   - protobufjs@8.4.1
   - protobufjs@7.6.1
@@ -859,9 +865,14 @@ minimumReleaseAgeExclude:
   - find-my-way@9.6.1
   - react-router@8.3.0
   - tar@7.5.21
-  - postcss@8.5.18
+  # Renovate security update: postcss@8.5.30
+  - postcss@8.5.18 || 8.5.30
   - valibot@1.4.2
   - brace-expansion@5.0.8
+  # Renovate security update: nanoid@3.3.20
+  - nanoid@3.3.20
+  # Renovate security update: @grpc/grpc-js@1.14.6
+  - "@grpc/grpc-js@1.14.6"
 
 # @visulima/packem imports `@visulima/cerebro/logger/pail` — cerebro's opt-in subpath —
 # but declares no dependency on @visulima/pail. cerebro is right to treat pail as an
@@ -906,7 +917,7 @@ overrides:
   # nanoid <3.3.17 (GHSA-2v37-7h3g-55p8, high): a custom alphabet can make the
   # generator loop indefinitely. The v5 line already resolves to a patched
   # 5.1.16; only the v3 copies need forcing to the 3.3.17 backport.
-  nanoid@<3.3.17: '>=3.3.17'
+  nanoid@<3.3.17: '>=3.3.20'
   '@tanstack/start-server-core@<1.167.30': '>=1.167.30'
   fastify@<5.7.2: '>=5.7.2'
   fastify@<=5.7.2: '>=5.7.3'
@@ -929,7 +940,7 @@ overrides:
   'websocket-driver@<0.7.5': '>=0.7.5'
   '@anthropic-ai/sdk@>=0.79.0 <0.91.1': ^0.91.1
   '@eslint/plugin-kit@<0.3.4': '>=0.4.0'
-  '@grpc/grpc-js@<1.14.4': '>=1.14.4'
+  '@grpc/grpc-js@<1.14.4': '>=1.14.6'
   '@hapi/content@<=6.0.0': '>=6.0.1'
   '@hapi/wreck@<18.1.2': '>=18.1.2'
   '@hono/node-server@<1.19.10': '>=1.19.10'
@@ -1018,7 +1029,7 @@ overrides:
   immutable@<4.3.8: '>=4.3.8'
   ip-address@<=10.1.0: ^10.1.1
   js-cookie@<=3.0.5: ^3.0.6
-  js-yaml@<3.14.2: '>=3.14.2'
+  js-yaml@<3.14.2: '>=3.15.2'
   js-yaml@>=4.0.0 <4.1.1: '>=4.1.1'
   jws@=4.0.0: '>=4.0.1'
   joi@<18.2.9: '>=18.2.9'
@@ -1042,9 +1053,9 @@ overrides:
   minimatch@>=7.0.0 <7.4.8: '>=7.4.8'
   minimatch@>=9.0.0 <9.0.6: '>=9.0.6'
   minimatch@>=9.0.0 <9.0.7: '>=9.0.7'
-  next@>=16.0.0 <16.2.6: ^16.2.6
-  next@>=16.0.0-beta.0 <16.0.9: '>=16.0.9'
-  next@>=16.0.0-canary.0 <16.0.7: '>=16.0.7'
+  next@>=16.0.0 <16.2.6: ^16.2.12
+  next@>=16.0.0-beta.0 <16.0.9: '>=16.0.11'
+  next@>=16.0.0-canary.0 <16.0.7: '>=16.0.11'
   node-forge@<1.3.2: '>=1.3.2'
   node-forge@<1.4.0: '>=1.4.0'
   node-forge@<=1.3.3: '>=1.4.0'
@@ -1054,7 +1065,7 @@ overrides:
   # picomatch security floors (<2.3.2, >=4.0.0 <4.0.4) are superseded by the exact
   # `picomatch: 4.0.5` pin above, which clears both. Keeping them here made pnpm resolve
   # some consumers to an unpatched 4.0.4 alongside the patched copy.
-  postcss@<8.5.10: '>=8.5.10'
+  postcss@<8.5.10: '>=8.5.30'
   prismjs@<1.30.0: '>=1.30.0'
   protobufjs@<7.5.5: '>=7.5.5'
   protobufjs@>=8.0.0 <8.2.0: ^8.2.0
@@ -1091,7 +1102,7 @@ overrides:
   uuid@>=13.0.0 <13.0.1: ^13.0.1
   valibot@>=0.31.0 <1.2.0: '>=1.2.0'
   vite@<=5.4.19: '>=7.1.11'
-  vite@>=6.0.0 <=6.4.1: '>=6.4.2'
+  vite@>=6.0.0 <=6.4.1: '>=6.4.4'
   vite@>=7.0.0 <=7.3.1: '>=7.3.2'
   vite@>=7.1.0 <=7.1.4: '>=7.1.11'
   ws@>=8.0.0 <8.20.1: ^8.20.1
@@ -1114,7 +1125,7 @@ overrides:
   dompurify@>=3.0.0 <=3.4.7: ^3.4.8
   form-data@<2.5.6: ^2.5.6
   form-data@>=4.0.0 <4.0.6: ^4.0.6
-  js-yaml@<=4.1.1: ^4.1.2
+  js-yaml@<=4.1.1: ^4.3.2
   launch-editor@<=2.14.0: ^2.14.1
   markdown-it@<=14.1.1: ^14.1.2
   nodemailer@<=9.0.0: ^9.0.1
