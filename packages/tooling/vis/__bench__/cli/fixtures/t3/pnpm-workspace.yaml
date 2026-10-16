@@ -1,0 +1,15 @@
+allowBuilds:
+  '@biomejs/biome': true
+  esbuild: true
+overrides:
+  '@auth/core@<=0.41.2': ^0.41.3
+  '@auth/core@>=0.1.0 <0.41.3': ^0.41.3
+  baseline-browser-mapping@>=2.0.0 <2.11.0: ^2.11.0
+  esbuild@<=0.24.2: ^0.25.0
+  nanoid@<3.3.18: ^3.3.18
+  next@>=16.0.0 <16.3.8: ^16.3.8
+  postcss@<=8.5.22: ^8.5.23
+  sharp@<0.35.5: ^0.35.5
+  shell-quote@<=1.8.4: ^1.9.0
+  shell-quote@>=1.8.4 <1.11.0: ^1.11.0
+  source-map-js@>=1.0.0 <1.2.2: ^1.2.2
