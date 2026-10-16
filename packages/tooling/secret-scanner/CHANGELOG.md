@@ -1,3 +1,24 @@
+## @visulima/secret-scanner [2.0.2](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.1...@visulima/secret-scanner@2.0.2) (2026-10-16)
+
+### Bug Fixes
+
+* **ci:** wait on the pull request head and format the Rust crates ([0aaf221](https://github.com/visulima/vis/commit/0aaf221c91f62a9cf1f9d11bcda52dcb29a13d63))
+* **deps:** update dependency @grpc/grpc-js to v1.14.6 [security] ([172d5a2](https://github.com/visulima/vis/commit/172d5a2d48fb1a4c08dd106eb58285034163160a))
+
+### Miscellaneous Chores
+
+* point every Discord link at the anolilab server ([#858](https://github.com/visulima/vis/issues/858)) ([7151fbf](https://github.com/visulima/vis/commit/7151fbfb703260e4505feef3875429b1b35ca30d))
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
+### Build System
+
+* add the nx workspace config and use nx for tests ([f14e445](https://github.com/visulima/vis/commit/f14e4451490224eceeb8443457a45ec171cb91c8))
+
+### Continuous Integration
+
+* **cargo-test:** gate clippy and record fat-lto evidence ([#929](https://github.com/visulima/vis/issues/929)) ([bc2e391](https://github.com/visulima/vis/commit/bc2e391e55c7f4079ad06fd07d2b2bfce5f91de0))
+* **codspeed:** run the bench step in its own job ([d24fcf5](https://github.com/visulima/vis/commit/d24fcf5c61e10b80bbf2cb2f8f6a6e2823353b4f))
+
 ## @visulima/secret-scanner [2.0.1](https://github.com/visulima/visulima/compare/@visulima/secret-scanner@2.0.0...@visulima/secret-scanner@2.0.1) (2026-08-19)
 
 ### Bug Fixes
