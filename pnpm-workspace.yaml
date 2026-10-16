@@ -862,6 +862,8 @@ minimumReleaseAgeExclude:
   - postcss@8.5.18
   - valibot@1.4.2
   - brace-expansion@5.0.8
+  # Renovate security update: @grpc/grpc-js@1.14.6
+  - "@grpc/grpc-js@1.14.6"
 
 # @visulima/packem imports `@visulima/cerebro/logger/pail` — cerebro's opt-in subpath —
 # but declares no dependency on @visulima/pail. cerebro is right to treat pail as an
