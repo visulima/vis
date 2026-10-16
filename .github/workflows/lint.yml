@@ -63,18 +63,6 @@ jobs:
             - name: "Lint package.json"
               run: "pnpm run lint:affected:package-json"
 
-            - name: "Lint eslint"
-              run: "pnpm -r run lint:eslint"
-
-            - name: "Lint typescript types"
-              run: "pnpm -r run lint:types"
-
-            - name: "Lint attw"
-              run: "pnpm -r run lint:attw"
-
-            - name: "Lint package.json"
-              run: "pnpm -r run lint:package-json"
-
     rust-fmt:
         name: "Lint (cargo fmt)"
         runs-on: "ubuntu-24.04"
