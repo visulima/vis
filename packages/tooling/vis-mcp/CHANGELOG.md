@@ -1,3 +1,18 @@
+## @visulima/vis-mcp [3.0.1](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.0...@visulima/vis-mcp@3.0.1) (2026-10-16)
+
+### Miscellaneous Chores
+
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
+### Build System
+
+* add the nx workspace config and use nx for tests ([f14e445](https://github.com/visulima/vis/commit/f14e4451490224eceeb8443457a45ec171cb91c8))
+
+
+### Dependencies
+
+* **@visulima/vis:** upgraded to 6.0.1
+
 ## @visulima/vis-mcp [3.0.0](https://github.com/visulima/visulima/compare/@visulima/vis-mcp@2.0.0...@visulima/vis-mcp@3.0.0) (2026-10-15)
 
 ### ⚠ BREAKING CHANGES
