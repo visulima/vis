@@ -8,10 +8,10 @@ import type { ToolchainConfig as InternalToolchainConfig, VersionManagerName } f
 import type { StagedConfig } from "../staged";
 import type { VisTargetConfiguration } from "../task/target-options";
 import type { VisPlugin } from "../util/hooks";
-import type { CodeownersConfig } from "./types-parts/codeowners";
-import type { LintFmtAdapterOverride } from "./types-parts/lint";
-import type { PolicyName } from "./types-parts/policies";
-import type { ExtraCustomType, ProjectJson, ScopedTasksBlock } from "./types-parts/project";
+import type { CodeownersConfig } from "./types/codeowners";
+import type { LintFmtAdapterOverride } from "./types/lint";
+import type { PolicyName } from "./types/policies";
+import type { ExtraCustomType, ProjectJson, ScopedTasksBlock } from "./types/project";
 
 /**
  * A predicate used by {@link VisConfig.scopedTasks}.
@@ -2030,8 +2030,8 @@ export interface VisConfig {
     zig?: { discover?: boolean };
 }
 
-export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types-parts/codeowners";
-export type { LintFmtAdapterOverride } from "./types-parts/lint";
-export type { NativeAuditExclusions, PolicyName } from "./types-parts/policies";
-export { POLICY_NAMES } from "./types-parts/policies";
-export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types-parts/project";
+export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types/codeowners";
+export type { LintFmtAdapterOverride } from "./types/lint";
+export type { NativeAuditExclusions, PolicyName } from "./types/policies";
+export { POLICY_NAMES } from "./types/policies";
+export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types/project";
