@@ -96,7 +96,6 @@ jobs:
     if: ${{ needs.discover.outputs.has-benches == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: benchmarks
     permissions:
       contents: read
       id-token: write
