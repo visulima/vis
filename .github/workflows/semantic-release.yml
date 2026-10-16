@@ -30,7 +30,7 @@ jobs:
         name: "Wait for tests to succeed"
         # Skip when a push carries the `[skip release]` marker in its commit message.
         # `head_commit` is null on workflow_dispatch, so manual runs are unaffected.
-        if: "github.repository == 'visulima/vis' && vars.RELEASES_ENABLED == 'true' && !contains(github.event.head_commit.message, '[skip release]')"
+        if: "github.repository == 'visulima/vis' && !contains(github.event.head_commit.message, '[skip release]')"
         runs-on: "ubuntu-latest"
         timeout-minutes: 60
         permissions:
@@ -121,7 +121,7 @@ jobs:
     semantic-release:
         name: "Semantic Release"
         needs: ["wait-for-tests"]
-        if: "github.repository == 'visulima/vis' && vars.RELEASES_ENABLED == 'true' && !contains(github.event.head_commit.message, '[skip release]')"
+        if: "github.repository == 'visulima/vis' && !contains(github.event.head_commit.message, '[skip release]')"
         runs-on: "ubuntu-latest"
         # No explicit timeout: multi-semantic-release walks ~50 packages and
         # commits/tags/publishes each one. A 30-minute cap previously cancelled

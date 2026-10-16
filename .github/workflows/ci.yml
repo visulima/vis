@@ -57,29 +57,19 @@ jobs:
                   restore-keys: |
                       nx-test-${{ runner.os }}-
 
-            # Pull requests run the suites of the packages they affect, plus their dependents.
-            # Pushes to main run every suite.
+            # Runs the suites of the packages affected since the base commit, plus their dependents.
+            # On pushes to main the base is the last successful run, so unchanged packages are skipped.
             - name: "Build affected packages"
-              if: "github.event_name == 'pull_request'"
               run: "pnpm run build:affected:packages"
-
-            - name: "Build packages"
-              if: "github.event_name != 'pull_request'"
-              run: "pnpm run build:packages"
 
             - name: "Run tests"
               env:
                   # The terminal suites assert on ANSI output and fail when the runner is not a TTY.
                   FORCE_COLOR: "3"
-                  EVENT: "${{ github.event_name }}"
               run: |
                   set -euo pipefail
 
-                  if [ "$EVENT" = "pull_request" ]; then
-                      pnpm run test:affected
-                  else
-                      pnpm run test
-                  fi
+                  pnpm run test:affected
 
             - name: "Save Nx cache"
               if: "${{ !cancelled() }}"
