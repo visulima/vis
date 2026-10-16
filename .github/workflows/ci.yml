@@ -34,7 +34,6 @@ jobs:
                   install-node-gyp: "true"
                   cache-prefix: "vis"
                   skip-playwright: "true"
-                  enable-nx-cache: "false"
                   upgrade-npm-version: false
 
             - name: "Download native build artifacts"

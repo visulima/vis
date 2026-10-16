@@ -1,0 +1,16 @@
+name: "Label Idle Issues"
+
+on: # yamllint disable-line rule:truthy
+    schedule:
+        - cron: "0 0 * * *"
+
+permissions:
+    contents: "read"
+    issues: "write"
+    pull-requests: "write"
+
+jobs:
+    stale-issues:
+        uses: "anolilab/workflows/.github/workflows/stale-issues.yml@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+        with:
+            target-repo: "visulima/vis"

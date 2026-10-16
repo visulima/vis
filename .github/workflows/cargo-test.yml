@@ -14,7 +14,6 @@ on: # yamllint disable-line rule:truthy
     push:
         branches:
             - "main"
-            - "alpha"
         paths:
             - "packages/tooling/task-runner/native/**"
             - "packages/terminal/tui/native/**"

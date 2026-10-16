@@ -19,7 +19,6 @@ on: # yamllint disable-line rule:truthy
     push:
         branches:
             - "main"
-            - "alpha"
         paths:
             - "packages/tooling/task-runner/native/fspy_seccomp/**"
             - ".github/workflows/fspy-seccomp-alpine.yml"

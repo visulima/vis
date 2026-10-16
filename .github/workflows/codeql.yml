@@ -1,0 +1,26 @@
+name: "CodeQL"
+on:
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+    schedule:
+        - cron: "0 0 * * 1"
+
+# Supersede stale pull-request scans, but let push and scheduled scans run to
+# completion: their SARIF upload is what feeds the security alerts.
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    cancel-in-progress: "${{ github.event_name == 'pull_request' }}"
+
+permissions: {}
+jobs:
+    codeql:
+        permissions:
+            security-events: "write"
+            actions: "read"
+            contents: "read"
+        uses: "anolilab/workflows/.github/workflows/codeql.yml@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5
+        with:
+            languages: "[\"javascript-typescript\"]"
+            branches: "[\"main\"]"

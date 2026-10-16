@@ -1,0 +1,22 @@
+name: "Zizmor"
+on:
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+
+# Supersede stale pull-request scans, but let push scans run to completion:
+# their SARIF upload is what feeds the security alerts.
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    cancel-in-progress: "${{ github.event_name == 'pull_request' }}"
+
+permissions: {}
+jobs:
+    zizmor:
+        permissions:
+            security-events: "write"
+            contents: "read"
+        uses: "anolilab/workflows/.github/workflows/zizmor.yml@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5
+        with:
+            min_severity: "medium"
