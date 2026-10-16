@@ -7,13 +7,14 @@ import type { Toolbox } from "@visulima/cerebro";
 import { isAccessibleSync } from "@visulima/fs";
 import { formatBytes } from "@visulima/humanizer";
 import { join, relative } from "@visulima/path";
-import type { TaskFingerprint } from "@visulima/task-runner";
+import type { RunSummary, TaskFingerprint, TaskSummary } from "@visulima/task-runner";
 import { Cache, describeCacheMissReason, digestFile, getLastRunSummaryPath, parseCacheSize, readLastRunSummary } from "@visulima/task-runner";
 
 import { clearCache as clearAiResponseCache, getCacheStats as getAiCacheStats } from "../../ai/ai-cache";
 import { applyBranchScope, isCacheDirectoryInsideWorkspace, resolveSharedCacheDirectory } from "../../cache/cache-directory";
 import { pail } from "../../io/logger";
 import { diffHashDetails, findTaskInSummary, readPreviousRunSummary, readRunSummaryById } from "../../report/run-summary-utils";
+import type { HashDetailsDiff } from "../../report/types";
 import { clearDepsDevCache, getDepsDevCacheStats } from "../../security/deps-dev-security";
 import { clearSnykCache, getSnykCacheStats } from "../../security/snyk-security";
 import { clearSocketCache, getSocketCacheStats } from "../../security/socket-security";
@@ -556,87 +557,72 @@ interface RunWhyOptions {
     workspaceRoot: string;
 }
 
-export const runWhy = async (taskId: string, options: RunWhyOptions, logger: Console): Promise<void> => {
-    const { format, runId, workspaceRoot } = options;
+const writeJsonLine = (payload: unknown): void => {
+    process.stdout.write(`${JSON.stringify(payload, undefined, 2)}\n`);
+};
 
-    const summary
-        = runId === undefined
-            ? await readLastRunSummary(workspaceRoot, { dataDirectory: getVisWorkspaceDataDir(workspaceRoot) })
-            : await readRunSummaryById(workspaceRoot, runId);
-
-    if (!summary) {
-        if (format === "json") {
-            process.stdout.write(`${JSON.stringify({ error: "no-summary", runId: runId ?? null, taskId }, undefined, 2)}\n`);
-            process.exitCode = 1;
-
-            return;
-        }
-
-        if (runId === undefined) {
-            pail.error(
-                `No previous run summary found. Run a task first to populate \`${getLastRunSummaryPath(workspaceRoot, { dataDirectory: getVisWorkspaceDataDir(workspaceRoot) })}\`.`,
-            );
-        } else {
-            pail.error(`Run summary "${runId}" not found in ${getVisRunsDir(workspaceRoot)}/.`);
-        }
-
-        process.exitCode = 1;
-
-        return;
+const reportWhyMissingSummary = (format: string, taskId: string, runId: string | undefined, workspaceRoot: string): void => {
+    if (format === "json") {
+        writeJsonLine({ error: "no-summary", runId: runId ?? null, taskId });
+    } else if (runId === undefined) {
+        pail.error(
+            `No previous run summary found. Run a task first to populate \`${getLastRunSummaryPath(workspaceRoot, { dataDirectory: getVisWorkspaceDataDir(workspaceRoot) })}\`.`,
+        );
+    } else {
+        pail.error(`Run summary "${runId}" not found in ${getVisRunsDir(workspaceRoot)}/.`);
     }
 
-    const task = findTaskInSummary(summary, taskId);
+    process.exitCode = 1;
+};
 
-    if (!task) {
-        if (format === "json") {
-            process.stdout.write(`${JSON.stringify({ error: "task-not-in-summary", runId: summary.id, taskId }, undefined, 2)}\n`);
-            process.exitCode = 1;
-
-            return;
-        }
-
+const reportWhyTaskNotInSummary = (format: string, taskId: string, summary: RunSummary): void => {
+    if (format === "json") {
+        writeJsonLine({ error: "task-not-in-summary", runId: summary.id, taskId });
+    } else {
         pail.error(`Task "${taskId}" was not part of run ${summary.id}.`);
         pail.info(`Tasks in this run: ${summary.tasks.map((t) => t.taskId).join(", ") || "(none)"}`);
-        process.exitCode = 1;
-
-        return;
     }
 
-    const previousSummary = await readPreviousRunSummary(workspaceRoot, summary.id);
-    const previousTask = previousSummary ? findTaskInSummary(previousSummary, taskId) : undefined;
-    const diff = diffHashDetails(task.hashDetails, previousTask?.hashDetails);
+    process.exitCode = 1;
+};
 
-    if (format === "json") {
-        process.stdout.write(
-            `${JSON.stringify(
-                {
-                    diff,
-                    previousRunId: previousSummary?.id ?? null,
-                    previousTask: previousTask
-                        ? {
-                            cacheStatus: previousTask.cacheStatus,
-                            hash: previousTask.hash ?? null,
-                            hashDetails: previousTask.hashDetails ?? null,
-                        }
-                        : null,
-                    runId: summary.id,
-                    task: {
-                        cacheMissReasons: task.cacheMissReasons ?? null,
-                        cacheStatus: task.cacheStatus,
-                        hash: task.hash ?? null,
-                        hashDetails: task.hashDetails ?? null,
-                        hashSource: task.hashSource ?? null,
-                        taskId: task.taskId,
-                    },
-                },
-                undefined,
-                2,
-            )}\n`,
-        );
+const buildWhyJson = (
+    summary: RunSummary,
+    task: TaskSummary,
+    previousSummary: RunSummary | undefined,
+    previousTask: TaskSummary | undefined,
+    diff: HashDetailsDiff,
+): Record<string, unknown> => {
+    return {
+        diff,
+        previousRunId: previousSummary?.id ?? null,
+        previousTask: previousTask
+            ? {
+                cacheStatus: previousTask.cacheStatus,
+                hash: previousTask.hash ?? null,
+                hashDetails: previousTask.hashDetails ?? null,
+            }
+            : null,
+        runId: summary.id,
+        task: {
+            cacheMissReasons: task.cacheMissReasons ?? null,
+            cacheStatus: task.cacheStatus,
+            hash: task.hash ?? null,
+            hashDetails: task.hashDetails ?? null,
+            hashSource: task.hashSource ?? null,
+            taskId: task.taskId,
+        },
+    };
+};
 
-        return;
-    }
-
+const printWhyHeader = (
+    taskId: string,
+    summary: RunSummary,
+    task: TaskSummary,
+    previousSummary: RunSummary | undefined,
+    previousTask: TaskSummary | undefined,
+    logger: Console,
+): void => {
     pail.info(`Why ${taskId}? (run ${summary.id})`);
     logger.info("");
     logger.info(`  status:  ${task.cacheStatus}`);
@@ -653,50 +639,38 @@ export const runWhy = async (taskId: string, options: RunWhyOptions, logger: Con
     }
 
     logger.info("");
+};
 
-    if (task.hashDetails === undefined) {
-        // Trace-mode tasks keep no declared hash inputs, so the diff below is
-        // empty by construction. Their explanation is the recorded miss reason.
-        if (task.cacheMissReasons && task.cacheMissReasons.length > 0) {
-            logger.info("Cache miss reasons (trace-mode fingerprint):");
+const printTraceModeWhy = (taskId: string, summary: RunSummary, task: TaskSummary, logger: Console): void => {
+    // Trace-mode tasks keep no declared hash inputs, so the diff is empty by
+    // construction. Their explanation is the recorded miss reason.
+    if (task.cacheMissReasons && task.cacheMissReasons.length > 0) {
+        logger.info("Cache miss reasons (trace-mode fingerprint):");
 
-            for (const reason of task.cacheMissReasons) {
-                logger.info(`  - ${describeCacheMissReason(reason)}`);
-            }
-        } else {
-            pail.info("No hash inputs recorded for this run (trace-mode tasks record a miss reason only when the cache misses).");
+        for (const reason of task.cacheMissReasons) {
+            logger.info(`  - ${describeCacheMissReason(reason)}`);
         }
-
-        logger.info("");
-        pail.info(`Tracked files and env of this run: vis cache hash ${taskId} --run ${summary.id}`);
-
-        return;
+    } else {
+        pail.info("No hash inputs recorded for this run (trace-mode tasks record a miss reason only when the cache misses).");
     }
 
-    if (!previousTask) {
-        pail.info("No previous run to diff against — first time this task was recorded.");
+    logger.info("");
+    pail.info(`Tracked files and env of this run: vis cache hash ${taskId} --run ${summary.id}`);
+};
 
-        return;
-    }
+const hasNoHashChanges = (diff: HashDetailsDiff): boolean =>
+    !diff.commandChanged
+    && diff.nodes.added.length === 0
+    && diff.nodes.changed.length === 0
+    && diff.nodes.removed.length === 0
+    && diff.runtime.added.length === 0
+    && diff.runtime.changed.length === 0
+    && diff.runtime.removed.length === 0
+    && diff.implicitDeps.added.length === 0
+    && diff.implicitDeps.changed.length === 0
+    && diff.implicitDeps.removed.length === 0;
 
-    const noChanges
-        = !diff.commandChanged
-            && diff.nodes.added.length === 0
-            && diff.nodes.changed.length === 0
-            && diff.nodes.removed.length === 0
-            && diff.runtime.added.length === 0
-            && diff.runtime.changed.length === 0
-            && diff.runtime.removed.length === 0
-            && diff.implicitDeps.added.length === 0
-            && diff.implicitDeps.changed.length === 0
-            && diff.implicitDeps.removed.length === 0;
-
-    if (noChanges) {
-        pail.success("No hash inputs changed since the previous run.");
-
-        return;
-    }
-
+const printHashInputChanges = (diff: HashDetailsDiff, logger: Console): void => {
     logger.info("Hash inputs that changed since the previous run:");
     logger.info("");
 
@@ -725,7 +699,61 @@ export const runWhy = async (taskId: string, options: RunWhyOptions, logger: Con
             logger.info(`    - ${key}`);
         }
     }
+};
 
+export const runWhy = async (taskId: string, options: RunWhyOptions, logger: Console): Promise<void> => {
+    const { format, runId, workspaceRoot } = options;
+
+    const summary
+        = runId === undefined
+            ? await readLastRunSummary(workspaceRoot, { dataDirectory: getVisWorkspaceDataDir(workspaceRoot) })
+            : await readRunSummaryById(workspaceRoot, runId);
+
+    if (!summary) {
+        reportWhyMissingSummary(format, taskId, runId, workspaceRoot);
+
+        return;
+    }
+
+    const task = findTaskInSummary(summary, taskId);
+
+    if (!task) {
+        reportWhyTaskNotInSummary(format, taskId, summary);
+
+        return;
+    }
+
+    const previousSummary = await readPreviousRunSummary(workspaceRoot, summary.id);
+    const previousTask = previousSummary ? findTaskInSummary(previousSummary, taskId) : undefined;
+    const diff = diffHashDetails(task.hashDetails, previousTask?.hashDetails);
+
+    if (format === "json") {
+        writeJsonLine(buildWhyJson(summary, task, previousSummary, previousTask, diff));
+
+        return;
+    }
+
+    printWhyHeader(taskId, summary, task, previousSummary, previousTask, logger);
+
+    if (task.hashDetails === undefined) {
+        printTraceModeWhy(taskId, summary, task, logger);
+
+        return;
+    }
+
+    if (!previousTask) {
+        pail.info("No previous run to diff against — first time this task was recorded.");
+
+        return;
+    }
+
+    if (hasNoHashChanges(diff)) {
+        pail.success("No hash inputs changed since the previous run.");
+
+        return;
+    }
+
+    printHashInputChanges(diff, logger);
     logger.info("");
     pail.info(`Last summary file: ${getLastRunSummaryPath(workspaceRoot, { dataDirectory: getVisWorkspaceDataDir(workspaceRoot) })}`);
 };
@@ -1006,6 +1034,110 @@ const computeFileDiff = async (file: CachedFileMeta, workspaceRoot: string): Pro
     };
 };
 
+const resolveVerifyCache = async (
+    taskId: string,
+    cacheDirectories: string[],
+    workspaceRoot: string,
+): Promise<{ cached: { hash: string }; cacheDirectory: string } | undefined> => {
+    // Walk the resolved directories in order — the entry can only live
+    // in one cache (task hashes are content-addressed), and we want the
+    // first match to win so --scope=all has predictable semantics
+    // (shared first, then worktree).
+    for (const directory of cacheDirectories) {
+        const found = await new Cache({ cacheDirectory: directory, workspaceRoot }).getByTaskId(taskId);
+
+        if (found) {
+            return { cached: found, cacheDirectory: directory };
+        }
+    }
+
+    return undefined;
+};
+
+const failVerify = (format: string, jsonPayload: Record<string, unknown>, message: string): void => {
+    if (format === "json") {
+        writeJsonLine(jsonPayload);
+    } else {
+        pail.error(message);
+    }
+
+    process.exitCode = 1;
+};
+
+const computeVerifyDiffs = async (cachedFiles: CachedFileMeta[], workspaceRoot: string): Promise<VerifyDiff[]> => {
+    // Bounded parallel: per-file IO (stat + sha256 stream) is
+    // independent across files, but unbounded parallelism on a
+    // 10k-file output tree would exhaust fd limits on common Linux
+    // setups (default 1024). 16 keeps us well below that while
+    // still saturating typical SSD read throughput.
+    const diffSlots: (VerifyDiff | undefined)[] = Array.from({ length: cachedFiles.length });
+
+    for (let offset = 0; offset < cachedFiles.length; offset += VERIFY_DIFF_CONCURRENCY) {
+        const chunk = cachedFiles.slice(offset, offset + VERIFY_DIFF_CONCURRENCY);
+
+        const results = await Promise.all(chunk.map(async (file) => computeFileDiff(file, workspaceRoot)));
+
+        for (const [index, result] of results.entries()) {
+            diffSlots[offset + index] = result;
+        }
+    }
+
+    return diffSlots.filter((slot): slot is VerifyDiff => slot !== undefined);
+};
+
+const printVerifyDiffEntry = (diff: VerifyDiff, logger: Console): void => {
+    const tag = diff.issues.includes("missing") ? "MISSING" : diff.issues.join(",").toUpperCase();
+
+    logger.info(`  [${tag}] ${diff.relativePath}`);
+
+    if (!diff.issues.includes("missing") && diff.expected && diff.actual) {
+        if (diff.issues.includes("content")) {
+            logger.info(`    expected hash: ${diff.expected.hash || "(none)"}`);
+            logger.info(`    actual   hash: ${diff.actual.hash ?? "(unreadable)"}`);
+        }
+
+        if (diff.issues.includes("mode")) {
+            logger.info(`    expected mode: ${diff.expected.mode.toString(8)}`);
+            logger.info(`    actual   mode: ${(diff.actual.mode ?? 0).toString(8)}`);
+        }
+
+        if (diff.issues.includes("mtime")) {
+            logger.info(`    expected mtime: ${new Date(diff.expected.mtimeMs).toISOString()}`);
+            logger.info(`    actual   mtime: ${diff.actual.mtimeMs === undefined ? "(unreadable)" : new Date(diff.actual.mtimeMs).toISOString()}`);
+        }
+    }
+};
+
+const printVerifyTextReport = (
+    taskId: string,
+    hash: string,
+    cacheDirectory: string,
+    fileCount: number,
+    diffs: VerifyDiff[],
+    logger: Console,
+): void => {
+    pail.info(`Verify ${taskId}  (hash ${hash})`);
+    logger.info("");
+    logger.info(`  cache:      ${cacheDirectory}`);
+    logger.info(`  files:      ${String(fileCount)}`);
+
+    if (diffs.length === 0) {
+        logger.info("");
+        pail.success("Cache restore is faithful — all files match content, mode, and mtime.");
+
+        return;
+    }
+
+    logger.info(`  drift:      ${String(diffs.length)} file(s)`);
+    logger.info("");
+
+    for (const diff of diffs) {
+        printVerifyDiffEntry(diff, logger);
+    }
+
+    process.exitCode = 1;
+};
+
 // Logging convention in this command: `pail.error` / `pail.info` /
 // `pail.success` carry the status banner (one-line summary, errors), and
 // the cerebro `logger.info` carries body text (the per-file drift
@@ -1014,46 +1146,24 @@ export const runVerify = async (taskId: string, options: RunVerifyOptions, logge
     const { cacheDirectories, format, workspaceRoot } = options;
 
     if (cacheDirectories.length === 0) {
-        if (format === "json") {
-            process.stdout.write(`${JSON.stringify({ error: "no-cache-directory", taskId }, undefined, 2)}\n`);
-        } else {
-            pail.error("No cache directory resolved — pass --cache-dir or run inside a workspace.");
-        }
-
-        process.exitCode = 1;
+        failVerify(format, { error: "no-cache-directory", taskId }, "No cache directory resolved — pass --cache-dir or run inside a workspace.");
 
         return;
     }
 
-    // Walk the resolved directories in order — the entry can only live
-    // in one cache (task hashes are content-addressed), and we want the
-    // first match to win so --scope=all has predictable semantics
-    // (shared first, then worktree).
-    let cacheDirectory: string | undefined;
-    let cached: { hash: string } | undefined;
+    const resolved = await resolveVerifyCache(taskId, cacheDirectories, workspaceRoot);
 
-    for (const directory of cacheDirectories) {
-        const found = await new Cache({ cacheDirectory: directory, workspaceRoot }).getByTaskId(taskId);
-
-        if (found) {
-            cacheDirectory = directory;
-            cached = found;
-            break;
-        }
-    }
-
-    if (!cached || !cacheDirectory) {
-        if (format === "json") {
-            process.stdout.write(`${JSON.stringify({ error: "no-cached-entry", searchedCaches: cacheDirectories, taskId }, undefined, 2)}\n`);
-        } else {
-            pail.error(`No cached entry found for task "${taskId}". Run it once before verifying.`);
-        }
-
-        process.exitCode = 1;
+    if (!resolved) {
+        failVerify(
+            format,
+            { error: "no-cached-entry", searchedCaches: cacheDirectories, taskId },
+            `No cached entry found for task "${taskId}". Run it once before verifying.`,
+        );
 
         return;
     }
 
+    const { cached, cacheDirectory } = resolved;
     const stagingRoot = await mkdtemp(join(tmpdir(), "vis-cache-verify-"));
 
     try {
@@ -1063,13 +1173,7 @@ export const runVerify = async (taskId: string, options: RunVerifyOptions, logge
         const restored = await stagingCache.restoreOutputs(cached.hash);
 
         if (!restored) {
-            if (format === "json") {
-                process.stdout.write(`${JSON.stringify({ error: "restore-failed", hash: cached.hash, taskId }, undefined, 2)}\n`);
-            } else {
-                pail.error(`Cache restore failed for ${taskId} (hash ${cached.hash}).`);
-            }
-
-            process.exitCode = 1;
+            failVerify(format, { error: "restore-failed", hash: cached.hash, taskId }, `Cache restore failed for ${taskId} (hash ${cached.hash}).`);
 
             return;
         }
@@ -1078,7 +1182,7 @@ export const runVerify = async (taskId: string, options: RunVerifyOptions, logge
 
         if (cachedFiles.length === 0) {
             if (format === "json") {
-                process.stdout.write(`${JSON.stringify({ diffs: [], hash: cached.hash, status: "no-outputs", taskId }, undefined, 2)}\n`);
+                writeJsonLine({ diffs: [], hash: cached.hash, status: "no-outputs", taskId });
             } else {
                 pail.info(`Cached entry for ${taskId} has no recorded outputs — nothing to verify.`);
             }
@@ -1086,40 +1190,17 @@ export const runVerify = async (taskId: string, options: RunVerifyOptions, logge
             return;
         }
 
-        // Bounded parallel: per-file IO (stat + sha256 stream) is
-        // independent across files, but unbounded parallelism on a
-        // 10k-file output tree would exhaust fd limits on common Linux
-        // setups (default 1024). 16 keeps us well below that while
-        // still saturating typical SSD read throughput.
-        const diffSlots: (VerifyDiff | undefined)[] = Array.from({ length: cachedFiles.length });
-
-        for (let offset = 0; offset < cachedFiles.length; offset += VERIFY_DIFF_CONCURRENCY) {
-            const chunk = cachedFiles.slice(offset, offset + VERIFY_DIFF_CONCURRENCY);
-
-            const results = await Promise.all(chunk.map(async (file) => computeFileDiff(file, workspaceRoot)));
-
-            for (const [index, result] of results.entries()) {
-                diffSlots[offset + index] = result;
-            }
-        }
-
-        const diffs: VerifyDiff[] = diffSlots.filter((slot): slot is VerifyDiff => slot !== undefined);
+        const diffs = await computeVerifyDiffs(cachedFiles, workspaceRoot);
 
         if (format === "json") {
-            process.stdout.write(
-                `${JSON.stringify(
-                    {
-                        cachedFileCount: cachedFiles.length,
-                        cacheDirectory,
-                        diffs,
-                        hash: cached.hash,
-                        status: diffs.length === 0 ? "ok" : "drift",
-                        taskId,
-                    },
-                    undefined,
-                    2,
-                )}\n`,
-            );
+            writeJsonLine({
+                cachedFileCount: cachedFiles.length,
+                cacheDirectory,
+                diffs,
+                hash: cached.hash,
+                status: diffs.length === 0 ? "ok" : "drift",
+                taskId,
+            });
 
             if (diffs.length > 0) {
                 process.exitCode = 1;
@@ -1128,45 +1209,7 @@ export const runVerify = async (taskId: string, options: RunVerifyOptions, logge
             return;
         }
 
-        pail.info(`Verify ${taskId}  (hash ${cached.hash})`);
-        logger.info("");
-        logger.info(`  cache:      ${cacheDirectory}`);
-        logger.info(`  files:      ${String(cachedFiles.length)}`);
-
-        if (diffs.length === 0) {
-            logger.info("");
-            pail.success("Cache restore is faithful — all files match content, mode, and mtime.");
-
-            return;
-        }
-
-        logger.info(`  drift:      ${String(diffs.length)} file(s)`);
-        logger.info("");
-
-        for (const diff of diffs) {
-            const tag = diff.issues.includes("missing") ? "MISSING" : diff.issues.join(",").toUpperCase();
-
-            logger.info(`  [${tag}] ${diff.relativePath}`);
-
-            if (!diff.issues.includes("missing") && diff.expected && diff.actual) {
-                if (diff.issues.includes("content")) {
-                    logger.info(`    expected hash: ${diff.expected.hash || "(none)"}`);
-                    logger.info(`    actual   hash: ${diff.actual.hash ?? "(unreadable)"}`);
-                }
-
-                if (diff.issues.includes("mode")) {
-                    logger.info(`    expected mode: ${diff.expected.mode.toString(8)}`);
-                    logger.info(`    actual   mode: ${(diff.actual.mode ?? 0).toString(8)}`);
-                }
-
-                if (diff.issues.includes("mtime")) {
-                    logger.info(`    expected mtime: ${new Date(diff.expected.mtimeMs).toISOString()}`);
-                    logger.info(`    actual   mtime: ${diff.actual.mtimeMs === undefined ? "(unreadable)" : new Date(diff.actual.mtimeMs).toISOString()}`);
-                }
-            }
-        }
-
-        process.exitCode = 1;
+        printVerifyTextReport(taskId, cached.hash, cacheDirectory, cachedFiles.length, diffs, logger);
     } finally {
         await rm(stagingRoot, { force: true, recursive: true }).catch(() => {});
     }
