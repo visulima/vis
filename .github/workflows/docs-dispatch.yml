@@ -34,6 +34,12 @@ jobs:
               run: |
                   set -euo pipefail
 
+                  # Until the secret exists, there is nothing to notify. Skip instead of failing.
+                  if [ -z "${DOCS_DISPATCH_TOKEN}" ]; then
+                    echo "::notice::DOCS_DISPATCH_TOKEN is not set, skipping the docs dispatch."
+                    exit 0
+                  fi
+
                   if [ "$EVENT" = "push" ]; then
                     body=$(jq -n --arg repo "$REPO" --arg sha "$SHA" \
                       '{event_type: "source-updated", client_payload: {repo: $repo, sha: $sha}}')

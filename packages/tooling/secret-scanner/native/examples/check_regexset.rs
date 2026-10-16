@@ -1,5 +1,5 @@
-use std::fs;
 use serde_json::Value;
+use std::fs;
 
 fn main() {
     let raw = fs::read_to_string("data/gitleaks.json").unwrap();

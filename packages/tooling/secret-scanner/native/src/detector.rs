@@ -4,7 +4,9 @@
 use std::path::Path;
 
 use crate::entropy::shannon;
-use crate::rules::{AllowlistTarget, CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
+use crate::rules::{
+    AllowlistTarget, CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine,
+};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
 /// windowed scanning kicks in. Covers the entire span of every kingfisher +
@@ -175,7 +177,11 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
             // sees the original content, so a miss there doesn't imply the rule can't fire.
             // Skip the intersection for those rules; they stay active on AC alone.
             let uses_pre_replace = !rule.pre_regex_replace.is_empty();
-            if rule.engine.as_ref().is_some_and(Engine::is_fast) && !uses_pre_replace && candidates[i] && !fast_in_set[i] {
+            if rule.engine.as_ref().is_some_and(Engine::is_fast)
+                && !uses_pre_replace
+                && candidates[i]
+                && !fast_in_set[i]
+            {
                 candidates[i] = false;
             }
         }

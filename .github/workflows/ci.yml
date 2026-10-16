@@ -39,7 +39,7 @@ jobs:
             - name: "Download native build artifacts"
               uses: "./.github/actions/native-test-artifacts"
               with:
-                  ref: "${{ github.sha }}"
+                  ref: "${{ github.event.pull_request.head.sha || github.sha }}"
                   github-token: "${{ secrets.GITHUB_TOKEN }}"
 
             - name: "Run tests"
