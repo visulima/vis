@@ -660,15 +660,7 @@ const printTraceModeWhy = (taskId: string, summary: RunSummary, task: TaskSummar
 
 const hasNoHashChanges = (diff: HashDetailsDiff): boolean =>
     !diff.commandChanged
-    && diff.nodes.added.length === 0
-    && diff.nodes.changed.length === 0
-    && diff.nodes.removed.length === 0
-    && diff.runtime.added.length === 0
-    && diff.runtime.changed.length === 0
-    && diff.runtime.removed.length === 0
-    && diff.implicitDeps.added.length === 0
-    && diff.implicitDeps.changed.length === 0
-    && diff.implicitDeps.removed.length === 0;
+    && [diff.nodes, diff.runtime, diff.implicitDeps].every((bucket) => bucket.added.length === 0 && bucket.changed.length === 0 && bucket.removed.length === 0);
 
 const printHashInputChanges = (diff: HashDetailsDiff, logger: Console): void => {
     logger.info("Hash inputs that changed since the previous run:");
@@ -1085,26 +1077,43 @@ const computeVerifyDiffs = async (cachedFiles: CachedFileMeta[], workspaceRoot: 
     return diffSlots.filter((slot): slot is VerifyDiff => slot !== undefined);
 };
 
+const printContentDrift = (expected: { hash: string }, actual: { hash?: string }, logger: Console): void => {
+    logger.info(`    expected hash: ${expected.hash || "(none)"}`);
+    logger.info(`    actual   hash: ${actual.hash ?? "(unreadable)"}`);
+};
+
+const printModeDrift = (expected: { mode: number }, actual: { mode?: number }, logger: Console): void => {
+    logger.info(`    expected mode: ${expected.mode.toString(8)}`);
+    logger.info(`    actual   mode: ${(actual.mode ?? 0).toString(8)}`);
+};
+
+const printMtimeDrift = (expected: { mtimeMs: number }, actual: { mtimeMs?: number }, logger: Console): void => {
+    logger.info(`    expected mtime: ${new Date(expected.mtimeMs).toISOString()}`);
+    logger.info(`    actual   mtime: ${actual.mtimeMs === undefined ? "(unreadable)" : new Date(actual.mtimeMs).toISOString()}`);
+};
+
 const printVerifyDiffEntry = (diff: VerifyDiff, logger: Console): void => {
     const tag = diff.issues.includes("missing") ? "MISSING" : diff.issues.join(",").toUpperCase();
 
     logger.info(`  [${tag}] ${diff.relativePath}`);
 
-    if (!diff.issues.includes("missing") && diff.expected && diff.actual) {
-        if (diff.issues.includes("content")) {
-            logger.info(`    expected hash: ${diff.expected.hash || "(none)"}`);
-            logger.info(`    actual   hash: ${diff.actual.hash ?? "(unreadable)"}`);
-        }
+    const { expected } = diff;
+    const { actual } = diff;
 
-        if (diff.issues.includes("mode")) {
-            logger.info(`    expected mode: ${diff.expected.mode.toString(8)}`);
-            logger.info(`    actual   mode: ${(diff.actual.mode ?? 0).toString(8)}`);
-        }
+    if (diff.issues.includes("missing") || !expected || !actual) {
+        return;
+    }
 
-        if (diff.issues.includes("mtime")) {
-            logger.info(`    expected mtime: ${new Date(diff.expected.mtimeMs).toISOString()}`);
-            logger.info(`    actual   mtime: ${diff.actual.mtimeMs === undefined ? "(unreadable)" : new Date(diff.actual.mtimeMs).toISOString()}`);
-        }
+    if (diff.issues.includes("content")) {
+        printContentDrift(expected, actual, logger);
+    }
+
+    if (diff.issues.includes("mode")) {
+        printModeDrift(expected, actual, logger);
+    }
+
+    if (diff.issues.includes("mtime")) {
+        printMtimeDrift(expected, actual, logger);
     }
 };
 

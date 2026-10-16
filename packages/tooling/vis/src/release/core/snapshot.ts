@@ -130,6 +130,42 @@ type SnapshotPackageOutcome = { kind: "published" } | { kind: "skipped"; reason:
 
 // Packs the rewritten manifest and publishes the tarball under every tag alias.
 // The source manifest is always restored, even when packing or publishing fails.
+type SnapshotPublishResult = Awaited<ReturnType<NpmAdapter["publish"]>>;
+
+const publishTarballUnderTags = async (tarball: string, deps: SnapshotPublishDeps): Promise<SnapshotPublishResult | undefined> => {
+    let firstResult: SnapshotPublishResult | undefined;
+
+    for (const t of deps.tags) {
+        const r = await deps.npmCli.publish({
+            access: "public",
+            extraArgs: ["--no-git-checks"],
+            registry: deps.registry,
+            tag: t,
+            tarball,
+        });
+
+        firstResult ??= r;
+    }
+
+    return firstResult;
+};
+
+// First tag's outcome determines the per-package status; later tags are
+// best-effort (already-published is success).
+const snapshotOutcomeFromPublish = (result: SnapshotPublishResult | undefined): SnapshotPackageOutcome => {
+    if (result?.published) {
+        return { kind: "published" };
+    }
+
+    if (result?.alreadyPublished) {
+        return { kind: "skipped", reason: "already-published" };
+    }
+
+    return { kind: "skipped", reason: result?.output ?? "unknown" };
+};
+
+// Packs the rewritten manifest and publishes the tarball under every tag alias.
+// The source manifest is always restored, even when packing or publishing fails.
 const publishSnapshotManifest = async (
     pkg: WorkspacePackage,
     cleaned: PackageManifest,
@@ -150,31 +186,7 @@ const publishSnapshotManifest = async (
 
         const packed = await deps.ctx.pm.pack({ cwd: pkg.dir, destination: tempDir });
 
-        // First tag's outcome determines the per-package status; later
-        // tags are best-effort (already-published is success).
-        let firstResult: Awaited<ReturnType<typeof deps.npmCli.publish>> | undefined;
-
-        for (const t of deps.tags) {
-            const r = await deps.npmCli.publish({
-                access: "public",
-                extraArgs: ["--no-git-checks"],
-                registry: deps.registry,
-                tag: t,
-                tarball: packed.tarball,
-            });
-
-            firstResult ??= r;
-        }
-
-        if (firstResult?.published) {
-            return { kind: "published" };
-        }
-
-        if (firstResult?.alreadyPublished) {
-            return { kind: "skipped", reason: "already-published" };
-        }
-
-        return { kind: "skipped", reason: firstResult?.output ?? "unknown" };
+        return snapshotOutcomeFromPublish(await publishTarballUnderTags(packed.tarball, deps));
     } catch (error) {
         return { kind: "failed", reason: (error as Error).message };
     } finally {
