@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -56,6 +56,13 @@ const findAssignments = (): Assignment[] => {
     const found: Assignment[] = [];
 
     for (const [label, root] of Object.entries(SCAN_ROOTS)) {
+        // ponytail: cerebro's source lives in visulima/visulima, which this repo does not
+        // contain. Its env writes are checked there; add a scan of the installed package
+        // when a readable copy of its source exists here.
+        if (!existsSync(root)) {
+            continue;
+        }
+
         for (const file of walk(root)) {
             const source = readFileSync(file, "utf8");
             const relative = `${label}:${file.slice(root.length + 1)}`;
@@ -108,6 +115,7 @@ describe("vis run injected and parent environment", () => {
 
         const wholeEnvWrite = /Object\.assign\(process\.env\b|process\.env\s*=(?!=)/u;
         const offending = Object.values(SCAN_ROOTS)
+            .filter((root) => existsSync(root))
             .flatMap((root) => walk(root))
             .filter((file) => wholeEnvWrite.test(readFileSync(file, "utf8")));
 
