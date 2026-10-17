@@ -6422,7 +6422,7 @@
                 }
             },
             "additionalProperties": false,
-            "description": "A predicate used by  {@link  VisConfig.scopedTasks } . All listed constraints must match for the block to apply."
+            "description": "A predicate used by the `scopedTasks` config block. All listed constraints must match for the block to apply."
         },
         "TaskArgument": {
             "type": "object",

@@ -4,11 +4,6 @@ import type { VisTargetConfiguration } from "../../task/target-options";
 import type { OwnersEntry } from "./codeowners";
 
 /**
- * One user-declared customTypes entry. See `policy.customTypes.extraTypes`
- * for the full contract — this is just the row shape.
- */
-
-/**
  * A predicate used by the `scopedTasks` config block.
  * All listed constraints must match for the block to apply.
  */
@@ -24,6 +19,11 @@ export interface ScopedTasksMatch {
     /** Match projects tagged with any of these tags. */
     tags?: string[];
 }
+
+/**
+ * One user-declared customTypes entry. See `policy.customTypes.extraTypes`
+ * for the full contract — this is just the row shape.
+ */
 
 export interface ExtraCustomType {
     /**
