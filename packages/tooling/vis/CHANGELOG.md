@@ -1,3 +1,14 @@
+## @visulima/vis [6.1.0](https://github.com/visulima/vis/compare/@visulima/vis@6.0.1...@visulima/vis@6.1.0) (2026-10-17)
+
+### Features
+
+* **vis:** flag doubled vite and vitest, check devEngines pins ([a47185d](https://github.com/visulima/vis/commit/a47185d00a58d665abb38f7744145034fa5bc661))
+* **vis:** scaffold editor and agent files from init, opt out of agent files in create ([be5afeb](https://github.com/visulima/vis/commit/be5afebf0fd3fc9c7867477ab0cf7d0a7189e93b))
+
+### Tests
+
+* **vis:** cover GitLab, Bitbucket and self-hosted GitLab remote template forms ([8b832c9](https://github.com/visulima/vis/commit/8b832c995ab7bd04afa365625d87af7e511c554d)), closes [#ref](https://github.com/visulima/vis/issues/ref)
+
 ## @visulima/vis [6.0.1](https://github.com/visulima/vis/compare/@visulima/vis@6.0.0...@visulima/vis@6.0.1) (2026-10-16)
 
 ### Bug Fixes

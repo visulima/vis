@@ -8,9 +8,11 @@ import { join, relative } from "@visulima/path";
 import { DEFAULT_MIN_RELEASE_AGE_MINUTES, findVisConfigFile } from "../../config/config";
 import { ensureVisGitignore } from "../../io/gitignore";
 import { pail } from "../../io/logger";
+import { declaredVersion, readRootPackageJson } from "../../lint-fmt/detect";
 import { detectPm } from "../../pm/pm-runner";
 import type { PackageManagerName } from "../../security/security";
 import { scanUnapprovedBuildScripts, syncAllowBuildsToNativeConfig, syncMinimumReleaseAgeToNativeConfig } from "../../security/security";
+import { assertSupportedEditor, generateAiInstructions, generateVscodeConfig } from "../create/scaffold-files";
 import type { InitOptions } from "./index";
 
 /**
@@ -364,6 +366,18 @@ const execute = async ({ options, workspaceRoot: wsRoot }: Toolbox<Console, Init
     }
 
     const pm = detectPm(cwd);
+
+    // Scaffolding runs before the config check: `vis init --editor vscode` must still write
+    // editor files in a repo that already has a config.
+    assertSupportedEditor(options.editor);
+
+    if (options.editor === "vscode") {
+        generateVscodeConfig(cwd, declaredVersion(readRootPackageJson(cwd), "oxfmt") !== undefined);
+    }
+
+    if (options.agent) {
+        generateAiInstructions(cwd, pm.name, { existingProject: true });
+    }
 
     const existingConfig = findVisConfigFile(cwd);
 

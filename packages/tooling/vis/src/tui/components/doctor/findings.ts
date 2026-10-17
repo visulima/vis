@@ -68,7 +68,7 @@ export const flattenFindings = (results: DoctorResults): DoctorFinding[] => {
                 pkg,
                 section: "dependencies",
                 severity: "warn",
-                subtitle: `${String(pkg.versions.length)} versions installed`,
+                subtitle: pkg.hint ? `${String(pkg.versions.length)} versions installed — ${pkg.hint}` : `${String(pkg.versions.length)} versions installed`,
                 title: pkg.name,
             });
         }

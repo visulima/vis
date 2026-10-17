@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { bold, cyan, dim } from "@visulima/colorize";
-import { ensureDirSync, isAccessibleSync, readJsonSync, writeFileSync } from "@visulima/fs";
+import { isAccessibleSync } from "@visulima/fs";
 import { isAbsolute, join, relative, resolve, sep } from "@visulima/path";
 
 import { pail } from "../../io/logger";
@@ -23,104 +23,10 @@ import type { CreateCommandOptions } from "./index";
 import type { OrgChoice } from "./org-templates";
 import { isOrgInput, resolveOrgTemplate } from "./org-templates";
 import { runInteractivePrompts } from "./prompts";
+import { assertSupportedEditor, generateAiInstructions, generateVscodeConfig } from "./scaffold-files";
 import { executeTemplate } from "./templates";
 import type { TemplateConfig } from "./templates/types";
 import { canSafelyOverwrite, isValidPackageName, resolveTargetDir, toValidPackageName } from "./utils";
-
-/**
- * Create or merge `.vscode/settings.json` and `.vscode/extensions.json`
- * with vis defaults (oxc formatter, format-on-save).
- *
- * If files exist, existing values take precedence over defaults.
- * Creates the `.vscode` directory if missing.
- * @param projectDir Absolute path to the scaffolded project.
- */
-const generateVscodeConfig = (projectDir: string): void => {
-    const vscodeDir = join(projectDir, ".vscode");
-
-    ensureDirSync(vscodeDir);
-
-    const settingsPath = join(vscodeDir, "settings.json");
-    const defaultSettings = {
-        "editor.defaultFormatter": "oxc.oxc-vscode",
-        "editor.formatOnSave": true,
-    };
-
-    if (isAccessibleSync(settingsPath)) {
-        try {
-            const existing = readJsonSync(settingsPath) as Record<string, unknown>;
-
-            writeFileSync(settingsPath, `${JSON.stringify({ ...defaultSettings, ...existing }, null, 4)}\n`);
-            pail.success("Merged .vscode/settings.json");
-        } catch {
-            pail.warn("Could not merge .vscode/settings.json, skipping");
-        }
-    } else {
-        writeFileSync(settingsPath, `${JSON.stringify(defaultSettings, null, 4)}\n`);
-        pail.success("Created .vscode/settings.json");
-    }
-
-    const extensionsPath = join(vscodeDir, "extensions.json");
-    const defaultExtensions = { recommendations: ["oxc.oxc-vscode"] };
-
-    if (isAccessibleSync(extensionsPath)) {
-        try {
-            const existing = readJsonSync(extensionsPath) as { recommendations?: string[] };
-
-            writeFileSync(
-                extensionsPath,
-                `${JSON.stringify(
-                    {
-                        ...existing,
-                        recommendations: [...new Set([...(existing.recommendations || []), ...defaultExtensions.recommendations])],
-                    },
-                    null,
-                    4,
-                )}\n`,
-            );
-            pail.success("Merged .vscode/extensions.json");
-        } catch {
-            pail.warn("Could not merge .vscode/extensions.json, skipping");
-        }
-    } else {
-        writeFileSync(extensionsPath, `${JSON.stringify(defaultExtensions, null, 4)}\n`);
-        pail.success("Created .vscode/extensions.json");
-    }
-};
-
-const generateAiInstructions = (projectDir: string, pmName: string): void => {
-    const aiDir = join(projectDir, ".ai");
-
-    ensureDirSync(aiDir);
-
-    const instructionsPath = join(aiDir, "instructions");
-
-    // Skip if the template already provided AI instructions
-    if (isAccessibleSync(instructionsPath)) {
-        return;
-    }
-
-    const content = `# Project Instructions
-
-This project was scaffolded with vis create.
-
-## Development
-
-- Package manager: ${pmName}
-- Build: \`${pmName} run build\`
-- Test: \`${pmName} run test\`
-- Lint: \`${pmName} run lint\`
-
-## Conventions
-
-- Use TypeScript strict mode
-- ESM modules (\`"type": "module"\`)
-- Follow Angular-style conventional commits
-`;
-
-    writeFileSync(instructionsPath, content);
-    pail.success("Created .ai/instructions");
-};
 
 const initGitRepo = (projectDir: string): void => {
     const result = spawnSync("git", ["init"], {
@@ -306,6 +212,8 @@ const execute = async ({ argument, logger, options, rawUnknown, visConfig, works
     // Tracks whether the user already confirmed overwriting a non-empty directory
     let userConfirmedOverwrite = false;
 
+    assertSupportedEditor(options.editor);
+
     if (runsPrompts) {
         const answers = await runInteractivePrompts({
             cwd,
@@ -455,7 +363,7 @@ const execute = async ({ argument, logger, options, rawUnknown, visConfig, works
     }
 
     // AI instructions
-    if (isAccessibleSync(targetDir)) {
+    if (options.agent && isAccessibleSync(targetDir)) {
         generateAiInstructions(targetDir, pm.name);
     }
 

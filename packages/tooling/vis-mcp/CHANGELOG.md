@@ -1,3 +1,10 @@
+## @visulima/vis-mcp [3.0.2](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.1...@visulima/vis-mcp@3.0.2) (2026-10-17)
+
+
+### Dependencies
+
+* **@visulima/vis:** upgraded to 6.1.0
+
 ## @visulima/vis-mcp [3.0.1](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.0...@visulima/vis-mcp@3.0.1) (2026-10-16)
 
 ### Miscellaneous Chores

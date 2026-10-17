@@ -54,6 +54,7 @@ vis create --list
 | ------------------ | ------- | --------------------------------------------- |
 | `--list`           | `false` | Show available templates and config aliases   |
 | `--editor`         |         | Generate editor configs (`vscode`)            |
+| `--no-agent`       | `false` | Skip AI agent instructions in `.ai/`         |
 | `--git-init`       | `false` | Initialize a git repository after scaffolding |
 | `--no-interactive` | `false` | Skip interactive prompts                      |
 
@@ -138,7 +139,7 @@ When run without arguments in a TTY, an interactive wizard guides you through:
 After scaffolding, vis automatically:
 
 1. **Editor config** — Creates `.vscode/settings.json` and `extensions.json` (when `--editor=vscode`)
-2. **AI instructions** — Creates `.ai/instructions` (skipped if already provided by template)
+2. **AI instructions** — Creates `.ai/instructions` (skipped with `--no-agent`, or if the template already provided one)
 3. **Git init** — Runs `git init` (when `--git-init`, standalone projects only)
 4. **Install dependencies** — Runs the detected package manager's install command
 

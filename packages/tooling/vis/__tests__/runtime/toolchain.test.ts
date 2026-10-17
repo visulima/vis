@@ -694,6 +694,74 @@ describe("toolchain", () => {
             expect(parsed.packageManager).toBe("pnpm@10.32.1");
         });
 
+        it("should update the matching devEngines.packageManager entry and keep its onFail", () => {
+            expect.assertions(2);
+
+            const pkgPath = join(tmpDirectory, "package.json");
+
+            writeFileSync(pkgPath, JSON.stringify({ devEngines: { packageManager: { name: "pnpm", onFail: "error", version: "^9.0.0" } }, name: "demo" }));
+
+            writePackageManagerField(tmpDirectory, { source: "vis.config.ts", tool: "pnpm", version: "10.32.1" });
+
+            const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+
+            expect(parsed).not.toHaveProperty("packageManager");
+            expect(parsed.devEngines).toStrictEqual({ packageManager: { name: "pnpm", onFail: "error", version: "10.32.1" } });
+        });
+
+        it("should update the matching entry of a devEngines.packageManager array", () => {
+            expect.assertions(1);
+
+            const pkgPath = join(tmpDirectory, "package.json");
+
+            writeFileSync(
+                pkgPath,
+                JSON.stringify({ devEngines: { packageManager: [{ name: "yarn", version: "4.0.0" }, { name: "pnpm", version: "9.0.0" }] }, name: "demo" }),
+            );
+
+            writePackageManagerField(tmpDirectory, { source: "vis.config.ts", tool: "pnpm", version: "10.32.1" });
+
+            const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as { devEngines: { packageManager: unknown } };
+
+            expect(parsed.devEngines.packageManager).toStrictEqual([
+                { name: "yarn", version: "4.0.0" },
+                { name: "pnpm", version: "10.32.1" },
+            ]);
+        });
+
+        it("should write a top-level packageManager for yarn, which does not switch version from devEngines", () => {
+            expect.assertions(2);
+
+            const pkgPath = join(tmpDirectory, "package.json");
+
+            writeFileSync(pkgPath, JSON.stringify({ devEngines: { packageManager: { name: "yarn", version: "4.0.0" } }, name: "demo" }));
+
+            writePackageManagerField(tmpDirectory, { source: "vis.config.ts", tool: "yarn", version: "4.5.0" });
+
+            const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as { devEngines: { packageManager: { version: string } }; packageManager: string };
+
+            expect(parsed.packageManager).toBe("yarn@4.5.0");
+            expect(parsed.devEngines.packageManager.version).toBe("4.0.0");
+        });
+
+        it("should not add a top-level packageManager next to an existing one", () => {
+            expect.assertions(2);
+
+            const pkgPath = join(tmpDirectory, "package.json");
+
+            writeFileSync(
+                pkgPath,
+                JSON.stringify({ devEngines: { packageManager: { name: "pnpm", version: "9.0.0" } }, name: "demo", packageManager: "pnpm@9.0.0" }),
+            );
+
+            writePackageManagerField(tmpDirectory, { source: "vis.config.ts", tool: "pnpm", version: "10.32.1" });
+
+            const parsed = JSON.parse(readFileSync(pkgPath, "utf8")) as { devEngines: { packageManager: { version: string } }; packageManager: string };
+
+            expect(parsed.packageManager).toBe("pnpm@10.32.1");
+            expect(parsed.devEngines.packageManager.version).toBe("9.0.0");
+        });
+
         it("should refuse to write non-package-manager tools", () => {
             expect.assertions(2);
 

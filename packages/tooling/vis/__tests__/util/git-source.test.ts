@@ -22,6 +22,11 @@ describe(resolveGitSource, () => {
         ["https://git.sr.ht/~user/repo", "sourcehut:user/repo"],
         ["sourcehut:~user/repo", "sourcehut:user/repo"],
         ["git.sr.ht/~user/repo", "sourcehut:user/repo"],
+        ["gitlab.com/group/subgroup/repo.git#main", "gitlab:group/subgroup/repo#main"],
+        ["git@gitlab.com:group/sub/repo.git#main", "gitlab:group/sub/repo#main"],
+        ["https://gitlab.com/group/sub/repo/-/tree/v1/docs", "gitlab:group/sub/repo/docs#v1"],
+        ["bitbucket.org/team/repo", "bitbucket:team/repo"],
+        ["https://bitbucket.org/team/repo#dev", "bitbucket:team/repo#dev"],
     ])("rewrites %s to %s", (input, expected) => {
         expect.assertions(1);
 
