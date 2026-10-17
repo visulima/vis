@@ -1,11 +1,13 @@
 ---
 title: "vis test"
-description: "Run the workspace tests with Vitest, no test script required"
+description: "Run the package's test script, or Vitest when it has none"
 ---
 
 # vis test
 
-Runs the project's tests with [Vitest](https://vitest.dev). It needs no `test` script in `package.json` and no `vis.config.ts` entry: it finds the `vitest` install in the nearest `node_modules` (walking up from the current directory, so a hoisted install works from a workspace package) and runs it.
+Runs the project's tests. If the package has a `test` script in its `package.json`, `vis test` runs that script through the workspace's package manager, so the command your team already uses stays the source of truth. Otherwise it runs [Vitest](https://vitest.dev) directly, with no script or config entry needed: it finds the `vitest` install in the nearest `node_modules` (walking up from the current directory, so a hoisted install works from a workspace package).
+
+When the `test` script is used, `vis test` prints a warning first, so it is clear which runner ran. Remove the script to fall back to Vitest.
 
 Vitest is not bundled. Add it to your project first:
 
@@ -19,7 +21,9 @@ vis add -D vitest
 vis test [files…] [options]
 ```
 
-Positional arguments and any other flags are forwarded to Vitest unchanged.
+Positional arguments and any other flags are forwarded unchanged: to Vitest, or after `--` to the `test` script.
+
+`--watch` applies to Vitest only. Combining it with a `test` script is an error, so the flag is never dropped silently; run the script directly for watch mode.
 
 ## Examples
 
@@ -39,4 +43,4 @@ vis test -- --reporter=dot
 
 ## Exit codes
 
-The exit code is Vitest's: `0` when every test passes, non-zero otherwise.
+The exit code is that of the runner: `0` when every test passes, non-zero otherwise.

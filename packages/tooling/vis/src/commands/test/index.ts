@@ -15,7 +15,7 @@ const test = defineCommand({
         name: "files",
         type: String,
     },
-    description: "Run the workspace tests with Vitest, no test script required",
+    description: "Run the package's test script, or Vitest when it has none",
     examples: [
         ["vis test", "Run all tests once with Vitest"],
         ["vis test --watch", "Re-run tests on change"],
