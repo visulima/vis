@@ -14,6 +14,7 @@ import analyzeCommand from "./commands/analyze";
 import approveBuildsCommand from "./commands/approve-builds";
 import attestCommands from "./commands/attest";
 import auditCommand from "./commands/audit";
+import buildCommand from "./commands/build";
 import cacheCommands from "./commands/cache";
 import checkCommand from "./commands/check";
 import ciCommand from "./commands/ci";
@@ -23,6 +24,7 @@ import createCommand from "./commands/create";
 import dashboardCommand from "./commands/dashboard";
 import dedupeCommand from "./commands/dedupe";
 import depsCommand from "./commands/deps";
+import devCommand from "./commands/dev";
 import devcontainerCommand from "./commands/devcontainer";
 import dlxCommand from "./commands/dlx";
 import dockerCommands from "./commands/docker";
@@ -45,6 +47,7 @@ import listCommand from "./commands/list";
 import migrateCommands from "./commands/migrate";
 import optimizeCommand from "./commands/optimize";
 import pmCommand from "./commands/pm";
+import rebuildCommand from "./commands/rebuild";
 import releaseCommands from "./commands/release";
 import releaseRootCommand from "./commands/release/root-command";
 import removeCommand from "./commands/remove";
@@ -81,6 +84,8 @@ const registerCommands = (cli: Cli<Console>): void => {
 
     // Workspace commands
     cli.addCommand(runCommand);
+    cli.addCommand(devCommand);
+    cli.addCommand(buildCommand);
     cli.addCommand(ciCommand);
     cli.addCommand(graphCommand);
     cli.addCommand(actionGraphCommand);
@@ -127,6 +132,7 @@ const registerCommands = (cli: Cli<Console>): void => {
     cli.addCommand(execCommand);
     cli.addCommand(xCommand);
     cli.addCommand(pmCommand);
+    cli.addCommand(rebuildCommand);
 
     // Project & environment commands
     cli.addCommand(initCommand);

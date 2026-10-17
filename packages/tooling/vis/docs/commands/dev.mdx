@@ -1,0 +1,40 @@
+---
+title: "vis dev"
+description: "Start the dev server: the package's dev script, or the inferred Vite, Rsbuild, Rslib, or Rspack dev server"
+---
+
+# vis dev
+
+Starts the `dev` target. `vis dev` is `vis run dev`, so it uses the same target resolution, filters, and caching.
+
+A package's own `dev` script in `package.json` always wins. When a project has no `dev` script, vis infers one from its config file:
+
+- `vite.config.*` → `vite`
+- `rsbuild.config.*` → `rsbuild dev`
+- `rslib.config.*` → `rslib build --watch` (a watch build, since Rslib has no dev server)
+- `rspack.config.*` → `rspack serve`
+
+## Usage
+
+```bash
+vis dev [args…] [options]
+```
+
+Positional arguments and flags after `--` are passed to the `dev` target.
+
+## Examples
+
+```bash
+# Start the dev target across the workspace
+vis dev
+
+# Start only one package
+vis dev --filter @org/web
+
+# Forward flags to the dev server
+vis dev -- --port 3000
+```
+
+## Scope
+
+Without `--filter`, `vis dev` starts every project that has a `dev` target. In a large workspace, pass `--filter` to start one package.

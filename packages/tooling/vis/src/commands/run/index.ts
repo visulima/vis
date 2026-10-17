@@ -3,7 +3,7 @@ import { defineCommand } from "@visulima/cerebro";
 
 import { negatable } from "../../util/negatable-option";
 
-const runOptionDefinitions = {
+export const runOptionDefinitions = {
     filter: {
         alias: "F",
         description:
