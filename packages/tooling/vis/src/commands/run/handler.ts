@@ -8,10 +8,8 @@ import { cleanupLegacyTaskRunnerLayout } from "../../util/vis-paths";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
 import { renderLastRunSummary } from "./parse";
-import { resolveRunArguments } from "./run-arguments";
 import { createRunCleanup } from "./run-cleanup";
 import { printDryRunPlan } from "./run-dry-run";
-import { buildInitialTasks } from "./run-initial-tasks";
 import { createInteractiveSession, runInteractiveRerun, waitForInteractiveAction } from "./run-interactive";
 import { runStartupPreflights } from "./run-preflight";
 import { createRunRuntime } from "./run-runtime";
@@ -19,7 +17,8 @@ import { resolveRunSelection } from "./run-selection";
 import { wireRunServices } from "./run-services";
 import { runStaticMode } from "./run-static";
 import { logRegistryServiceHint } from "./run-summary";
-import { createRunTaskGraph, finalizeRunTaskGraph } from "./run-task-graph";
+import { finalizeRunTaskGraph } from "./run-task-graph";
+import { buildRunTasks } from "./run-tasks";
 import { resolveTaskCommand } from "./shell";
 import { resolveRetrySpawn } from "./task-env";
 
@@ -84,42 +83,26 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
     const { affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target } = selection;
 
-    const taskArguments = resolveRunArguments({ forwardedArgs, logger, projectsWithTarget, projectTargetIndex, target });
-
-    if (!taskArguments) {
-        return;
-    }
-
-    const initialSelection = buildInitialTasks({
+    const runTasks = buildRunTasks({
         affectedFiles,
+        config,
         forwardedArgs,
         logger,
         options,
+        projectGraph,
+        projectOptions,
         projectsWithTarget,
         projectTargetIndex,
         target,
-        taskArgumentEnvVars: taskArguments.env,
         workspace,
     });
 
-    if (!initialSelection) {
+    if (!runTasks) {
         return;
     }
 
-    const { persistentTasks } = initialSelection;
-    let { initialTasks } = initialSelection;
-
-    let taskGraph = createRunTaskGraph({
-        affectedFiles,
-        config,
-        initialTasks,
-        logger,
-        options,
-        persistentTasks,
-        projectGraph,
-        projectOptions,
-        workspace,
-    });
+    const { persistentTasks } = runTasks;
+    let { initialTasks, taskGraph } = runTasks;
 
     await runStartupPreflights({ config, logger, options, packageJsons, workspaceRoot });
 
