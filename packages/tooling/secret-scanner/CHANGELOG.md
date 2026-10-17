@@ -1,3 +1,9 @@
+## @visulima/secret-scanner [2.0.3](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.2...@visulima/secret-scanner@2.0.3) (2026-10-17)
+
+### Bug Fixes
+
+* **deps:** bump npm and rust dependencies ([#33](https://github.com/visulima/vis/issues/33)) ([bb0d78e](https://github.com/visulima/vis/commit/bb0d78e0f7d55608761a24c21e445bf9fff707ab))
+
 ## @visulima/secret-scanner [2.0.2](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.1...@visulima/secret-scanner@2.0.2) (2026-10-16)
 
 ### Bug Fixes
