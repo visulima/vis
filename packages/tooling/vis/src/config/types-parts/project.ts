@@ -1,13 +1,30 @@
 import type { ProjectConfiguration, TargetConfiguration } from "@visulima/task-runner";
 
 import type { VisTargetConfiguration } from "../../task/target-options";
-import type { ScopedTasksMatch } from "../types";
 import type { OwnersEntry } from "./codeowners";
 
 /**
  * One user-declared customTypes entry. See `policy.customTypes.extraTypes`
  * for the full contract — this is just the row shape.
  */
+
+/**
+ * A predicate used by the `scopedTasks` config block.
+ * All listed constraints must match for the block to apply.
+ */
+export interface ScopedTasksMatch {
+    /** Match on primary language. */
+    language?: string | string[];
+    /** Match on project layer. */
+    layer?: ProjectJson["layer"] | ProjectJson["layer"][];
+    /** Match on project type. */
+    projectType?: "application" | "library" | "service" | "tool";
+    /** Match on project stack. */
+    stack?: ProjectJson["stack"] | ProjectJson["stack"][];
+    /** Match projects tagged with any of these tags. */
+    tags?: string[];
+}
+
 export interface ExtraCustomType {
     /**
      * Required when `strategy === "string"`. The dep-cluster key the bare

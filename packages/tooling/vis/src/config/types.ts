@@ -11,24 +11,7 @@ import type { VisPlugin } from "../util/hooks";
 import type { CodeownersConfig } from "./types-parts/codeowners";
 import type { LintFmtAdapterOverride } from "./types-parts/lint";
 import type { PolicyName } from "./types-parts/policies";
-import type { ExtraCustomType, ProjectJson, ScopedTasksBlock } from "./types-parts/project";
-
-/**
- * A predicate used by {@link VisConfig.scopedTasks}.
- * All listed constraints must match for the block to apply.
- */
-export interface ScopedTasksMatch {
-    /** Match on primary language. */
-    language?: string | string[];
-    /** Match on project layer. */
-    layer?: ProjectJson["layer"] | ProjectJson["layer"][];
-    /** Match on project type. */
-    projectType?: "application" | "library" | "service" | "tool";
-    /** Match on project stack. */
-    stack?: ProjectJson["stack"] | ProjectJson["stack"][];
-    /** Match projects tagged with any of these tags. */
-    tags?: string[];
-}
+import type { ExtraCustomType, ScopedTasksBlock } from "./types-parts/project";
 
 export interface VisConfig {
     /**
@@ -2034,4 +2017,4 @@ export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types-pa
 export type { LintFmtAdapterOverride } from "./types-parts/lint";
 export type { NativeAuditExclusions, PolicyName } from "./types-parts/policies";
 export { POLICY_NAMES } from "./types-parts/policies";
-export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types-parts/project";
+export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, ScopedTasksMatch, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types-parts/project";
