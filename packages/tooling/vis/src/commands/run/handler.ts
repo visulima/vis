@@ -124,34 +124,9 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         serviceRunDir,
     } = services;
 
-    taskGraph = finalizeRunTaskGraph({ logger, options, projectOptions, taskGraph });
-
-    if (options.dryRun) {
-        printDryRunPlan({ config, logger, persistentTasks, taskGraph });
-
-        return;
-    }
-
-    const runtime = await createRunRuntime({
-        affectedFiles,
-        config,
-        currentOs,
-        initialTasks,
-        invocationCwd,
-        logger,
-        options,
-        persistentTasks,
-        projectsWithTarget,
-        serviceEnvByTaskId,
-        serviceResult,
-        target,
-        taskGraph,
-        visConfig,
-        workspaceRoot,
-    });
-
-    await runtime.hooks.callHook("run:before", { tasks: initialTasks, workspaceRoot });
-
+    // Arm before anything that can throw: services may already be booted by
+    // now, so a failure in finalizing, the dry run, the runtime hooks or the
+    // modes must still tear them down.
     const stopServicesOnExit = options.stopServices;
     const cleanup = createRunCleanup({
         ephemeralPidFiles,
@@ -166,6 +141,34 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     cleanup.install();
 
     try {
+        taskGraph = finalizeRunTaskGraph({ logger, options, projectOptions, taskGraph });
+
+        if (options.dryRun) {
+            printDryRunPlan({ config, logger, persistentTasks, taskGraph });
+
+            return;
+        }
+
+        const runtime = await createRunRuntime({
+            affectedFiles,
+            config,
+            currentOs,
+            initialTasks,
+            invocationCwd,
+            logger,
+            options,
+            persistentTasks,
+            projectsWithTarget,
+            serviceEnvByTaskId,
+            serviceResult,
+            target,
+            taskGraph,
+            visConfig,
+            workspaceRoot,
+        });
+
+        await runtime.hooks.callHook("run:before", { tasks: initialTasks, workspaceRoot });
+
         if (runtime.isTTY) {
             const { spawnContext } = runtime;
             const { dynamic, lifeCycle, stdinRegistry, store, taskExecutor } = createInteractiveSession({
