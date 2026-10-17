@@ -310,8 +310,8 @@
         "test:watch": "vitest"
     },
     "dependencies": {
-        "@visulima/ansi": "4.2.0",
-        "@visulima/colorize": "2.2.0",
+        "@visulima/ansi": "5.0.0",
+        "@visulima/colorize": "3.0.0",
         "@visulima/error": "6.1.0",
         "@visulima/string": "3.1.1",
         "scheduler": "catalog:prod",
@@ -334,8 +334,8 @@
         "@types/react": "catalog:types",
         "@types/react-reconciler": "catalog:types",
         "@types/scheduler": "catalog:types",
-        "@visulima/ansi": "4.2.0",
-        "@visulima/boxen": "5.0.0",
+        "@visulima/ansi": "5.0.0",
+        "@visulima/boxen": "6.0.0",
         "@visulima/error": "6.1.0",
         "@visulima/packem": "catalog:dev",
         "@visulima/string": "3.1.1",

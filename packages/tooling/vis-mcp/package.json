@@ -95,7 +95,7 @@
         "conventional-changelog-conventionalcommits": "catalog:dev",
         "esbuild": "catalog:build",
         "eslint": "catalog:lint",
-        "eslint-plugin-zod": "4.9.1",
+        "eslint-plugin-zod": "5.2.0",
         "fallow": "catalog:lint",
         "prettier": "catalog:lint",
         "publint": "catalog:dev",

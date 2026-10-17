@@ -146,7 +146,10 @@ pub fn ingest<P: AsRef<Path>>(
             }
             let size = entry.size();
             if size > MAX_ENTRY_BYTES {
-                return Err(IngestError::OversizedEntry { name: entry.name().to_string(), observed: size });
+                return Err(IngestError::OversizedEntry {
+                    name: String::from_utf8_lossy(entry.name_raw()).into_owned(),
+                    observed: size,
+                });
             }
             total_bytes = total_bytes.saturating_add(size);
             if total_bytes > MAX_TOTAL_BYTES {
@@ -156,8 +159,10 @@ pub fn ingest<P: AsRef<Path>>(
             let mut buf = Vec::with_capacity(size as usize);
             entry.read_to_end(&mut buf)?;
 
-            let advisory: osv::Advisory = serde_json::from_slice(&buf)
-                .map_err(|e| IngestError::BadJson { entry: entry.name().to_string(), message: e.to_string() })?;
+            let advisory: osv::Advisory = serde_json::from_slice(&buf).map_err(|e| IngestError::BadJson {
+                entry: String::from_utf8_lossy(entry.name_raw()).into_owned(),
+                message: e.to_string(),
+            })?;
 
             let (severity, cvss_score) = osv::normalized_severity(&advisory);
             let published = advisory.published.clone().unwrap_or_default();

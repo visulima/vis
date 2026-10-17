@@ -20,7 +20,7 @@ crate-type = [ "cdylib" ]
 # maps the dylib into the child, before `main` — that's where we adopt the
 # inherited reporting socket. Both are tiny, stable-Rust, no-nightly deps.
 libc = "0.2.178"
-ctor = "0.2"
+ctor = "1"
 
 # Keep the injected dylib small and dependency-free at runtime: no tokio, no
 # serialization crate. The wire format is a single datagram per access

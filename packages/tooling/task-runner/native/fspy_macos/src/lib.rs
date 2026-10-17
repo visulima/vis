@@ -81,7 +81,7 @@ unsafe impl Sync for Interpose {}
 /// Adopt the inherited socket the moment dyld maps us, before the target's
 /// `main`. Best-effort: any failure leaves `REPORT_FD == -1` (no tracking)
 /// rather than disturbing the tracked process.
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // SAFETY: `getenv` with a NUL-terminated key; we only read the returned C
     // string, never free it.
