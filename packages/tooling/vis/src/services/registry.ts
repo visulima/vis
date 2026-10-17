@@ -4,6 +4,7 @@ import { open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "no
 import { ensureDir, isAccessible, readJson } from "@visulima/fs";
 import { join } from "@visulima/path";
 
+import { isPidAlive } from "../util/process-alive";
 import { getVisWorkspaceDir } from "../util/vis-paths";
 import type { ServiceEntry } from "./types";
 
@@ -218,15 +219,7 @@ export const deleteEntry = async (workspaceRoot: string, id: string, entry?: Ser
  * Auto-attaching to a stranger is worse than missing a service we do
  * own — the operator can always restart it.
  */
-export const isAlive = (pid: number): boolean => {
-    try {
-        process.kill(pid, 0);
-
-        return true;
-    } catch {
-        return false;
-    }
-};
+export const isAlive = isPidAlive;
 
 /**
  * Result of `pruneDead`: which entry ids were pruned, plus the surviving

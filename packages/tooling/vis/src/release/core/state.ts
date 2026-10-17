@@ -21,6 +21,7 @@ import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { hostname, platform } from "node:os";
 import { dirname, join } from "node:path";
 
+import { isPidAlive } from "../../util/process-alive";
 import { VisReleaseError } from "../errors";
 import type { LockInfo, PlannedRelease, StateFile } from "../types";
 
@@ -124,18 +125,6 @@ export const filterPlanByState = (plan: ReadonlyArray<PlannedRelease>, state: St
 const STALE_LOCK_MS = 60 * 60 * 1000; // 1 hour
 
 export const lockFilePath = (cwd: string, changesDir: string): string => join(cwd, changesDir, ".lock");
-
-const isPidAlive = (pid: number): boolean => {
-    try {
-        // Signal 0 doesn't actually send a signal — it just checks whether
-        // the target PID exists and is reachable.
-        process.kill(pid, 0);
-
-        return true;
-    } catch {
-        return false;
-    }
-};
 
 /**
  * Try to acquire the process-level lock. Returns the path on success;

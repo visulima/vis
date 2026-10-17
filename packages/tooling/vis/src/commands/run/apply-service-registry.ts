@@ -2,13 +2,7 @@ import type { Task, TaskGraph } from "@visulima/task-runner";
 
 import { isAlive } from "../../services/registry";
 import type { ServiceEntry } from "../../services/types";
-import type { VisTargetOptions } from "../../task/target-options";
-
-const getVisOptions = (task: Task): VisTargetOptions | undefined => {
-    const options = task.overrides["visOptions"];
-
-    return options && typeof options === "object" ? options : undefined;
-};
+import { getVisOptions } from "../../task/target-options";
 
 export interface ServiceRegistryDiagnostic {
     /** Always actionable — explains how to satisfy the dep. */

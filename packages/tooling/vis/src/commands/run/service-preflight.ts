@@ -3,12 +3,11 @@ import { tmpdir } from "node:os";
 
 import { writeFileSync } from "@visulima/fs";
 import { join } from "@visulima/path";
-import type { Task, TaskGraph } from "@visulima/task-runner";
+import type { TaskGraph } from "@visulima/task-runner";
 import { buildEnhancedPath } from "@visulima/task-runner";
 
 import type { ServiceConfig } from "../../services/types";
-import type { VisTargetOptions } from "../../task/target-options";
-import { loadEnvFile, resolveTaskCwd } from "../../task/target-options";
+import { getVisOptions, loadEnvFile, resolveTaskCwd } from "../../task/target-options";
 
 /** Lifecycle mode for an auto-started service. */
 export type PreflightMode = "ephemeral" | "registry";
@@ -28,12 +27,6 @@ interface PreflightTaskExtraction {
     /** Service ids that were missing but lacked a `service:` config or command — diagnostic only. */
     skipped: { id: string; reason: string }[];
 }
-
-const getVisOptions = (task: Task): VisTargetOptions | undefined => {
-    const options = task.overrides["visOptions"];
-
-    return options && typeof options === "object" ? options : undefined;
-};
 
 /**
  * Walk `taskGraph.tasks[id]` for each missing service id and produce the

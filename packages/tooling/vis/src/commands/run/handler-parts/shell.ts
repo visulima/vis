@@ -2,32 +2,21 @@ import type { Task } from "@visulima/task-runner";
 
 import type { detectCurrentOs, VisTargetOptions } from "../../../task/target-options";
 import { resolveTargetShell } from "../../../task/target-options";
+import { shellQuote } from "../../../util/shell-quote";
 import { getTaskOptions } from "../task-env";
 
 /**
- * Wraps a string in single quotes for safe POSIX shell execution.
- * Used when we know the consumer is a POSIX shell — e.g. when forwarding
- * a value as the argument of `&lt;shell> -c &lt;value>` regardless of OS.
+ * Quotes one argument for the platform's default shell. On Windows a value
+ * with no special characters is passed bare; everything else, and every
+ * POSIX value, goes through the shared `shellQuote` (single quotes on POSIX,
+ * cmd.exe double quotes on Windows).
  */
-const singleQuoteEscape = (value: string): string => `'${value.replaceAll("'", String.raw`'\''`)}'`;
-
-/**
- * Wraps a string for safe shell execution by the platform's default
- * shell. POSIX uses single quotes (prevents `$VAR` / `\n` / backtick
- * expansion). Windows cmd.exe treats single quotes as literal characters
- * — they would survive into the child process's argv — so we use
- * double-quote escaping with inner `"` doubled per cmd.exe parsing rules.
- */
-const shellQuote = (value: string): string => {
-    if (process.platform === "win32") {
-        if (value.length > 0 && !/[\s"&|<>^()%!]/.test(value)) {
-            return value;
-        }
-
-        return `"${value.replaceAll("\"", "\"\"")}"`;
+const quoteArgument = (value: string): string => {
+    if (process.platform === "win32" && value.length > 0 && !/[\s"&|<>^()%!]/.test(value)) {
+        return value;
     }
 
-    return singleQuoteEscape(value);
+    return shellQuote(value);
 };
 
 /** Builds the command args list for `affectedFiles` forwarding. */
@@ -37,7 +26,7 @@ const buildAffectedFilesArgs = (command: string, affectedFiles: string[] | undef
     }
 
     if (mode === "args" || mode === "both") {
-        const quoted = affectedFiles.map((file) => shellQuote(file)).join(" ");
+        const quoted = affectedFiles.map((file) => quoteArgument(file)).join(" ");
 
         return `${command} ${quoted}`;
     }
@@ -61,7 +50,7 @@ const appendForwardedArgs = (command: string, task: Task): string => {
         return command;
     }
 
-    const quoted = (args as string[]).map((argument) => shellQuote(argument)).join(" ");
+    const quoted = (args as string[]).map((argument) => quoteArgument(argument)).join(" ");
 
     return `${command} ${quoted}`;
 };
@@ -96,9 +85,9 @@ export const resolveTaskCommand = (task: Task, affectedFiles: string[] | undefin
     // into a file lookup), so fall back to `-c`.
     const shellArgs = visOptions?.shellArgs;
     const shellInvokeArgs = shellArgs && shellArgs.length > 0 ? shellArgs.join(" ") : "-c";
-    // `shellQuote` is platform-aware (POSIX single-quote / cmd.exe
-    // double-quote) — `singleQuoteEscape` would leave literal `'…'` around
+    // `quoteArgument` is platform-aware (POSIX single-quote / cmd.exe
+    // double-quote) — a POSIX-only quote would leave literal `'…'` around
     // the command under cmd.exe, breaking e.g. `node -e` on Windows.
 
-    return customShell ? `${customShell} ${shellInvokeArgs} ${shellQuote(commandWithAffected)}` : commandWithAffected;
+    return customShell ? `${customShell} ${shellInvokeArgs} ${quoteArgument(commandWithAffected)}` : commandWithAffected;
 };

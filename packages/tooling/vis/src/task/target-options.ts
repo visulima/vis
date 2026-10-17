@@ -2,6 +2,7 @@ import { platform } from "node:os";
 
 import { isAccessibleSync, readFileSync } from "@visulima/fs";
 import { isAbsolute, join } from "@visulima/path";
+import type { Task } from "@visulima/task-runner";
 
 import type { TargetOsType, TargetPreset, TargetType, VisTargetConfiguration, VisTargetOptions } from "./types";
 
@@ -53,6 +54,13 @@ export const applyPreset = (target: VisTargetConfiguration): VisTargetConfigurat
 };
 
 /** Detects the current operating system as a {@link TargetOsType}. */
+/** The `visOptions` override a task carries, when it is an object. */
+export const getVisOptions = (task: Task): VisTargetOptions | undefined => {
+    const options = task.overrides["visOptions"];
+
+    return options && typeof options === "object" ? options : undefined;
+};
+
 export const detectCurrentOs = (): TargetOsType => {
     const p = platform();
 

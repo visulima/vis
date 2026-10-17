@@ -7,6 +7,7 @@ import type { VisTargetOptions } from "../../../task/target-options";
 import { detectCurrentOs, resolveTaskCwd } from "../../../task/target-options";
 import type { TaskStore } from "../../../tui/components/task-store";
 import type { StdinEntry } from "../../../tui/types";
+import { isPidAlive } from "../../../util/process-alive";
 import type { TaskSpawnContext } from "../task-env";
 import { resolveTaskSpawn } from "../task-env";
 import { MAX_OUTPUT_BYTES } from "./output";
@@ -297,19 +298,13 @@ export const runPersistentTasks = async (tasks: Task[], spawnContext: TaskSpawnC
 };
 
 /** Liveness check: true if the pid (or its group) is still in the process table. */
-const isPidAlive = (pid: number): boolean => {
+const isGroupAlive = (pid: number): boolean => {
     try {
         process.kill(-pid, 0);
 
         return true;
     } catch {
-        try {
-            process.kill(pid, 0);
-
-            return true;
-        } catch {
-            return false;
-        }
+        return isPidAlive(pid);
     }
 };
 
@@ -402,7 +397,7 @@ export const cleanupEphemeralServices = (params: { extraPids?: ReadonlyArray<num
             let allDead = true;
 
             for (const pid of pids) {
-                if (isPidAlive(pid)) {
+                if (isGroupAlive(pid)) {
                     allDead = false;
                     break;
                 }
@@ -416,7 +411,7 @@ export const cleanupEphemeralServices = (params: { extraPids?: ReadonlyArray<num
         }
 
         for (const pid of pids) {
-            if (!isPidAlive(pid)) {
+            if (!isGroupAlive(pid)) {
                 continue;
             }
 
