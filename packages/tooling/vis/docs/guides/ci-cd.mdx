@@ -64,10 +64,10 @@ jobs:
             - run: pnpm install --frozen-lockfile
 
             - name: Check for outdated dependencies
-              run: vis check --format json > deps-report.json
+              run: vis outdated --format json > deps-report.json
 
             - name: Security audit
-              run: vis check --security --exit-code
+              run: vis outdated --security --exit-code
 
             - name: Upload report
               if: always()
@@ -326,14 +326,14 @@ Use `--exit-code` to fail the pipeline when outdated dependencies are found:
 
 ```yaml
 - name: Enforce patch updates
-  run: vis check --target patch --exit-code
+  run: vis outdated --target patch --exit-code
 ```
 
 Use `--security` to catch vulnerabilities:
 
 ```yaml
 - name: Security gate
-  run: vis check --security --exit-code
+  run: vis outdated --security --exit-code
 ```
 
 ## Keeping Pipelines Pinned
@@ -445,6 +445,6 @@ Export JSON reports for monitoring dashboards or Slack notifications:
 ```yaml
 - name: Generate reports
   run: |
-      vis check --format json > check-results.json
-      vis check --security --format json > security-results.json
+      vis outdated --format json > check-results.json
+      vis outdated --security --format json > security-results.json
 ```
