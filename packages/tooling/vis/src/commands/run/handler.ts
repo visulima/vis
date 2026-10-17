@@ -42,14 +42,14 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     const serviceResult = await attachRegisteredServices(ctx);
 
     injectMissingServices(ctx, serviceResult);
-    finalizeServiceGraph(ctx, serviceResult);
 
-    // Arm before anything that can throw: services may already be booted by
-    // now, so a failure in shaping, the runtime hooks or the modes must still
-    // tear them down.
+    // Arm as soon as services may have booted: a failure in graph
+    // finalization, shaping, the runtime hooks or the modes must still tear
+    // them down.
     const cleanup = armRunCleanup(ctx);
 
     try {
+        finalizeServiceGraph(ctx, serviceResult);
         shapeTaskGraph(ctx);
 
         if (printDryRunPlan(ctx)) {
