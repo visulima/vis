@@ -8,7 +8,7 @@ const { runDev } = await import("../../../src/commands/dev/handler");
 const { runBuild } = await import("../../../src/commands/build/handler");
 
 // The target is already defined, so these tests exercise forwarding, not the offer.
-const DEFINED = { definesTarget: async () => true };
+const DEFINED = { projects: async () => [{ name: "app", root: "/tmp/app", targets: { build: {}, dev: {} } }] };
 
 const toolbox = (argument: string[] | undefined, rawUnknown: string[] | undefined, options: Record<string, unknown> = {}) =>
     ({ argument, logger: {}, options, rawUnknown }) as never;

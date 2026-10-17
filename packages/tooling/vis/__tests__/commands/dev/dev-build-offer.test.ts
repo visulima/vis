@@ -45,16 +45,7 @@ describe("vis dev and vis build with no target", () => {
     it("runs the dev target without prompting when a package already defines it", async () => {
         expect.assertions(2);
 
-        writeFileSync(join(root, "packages", "app", "package.json"), JSON.stringify({ name: "@fix/app", scripts: { dev: "node server.js" } }));
-        const cwd = process.cwd();
-
-        process.chdir(join(root, "packages", "app"));
-
-        try {
-            await runDev(toolbox(root), { definesTarget: async () => true, install: () => 0, isInteractive: () => false });
-        } finally {
-            process.chdir(cwd);
-        }
+        await runDev(toolbox(root), { install: () => 0, isInteractive: () => false, projects: async () => [{ name: "@fix/app", root: join(root, "packages", "app"), targets: { dev: {} } }] });
 
         expect(runExecute).toHaveBeenCalledTimes(1);
         expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["dev"]);
@@ -63,15 +54,9 @@ describe("vis dev and vis build with no target", () => {
     it("errors for build in a non-interactive run, and does not run the target", async () => {
         expect.assertions(2);
 
-        const cwd = process.cwd();
-
-        process.chdir(join(root, "packages", "app"));
-
-        try {
-            await expect(runBuild(toolbox(root), { definesTarget: async () => false, install: () => 0, isInteractive: () => false })).rejects.toThrow("vis add -D @rslib/core");
-        } finally {
-            process.chdir(cwd);
-        }
+        await expect(
+            runBuild(toolbox(root), { install: () => 0, isInteractive: () => false, projects: async () => [{ name: "@fix/app", root: join(root, "packages", "app"), targets: undefined }] }),
+        ).rejects.toThrow("vis add -D @rslib/core");
 
         expect(runExecute).not.toHaveBeenCalled();
     });

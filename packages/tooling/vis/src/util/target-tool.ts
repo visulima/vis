@@ -3,13 +3,13 @@
  *
  * When no project defines the target, by script or by inference, vis asks which
  * tool to use. The answer is the consent: it installs the tool with `vis add -D`
- * into the nearest package and adds a matching script to that package.json. The
- * script and config file are what make the choice stick: the script runs the tool,
- * and the config file lets inference find the target on later runs.
+ * into the chosen project and adds a matching script to its package.json. The
+ * script and config file are what make the choice stick: the script runs the
+ * tool, and the config lets inference find the target on later runs.
  */
 
 import type { CerebroFs } from "@visulima/cerebro";
-import { dirname, join, relative } from "@visulima/path";
+import { join, relative } from "@visulima/path";
 
 import { discoverWorkspace, loadVisTaskConfigsForWorkspace } from "../config/workspace";
 import { VisUserError } from "../errors/vis-user-error";
@@ -28,9 +28,18 @@ export interface TargetToolChoice {
     script: string;
 }
 
+/** A workspace project as far as this flow needs it. */
+export interface WorkspaceProject {
+    name: string;
+    /** Absolute directory of the project. */
+    root: string;
+    targets: Record<string, unknown> | undefined;
+}
+
 export interface TargetToolParams {
     choices: ReadonlyArray<TargetToolChoice>;
-    cwd: string;
+    /** `--filter` selectors from the command line. A single exact project name picks where to add the script. */
+    filter?: ReadonlyArray<string>;
     fs: CerebroFs;
     logger: Pick<Console, "info">;
     target: "build" | "dev";
@@ -39,42 +48,47 @@ export interface TargetToolParams {
 }
 
 export interface TargetToolDeps extends ChooseToolDeps {
-    /** Overrides the workspace check. Defaults to discovering the workspace. */
-    definesTarget?: (root: string, visConfig: TargetToolParams["visConfig"], target: string) => Promise<boolean>;
     /** Installs each package. Defaults to `vis add -D`. */
     install?: Installer;
+    /** Lists the workspace projects. Defaults to discovering the workspace. */
+    projects?: (root: string, visConfig: TargetToolParams["visConfig"]) => Promise<ReadonlyArray<WorkspaceProject>>;
 }
 
-/** Whether any project in the workspace already defines `target`, by script or by inference. */
-export const workspaceDefinesTarget = async (root: string, visConfig: TargetToolParams["visConfig"], target: string): Promise<boolean> => {
+/** Every project in the workspace, with its targets. */
+export const discoverProjects = async (root: string, visConfig: TargetToolParams["visConfig"]): Promise<ReadonlyArray<WorkspaceProject>> => {
     const taskConfigs = await loadVisTaskConfigsForWorkspace(root, visConfig);
     const { workspace } = discoverWorkspace(root, visConfig, taskConfigs);
 
-    return Object.values(workspace.projects).some((project) => project.targets?.[target] !== undefined);
+    return Object.entries(workspace.projects).map(([name, project]) => {
+        return {
+            name,
+            root: project.root,
+            targets: project.targets,
+        };
+    });
 };
 
-/** The nearest package directory at or below the workspace root, or `undefined` at the root itself. */
-const nearestPackageDirectory = async (cwd: string, root: string, fs: CerebroFs): Promise<string | undefined> => {
-    let directory = cwd;
+/**
+ * Pick the project the script goes into. `--filter` with one exact project name
+ * wins. Otherwise the workspace must have exactly one project. Anything else is
+ * ambiguous, so the user is asked to say which one.
+ */
+const chooseProject = (projects: ReadonlyArray<WorkspaceProject>, filter: ReadonlyArray<string>, target: string): WorkspaceProject => {
+    if (filter.length > 0) {
+        const matches = projects.filter((project) => filter.includes(project.name));
 
-    for (;;) {
-        // The root's package.json belongs to the workspace, so the script is never added there.
-        if (directory === root) {
-            return undefined;
+        if (matches.length === 1) {
+            return matches[0]!;
         }
 
-        if (await pathExists(fs, join(directory, "package.json"))) {
-            return directory;
-        }
-
-        const parent = dirname(directory);
-
-        if (parent === directory) {
-            return undefined;
-        }
-
-        directory = parent;
+        throw new VisUserError(`vis ${target}: --filter ${filter.join(", ")} does not match exactly one project. Pass the package name as it appears in its package.json.`);
     }
+
+    if (projects.length === 1) {
+        return projects[0]!;
+    }
+
+    throw new VisUserError(`vis ${target}: no project defines a "${target}" target, and the workspace has ${String(projects.length)} projects. Pass --filter <package> to choose where to add it.`);
 };
 
 /** Adds `scripts[name] = command`, keeping the file's indentation. */
@@ -92,27 +106,21 @@ const addScript = async (fs: CerebroFs, file: string, name: string, command: str
 /**
  * Make sure the workspace can run `target`. Returns `true` when the caller should
  * run it now, and `false` when an install failed (the exit code is already set).
- * Throws when there is nowhere to add the script, or when the user cancels.
+ * Throws when no project can take the script, or when the user cancels.
  */
 export const offerTargetTool = async (params: TargetToolParams, deps: TargetToolDeps = {}): Promise<boolean> => {
-    const { cwd, fs, logger, target, visConfig, workspaceRoot } = params;
+    const { choices, fs, logger, target, visConfig, workspaceRoot } = params;
+    const projects = await (deps.projects ?? discoverProjects)(workspaceRoot, visConfig);
 
-    const definesTarget = deps.definesTarget ?? workspaceDefinesTarget;
-
-    if (await definesTarget(workspaceRoot, visConfig, target)) {
+    if (projects.some((project) => project.targets?.[target] !== undefined)) {
         return true;
     }
 
-    const packageDirectory = await nearestPackageDirectory(cwd, workspaceRoot, fs);
-
-    if (packageDirectory === undefined) {
-        throw new VisUserError(`vis ${target}: no package to add a "${target}" script to. Run it from inside a package, or pass --filter to pick one.`);
-    }
-
-    const where = relative(workspaceRoot, join(packageDirectory, "package.json")) || "package.json";
+    const project = chooseProject(projects, params.filter ?? [], target);
+    const where = relative(workspaceRoot, join(project.root, "package.json")) || "package.json";
     const choice = await chooseTool(
         `No "${target}" target is configured. Pick a tool: vis will install it and add a "${target}" script to ${where}.`,
-        params.choices.map((option) => {
+        choices.map((option) => {
             return {
                 hint: `vis add -D ${option.packages.join(" ")}, then "${target}": "${option.script}"`,
                 label: option.label,
@@ -126,14 +134,14 @@ export const offerTargetTool = async (params: TargetToolParams, deps: TargetTool
         throw new VisUserError(`No ${target} tool selected. Add a "${target}" script to your package.json, or install one of the tools listed above.`);
     }
 
-    const picked = params.choices.find((option) => option.label === choice.value);
+    const picked = choices.find((option) => option.label === choice.value);
 
     if (picked === undefined) {
         throw new VisUserError(`Unknown ${target} tool: ${choice.value}.`);
     }
 
     for (const packageName of picked.packages) {
-        const code = installDevDependency(packageName, packageDirectory, logger, deps.install);
+        const code = installDevDependency(packageName, project.root, logger, deps.install);
 
         if (code !== 0) {
             process.exitCode = code;
@@ -142,11 +150,11 @@ export const offerTargetTool = async (params: TargetToolParams, deps: TargetTool
         }
     }
 
-    await addScript(fs, join(packageDirectory, "package.json"), target, picked.script);
+    await addScript(fs, join(project.root, "package.json"), target, picked.script);
     logger.info(`Added "${target}": "${picked.script}" to ${where}.`);
 
-    if (picked.config !== undefined && !(await pathExists(fs, join(packageDirectory, picked.config.file)))) {
-        await fs.writeFile(join(packageDirectory, picked.config.file), picked.config.contents, "utf8");
+    if (picked.config !== undefined && !(await pathExists(fs, join(project.root, picked.config.file)))) {
+        await fs.writeFile(join(project.root, picked.config.file), picked.config.contents, "utf8");
         logger.info(`Added ${picked.config.file}.`);
     }
 

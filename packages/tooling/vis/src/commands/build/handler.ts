@@ -8,19 +8,19 @@ import type { BuildOptions } from "./index";
 /** Bundlers vis can set up when no project defines a `build` target. */
 export const BUILD_CHOICES: ReadonlyArray<TargetToolChoice> = [
     {
-        config: { contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.ts" },
+        config: { contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.mts" },
         label: "Vite",
         packages: ["vite"],
         script: "vite build",
     },
     {
-        config: { contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.ts" },
+        config: { contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.mts" },
         label: "Rsbuild",
         packages: ["@rsbuild/core"],
         script: "rsbuild build",
     },
     {
-        config: { contents: "import { defineConfig } from \"@rslib/core\";\n\nexport default defineConfig({ lib: [{ format: \"esm\" }] });\n", file: "rslib.config.ts" },
+        config: { contents: "import { defineConfig } from \"@rslib/core\";\n\nexport default defineConfig({ lib: [{ format: \"esm\" }] });\n", file: "rslib.config.mts" },
         label: "Rslib",
         packages: ["@rslib/core"],
         script: "rslib build",
@@ -35,9 +35,9 @@ export const BUILD_CHOICES: ReadonlyArray<TargetToolChoice> = [
 
 /** Offers a bundler when none is configured, then runs the `build` target like `vis run build`. */
 export const runBuild = async (toolbox: Toolbox<Console, BuildOptions>, deps: TargetToolDeps = {}): Promise<void> => {
-    const { argument, fs, logger, rawUnknown, visConfig, workspaceRoot } = toolbox;
+    const { argument, fs, logger, options, rawUnknown, visConfig, workspaceRoot } = toolbox;
     const ready = await offerTargetTool(
-        { choices: BUILD_CHOICES, cwd: process.cwd(), fs, logger, target: "build", visConfig, workspaceRoot: workspaceRoot ?? process.cwd() },
+        { choices: BUILD_CHOICES, filter: options.filter, fs, logger, target: "build", visConfig, workspaceRoot: workspaceRoot ?? process.cwd() },
         deps,
     );
 
