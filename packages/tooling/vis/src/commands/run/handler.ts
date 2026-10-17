@@ -1,6 +1,6 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
-import type { ChildEnvOptions, LogMode, OutputSpec, ProcessEvent, TargetConfiguration, Task, TaskResults, TaskRunnerOptions, TaskTarget } from "@visulima/task-runner";
-import { CompositeLifeCycle, createLogReporter, createTaskGraph, defaultTaskRunner, expandTokensInString, generateRunSummary, parsePartition, pickChildParentEnv, reverseTaskGraph, runConcurrently, splitCompoundTasks, TaskScheduler, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
+import type { ChildEnvOptions, LogMode, ProcessEvent, Task, TaskResults, TaskRunnerOptions } from "@visulima/task-runner";
+import { CompositeLifeCycle, createLogReporter, defaultTaskRunner, generateRunSummary, pickChildParentEnv, reverseTaskGraph, runConcurrently, splitCompoundTasks, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
 import isInCi from "is-in-ci";
 
 import { applyBranchScope, resolveSharedCacheDirectory } from "../../cache/cache-directory";
@@ -12,10 +12,7 @@ import { resolveCommandRuntime } from "../../runtime/command-runtime";
 import { runReadiness } from "../../services/readiness";
 import { readAllEntries } from "../../services/registry";
 import type { ServiceEntry } from "../../services/types";
-import { describeMisplacedTargetKeys, findMisplacedTargetKeys } from "../../task/misplaced-options";
-import { resolveSkipCachePatterns } from "../../task/skip-cache";
 import { checkStrictEnv, formatStrictEnvError } from "../../task/strict-env";
-import type { VisTargetConfiguration, VisTargetOptions } from "../../task/target-options";
 import { detectCurrentOs, resolveTargetShell } from "../../task/target-options";
 import { ServiceDockStore } from "../../tui/components/service-dock/service-dock-store";
 import { createDynamicOutputRenderer } from "../../tui/dynamic-life-cycle";
@@ -32,21 +29,23 @@ import type { MutexPool } from "./executor";
 import { createConcurrentExecutor, createRetryBudget } from "./executor";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
-import { parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./parse";
+import { parseEnvConcurrency, renderLastRunSummary } from "./parse";
 import { runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
+import { resolveRunArguments } from "./run-arguments";
 import { createRunCleanup } from "./run-cleanup";
 import { printDryRunPlan } from "./run-dry-run";
+import { buildInitialTasks } from "./run-initial-tasks";
 import { runStartupPreflights } from "./run-preflight";
 import { applyRemoteCacheConfig } from "./run-remote-cache";
 import { enforceRunConstraints, narrowProjectSelection, narrowToAffectedProjects, pickRunTarget, validateAffectedOnlyFlags } from "./run-selection";
 import { logRegistryServiceHint, reportRunOutcome } from "./run-summary";
 import { selectProjectsWithTarget } from "./run-target-projects";
+import { createRunTaskGraph } from "./run-task-graph";
 import type { ServiceBridgeEntry } from "./service-event-bridge";
 import { ServiceEventBridge } from "./service-event-bridge";
 import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "./service-preflight";
-import { FORWARDED_ARGS_KEY, resolveTaskCommand } from "./shell";
-import { resolveTaskArguments } from "./task-arguments";
-import { AFFECTED_FILES_ENV, createTaskSpawnContext, effectiveChildEnvPolicy, getTaskOptions, resolveRetrySpawn, resolveTaskSpawn, TASK_ARG_ENV_KEY } from "./task-env";
+import { resolveTaskCommand } from "./shell";
+import { AFFECTED_FILES_ENV, createTaskSpawnContext, effectiveChildEnvPolicy, getTaskOptions, resolveRetrySpawn, resolveTaskSpawn } from "./task-env";
 
 const execute = async ({ argument, logger, options, visConfig, workspaceRoot: wsRoot }: Toolbox<Console, RunOptions>): Promise<void> => {
     if (!wsRoot) {
@@ -155,285 +154,42 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
     const { projectsWithTarget, projectTargetIndex } = targetSelection;
 
-    const ptyFlag = options.pty;
+    const taskArguments = resolveRunArguments({ forwardedArgs, logger, projectsWithTarget, projectTargetIndex, target });
 
-    // First-class task arguments: validate the forwarded args against the
-    // invoked target's declared schema, surface per-task `--help`, and expose
-    // validated values to the command as VIS_ARG_* env vars. See
-    // `./task-arguments`. Because the same args + VIS_ARG_* reach every
-    // selected project, all of them must agree on the contract — fail fast if
-    // two projects expose this target with different `arguments` schemas
-    // rather than validate one project's invocation against another's.
-    const schemasByProject = projectsWithTarget
-        .map((projectName) => {
-            return { project: projectName, schema: projectTargetIndex.get(projectName)?.arguments };
-        })
-        .filter(
-            (entry): entry is { project: string; schema: NonNullable<VisTargetConfiguration["arguments"]> } =>
-                Array.isArray(entry.schema) && entry.schema.length > 0,
-        );
-
-    const distinctSchemas = new Map<string, string[]>();
-
-    for (const { project, schema } of schemasByProject) {
-        const key = JSON.stringify(schema);
-        const projects = distinctSchemas.get(key) ?? [];
-
-        projects.push(project);
-        distinctSchemas.set(key, projects);
-    }
-
-    if (distinctSchemas.size > 1) {
-        const groups = [...distinctSchemas.values()].map((projects) => projects.join(", ")).join(" | ");
-
-        throw new Error(
-            `Target "${target}" declares conflicting \`arguments\` schemas across projects (${groups}). `
-            + `Run a single project (e.g. \`vis run ${schemasByProject[0]?.project}:${target}\` or --projects=<name>) so the argument contract is unambiguous.`,
-        );
-    }
-
-    const argumentSchema = schemasByProject[0]?.schema;
-    const argumentDescription = projectTargetIndex.get(schemasByProject[0]?.project ?? (projectsWithTarget[0] as string))?.description;
-    const argumentResolution = resolveTaskArguments(target, argumentDescription, argumentSchema, forwardedArgs);
-
-    if (argumentResolution.kind === "help") {
-        logger.info(argumentResolution.text);
-
+    if (!taskArguments) {
         return;
     }
 
-    if (argumentResolution.kind === "invalid") {
-        logger.info(`Invalid arguments for "${target}":`);
-
-        for (const message of argumentResolution.errors) {
-            logger.info(`  ✖ ${message}`);
-        }
-
-        logger.info("");
-        logger.info(argumentResolution.help);
-
-        throw new Error(`Invalid arguments for target "${target}"`);
-    }
-
-    const taskArgumentEnvVars = argumentResolution.env;
-
-    // `--hash-mode` overrides how the directly-run target is hashed for
-    // this run; when unset, the target's configured `hashMode` (if any)
-    // still applies. Validated early so a bad value fails before any task
-    // is scheduled. Dependency tasks keep their own configured hashMode.
-    const hashModeOverride = parseHashMode(options.hashMode);
-
-    let initialTasks: Task[] = projectsWithTarget.map((projectName) => {
-        const project = workspace.projects[projectName];
-        const visTarget = projectTargetIndex.get(projectName)!;
-        const taskTarget: TaskTarget = { project: projectName, target };
-        const taskId = `${projectName}:${target}`;
-        // The --pty flag flips all tasks into PTY mode; per-target config
-        // still wins when the target explicitly opts out.
-        const mergedOptions: VisTargetOptions | undefined = ptyFlag ? { ...visTarget.options, pty: visTarget.options?.pty ?? true } : visTarget.options;
-
-        // Expand `${affected.files}` / `${changed_files | flag '...'}`
-        // tokens here so the resolved paths land in `overrides.command`
-        // before task-runner's hasher reads it. Hashing the raw form
-        // would let two runs with different affected-file sets but the
-        // same workspace file hashes collide on the cache key — the
-        // executor would replay a stale result that "linted" a different
-        // subset. Persistent tasks and the watch-retry path also read
-        // `overrides.command` directly, so doing this once at build time
-        // keeps every consumer in sync.
-        const expandedCommand = visTarget.command ? expandTokensInString(visTarget.command, { affectedFiles, projectRoot: project?.root }) : visTarget.command;
-
-        // Expand `{projectRoot}`/`{projectName}` tokens in outputs (string
-        // entries only; `{ auto: true }` passes through). Unexpanded, the
-        // task-runner treats `{projectRoot}/dist` as a literal glob whose braces
-        // match nothing, so output caching captures nothing. An empty project
-        // root maps to `.` so the path stays a workspace-relative `./dist`
-        // instead of an escaping `/dist`. Idempotent if already expanded.
-        const outputsProjectRoot = project?.root && project.root.length > 0 ? project.root : ".";
-        // OutputSpec is a `string | { auto: true }` union, so the two
-        // branches legitimately return different runtime shapes — the
-        // `{ auto: true }` sentinel passes through, strings get expanded.
-        // eslint-disable-next-line sonarjs/function-return-type -- OutputSpec union; non-string sentinel passes through, strings are expanded
-        const expandedOutputs = (visTarget.outputs ?? []).map((output): OutputSpec => {
-            if (typeof output !== "string") {
-                return output;
-            }
-
-            return output.replaceAll("{projectRoot}", outputsProjectRoot).replaceAll("{projectName}", projectName);
-        });
-
-        const misplacedKeys = findMisplacedTargetKeys(visTarget.options);
-
-        if (misplacedKeys.length > 0) {
-            logger.warn(describeMisplacedTargetKeys(taskId, misplacedKeys));
-        }
-
-        return {
-            cache: visTarget.cache,
-            // Mirrors the task-runner graph builder. Without it a traced target
-            // that declares inputs is treated as declaring none, so the declared
-            // fallback never runs for the directly-run target.
-            declaresInputs: visTarget.inputs !== undefined,
-            fingerprintEnv: visTarget.fingerprintEnv,
-            hashMode: hashModeOverride ?? visTarget.hashMode,
-            id: taskId,
-            outputs: expandedOutputs,
-            overrides: {
-                command: expandedCommand,
-                ...(forwardedArgs.length > 0 ? { [FORWARDED_ARGS_KEY]: forwardedArgs } : {}),
-                ...(Object.keys(taskArgumentEnvVars).length > 0 ? { [TASK_ARG_ENV_KEY]: taskArgumentEnvVars } : {}),
-                ...(mergedOptions ? { visOptions: mergedOptions } : {}),
-            },
-            parallelism: visTarget.parallelism,
-            projectRoot: project?.root,
-            splitCompound: visTarget.splitCompound,
-            target: taskTarget,
-            untrackedEnv: visTarget.untrackedEnv,
-        };
-    });
-
-    const persistentTasks: Task[] = [];
-    const regularTasks: Task[] = [];
-
-    for (const task of initialTasks) {
-        const opts = getTaskOptions(task);
-
-        if (opts?.persistent) {
-            task.cache = false;
-            persistentTasks.push(task);
-        } else {
-            regularTasks.push(task);
-        }
-    }
-
-    initialTasks = regularTasks;
-
-    const partition = parsePartition(options.partition);
-
-    if (partition) {
-        initialTasks = TaskScheduler.partitionTasks(initialTasks, partition);
-
-        logger.info(`Partition ${partition.index}/${partition.total}: running ${initialTasks.length} task(s)`);
-
-        if (initialTasks.length === 0) {
-            logger.info("No tasks assigned to this partition.");
-
-            return;
-        }
-    }
-
-    // User-requested task ids (post-partition), so the dependency-hydration
-    // pass below can tell a `dependsOn`-added task apart from one the user
-    // asked for directly and only warn about missing commands on the former.
-    const requestedTaskIds = new Set([...initialTasks, ...persistentTasks].map((task) => task.id));
-
-    // Include persistent tasks in the graph so their `dependsOn` chain
-    // (especially service deps like `web:serve → api:db`) is walked by
-    // `applyServiceRegistry`. Without this, persistent tasks are split
-    // out before graph construction and their service deps go undiscovered,
-    // so preflight never auto-starts them. The persistent task ids are
-    // stripped from the graph again after preflight injection so the
-    // regular runner doesn't execute them — they run via `runPersistentTasks`.
-    let taskGraph = createTaskGraph([...initialTasks, ...persistentTasks], {
-        onCycleBroken: (cycle) => {
-            // A dependency cycle that runs only through devDependency edges
-            // is tolerated (pnpm does the same) — we break it and warn rather
-            // than deadlocking. Cycles with a real (static) edge stay fatal.
-            logger.warn(`Ignoring dev-only dependency cycle (build order is ambiguous): ${cycle.join(" → ")}`);
-        },
-        onUnmatchedProjectSelector: (selector) => {
-            // An unmatched `dependsOn.projects` entry produces no edge, so
-            // the declared ordering just isn't there. Silence made a typo
-            // and a working config indistinguishable.
-            logger.warn(`dependsOn.projects entry "${selector}" matched no project — that dependency edge was not created.`);
-        },
-        projectGraph,
-        targetDefaults: config.tasks as unknown as Record<string, Partial<TargetConfiguration>>,
+    const initialSelection = buildInitialTasks({
+        affectedFiles,
+        forwardedArgs,
+        logger,
+        options,
+        projectsWithTarget,
+        projectTargetIndex,
+        target,
+        taskArgumentEnvVars: taskArguments.env,
         workspace,
     });
 
-    // task-runner's createTaskGraph copies overrides only from the
-    // user-invoked `initialTasks`, so dep tasks added via `dependsOn`
-    // arrive without `visOptions` and without `command`. That hides
-    // every vis-specific option on dep tasks — most importantly
-    // `options.service`, which applyServiceRegistry needs to detect a
-    // service dependency it should auto-attach to — and leaves the
-    // service-preflight injector with no command to wrap. Re-hydrate
-    // both fields for every task in the graph from `projectOptions`
-    // so dep tasks carry the same target metadata that user-invoked
-    // tasks already carry.
-    for (const [taskId, task] of Object.entries(taskGraph.tasks)) {
-        const projectName = task.target.project;
-        const targetName = task.target.target;
-        const visTarget = projectOptions.get(projectName)?.[targetName];
-
-        if (!visTarget) {
-            // A `dependsOn`-added dependency that resolves to a target with
-            // no configuration anywhere (e.g. `dependsOn: ["codegen"]` but
-            // the project has no `codegen` script/target). task-runner keeps
-            // it in the graph and the executor runs it as a silent 0-exit
-            // no-op, so the missing prerequisite vanishes instead of erroring
-            // — the trap that makes such gaps CI-only and hard to find. Warn
-            // so the misconfiguration is visible. Tasks the user invoked
-            // directly always carry config, so this only fires for deps.
-            if (!requestedTaskIds.has(taskId)) {
-                logger.warn(`${targetName} required via dependsOn but no command is configured for ${projectName} — skipping (no-op).`);
-            }
-
-            continue;
-        }
-
-        const project = workspace.projects[projectName];
-        let mutated = false;
-        const nextOverrides = { ...task.overrides };
-
-        if (nextOverrides["visOptions"] === undefined && visTarget.options) {
-            nextOverrides["visOptions"] = visTarget.options;
-            mutated = true;
-        }
-
-        if (nextOverrides["command"] === undefined && visTarget.command) {
-            nextOverrides["command"] = expandTokensInString(visTarget.command, { affectedFiles, projectRoot: project?.root });
-            mutated = true;
-        }
-
-        if (mutated) {
-            task.overrides = nextOverrides;
-            taskGraph.tasks[taskId] = task;
-        }
+    if (!initialSelection) {
+        return;
     }
 
-    // Per-task cache bypass via --skip-cache=<patterns>. Unlike the
-    // global --no-cache (which drops the runner's `skipNxCache` switch
-    // and bypasses cache for every task), this only flips
-    // `task.cache = false` on tasks whose ID matches a user-supplied
-    // pattern. The dry-run plan printer already surfaces this as
-    // `(no-cache)` next to the matched task IDs. We skip the work
-    // entirely when --no-cache is set since the runner-level switch
-    // already disables caching for the whole run.
-    if (typeof options.skipCache === "string" && options.skipCache.trim() !== "") {
-        if (options.cache) {
-            const skipResolution = resolveSkipCachePatterns(options.skipCache, workspace, Object.keys(taskGraph.tasks));
+    const { persistentTasks } = initialSelection;
+    let { initialTasks } = initialSelection;
 
-            for (const id of skipResolution.skipTaskIds) {
-                const task = taskGraph.tasks[id];
-
-                if (task !== undefined) {
-                    task.cache = false;
-                }
-            }
-
-            if (skipResolution.unmatchedPatterns.length > 0) {
-                logger.warn(`--skip-cache: no tasks matched ${skipResolution.unmatchedPatterns.map((p) => `"${p}"`).join(", ")}`);
-            }
-
-            if (skipResolution.skipTaskIds.size > 0) {
-                logger.debug?.(`--skip-cache: bypassing cache for ${String(skipResolution.skipTaskIds.size)} task(s)`);
-            }
-        } else {
-            logger.debug?.("--skip-cache ignored: --no-cache already disables caching for the whole run");
-        }
-    }
+    let taskGraph = createRunTaskGraph({
+        affectedFiles,
+        config,
+        initialTasks,
+        logger,
+        options,
+        persistentTasks,
+        projectGraph,
+        projectOptions,
+        workspace,
+    });
 
     await runStartupPreflights({ config, logger, options, packageJsons, workspaceRoot });
 
