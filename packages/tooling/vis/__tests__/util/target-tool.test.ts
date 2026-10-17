@@ -10,7 +10,7 @@ import type { TargetToolChoice } from "../../src/util/target-tool";
 import { offerTargetTool } from "../../src/util/target-tool";
 
 const CHOICES: ReadonlyArray<TargetToolChoice> = [
-    { label: "Vite", packages: ["vite"], script: "vite" },
+    { config: { contents: "export default {};\n", file: "vite.config.ts" }, label: "Vite", packages: ["vite"], script: "vite" },
     { label: "Rspack", packages: ["@rspack/cli", "@rspack/core"], script: "rspack serve" },
 ];
 
@@ -91,6 +91,24 @@ describe(offerTargetTool, () => {
         await offerTargetTool(params(), { definesTarget: async () => false, install, isInteractive: () => true, readline: async () => "2" });
 
         expect(install.mock.calls.map(([name]) => name)).toStrictEqual(["@rspack/cli", "@rspack/core"]);
+    });
+
+    it("writes the tool's config file next to the script", async () => {
+        expect.assertions(1);
+
+        await offerTargetTool(params(), { definesTarget: async () => false, install: () => 0, isInteractive: () => true, readline: async () => "1" });
+
+        expect(readFileSync(join(app, "vite.config.ts"), "utf8")).toBe("export default {};\n");
+    });
+
+    it("keeps an existing config file untouched", async () => {
+        expect.assertions(1);
+
+        writeFileSync(join(app, "vite.config.ts"), "export default { base: '/app/' };\n");
+
+        await offerTargetTool(params(), { definesTarget: async () => false, install: () => 0, isInteractive: () => true, readline: async () => "1" });
+
+        expect(readFileSync(join(app, "vite.config.ts"), "utf8")).toBe("export default { base: '/app/' };\n");
     });
 
     it("keeps the package's own indentation when it adds the script", async () => {

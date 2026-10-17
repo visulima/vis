@@ -14,7 +14,7 @@ A package's own `dev` script in `package.json` always wins. When a project has n
 - `rslib.config.*` → `rslib build --watch` (a watch build, since Rslib has no dev server)
 - `rspack.config.*` → `rspack serve`
 
-If no project defines a `dev` target, `vis dev` asks which dev server to set up: Vite, Rsbuild, or Rspack. Your choice is the consent. vis installs the tool with `vis add -D` into the nearest package, and adds the matching `dev` script to that package's `package.json`. The script is what keeps the choice, so later runs use it without asking.
+If no project defines a `dev` target, `vis dev` asks which dev server to set up: Vite, Rsbuild, or Rspack. Your choice is the consent. vis installs the tool with `vis add -D` into the nearest package, and adds the matching `dev` script to that package's `package.json`. The tool's config file (for example `vite.config.ts`) is also written, unless one already exists. The script and config are what keep the choice, so later runs use it without asking.
 
 In a non-interactive run (CI, or no terminal) it stops and lists each tool and its install command instead. It never picks one for you. Run it from inside a package: at the workspace root there is no package to add the script to.
 

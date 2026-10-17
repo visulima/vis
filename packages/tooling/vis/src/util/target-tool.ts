@@ -4,7 +4,8 @@
  * When no project defines the target, by script or by inference, vis asks which
  * tool to use. The answer is the consent: it installs the tool with `vis add -D`
  * into the nearest package and adds a matching script to that package.json. The
- * script is what makes the choice stick, since inference needs a config file.
+ * script and config file are what make the choice stick: the script runs the tool,
+ * and the config file lets inference find the target on later runs.
  */
 
 import type { CerebroFs } from "@visulima/cerebro";
@@ -17,6 +18,8 @@ import { chooseTool, installDevDependency } from "./tool-choice";
 import { pathExists } from "./toolbox-fs";
 
 export interface TargetToolChoice {
+    /** Config file the tool's inference needs. Written only when it does not exist yet. */
+    config?: { contents: string; file: string };
     /** Shown in the list, e.g. "Vite". */
     label: string;
     /** Installed as devDependencies with `vis add -D`. */
@@ -141,6 +144,11 @@ export const offerTargetTool = async (params: TargetToolParams, deps: TargetTool
 
     await addScript(fs, join(packageDirectory, "package.json"), target, picked.script);
     logger.info(`Added "${target}": "${picked.script}" to ${where}.`);
+
+    if (picked.config !== undefined && !(await pathExists(fs, join(packageDirectory, picked.config.file)))) {
+        await fs.writeFile(join(packageDirectory, picked.config.file), picked.config.contents, "utf8");
+        logger.info(`Added ${picked.config.file}.`);
+    }
 
     return true;
 };

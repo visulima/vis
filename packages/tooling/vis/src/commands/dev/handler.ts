@@ -7,9 +7,24 @@ import type { DevOptions } from "./index";
 
 /** Dev servers vis can set up when no project defines a `dev` target. Rslib has no dev server. */
 export const DEV_CHOICES: ReadonlyArray<TargetToolChoice> = [
-    { label: "Vite", packages: ["vite"], script: "vite" },
-    { label: "Rsbuild", packages: ["@rsbuild/core"], script: "rsbuild dev" },
-    { label: "Rspack", packages: ["@rspack/cli", "@rspack/core", "@rspack/dev-server"], script: "rspack serve" },
+    {
+        config: { contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.ts" },
+        label: "Vite",
+        packages: ["vite"],
+        script: "vite",
+    },
+    {
+        config: { contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.ts" },
+        label: "Rsbuild",
+        packages: ["@rsbuild/core"],
+        script: "rsbuild dev",
+    },
+    {
+        config: { contents: "export default {};\n", file: "rspack.config.mjs" },
+        label: "Rspack",
+        packages: ["@rspack/cli", "@rspack/core", "@rspack/dev-server"],
+        script: "rspack serve",
+    },
 ];
 
 /** Offers a dev server when none is configured, then runs the `dev` target like `vis run dev`. */

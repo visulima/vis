@@ -14,7 +14,7 @@ A package's own `build` script in `package.json` always wins. When a project has
 - `rslib.config.*` → `rslib build` (a library build)
 - `rspack.config.*` → `rspack build`
 
-If no project defines a `build` target, `vis build` asks which bundler to set up: Vite, Rsbuild, Rslib, or Rspack. The choice works the same way as for `vis dev`: the tool is installed with `vis add -D` into the nearest package, and a `build` script is added to its `package.json`. Non-interactive runs stop and list the options instead.
+If no project defines a `build` target, `vis build` asks which bundler to set up: Vite, Rsbuild, Rslib, or Rspack. The choice works the same way as for `vis dev`: the tool is installed with `vis add -D` into the nearest package, and a `build` script is added to its `package.json`, along with the tool's config file unless one already exists. Non-interactive runs stop and list the options instead.
 
 When a project has more than one bundler config, the first match in this order wins: Vite, then Rsbuild, then Rslib, then Rspack.
 

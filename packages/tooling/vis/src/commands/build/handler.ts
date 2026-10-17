@@ -7,10 +7,30 @@ import type { BuildOptions } from "./index";
 
 /** Bundlers vis can set up when no project defines a `build` target. */
 export const BUILD_CHOICES: ReadonlyArray<TargetToolChoice> = [
-    { label: "Vite", packages: ["vite"], script: "vite build" },
-    { label: "Rsbuild", packages: ["@rsbuild/core"], script: "rsbuild build" },
-    { label: "Rslib", packages: ["@rslib/core"], script: "rslib build" },
-    { label: "Rspack", packages: ["@rspack/cli", "@rspack/core"], script: "rspack build" },
+    {
+        config: { contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.ts" },
+        label: "Vite",
+        packages: ["vite"],
+        script: "vite build",
+    },
+    {
+        config: { contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.ts" },
+        label: "Rsbuild",
+        packages: ["@rsbuild/core"],
+        script: "rsbuild build",
+    },
+    {
+        config: { contents: "import { defineConfig } from \"@rslib/core\";\n\nexport default defineConfig({ lib: [{ format: \"esm\" }] });\n", file: "rslib.config.ts" },
+        label: "Rslib",
+        packages: ["@rslib/core"],
+        script: "rslib build",
+    },
+    {
+        config: { contents: "export default {};\n", file: "rspack.config.mjs" },
+        label: "Rspack",
+        packages: ["@rspack/cli", "@rspack/core"],
+        script: "rspack build",
+    },
 ];
 
 /** Offers a bundler when none is configured, then runs the `build` target like `vis run build`. */
