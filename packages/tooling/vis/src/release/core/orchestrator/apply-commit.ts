@@ -47,8 +47,9 @@ export const commitVersionChanges = async (
 
     // RFC §19.5: one release commit per package when opted in and not
     // aggregating. Shared artifacts (lockfiles + consumed change-file
-    // deletions) ride in the final package's commit. The per-package template ignores any aggregate
-    // `options.commitMessage` override (it's inherently single-message).
+    // deletions) ride in the final package's commit. The per-package
+    // template ignores any aggregate `options.commitMessage` override
+    // (it's inherently single-message).
     if (context.config.oneCommitPerPackage === true && !aggregateEnabled && context.plan.releases.length > 0) {
         const channel = context.channel?.tag ?? context.branch ?? "main";
         const writePaths = applied.writes.map((w) => w.path);
