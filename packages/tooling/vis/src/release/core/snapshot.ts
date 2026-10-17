@@ -122,14 +122,11 @@ interface SnapshotPublishDeps {
     ctx: OrchestratorContext;
     npmCli: NpmAdapter;
     registry: string | undefined;
-    snapshotVersion: string;
     tags: string[];
 }
 
 type SnapshotPackageOutcome = { kind: "published" } | { kind: "skipped"; reason: string } | { kind: "failed"; reason: string };
 
-// Packs the rewritten manifest and publishes the tarball under every tag alias.
-// The source manifest is always restored, even when packing or publishing fails.
 type SnapshotPublishResult = Awaited<ReturnType<NpmAdapter["publish"]>>;
 
 const publishTarballUnderTags = async (tarball: string, deps: SnapshotPublishDeps): Promise<SnapshotPublishResult | undefined> => {
@@ -256,7 +253,7 @@ export const runSnapshot = async (options: RunSnapshotOptions): Promise<RunSnaps
     }
 
     const catalogs = parseCatalogs(await ctx.pm.readCatalogYaml(ctx.cwd));
-    const deps: SnapshotPublishDeps = { ctx, npmCli: new NpmAdapter(runner), registry, snapshotVersion, tags };
+    const deps: SnapshotPublishDeps = { ctx, npmCli: new NpmAdapter(runner), registry, tags };
 
     const published: SnapshotItem[] = [];
     const skipped: { name: string; reason: string }[] = [];
