@@ -13,7 +13,7 @@ permissions:
 
 jobs:
     lock-file:
-        uses: "anolilab/workflows/.github/workflows/pnpm-lock-file-maintenance.yml@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+        uses: "anolilab/workflows/.github/workflows/pnpm-lock-file-maintenance.yml@986f549679af57daf7997679e2a6ffce5dbb4d6b" # v25.0.1 # main
         with:
             target-repo: "visulima/vis"
             node-version: "24"
