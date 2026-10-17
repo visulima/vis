@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "dependencies": {
         "@vis-bench/shared": "workspace:*",
-        "express": "4.20.0",
+        "express": "4.22.3",
         "zod": "3.23.8"
     }
 }
