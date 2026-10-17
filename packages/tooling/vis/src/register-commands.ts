@@ -61,6 +61,7 @@ import stagedCommand from "./commands/staged";
 import statusCommand from "./commands/status";
 import syncCommand from "./commands/sync";
 import taskWhyCommand from "./commands/task-why";
+import testCommand from "./commands/test";
 import toolchainCommands from "./commands/toolchain";
 import unlinkCommand from "./commands/unlink";
 import updateCommand from "./commands/update";
@@ -97,6 +98,7 @@ const registerCommands = (cli: Cli<Console>): void => {
     cli.addCommand(statusCommand);
     cli.addCommand(dashboardCommand);
     cli.addCommand(syncCommand);
+    cli.addCommand(testCommand);
     cli.addCommand(listCommand);
     cli.addCommand(completionCommand);
     cli.addCommand(versionCommand);
