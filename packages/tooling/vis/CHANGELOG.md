@@ -1,3 +1,46 @@
+## @visulima/vis [6.1.1](https://github.com/visulima/vis/compare/@visulima/vis@6.1.0...@visulima/vis@6.1.1) (2026-10-17)
+
+### Bug Fixes
+
+* **vis:** export the dynamic output result type ([f4d74ac](https://github.com/visulima/vis/commit/f4d74acb7c638e0ce591fa7e27cb54d86e0b6dfb))
+* **vis:** format the typosquats blocklist with the repo's JSON indent ([66c3029](https://github.com/visulima/vis/commit/66c3029601e10651a7efdc5e966b0c7ec56d9134))
+* **vis:** sync typosquats blocklist ([2b703eb](https://github.com/visulima/vis/commit/2b703ebbdd15e8a398313dc98f00bf46fd15b810))
+* **vis:** write the typosquats blocklist with four-space indent ([9e9e25a](https://github.com/visulima/vis/commit/9e9e25a32d5d07b42b04e335a2435d28945a68f2))
+
+### Documentation
+
+* **vis:** describe release note behaviour without external references ([5a58123](https://github.com/visulima/vis/commit/5a5812398159e5960f230bc6687c197d7c9957ce))
+* **vis:** rewrap the per-package release commit comment ([0486063](https://github.com/visulima/vis/commit/0486063bff0f9fc83865273f8367fe6c87253ee8))
+
+### Code Refactoring
+
+* **vis:** drop unused snapshotVersion from snapshot publish deps ([eddde20](https://github.com/visulima/vis/commit/eddde203db8744ecc8ddf44f22d25d179ba53864))
+* **vis:** extract config type groups ([e18eeb1](https://github.com/visulima/vis/commit/e18eeb15400e8c5bd20073637d9deb04cee7fcf0))
+* **vis:** flatten run handler helpers into commands/run ([ba116df](https://github.com/visulima/vis/commit/ba116df2778f930170dcedaa2ba53803e3bc0758))
+* **vis:** give release hook runner and publish types their own modules ([ab23740](https://github.com/visulima/vis/commit/ab23740aaec742d946f47c8cc91b20e1fe9d8d97))
+* **vis:** import isGemVersionRbPath from ecosystems in its test ([0f9a984](https://github.com/visulima/vis/commit/0f9a984ad7a215e4ecc68de610cd0f59ac30d00c))
+* **vis:** import run retry budget from its defining module ([2fb8b9b](https://github.com/visulima/vis/commit/2fb8b9b65fc00825195a49fb92534bc223e9096a))
+* **vis:** move applyContext steps into their own modules ([7543484](https://github.com/visulima/vis/commit/754348492973522b39fb5340e583c8254bdfb0e7))
+* **vis:** move buildContext loading steps into their own modules ([ffa64a8](https://github.com/visulima/vis/commit/ffa64a8712dd7db643dfbbdde75ddf9c72519cd7))
+* **vis:** move catalog composite parser ([4c33f47](https://github.com/visulima/vis/commit/4c33f471b685148130f7b1a8ae90efdec3a7847e))
+* **vis:** move config type parts into types directory ([e79a50e](https://github.com/visulima/vis/commit/e79a50e3e124a961de2aa46b39cd816c0e581646))
+* **vis:** move detectJsonIndent out of the bun catalog module ([0c0ef7d](https://github.com/visulima/vis/commit/0c0ef7d6160b294671526c3d2cd39897b3bda66e))
+* **vis:** move run argument, initial task and graph setup out of execute ([42a88ee](https://github.com/visulima/vis/commit/42a88ee39d3d4402d2140a8d47f805c071d5ae0c))
+* **vis:** move run handler helpers ([cb94e15](https://github.com/visulima/vis/commit/cb94e1586ec8da6b72f67e84ea1ede84bcc3029d))
+* **vis:** move run preflight, remote cache, dry-run and reporting out of execute ([404d388](https://github.com/visulima/vis/commit/404d3880d3ad7fca64539e3655c3a036905f3f72))
+* **vis:** move run service wiring out of execute ([6759a11](https://github.com/visulima/vis/commit/6759a11619030cd6f0d45dff565f4a09cc6feb3e))
+* **vis:** move run task construction out of execute ([24d600d](https://github.com/visulima/vis/commit/24d600d05382ea090b2b13bfe1983ce18aa05104))
+* **vis:** move the security, policy and update config sections out of types.ts ([23379d3](https://github.com/visulima/vis/commit/23379d3cc833254fe24a6092a4256bcf6a2bf9cb))
+* **vis:** reduce cache why/verify complexity ([eddea62](https://github.com/visulima/vis/commit/eddea6252564f0ff3b5a0fac03d8602bc0bcc8eb))
+* **vis:** reduce runSnapshot complexity ([80fdcb7](https://github.com/visulima/vis/commit/80fdcb720f39ed63f858d1b20f8dc40ce83122b7))
+* **vis:** split cache and snapshot helpers ([15efc74](https://github.com/visulima/vis/commit/15efc747799331721de89b9d38e681e3a8d4af56))
+* **vis:** split cache command handler into per-subcommand modules ([790f47f](https://github.com/visulima/vis/commit/790f47f609ab8f1ca0ad2bf33f628afc1df79f3e))
+* **vis:** split catalog helpers ([7e319b6](https://github.com/visulima/vis/commit/7e319b65a1016ec3d5941288a2bd0039319e16b7))
+* **vis:** split publishContext into publish stages ([1812426](https://github.com/visulima/vis/commit/18124268a76bf33d2e96036200a9cdd6ed19adbd))
+* **vis:** split release orchestrator ([c5eec08](https://github.com/visulima/vis/commit/c5eec085da36f698f831422e800de57fc94cfbc3))
+* **vis:** split run runtime, interactive and static execution out of execute ([1ff7c9d](https://github.com/visulima/vis/commit/1ff7c9d336663c554c861932ddd154e37abb2303))
+* **vis:** split run target and project selection out of execute ([eb53369](https://github.com/visulima/vis/commit/eb53369b19ae5c2fb6cdcf1d3a253cbd150ee90d))
+
 ## @visulima/vis [6.1.0](https://github.com/visulima/vis/compare/@visulima/vis@6.0.1...@visulima/vis@6.1.0) (2026-10-17)
 
 ### Features
