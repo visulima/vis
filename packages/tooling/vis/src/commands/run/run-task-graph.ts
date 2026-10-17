@@ -1,7 +1,8 @@
 import type { TargetConfiguration, Task, TaskGraph } from "@visulima/task-runner";
-import { createTaskGraph, expandTokensInString } from "@visulima/task-runner";
+import { createTaskGraph, expandTokensInString, reverseTaskGraph, splitCompoundTasks } from "@visulima/task-runner";
 
 import { resolveSkipCachePatterns } from "../../task/skip-cache";
+import { resolveTargetShell } from "../../task/target-options";
 import type { RunOptions } from "./index";
 import type { DiscoveredWorkspace, RunLogger, RunProjectGraph } from "./run-context";
 
@@ -143,6 +144,62 @@ export const createRunTaskGraph = ({
             logger.debug?.("--skip-cache ignored: --no-cache already disables caching for the whole run");
         }
     }
+
+    return taskGraph;
+};
+
+/**
+ * Applies the graph-level transforms before the plan is printed or the
+ * scheduler runs: flips the graph for `--reverse`, leaves custom-shell
+ * targets whole, and splits the remaining `splitCompound` targets into
+ * chained segment tasks.
+ */
+export const finalizeRunTaskGraph = ({
+    logger,
+    options,
+    projectOptions,
+    taskGraph: taskGraphIn,
+}: {
+    logger: RunLogger;
+    options: RunOptions;
+    projectOptions: DiscoveredWorkspace["projectOptions"];
+    taskGraph: TaskGraph;
+}): TaskGraph => {
+    let taskGraph = taskGraphIn;
+
+    // Flip the task graph for teardown targets (CDK/Pulumi `destroy`,
+    // `undeploy`, etc.) where dependents must run before the things
+    // they depend on. Runs after service auto-attach so service
+    // detection still uses the natural graph; runs before the
+    // dry-run walk and scheduler so both reflect the reversed order.
+    // `reverseTaskGraph` recomputes `roots` from the flipped edges,
+    // so the dry-run printer and `TaskScheduler` need no further
+    // changes — they already walk topologically over `dependencies`.
+    if (options.reverse) {
+        taskGraph = reverseTaskGraph(taskGraph);
+        logger.debug?.(`Reversed task graph: ${String(taskGraph.roots.length)} new root(s) (originally leaves)`);
+    }
+
+    // `splitCompound` splits a POSIX shell line, so a target with a custom
+    // shell runs its command in another language and stays whole.
+    for (const task of Object.values(taskGraph.tasks)) {
+        const shellOptions = projectOptions.get(task.target.project)?.[task.target.target]?.options;
+
+        if (task.splitCompound && resolveTargetShell(shellOptions) !== undefined) {
+            logger.warn(`splitCompound ignored for ${task.id}: it uses a custom shell. Running the command as one unit.`);
+            task.splitCompound = undefined;
+        }
+    }
+
+    // Split `splitCompound` targets into chained segment tasks before the
+    // dry-run plan and the scheduler read the graph. The runner's own split
+    // pass then finds nothing left to do.
+    taskGraph = splitCompoundTasks(taskGraph, {
+        commandOf: (task) => task.overrides["command"] as string | undefined,
+        onDiagnostic: (_taskId, message) => {
+            logger.warn(message);
+        },
+    });
 
     return taskGraph;
 };

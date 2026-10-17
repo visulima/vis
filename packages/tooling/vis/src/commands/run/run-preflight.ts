@@ -72,7 +72,7 @@ export const runStartupPreflights = async ({
         throw new Error(`${lockfilePreflight.formattedMessage ?? "preflight: lockfile drift detected"} (pass --no-preflight to bypass)`);
     }
 
-    // One-time offer to alias @voidzero-dev/vite-task-client to our
+    // One-time offer to alias the vite client package to our
     // drop-in client so its cache hints reach the runner. TTY-only and
     // remembers a decline, so CI and repeat runs are never blocked.
     if (preflightEnabled && !isInCi && process.stdin.isTTY && process.stdout.isTTY) {

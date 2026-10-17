@@ -6,10 +6,14 @@ import { selectAffectedProjects } from "../../task/affected-selection";
 import { filterProjectsByNames } from "../../task/project-name-filter";
 import { filterProjectsByQuery, filterProjectsByTags, resolveSelector } from "../../task/selectors";
 import { buildAliasMap, collectAvailableTargets, formatTargetList, promptTargetInteractively, resolveTargetAlias } from "../../task/target-discovery";
+import type { VisTargetConfiguration } from "../../task/target-options";
+import { detectCurrentOs } from "../../task/target-options";
 import { appendToShellHistory } from "../../util/shell-history";
 import { applyFilterStrings } from "./filter";
 import type { RunOptions } from "./index";
 import type { DiscoveredWorkspace, RunLogger, RunProjectGraph } from "./run-context";
+import { selectProjectsWithTarget } from "./run-target-projects";
+import { AFFECTED_FILES_ENV } from "./task-env";
 
 /**
  * Resolves the target to run. Returns the selector string, or `undefined`
@@ -311,4 +315,114 @@ export const narrowToAffectedProjects = async ({
     }
 
     return { affectedChangedFiles, projectNames };
+};
+
+/**
+ * Resolves the target and the project selection for this run: picks the
+ * target, enforces the workspace constraints, narrows by selector, filters
+ * and `--affected`, and keeps the projects that define the target. Returns
+ * `undefined` when a step exits quietly (nothing to run).
+ */
+export const resolveRunSelection = async ({
+    argument,
+    config,
+    fileOwners,
+    logger,
+    options,
+    packageJsons,
+    projectGraph,
+    projectOptions,
+    visConfig,
+    workspace,
+    workspaceRoot,
+}: {
+    argument: string[];
+    config: DiscoveredWorkspace["config"];
+    fileOwners: DiscoveredWorkspace["fileOwners"];
+    logger: RunLogger;
+    options: RunOptions;
+    packageJsons: DiscoveredWorkspace["packageJsons"];
+    projectGraph: RunProjectGraph;
+    projectOptions: DiscoveredWorkspace["projectOptions"];
+    visConfig: Toolbox<Console, RunOptions>["visConfig"];
+    workspace: DiscoveredWorkspace["workspace"];
+    workspaceRoot: string;
+}): Promise<
+    | {
+        affectedFiles: string[] | undefined;
+        currentOs: ReturnType<typeof detectCurrentOs>;
+        forwardedArgs: string[];
+        projectsWithTarget: string[];
+        projectTargetIndex: Map<string, VisTargetConfiguration>;
+        target: string;
+    }
+    | undefined
+> => {
+    const rawSelector = await pickRunTarget({ argument, logger, workspace });
+
+    if (rawSelector === undefined) {
+        return undefined;
+    }
+
+    enforceRunConstraints({ config, logger, options, projectGraph });
+
+    validateAffectedOnlyFlags({ options, rawSelector });
+
+    const selection = await narrowProjectSelection({
+        logger,
+        options,
+        packageJsons,
+        projectGraph,
+        projectOptions,
+        rawSelector,
+        visConfig,
+        workspace,
+        workspaceRoot,
+    });
+
+    if (!selection) {
+        return undefined;
+    }
+
+    const { target } = selection;
+
+    // Any positional args past the target name are forwarded only to the
+    // invoked task — not to `dependsOn` deps. The task-runner string-form
+    // resolver strips overrides so deps start with a clean slate.
+    const forwardedArgs: string[] = argument.slice(1).map(String);
+
+    const narrowed = await narrowToAffectedProjects({
+        fileOwners,
+        logger,
+        options,
+        projectGraph,
+        projectNames: selection.projectNames,
+        visConfig,
+        workspace,
+        workspaceRoot,
+    });
+
+    if (!narrowed) {
+        return undefined;
+    }
+
+    const { affectedChangedFiles, projectNames } = narrowed;
+
+    const currentOs = detectCurrentOs();
+
+    // `vis affected` delegates to `vis run --projects=…` and passes the
+    // changed-file set through the environment; an in-process `--affected`
+    // run already has it in hand.
+    const affectedFilesRaw = process.env[AFFECTED_FILES_ENV];
+    const affectedFiles = affectedChangedFiles ?? (affectedFilesRaw ? affectedFilesRaw.split("\n").filter(Boolean) : undefined);
+
+    const targetSelection = selectProjectsWithTarget({ logger, options, projectNames, projectOptions, target, workspace });
+
+    if (!targetSelection) {
+        return undefined;
+    }
+
+    const { projectsWithTarget, projectTargetIndex } = targetSelection;
+
+    return { affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target };
 };
