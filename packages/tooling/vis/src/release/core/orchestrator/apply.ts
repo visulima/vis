@@ -1,14 +1,15 @@
 import { unlink, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { DEFAULT_CHANGES_DIR } from "../../config";
 import { VisReleaseError } from "../../errors";
 import type { ReleasePlan } from "../../types";
 import { applyReleasePlan } from "../apply-release-plan";
-import { RELEASE_PLAN_ORDER } from "../ecosystems";
 import { createShellRunner } from "../shell-runner";
+import { commitVersionChanges } from "./apply-commit";
+import { applyExtraFileWrites } from "./apply-extra-writes";
 import type { OrchestratorContext } from "./context";
-import { runHook } from "./hooks";
+import { formatChangedFiles } from "./format-changed-files";
+import { runGroupPreVersionCommands, runHook } from "./hooks";
 
 // ── Apply phase ─────────────────────────────────────────────────────
 export interface ApplyOptions {
@@ -186,33 +187,9 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
     // in via `groupPreVersionCommands["group-<index>"]`. Runs after the
     // workspace-level preVersionCommand, before any package mutations.
     if (!options.dryRun && context.config.groupPreVersionCommands) {
-        const { normaliseGroup } = await import("../../types");
-        const allGroups = [...(context.config.fixed ?? []), ...(context.config.linked ?? [])].map((g) => normaliseGroup(g));
-        const { default: zeptomatch } = await import("zeptomatch");
-
-        for (const [groupKey, command] of Object.entries(context.config.groupPreVersionCommands)) {
-            const groupIndex = Number.parseInt(groupKey.replace(/^group-/, ""), 10);
-            const group = allGroups[groupIndex];
-
-            if (!group) {
-                continue;
-            }
-
-            // Only run if the group has at least one package being released this wave.
-            // Group entries can be literal names OR glob patterns — match both.
-            const groupTouched = context.plan.releases.some((r) =>
-                group.packages.some((memberPattern) => r.name === memberPattern || zeptomatch(memberPattern, r.name)),
-            );
-
-            if (!groupTouched) {
-                continue;
-            }
-
-            await runHook(context.cwd, command, `groupPreVersionCommand[${groupKey}]`);
-        }
+        await runGroupPreVersionCommands(context, context.config.groupPreVersionCommands);
     }
 
-    const fs = await import("node:fs/promises");
     const { readFileSync } = await import("node:fs");
     const { resolveFormatter } = await import("../changelog/resolve");
     const { resolveGroupChangelogRouting } = await import("../changelog/workspace");
@@ -221,7 +198,7 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
 
     // Build the group-changelog routing once. Fixed/linked groups that
     // opt in via `changelog.mode: "shared"` get a single
-    // `GROUP-CHANGELOG.md` (changesets #1059); other packages fall back
+    // `GROUP-CHANGELOG.md`; other packages fall back
     // to the default per-package routing.
     const groupRouting = resolveGroupChangelogRouting(context.config, context.packages, context.cwd);
 
@@ -250,148 +227,7 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
             }),
     });
 
-    // Apply extra-files rules and built-in versionFiles per release. Both
-    // produce writes that are appended to the applied set so the existing
-    // commit + dry-run code paths pick them up automatically.
-    const extraFileWarnings: string[] = [];
-
-    {
-        const { applyExtraFilesForRelease } = await import("../extra-files");
-        const { applyVersionFilesForRelease } = await import("../version-files");
-        const { cargoManifestPaths } = await import("../cargo-lock");
-
-        const perReleaseResults = await Promise.all(
-            context.plan.releases.map(async (release) => {
-                const pkg = context.depGraph.getPackage(release.name);
-
-                if (!pkg) {
-                    return { warnings: [], writes: [] };
-                }
-
-                const perPkgRules = context.perPackageConfig.get(release.name)?.extraFiles ?? [];
-                const workspaceRules = context.config.publish?.extraFiles ?? [];
-                const versionFiles = context.perPackageConfig.get(release.name)?.versionFiles ?? [];
-
-                const hasExtraRules = perPkgRules.length > 0 || workspaceRules.length > 0;
-                const extra = hasExtraRules
-                    ? await applyExtraFilesForRelease(context.cwd, pkg.dir, release.newVersion, release.name, workspaceRules, perPkgRules)
-                    : { warnings: [], writes: [] };
-
-                // Runs after extraFiles and reads its output, so a file named by
-                // both is rewritten once with both edits instead of the later write
-                // silently discarding the earlier one.
-                const versioned
-                    = versionFiles.length > 0
-                        ? await applyVersionFilesForRelease(pkg.dir, versionFiles, release.newVersion, release.name, new Map(extra.writes.map((write) => [write.path, write.content])))
-                        : { writes: [] };
-
-                return { warnings: extra.warnings, writes: [...extra.writes, ...versioned.writes] };
-            }),
-        );
-
-        // Cargo edits are planned once for the whole wave: crate versions,
-        // dependents' requirements and Cargo.lock. Per-release steps started
-        // from the original files, so two releases in one file (or one lock)
-        // silently dropped each other's edit. Everything below reads and
-        // writes one pending map.
-        const pending = new Map<string, string>();
-        const touched = new Set<string>();
-
-        for (const result of perReleaseResults) {
-            for (const write of result.writes) {
-                pending.set(write.path, write.content);
-                touched.add(write.path);
-            }
-
-            extraFileWarnings.push(...result.warnings);
-        }
-
-        const cargoCrates = context.packages.filter((pkg) => pkg.ecosystem === "cargo");
-        const planReleases = context.plan.releases.flatMap((release) => {
-            const pkg = context.depGraph.getPackage(release.name);
-
-            // Python projects, Maven and Gradle modules have their own plans (planPythonWorkspace,
-            // planMavenWorkspace, planGradleWorkspace); a uv.lock is not a Cargo.lock, and a pom or a build script is not one either.
-            if (!pkg || (pkg.ecosystem !== undefined && pkg.ecosystem !== "cargo")) {
-                return [];
-            }
-
-            const manifestPaths
-                = pkg.ecosystem === "cargo" ? [pkg.manifestPath] : cargoManifestPaths(pkg.dir, context.perPackageConfig.get(release.name) ?? {});
-
-            return manifestPaths.length > 0 || pkg.ecosystem === "cargo"
-                ? [{ ecosystem: pkg.ecosystem, manifestPaths, name: release.name, newVersion: release.newVersion }]
-                : [];
-        });
-
-        if (planReleases.length > 0) {
-            // Every Cargo manifest a JS package claims is rescanned too, so a
-            // dependent in a JS-owned crate still gets its requirement moved.
-            const scanManifests = new Set(cargoCrates.map((pkg) => pkg.manifestPath));
-
-            // A virtual root has no [package], so discovery never returns it, but its
-            // [workspace.dependencies] requirements must still follow a bumped crate.
-            if (cargoCrates.length > 0) {
-                scanManifests.add(resolve(context.cwd, "Cargo.toml"));
-            }
-
-            for (const pkg of context.packages) {
-                if (pkg.ecosystem === undefined) {
-                    for (const manifestPath of cargoManifestPaths(pkg.dir, context.perPackageConfig.get(pkg.name) ?? {})) {
-                        scanManifests.add(manifestPath);
-                    }
-                }
-            }
-
-            const { planCargoWorkspace } = await import("../cargo-plan");
-            const cargo = await planCargoWorkspace({
-                crateManifests: cargoCrates.map((pkg) => pkg.manifestPath),
-                cwd: context.cwd,
-                pending,
-                releases: planReleases,
-                // Other crates' requirements move only for discovered crates; a `cargo()` package keeps its lock in step.
-                rewriteDependents: context.config.cargo?.discover === true,
-                scanManifests: [...scanManifests],
-            });
-
-            for (const path of cargo.touched) {
-                touched.add(path);
-            }
-
-            extraFileWarnings.push(...cargo.warnings);
-        }
-
-        // Cargo planned above: its release filter also covers JS packages that claim a Cargo manifest. The rest run in plan order.
-        for (const eco of RELEASE_PLAN_ORDER) {
-            const releases = context.plan.releases.flatMap((release) => {
-                const pkg = context.depGraph.getPackage(release.name);
-
-                return pkg?.ecosystem === eco.id ? [{ name: release.name, newVersion: release.newVersion }] : [];
-            });
-
-            if (releases.length === 0 || eco.plan === undefined) {
-                continue;
-            }
-
-            const outcome = await eco.plan({ context, pending, projects: context.projectsByEcosystem?.get(eco.id) ?? [], releases });
-
-            for (const path of outcome.touched) {
-                touched.add(path);
-            }
-
-            extraFileWarnings.push(...outcome.warnings);
-        }
-
-        for (const path of touched) {
-            applied.writes.push({ content: pending.get(path)!, path });
-        }
-
-        // Surface warnings through plan.warnings so they bubble up to
-        // CI logs alongside the other release warnings.
-        if (extraFileWarnings.length > 0) {
-            context.plan.warnings.push(...extraFileWarnings);
-        }
-    }
+    await applyExtraFileWrites(context, applied);
 
     if (options.dryRun) {
         return {
@@ -445,78 +281,12 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         await runApplyDraftHooks({ config: context.config, cwd: context.cwd }, context.plan);
     }
 
-    let commitSha: string | undefined;
-
-    if (options.commit) {
-        const { stageAndCommit } = await import("../git");
-        const runner = createShellRunner();
-
-        // Lockfile paths to also stage (best-effort; some PMs don't have one yet).
-        const lockfileCandidates = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb"];
-        const path = await import("node:path");
-        const lockfilesPresent: string[] = [];
-
-        for (const name of lockfileCandidates) {
-            try {
-                await fs.access(path.join(context.cwd, name));
-                lockfilesPresent.push(path.join(context.cwd, name));
-            } catch {
-                // not present
-            }
-        }
-
-        const aggregateEnabled
-            = context.config.aggregateRelease === true || (typeof context.config.aggregateRelease === "object" && context.config.aggregateRelease.enabled);
-
-        // RFC §19.5: one release commit per package (multi-semantic-release
-        // parity) when opted in and not aggregating. Shared artifacts
-        // (lockfiles + consumed change-file deletions) ride in the final
-        // package's commit. The per-package template ignores any aggregate
-        // `options.commitMessage` override (it's inherently single-message).
-        if (context.config.oneCommitPerPackage === true && !aggregateEnabled && context.plan.releases.length > 0) {
-            const channel = context.channel?.tag ?? context.branch ?? "main";
-            const writePaths = applied.writes.map((w) => w.path);
-            const claimed = new Set<string>();
-            const { releases } = context.plan;
-
-            for (let index = 0; index < releases.length; index += 1) {
-                const release = releases[index]!;
-                const pkg = context.depGraph.getPackage(release.name);
-                const pkgPrefix = pkg ? `${pkg.dir}${path.sep}` : undefined;
-                const pkgFiles = pkgPrefix ? writePaths.filter((p) => p.startsWith(pkgPrefix)) : [];
-
-                for (const file of pkgFiles) {
-                    claimed.add(file);
-                }
-
-                // Last package sweeps up anything unclaimed (writes outside a
-                // package dir, e.g. a root file), the change-file deletions,
-                // and the lockfiles.
-                const trailing = index === releases.length - 1 ? [...writePaths.filter((p) => !claimed.has(p)), ...applied.deletions, ...lockfilesPresent] : [];
-
-                const files = [...pkgFiles, ...trailing];
-
-                if (files.length === 0) {
-                    continue;
-                }
-
-                commitSha = await stageAndCommit({ cwd: context.cwd, runner }, files, `release(${channel}): ${release.name}@${release.newVersion} [skip ci]`, {
-                    author: context.config.gitUser,
-                });
-            }
-        } else {
-            // Single aggregate commit for the whole wave (default).
-            const message = options.commitMessage ?? buildDefaultCommitMessage(context);
-            const allFiles = [...applied.writes.map((w) => w.path), ...applied.deletions, ...lockfilesPresent];
-
-            commitSha = await stageAndCommit({ cwd: context.cwd, runner }, allFiles, message, { author: context.config.gitUser });
-        }
-    }
+    const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage) : undefined;
 
     // Workspace-level changelog is intentionally NOT written here — the
     // wave entry is appended from `publishContext` against the actually-
-    // published set (`result.published[]`) instead of the optimistic plan
-    // (C5 fix). Otherwise a stage rejected at the gate would leave an
+    // published set (`result.published[]`) instead of the optimistic plan.
+    // Otherwise a stage rejected at the gate would leave an
     // orphan wave entry in CHANGELOG.md. Per-package CHANGELOG.md sections
     // are still written above as part of the version commit; their orphan-
     // risk is a documented operator workflow note — the `stage reject` post-
@@ -530,7 +300,7 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
     // mode, this version run is the consolidation step — delete the
     // file so the next wave is a regular stable bump.
     //
-    // M9 fix: use the pinned `context.preMode` snapshot from
+    // Use the pinned `context.preMode` snapshot from
     // `buildContext` instead of re-reading pre.json here. Otherwise a
     // concurrent `vis release pre exit` between the two reads could
     // leave the version computed as prerelease (snapshot says
@@ -554,70 +324,4 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         deletedFiles: applied.deletions,
         plan: context.plan,
     };
-};
-
-type PrettierModule = {
-    format: (source: string, options: Record<string, unknown>) => Promise<string>;
-    getFileInfo: (file: string) => Promise<{ ignored: boolean; inferredParser: null | string }>;
-    resolveConfig: (file: string) => Promise<Record<string, unknown> | null>;
-};
-
-/**
- * Run the project's Prettier over the version step's written files (RFC §14
- * step 7). Scoped to those files only; resolves the *project's* Prettier from
- * `cwd` (not vis's own). Soft-fails entirely when Prettier isn't installed,
- * and skips any file Prettier ignores or can't infer a parser for. Never
- * throws — formatting must not fail a release.
- */
-const formatChangedFiles = async (files: string[], cwd: string): Promise<void> => {
-    if (files.length === 0) {
-        return;
-    }
-
-    const { join } = await import("node:path");
-
-    let prettier: PrettierModule;
-
-    try {
-        const { createRequire } = await import("node:module");
-        const { pathToFileURL } = await import("node:url");
-        const requireFromProject = createRequire(join(cwd, "package.json"));
-
-        prettier = (await import(pathToFileURL(requireFromProject.resolve("prettier")).href)) as PrettierModule;
-    } catch {
-        // Prettier not installed in the target project — skip silently.
-        return;
-    }
-
-    const fsp = await import("node:fs/promises");
-
-    for (const file of files) {
-        try {
-            const info = await prettier.getFileInfo(file);
-
-            if (info.ignored || !info.inferredParser) {
-                continue;
-            }
-
-            const source = await fsp.readFile(file, "utf8");
-            const config = await prettier.resolveConfig(file);
-            const formatted = await prettier.format(source, { ...config, filepath: file });
-
-            if (formatted !== source) {
-                await fsp.writeFile(file, formatted);
-            }
-        } catch {
-            // Per-file soft-fail — never break a release on a formatting error.
-        }
-    }
-};
-
-const buildDefaultCommitMessage = (context: OrchestratorContext): string => {
-    const channel = context.channel?.tag ?? context.branch ?? "main";
-    const { releases } = context.plan;
-    const summary = releases.length <= 3 ? releases.map((r) => `${r.name}@${r.newVersion}`).join(", ") : `version ${releases.length} packages`;
-
-    const details = releases.map((r) => `- ${r.name}: ${r.oldVersion} → ${r.newVersion}`).join("\n");
-
-    return `release(${channel}): ${summary} [skip ci]\n\n${details}`;
 };
