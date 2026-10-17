@@ -4,8 +4,11 @@ const runExecute = vi.hoisted(() => vi.fn());
 
 vi.mock(import("../../../src/commands/run/handler"), () => { return { default: runExecute }; });
 
-const { default: devExecute } = await import("../../../src/commands/dev/handler");
-const { default: buildExecute } = await import("../../../src/commands/build/handler");
+const { runDev } = await import("../../../src/commands/dev/handler");
+const { runBuild } = await import("../../../src/commands/build/handler");
+
+// The target is already defined, so these tests exercise forwarding, not the offer.
+const DEFINED = { definesTarget: async () => true };
 
 const toolbox = (argument: string[] | undefined, rawUnknown: string[] | undefined, options: Record<string, unknown> = {}) =>
     ({ argument, logger: {}, options, rawUnknown }) as never;
@@ -18,7 +21,7 @@ describe("vis dev and vis build", () => {
     it("runs the dev target through the run handler", async () => {
         expect.assertions(1);
 
-        await devExecute(toolbox(undefined, undefined));
+        await runDev(toolbox(undefined, undefined), DEFINED);
 
         expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["dev"]);
     });
@@ -26,7 +29,7 @@ describe("vis dev and vis build", () => {
     it("forwards positional and flag arguments after the target", async () => {
         expect.assertions(1);
 
-        await devExecute(toolbox(["web"], ["--port", "3000"]));
+        await runDev(toolbox(["web"], ["--port", "3000"]), DEFINED);
 
         expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["dev", "web", "--port", "3000"]);
     });
@@ -34,7 +37,7 @@ describe("vis dev and vis build", () => {
     it("passes run's options through unchanged", async () => {
         expect.assertions(1);
 
-        await buildExecute(toolbox(undefined, undefined, { filter: ["@org/web"], preflight: undefined }));
+        await runBuild(toolbox(undefined, undefined, { filter: ["@org/web"], preflight: undefined }), DEFINED);
 
         expect(runExecute.mock.calls[0][0].options).toStrictEqual({ filter: ["@org/web"], preflight: undefined });
     });
@@ -42,7 +45,7 @@ describe("vis dev and vis build", () => {
     it("runs the build target", async () => {
         expect.assertions(1);
 
-        await buildExecute(toolbox(undefined, ["--mode", "production"]));
+        await runBuild(toolbox(undefined, ["--mode", "production"]), DEFINED);
 
         expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["build", "--mode", "production"]);
     });
