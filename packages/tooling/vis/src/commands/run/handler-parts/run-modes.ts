@@ -17,7 +17,7 @@ import { resolveTaskCommand } from "./shell";
  * through the store, so the whole loop stays in one function.
  */
 export const runInteractiveMode = async (ctx: RunContext, runtime: RunRuntime): Promise<void> => {
-    const { logger, options, projectGraph, workspaceRoot } = ctx;
+    const { currentOs, logger, options, projectGraph, workspaceRoot } = ctx;
     const { childEnvPolicyFor, failureLogLifeCycle, hookLifeCycle, hooks, lifecycleOptions, maybeWriteProfile, outputStyle, preTraceCheck, resolveCommand, runnerOptions, sharedRetryBudget, spawnContext } = runtime;
     // Snapshots of service state that is final before this phase; const so the callbacks below narrow.
     const { serviceEventBridge } = ctx;
@@ -120,7 +120,7 @@ export const runInteractiveMode = async (ctx: RunContext, runtime: RunRuntime): 
             // A split target retries by segment id, which only the graph knows.
             const task = ctx.taskGraph.tasks[retryTaskId] ?? ctx.initialTasks.find((t) => t.id === retryTaskId);
             // Same command the first attempt ran, so a retry keeps its forwarded arguments and shell.
-            const command = task ? resolveTaskCommand(task, spawnContext.affectedFiles, ctx.currentOs) : undefined;
+            const command = task ? resolveTaskCommand(task, spawnContext.affectedFiles, currentOs) : undefined;
 
             if (task && command) {
                 lifeCycle.startTasks?.([task]);
