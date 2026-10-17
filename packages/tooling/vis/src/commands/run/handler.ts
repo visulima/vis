@@ -1,20 +1,16 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import type { ChildEnvOptions, LogMode, OutputSpec, ProcessEvent, TargetConfiguration, Task, TaskResults, TaskRunnerOptions, TaskTarget } from "@visulima/task-runner";
-import { CompositeLifeCycle, createLogReporter, createTaskGraph, defaultTaskRunner, enforceProjectConstraints, expandTokensInString, generateRunSummary, parsePartition, pickChildParentEnv, resolveTurboEnvCompat, reverseTaskGraph, runConcurrently, splitCompoundTasks, TaskScheduler, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
+import { CompositeLifeCycle, createLogReporter, createTaskGraph, defaultTaskRunner, enforceProjectConstraints, expandTokensInString, generateRunSummary, parsePartition, pickChildParentEnv, reverseTaskGraph, runConcurrently, splitCompoundTasks, TaskScheduler, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
 import isInCi from "is-in-ci";
 
 import { applyBranchScope, resolveSharedCacheDirectory } from "../../cache/cache-directory";
 import { buildProjectGraph, discoverWorkspace, loadVisTaskConfigsForWorkspace } from "../../config/workspace";
 import { VisUserError } from "../../errors/vis-user-error";
-import { runLockfilePreflight } from "../../preflight/lockfile";
-import { maybePromptViteClientOverride } from "../../preflight/vite-client-override";
 import { FailureLogLifeCycle } from "../../report/failure-log";
-import { analyzeFlakiness, formatFlakinessTable } from "../../report/flakiness";
 import { compareDuration, formatTimingSummary, loadRunSummaries } from "../../report/run-report";
 import { resolveCommandRuntime } from "../../runtime/command-runtime";
-import { runToolchainPreflight } from "../../runtime/toolchain";
 import { runReadiness } from "../../services/readiness";
-import { deleteEntry, readAllEntries } from "../../services/registry";
+import { readAllEntries } from "../../services/registry";
 import type { ServiceEntry } from "../../services/types";
 import { selectAffectedProjects } from "../../task/affected-selection";
 import { describeMisplacedTargetKeys, findMisplacedTargetKeys } from "../../task/misplaced-options";
@@ -42,8 +38,13 @@ import { createConcurrentExecutor, createRetryBudget } from "./executor";
 import { applyFilterStrings } from "./filter";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
-import { parseCacheBackend, parseCacheMode, parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./parse";
-import { cleanupEphemeralServices, runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
+import { parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./parse";
+import { runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
+import { createRunCleanup } from "./run-cleanup";
+import { printDryRunPlan } from "./run-dry-run";
+import { runStartupPreflights } from "./run-preflight";
+import { applyRemoteCacheConfig } from "./run-remote-cache";
+import { logRegistryServiceHint, reportRunOutcome } from "./run-summary";
 import type { ServiceBridgeEntry } from "./service-event-bridge";
 import { ServiceEventBridge } from "./service-event-bridge";
 import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "./service-preflight";
@@ -681,74 +682,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         }
     }
 
-    // Pre-flight: if a workspace tool pin doesn't match the running
-    // version and `toolchain.autoInstall` is on (default when a
-    // manager is detected), install via the right manager and let
-    // subsequent task subprocesses pick up the new version. We
-    // never block on failure — surface a warning, keep going,
-    // and let the existing runtime-check warnings do their job.
-    //
-    // Runs before service auto-attach so the right Node/PM is in
-    // place when the probe runs, and before the dry-run short-circuit
-    // so `--dry-run` still surfaces toolchain drift.
-    await runToolchainPreflight(
-        workspaceRoot,
-        config.toolchain,
-        {
-            error: (message) => {
-                logger.error(message);
-            },
-            info: (message) => {
-                logger.info(message);
-            },
-            warn: (message) => {
-                logger.warn(message);
-            },
-        },
-        Boolean(options.skipToolchain),
-    );
-
-    // Lockfile/install drift check. Fires after toolchain (so the
-    // suggested install command runs against the right Node) and
-    // before service auto-attach + task execution. CLI flag wins over
-    // config; both default to on. The helper logs the warn line itself
-    // in TTY; in CI it stays silent and we throw with `formattedMessage`
-    // so the user sees the detail exactly once.
-    const preflightEnabled = options.preflight !== false && config.preflight?.lockfile !== false;
-    const lockfilePreflight = runLockfilePreflight(
-        workspaceRoot,
-        isInCi,
-        {
-            warn: (message) => {
-                logger.warn(message);
-            },
-        },
-        { skip: !preflightEnabled },
-    );
-
-    if (!lockfilePreflight.shouldContinue) {
-        throw new Error(`${lockfilePreflight.formattedMessage ?? "preflight: lockfile drift detected"} (pass --no-preflight to bypass)`);
-    }
-
-    // One-time offer to alias @voidzero-dev/vite-task-client to our
-    // drop-in client so its cache hints reach the runner. TTY-only and
-    // remembers a decline, so CI and repeat runs are never blocked.
-    if (preflightEnabled && !isInCi && process.stdin.isTTY && process.stdout.isTTY) {
-        await maybePromptViteClientOverride(workspaceRoot, {
-            interactive: true,
-            logger: {
-                info: (message) => {
-                    logger.info(message);
-                },
-                warn: (message) => {
-                    logger.warn(message);
-                },
-            },
-            // Scan every discovered project manifest, not just the root —
-            // a tool depending on the vite client may live in a sub-package.
-            projectManifests: [...packageJsons.values()],
-        });
-    }
+    await runStartupPreflights({ config, logger, options, packageJsons, workspaceRoot });
 
     // Auto-attach: if a service this run depends on is already
     // running in the background registry, drop it from the graph and
@@ -1133,54 +1067,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     });
 
     if (options.dryRun) {
-        const taskCount = Object.keys(taskGraph.tasks).length;
-        const rootCount = taskGraph.roots.length;
-
-        logger.info(`Execution plan (${String(taskCount)} task(s), ${String(rootCount)} root(s)):`);
-        logger.info("");
-
-        const visited = new Set<string>();
-        const walkPlan = (id: string, depth: number): void => {
-            if (visited.has(id)) {
-                return;
-            }
-
-            visited.add(id);
-
-            for (const dep of taskGraph.dependencies[id] ?? []) {
-                walkPlan(dep, depth + 1);
-            }
-
-            const task = taskGraph.tasks[id];
-            const indent = "  ".repeat(depth + 1);
-            const segmentNote = task?.segment ? ` (segment ${String(task.segment.index)}/${String(task.segment.count)}: ${String(task.overrides["command"])})` : "";
-            // The engine traces every task under the workspace switch, so it is annotated like a per-target trace.
-            const traced = task?.hashMode === "trace" || config.taskRunner?.autoFingerprint === true;
-            const annotations = `${task?.cache === false ? " (no-cache)" : ""}${traced ? " (trace)" : ""}${segmentNote}`;
-
-            logger.info(`${indent}${id}${annotations}`);
-        };
-
-        for (const root of taskGraph.roots) {
-            walkPlan(root, 0);
-        }
-
-        // Visit any tasks not reachable from `roots`. Two cases hit
-        // this: disconnected graph components, and reversed graphs
-        // where reverse-roots don't reach the original-leaves through
-        // outbound `dependencies` (the printer recurses into deps,
-        // and original-leaves are reverse-dependents — so we'd
-        // otherwise drop them silently from the plan).
-        for (const taskId of Object.keys(taskGraph.tasks)) {
-            walkPlan(taskId, 0);
-        }
-
-        if (persistentTasks.length > 0) {
-            logger.info("");
-            logger.info(`  + ${String(persistentTasks.length)} persistent task(s) (run after graph completes)`);
-        }
-
-        logger.info("");
+        printDryRunPlan({ config, logger, persistentTasks, taskGraph });
 
         return;
     }
@@ -1362,94 +1249,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         return command === undefined ? undefined : strictEnvFailure(task, command, spawnOptions);
     };
 
-    // Resolve the remote-cache config in three layers (CLI > vis.config.ts
-    // > Turbo env-var compat). Fill missing HTTP fields from TURBO_API /
-    // TURBO_TOKEN / TURBO_TEAM so a workspace migrating from Turbo keeps
-    // working without rewriting CI secrets. Rejects malformed CLI values
-    // up front so a typo in `--cache-mode=eread` doesn't silently fall
-    // through to the runner and surface as "no cache hits".
-    const envCompatRemoteCache = resolveTurboEnvCompat(configTaskRunner.remoteCache);
-
-    if (envCompatRemoteCache) {
-        const cliMode = parseCacheMode(options.cacheMode);
-        const cliBackend = parseCacheBackend(options.cacheBackend);
-
-        runnerOptions.remoteCache = {
-            ...envCompatRemoteCache,
-            ...(cliMode ? { mode: cliMode } : {}),
-            ...(cliBackend ? { backend: cliBackend } : {}),
-        };
-
-        // Config can only carry serializable attestation knobs
-        // (`requireOnDownload`, `expectedIdentity`); the actual keyless
-        // sign/verify callbacks can't live in vis.config.ts. When the
-        // user opted in, swap the declarative stub for Sigstore-backed
-        // hooks here.
-        if (runnerOptions.remoteCache.attestation) {
-            const { expectedIdentity, requireOnDownload } = runnerOptions.remoteCache.attestation;
-
-            // Verifying a keyless bundle without pinning the signer
-            // proves integrity, not authenticity — that is what the HMAC
-            // `signing` block already does. Accept any of the three
-            // public identity forms; refuse a half-configured setup
-            // loudly rather than ship a false sense of provenance.
-            const identityConfigured
-                = expectedIdentity !== undefined
-                    && (("github" in expectedIdentity
-                        && typeof expectedIdentity.github?.ref === "string"
-                        && typeof expectedIdentity.github.repo === "string"
-                        && typeof expectedIdentity.github.workflow === "string")
-                    || ("oidcIssuer" in expectedIdentity
-                        && typeof expectedIdentity.oidcIssuer === "string"
-                        && (typeof (expectedIdentity as { san?: unknown }).san === "string"
-                            || typeof (expectedIdentity as { sanRegex?: unknown }).sanRegex === "string")));
-
-            if (!identityConfigured) {
-                throw new Error(
-                    "[vis run] remoteCache.attestation requires a pinned keyless signer via `expectedIdentity`. Use one of:\n  • { github: { repo, workflow, ref } }   (GitHub Actions — recommended)\n  • { oidcIssuer, san }                   (literal identity; vis regex-escapes + anchors it)\n  • { oidcIssuer, sanRegex }              (advanced: raw regex, you own anchoring)\nWithout it, verification is integrity-only — use `remoteCache.signing` (HMAC) for that instead.",
-                );
-            }
-
-            // Only the raw-regex form carries the unanchored-match
-            // hazard: sigstore matches the SAN with `String.match`, so a
-            // substring-matched pattern lets a longer attacker SAN that
-            // merely *contains* the expected value pass. The `github`
-            // and literal `san` forms are escaped and `^…$`-anchored by
-            // `normalizeExpectedIdentity`, so they're safe by default.
-            if ("sanRegex" in expectedIdentity && (!expectedIdentity.sanRegex.startsWith("^") || !expectedIdentity.sanRegex.endsWith("$"))) {
-                logger.warn(
-                    "[vis run] remoteCache.attestation.expectedIdentity.sanRegex is not anchored (^…$). sigstore matches it as a regex; an unanchored value is substring-matched and weakens the identity pin. Prefer the literal `san` form unless you need a pattern.",
-                );
-            }
-
-            const { installCommandFor, isSigstoreInstalled } = await import("../../security/sigstore/loader");
-
-            // Surface a missing optional peer dep at startup rather than
-            // mid-run: warn (don't fail) so a misconfigured consumer
-            // still runs, just without provenance, with a copy-paste fix.
-            if (!isSigstoreInstalled()) {
-                logger.warn(
-                    `[vis run] remoteCache.attestation is configured but the optional \`sigstore\` package is not installed. Cache uploads will be unsigned and signed entries can't be verified until you install it:\n  ${installCommandFor(workspaceRoot)}`,
-                );
-            }
-
-            const { buildCacheAttestationHooks } = await import("../../security/sigstore/cache-attestation");
-
-            runnerOptions.remoteCache.attestation = buildCacheAttestationHooks({
-                expectedIdentity,
-                onReject: (hash, reason) => {
-                    logger.warn(`[vis run] remote cache entry ${hash.slice(0, 12)} rejected: attestation ${reason}. Treating as a cache miss.`);
-                },
-                onVerifyFailure: (message) => {
-                    logger.warn(`[vis run] attestation verification failed: ${message}`);
-                },
-                requireOnDownload,
-                workspaceRoot,
-            });
-        }
-    } else if (options.cacheMode || options.cacheBackend) {
-        logger.warn("[vis run] --cache-mode and --cache-backend require a `remoteCache` block in vis.config.ts (or TURBO_API env); ignoring.");
-    }
+    await applyRemoteCacheConfig({ configTaskRunner, logger, options, runnerOptions, workspaceRoot });
 
     const isTTY = process.stdout.isTTY && !isInCi;
     // Opt-in "quiet on success": suppress successful/cached task output and,
@@ -1517,42 +1317,18 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
     await hooks.callHook("run:before", { tasks: initialTasks, workspaceRoot });
 
-    /**
-     * SIGTERM the ephemeral service group + drop the scratch dir exactly
-     * once. Run from the run-block's `finally`, AND from a Ctrl+C/SIGTERM
-     * listener so children don't outlive the run when the dynamic TUI's
-     * own `process.exit(1)` short-circuits the normal exit path.
-     */
     const stopServicesOnExit = options.stopServices;
-    let cleanupRan = false;
-    const runCleanupOnce = (): void => {
-        if (cleanupRan) {
-            return;
-        }
+    const cleanup = createRunCleanup({
+        ephemeralPidFiles,
+        registryStartedIds,
+        registryStartedPids,
+        serviceEventBridge,
+        serviceRunDir,
+        stopServicesOnExit,
+        workspaceRoot,
+    });
 
-        cleanupRan = true;
-
-        if (serviceEventBridge) {
-            serviceEventBridge.dispose().catch(() => {});
-        }
-
-        // When --stop-services is set, also kill the registry-mode services
-        // this run started. Their pids are captured by the bridge `started`
-        // sink. Registry entries point at dead pids after this; `vis
-        // service list` / `pruneDead` cleans them up later.
-        const extraPids = stopServicesOnExit ? [...registryStartedPids.values()] : undefined;
-
-        cleanupEphemeralServices({ extraPids, pidFiles: ephemeralPidFiles, runDir: serviceRunDir });
-    };
-    const onCleanupSignal = (): void => {
-        runCleanupOnce();
-    };
-    const hasCleanupWork = ephemeralPidFiles.length > 0 || serviceRunDir !== undefined || (stopServicesOnExit && registryStartedIds.length > 0);
-
-    if (hasCleanupWork) {
-        process.on("SIGINT", onCleanupSignal);
-        process.on("SIGTERM", onCleanupSignal);
-    }
+    cleanup.install();
 
     try {
         if (isTTY) {
@@ -1755,15 +1531,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
             await hooks.callHook("run:after", lastResults);
             await maybeWriteProfile(lastResults);
 
-            if (registryStartedCount > 0) {
-                logger.info("");
-
-                if (stopServicesOnExit) {
-                    logger.info(`${String(registryStartedCount)} service(s) stopped (--stop-services).`);
-                } else {
-                    logger.info(`${String(registryStartedCount)} service(s) started in the background. Run \`vis service stop --all\` to clean up.`);
-                }
-            }
+            logRegistryServiceHint({ logger, registryStartedCount, stopServicesOnExit });
         } else {
             const mutexPool: MutexPool = new Map();
             const logModeOption = typeof options.log === "string" ? options.log.toLowerCase() : "";
@@ -2032,128 +1800,16 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
                 return;
             }
 
-            // Print historical flakiness regardless of this run's outcome —
-            // a clean run that masked a flaky task via retries (or one that
-            // hasn't tripped the flake yet today) shouldn't hide history
-            // that would help the user investigate. Suppressed with
-            // `--no-flaky`. Reuses the history already loaded for the
-            // timing comparison above — the runs/ directory hasn't
-            // changed since this turn of the loop started.
-            if (options.flaky) {
-                const flakyStats = analyzeFlakiness(workspaceRoot, { minRuns: 2 }, firstRun.runHistory);
-
-                if (flakyStats.length > 0) {
-                    logger.info("");
-                    logger.info("Flaky tasks (based on historical runs):");
-                    logger.info("");
-
-                    for (const line of formatFlakinessTable(flakyStats)) {
-                        logger.info(`  ${line}`);
-                    }
-
-                    logger.info("");
-                }
-            }
-
-            // `--fail-on-retry` upgrades any retried-but-passed task into a
-            // run failure. Lets CI surface flakes that retries would
-            // otherwise mask — useful as a periodic "nightly" check that
-            // disables the safety net the day-to-day workflow keeps on.
-            const retriedTaskIds: string[] = [];
-
-            for (const [taskId, result] of firstRun.results) {
-                if (result.retryAttempts && result.retryAttempts > 0) {
-                    retriedTaskIds.push(taskId);
-                }
-            }
-
-            const failOnRetry = options.failOnRetry && retriedTaskIds.length > 0;
-
-            if (failOnRetry) {
-                // Cap the rendered list so a wide flake (every task retried
-                // once) doesn't produce a multi-screen warn line that buries
-                // surrounding context in CI logs.
-                const MAX_LISTED = 5;
-                const listedIds = retriedTaskIds.slice(0, MAX_LISTED);
-                const remaining = retriedTaskIds.length - listedIds.length;
-                const idsRendered = remaining > 0 ? `${listedIds.join(", ")}, and ${String(remaining)} more` : listedIds.join(", ");
-
-                logger.warn("");
-                logger.warn(`--fail-on-retry: ${String(retriedTaskIds.length)} task(s) succeeded only after retry: ${idsRendered}`);
-            }
-
-            if (hasFailure || failOnRetry) {
-                const headline = failOnRetry && !hasFailure ? "Some tasks succeeded only after retry (--fail-on-retry)." : "Some tasks failed.";
-
-                // Tail the captured terminal output of every failed task into
-                // the thrown error so callers (especially programmatic ones
-                // like vitest runs that mute the logger) see *why* a task
-                // failed, not just *that* one did. Cap each tail so a runaway
-                // log doesn't drown the stack trace.
-                const TAIL_BYTES = 2000;
-                const failureDetails: string[] = [];
-
-                for (const [taskId, result] of firstRun.results) {
-                    if (result.status !== "failure") {
-                        continue;
-                    }
-
-                    const output = result.terminalOutput ?? "";
-                    const tail = output.length > TAIL_BYTES ? `…${output.slice(-TAIL_BYTES)}` : output;
-                    const code = result.code ?? "?";
-
-                    failureDetails.push(
-                        `  ${taskId} (exit ${String(code)}):\n${tail
-                            .split("\n")
-                            .map((l) => `    ${l}`)
-                            .join("\n")}`,
-                    );
-                }
-
-                // A failed task is the run reporting a result, not vis
-                // malfunctioning — a stack here would bury the summary block
-                // that actually names the failures.
-                throw new VisUserError(failureDetails.length > 0 ? `${headline}\n${failureDetails.join("\n")}` : headline);
-            }
+            reportRunOutcome({ firstRun, hasFailure, logger, options, workspaceRoot });
 
             if (persistentTasks.length > 0 && !options.failFast) {
                 await runPersistentTasks(persistentTasks, spawnContext, undefined);
             }
 
-            if (registryStartedCount > 0) {
-                logger.info("");
-
-                if (stopServicesOnExit) {
-                    logger.info(`${String(registryStartedCount)} service(s) stopped (--stop-services).`);
-                } else {
-                    logger.info(`${String(registryStartedCount)} service(s) started in the background. Run \`vis service stop --all\` to clean up.`);
-                }
-            }
+            logRegistryServiceHint({ logger, registryStartedCount, stopServicesOnExit });
         }
     } finally {
-        runCleanupOnce();
-
-        if (hasCleanupWork) {
-            process.off("SIGINT", onCleanupSignal);
-            process.off("SIGTERM", onCleanupSignal);
-        }
-
-        // Clean exit path: also delete the registry entries for services
-        // we just stopped so `vis service list` doesn't show stale rows.
-        // The signal-handler path skips this — sync FS work in a SIGINT
-        // handler is risky, and `pruneDead` reconciles dead entries on
-        // demand anyway.
-        if (stopServicesOnExit && registryStartedIds.length > 0) {
-            await Promise.all(
-                registryStartedIds.map(async (id) => {
-                    try {
-                        await deleteEntry(workspaceRoot, id);
-                    } catch {
-                        // Best-effort — entry may already be gone.
-                    }
-                }),
-            );
-        }
+        await cleanup.finish();
     }
 };
 
