@@ -11,6 +11,7 @@ import { hasPnpmCatalogs, readPnpmCatalogs } from "./catalog/pnpm-yaml";
 import type { ApplyCatalogUpdatesOptions, InternalOutdatedOptions, OutdatedEntry, ReadCatalogOptions, UpdateTarget } from "./catalog/types";
 import { extractPrefix, getUpdateType, isNewer, parseVersion } from "./catalog/version";
 import { resolveIndentForExistingFile } from "./editorconfig";
+import { setNestedField } from "./nested-field";
 
 const getDepTypesToInclude = (options?: ReadCatalogOptions): string[] => {
     if (options?.dev) {
@@ -70,27 +71,6 @@ const getNestedField = (object: Record<string, unknown>, path: string): Record<s
     }
 
     return typeof current === "object" && current !== null ? (current as Record<string, string>) : undefined;
-};
-
-const setNestedField = (object: Record<string, unknown>, path: string, key: string, value: string): void => {
-    const parts = path.split(".");
-    let current: Record<string, unknown> = object;
-
-    for (const part of parts.slice(0, -1)) {
-        if (!current[part] || typeof current[part] !== "object") {
-            current[part] = {};
-        }
-
-        current = current[part] as Record<string, unknown>;
-    }
-
-    const lastPart = parts.at(-1)!;
-
-    if (!current[lastPart] || typeof current[lastPart] !== "object") {
-        current[lastPart] = {};
-    }
-
-    (current[lastPart] as Record<string, string>)[key] = value;
 };
 
 const filterExternalDeps = (deps: Record<string, string>, internalNames: Set<string>): Map<string, string> => {

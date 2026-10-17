@@ -1,6 +1,7 @@
 import { readJsonSync, writeJsonSync } from "@visulima/fs";
 
 import { resolveIndentForExistingFile } from "../util/editorconfig";
+import { setNestedField } from "../util/nested-field";
 import type { DepInstance, DepType } from "../util/workspace-deps";
 
 /**
@@ -64,32 +65,6 @@ export const lintWorkspaceProtocol = (instances: DepInstance[], options: Workspa
     }
 
     return issues;
-};
-
-const setNestedField = (object: Record<string, unknown>, dotPath: string, key: string, value: string): void => {
-    const parts = dotPath.split(".");
-    let current = object;
-
-    for (let index = 0; index < parts.length - 1; index += 1) {
-        const part = parts[index] as string;
-        const next = current[part];
-
-        if (typeof next !== "object" || next === null) {
-            current[part] = {};
-        }
-
-        current = current[part] as Record<string, unknown>;
-    }
-
-    const lastPart = parts.at(-1) as string;
-    let block = current[lastPart];
-
-    if (typeof block !== "object" || block === null) {
-        block = {};
-        current[lastPart] = block;
-    }
-
-    (block as Record<string, string>)[key] = value;
 };
 
 export interface ApplyWorkspaceProtocolFixesOptions {
