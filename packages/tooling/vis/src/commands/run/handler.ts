@@ -5,16 +5,11 @@ import isInCi from "is-in-ci";
 
 import { applyBranchScope, resolveSharedCacheDirectory } from "../../cache/cache-directory";
 import { buildProjectGraph, discoverWorkspace, loadVisTaskConfigsForWorkspace } from "../../config/workspace";
-import { VisUserError } from "../../errors/vis-user-error";
 import { FailureLogLifeCycle } from "../../report/failure-log";
 import { compareDuration, formatTimingSummary, loadRunSummaries } from "../../report/run-report";
 import { resolveCommandRuntime } from "../../runtime/command-runtime";
-import { runReadiness } from "../../services/readiness";
-import { readAllEntries } from "../../services/registry";
-import type { ServiceEntry } from "../../services/types";
 import { checkStrictEnv, formatStrictEnvError } from "../../task/strict-env";
 import { detectCurrentOs, resolveTargetShell } from "../../task/target-options";
-import { ServiceDockStore } from "../../tui/components/service-dock/service-dock-store";
 import { createDynamicOutputRenderer } from "../../tui/dynamic-life-cycle";
 import { resolveOutputStyle, StaticOutputLifeCycle } from "../../tui/static-life-cycle";
 import type { StdinEntry } from "../../tui/types";
@@ -24,13 +19,12 @@ import { collectTrackedWatchTargets, createTrackedFileFilter, startWatcher } fro
 import { applyProjectFilter } from "../../watch/watch-filter";
 import type { KeybindHandle } from "../../watch/watch-keybinds";
 import { installKeybinds, writeHelp } from "../../watch/watch-keybinds";
-import { applyServiceRegistry } from "./apply-service-registry";
 import type { MutexPool } from "./executor";
 import { createConcurrentExecutor, createRetryBudget } from "./executor";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
 import { parseEnvConcurrency, renderLastRunSummary } from "./parse";
-import { runPersistentTasks, SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
+import { runPersistentTasks } from "./persistent-tasks";
 import { resolveRunArguments } from "./run-arguments";
 import { createRunCleanup } from "./run-cleanup";
 import { printDryRunPlan } from "./run-dry-run";
@@ -38,12 +32,10 @@ import { buildInitialTasks } from "./run-initial-tasks";
 import { runStartupPreflights } from "./run-preflight";
 import { applyRemoteCacheConfig } from "./run-remote-cache";
 import { enforceRunConstraints, narrowProjectSelection, narrowToAffectedProjects, pickRunTarget, validateAffectedOnlyFlags } from "./run-selection";
+import { wireRunServices } from "./run-services";
 import { logRegistryServiceHint, reportRunOutcome } from "./run-summary";
 import { selectProjectsWithTarget } from "./run-target-projects";
 import { createRunTaskGraph } from "./run-task-graph";
-import type { ServiceBridgeEntry } from "./service-event-bridge";
-import { ServiceEventBridge } from "./service-event-bridge";
-import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "./service-preflight";
 import { resolveTaskCommand } from "./shell";
 import { AFFECTED_FILES_ENV, createTaskSpawnContext, effectiveChildEnvPolicy, getTaskOptions, resolveRetrySpawn, resolveTaskSpawn } from "./task-env";
 
@@ -193,353 +185,23 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
     await runStartupPreflights({ config, logger, options, packageJsons, workspaceRoot });
 
-    // Auto-attach: if a service this run depends on is already
-    // running in the background registry, drop it from the graph and
-    // capture its env for the surviving dependents. Diagnostics here
-    // mean the user invoked something whose dep is a service that
-    // isn't running — refuse to half-execute.
-    //
-    // The probe re-runs the service's readiness check with a short
-    // timeout before accepting the entry. PID-alive isn't enough: a
-    // shell-wrapped service whose underlying server has crashed leaves
-    // the wrapper PID alive, and we don't want to attach a dependent
-    // task to a dead port. The probe is skipped in `--dry-run` because
-    // a plan print never executes the dependent task, so probing risks
-    // a misleading "service down" diagnostic for what is really a
-    // planning-only invocation.
-    const visVersion = process.env["VIS_VERSION"] ?? "0.0.0";
-    const probe = options.dryRun
-        ? undefined
-        : async (entry: ServiceEntry): Promise<boolean> => {
-            try {
-                await runReadiness(entry.config, { timeoutMs: SERVICE_PROBE_TIMEOUT_MS });
+    const services = await wireRunServices({ config, initialTasks, logger, options, persistentTasks, target, taskGraph, workspaceRoot });
 
-                return true;
-            } catch {
-                return false;
-            }
-        };
+    initialTasks = services.initialTasks;
+    taskGraph = services.taskGraph;
 
-    const registeredEntries = await readAllEntries(workspaceRoot);
-    // User-invoked tasks for `applyServiceRegistry`'s "is this user-asked-for?"
-    // check — includes persistent ones so a user running `vis run dev` (where
-    // `dev` is persistent) doesn't get a confusing "service deps missing"
-    // diagnostic for the persistent task itself.
-    const serviceResult = await applyServiceRegistry({
-        initialTasks: [...initialTasks, ...persistentTasks],
-        probe,
-        registeredEntries,
-        taskGraph,
-        visVersion,
-    });
-
-    /**
-     * Ephemeral pid files written by the bootstrap wrapper at service
-     * boot. Read at run end + SIGTERM the recorded pids so a failed run
-     * never leaves orphan children. Registry-mode services are NOT
-     * tracked here — they persist by design.
-     */
-    const ephemeralPidFiles: string[] = [];
-    /** Per-run scratch directory holding the bootstrap script + pid/config files. Removed at run end. */
-    let serviceRunDir: string | undefined;
-    /** Registry-mode services started this run; surfaced in a one-line cleanup hint after the run completes. */
-    let registryStartedCount = 0;
-    /** Ids of registry-mode services this run started — used by `--stop-services` to clean only its own. */
-    const registryStartedIds: string[] = [];
-    /** id → pid for registry-mode services this run started, captured in the bridge `started` sink. Used by the sync signal-path cleanup. */
-    const registryStartedPids = new Map<string, number>();
-
-    /**
-     * Service ids injected as regular dep nodes for this run. The dynamic
-     * TUI's `TaskStore` only renders rows for tasks it knows about at
-     * construction time — top-level `initialTasks` alone would hide the
-     * service rows. We prepend these task objects to `initialTasks` after
-     * the 2nd-pass `applyServiceRegistry` so the renderer makes rows for
-     * them and live boot logs land somewhere visible.
-     */
-    let injectedServiceIds: string[] = [];
-    /** Set form of `injectedServiceIds` used by the executor's onOutput hook to route per-task chunks. */
-    const injectedServiceIdSet = new Set<string>();
-    /** Service dock store + event bridge (ephemeral mode only in v1). Constructed alongside successful injection. */
-    let serviceDockStore: ServiceDockStore | null = null;
-    let serviceEventBridge: ServiceEventBridge | null = null;
-
-    if (serviceResult.diagnostics.length > 0) {
-        const isTty = Boolean(process.stdout.isTTY && process.stdin.isTTY);
-        const decision = options.dryRun
-            ? "off"
-            : resolveServicesPolicy({
-                cli: options.services,
-                config: config.run?.services,
-                isCi: Boolean(isInCi),
-                isPersistentTarget: persistentTasks.length > 0,
-                isTty,
-                target,
-            });
-
-        if (decision === "off") {
-            for (const diagnostic of serviceResult.diagnostics) {
-                logger.error(diagnostic.message);
-            }
-
-            // Auto-start exists and would have satisfied every one of these
-            // deps — it just wasn't reached, because `--dry-run` skips it or
-            // the TTY-aware default resolved to `off` (CI, a piped stdout, a
-            // non-interactive shell). Naming the override turns a dead end
-            // into a one-flag fix; without it a declarative `dependsOn` on a
-            // service reads as simply unsupported.
-            const source = describeServicesPolicySource({ cli: options.services, config: config.run?.services });
-            const hints: string[] = [];
-
-            if (options.dryRun) {
-                hints.push("`--dry-run` never starts services; drop it to let vis boot them.");
-            } else if (source === "default") {
-                hints.push(
-                    "vis only auto-starts service deps in an interactive terminal by default (this run is CI or non-TTY).",
-                    "Pass `--services=ephemeral` to boot them for this run, or set `run.services` in vis.config.ts.",
-                );
-            } else if (source === "cli") {
-                hints.push("`--services=off` was passed; use `--services=ephemeral` to boot them for this run.");
-            } else {
-                hints.push("`run.services: \"off\"` is set in vis.config.ts; override it with `--services=ephemeral`.");
-            }
-
-            throw new VisUserError(
-                [`${serviceResult.diagnostics.length} service dependency error(s) — start the missing services or invoke them directly.`, ...hints].join(
-                    "\n",
-                ),
-            );
-        }
-
-        const missingIds = serviceResult.diagnostics.map((d) => d.targetId);
-        const mode = decision;
-
-        // Capture the original (pre-injection) per-service config so the
-        // bridge's registry entries hold the actual service command —
-        // `injectServiceTasks` rewrites `task.overrides.command` to the
-        // `vis service start <id>` wrapper, which is the wrong thing to
-        // re-spawn from `#retryRegistry`.
-        const preInjectionExtracted = mode === "registry" ? extractPreflightTasks(workspaceRoot, missingIds, taskGraph) : undefined;
-
-        // Inject the missing services as regular task graph nodes —
-        // they'll render as rows in the run TUI with live boot logs,
-        // execute strictly sequentially (artificial deps chain them),
-        // and exit 0 the moment readiness passes. The synthesized env
-        // map below mirrors apply-service-registry's prune-time logic
-        // without actually pruning the graph.
-        const visBin = process.argv[1] ?? "vis";
-        const injection = injectServiceTasks({
-            missingServiceIds: missingIds,
-            mode,
-            taskGraph,
-            visBin,
-            workspaceRoot,
-        });
-
-        if (injection.skipped.length > 0) {
-            for (const { id, reason } of injection.skipped) {
-                logger.error(`Cannot auto-start ${id}: ${reason}`);
-            }
-
-            throw new VisUserError(`${injection.skipped.length} service(s) cannot be auto-started — invoke them directly or add a service config.`);
-        }
-
-        ephemeralPidFiles.push(...injection.ephemeralPidFiles);
-        serviceRunDir = injection.runDir;
-        injectedServiceIds = injection.chain;
-
-        for (const id of injection.chain) {
-            injectedServiceIdSet.add(id);
-        }
-
-        if (mode === "registry") {
-            registryStartedCount = injection.chain.length;
-            registryStartedIds.push(...injection.chain);
-        }
-
-        // Stand up the dock + bridge for both modes. Ephemeral surfaces
-        // boot events through the bootstrap's stdout marker channel and
-        // running-phase log via fs.watch. Registry surfaces them through
-        // the wrapper task's `started`/`close` lifecycle events emitted
-        // by the executor — see the bridge wiring in `onEvent`.
-        if (injection.chain.length > 0) {
-            const dock = new ServiceDockStore(injection.chain);
-            const bridgeEntries = new Map<string, ServiceBridgeEntry>();
-
-            if (mode === "ephemeral" && injection.runDir) {
-                for (const id of injection.chain) {
-                    const paths = buildBootstrapPaths(injection.runDir, `${injection.runDir}/bootstrap.mjs`, id);
-
-                    bridgeEntries.set(id, {
-                        ephemeral: {
-                            configFile: paths.configFile,
-                            cwd: workspaceRoot,
-                            logFile: paths.logFile,
-                            pidFile: paths.pidFile,
-                            scriptPath: paths.scriptPath,
-                        },
-                        mode: "ephemeral",
-                    });
-                }
-            } else if (mode === "registry" && preInjectionExtracted) {
-                for (const svc of preInjectionExtracted.services) {
-                    bridgeEntries.set(svc.id, {
-                        mode: "registry",
-                        registry: {
-                            command: svc.command,
-                            config: svc.config,
-                            cwd: svc.cwd,
-                            env: svc.env,
-                        },
-                    });
-                }
-            }
-
-            if (bridgeEntries.size > 0) {
-                const bridge = new ServiceEventBridge({
-                    indexToId: new Map(),
-                    services: bridgeEntries,
-                    sink: {
-                        crashed: (id, tail) => {
-                            dock.markCrashed(id, tail);
-                        },
-                        failed: (id, reason, detail) => {
-                            dock.markFailed(id, reason, detail);
-                        },
-                        log: (id, chunk) => {
-                            dock.appendLog(id, chunk);
-                        },
-                        ready: (id, info) => {
-                            dock.markReady(id, info);
-                        },
-                        started: (id, pid) => {
-                            dock.markStarted(id, pid);
-
-                            // Capture registry-mode pids for the optional
-                            // --stop-services cleanup. Ephemeral pids are
-                            // already tracked via `ephemeralPidFiles`, so
-                            // skip those to keep the two cleanup paths
-                            // from doubly-killing the same pid.
-                            if (mode === "registry" && pid !== null) {
-                                registryStartedPids.set(id, pid);
-                            }
-                        },
-                        starting: (id) => {
-                            dock.markStarting(id);
-                        },
-                    },
-                    workspaceRoot,
-                });
-
-                serviceDockStore = dock;
-                serviceEventBridge = bridge;
-            }
-        }
-
-        // Merge synthesized env on top of the 1st pass's env map.
-        // 1st-pass entries cover already-running registered services;
-        // injection covers services we're about to boot.
-        for (const [taskId, env] of injection.serviceEnvByTaskId) {
-            const existing = serviceResult.serviceEnvByTaskId.get(taskId) ?? {};
-
-            serviceResult.serviceEnvByTaskId.set(taskId, { ...existing, ...env });
-        }
-    }
-
-    // applyServiceRegistry was called with `[...initialTasks, ...persistentTasks]`
-    // so its "is this user-asked-for?" check covers persistent targets like
-    // `vis run dev`. Its returned `initialTasks` therefore *also* contains
-    // the persistent ones (minus any satisfied services). Strip them back
-    // out — `runPersistentTasks` runs them; the regular runner must not.
-    // Without this filter, `web:serve` is fed to *both* pipelines and the
-    // TUI renders the row twice.
-    const persistentIdSet = new Set(persistentTasks.map((task) => task.id));
-
-    initialTasks = serviceResult.initialTasks.filter((task) => !persistentIdSet.has(task.id));
-    taskGraph = serviceResult.taskGraph;
-
-    if (injectedServiceIds.length > 0) {
-        const serviceTasks = injectedServiceIds.map((id) => taskGraph.tasks[id]).filter((t): t is Task => t !== undefined);
-
-        initialTasks = [...serviceTasks, ...initialTasks];
-    }
-
-    // Persistent tasks were folded into the graph above so their service
-    // deps could be walked. Strip them now so the regular task runner
-    // doesn't try to execute them — they have their own runner pipeline
-    // via `runPersistentTasks`. Their dep edges are removed too; the
-    // service tasks they pointed at become roots and run on their own.
-    if (persistentTasks.length > 0) {
-        const persistentIds = new Set(persistentTasks.map((task) => task.id));
-
-        const filteredTasks: Record<string, Task> = {};
-
-        for (const [id, task] of Object.entries(taskGraph.tasks)) {
-            if (!persistentIds.has(id)) {
-                filteredTasks[id] = task;
-            }
-        }
-
-        const filteredDependencies: Record<string, string[]> = {};
-
-        for (const [id, deps] of Object.entries(taskGraph.dependencies)) {
-            if (persistentIds.has(id)) {
-                continue;
-            }
-
-            filteredDependencies[id] = deps.filter((depId) => !persistentIds.has(depId));
-        }
-
-        // Recompute roots from the trimmed graph: anything no remaining
-        // task depends on. Service tasks orphaned by removing their
-        // dependent persistent task become roots here.
-        const dependedOn = new Set<string>();
-
-        for (const deps of Object.values(filteredDependencies)) {
-            for (const depId of deps) {
-                dependedOn.add(depId);
-            }
-        }
-
-        const filteredRoots = Object.keys(filteredTasks).filter((id) => !dependedOn.has(id));
-
-        taskGraph = {
-            dependencies: filteredDependencies,
-            roots: filteredRoots,
-            tasks: filteredTasks,
-        };
-    }
-
-    // Service env precedence: the executor merges these on top of
-    // process.env when running each dependent task. See
-    // apply-service-registry.ts → ApplyServiceRegistryResult.serviceEnvByTaskId
-    // for the keying contract (per *dependent*, not per service).
-    const { serviceEnvByTaskId } = serviceResult;
-
-    if (serviceResult.satisfiedServices.length > 0) {
-        const names = serviceResult.satisfiedServices.map((s) => s.id).join(", ");
-
-        logger.debug?.(`Auto-attached to running services: ${names}`);
-
-        // Surface attached services in the dock so a second `vis run dev`
-        // (where the registry already holds api:db, api:redis, …) still
-        // shows the green pill. Without this, the dock is empty on rerun
-        // and the user can't tell whether their deps are wired.
-        if (serviceDockStore) {
-            for (const entry of serviceResult.satisfiedServices) {
-                serviceDockStore.registerService(entry.id);
-            }
-        } else {
-            serviceDockStore = new ServiceDockStore(serviceResult.satisfiedServices.map((s) => s.id));
-        }
-
-        for (const entry of serviceResult.satisfiedServices) {
-            const readinessPort = entry.config.readiness?.tcp?.port ?? entry.config.port ?? 0;
-            const readinessHost = entry.config.readiness?.tcp?.host ?? "127.0.0.1";
-
-            serviceDockStore.markReady(entry.id, { host: readinessHost, port: readinessPort });
-        }
-    }
+    const {
+        ephemeralPidFiles,
+        injectedServiceIdSet,
+        registryStartedCount,
+        registryStartedIds,
+        registryStartedPids,
+        serviceDockStore,
+        serviceEnvByTaskId,
+        serviceEventBridge,
+        serviceResult,
+        serviceRunDir,
+    } = services;
 
     // Flip the task graph for teardown targets (CDK/Pulumi `destroy`,
     // `undeploy`, etc.) where dependents must run before the things
