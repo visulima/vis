@@ -9,7 +9,7 @@ import { runStaticMode } from "./handler-parts/run-static";
 import type { RunOptions } from "./index";
 
 /**
- * `vis run &lt;target>`: select projects, build and preflight the task graph,
+ * `vis run TARGET`: select projects, build and preflight the task graph,
  * attach or boot services, then run the tasks (interactive, static, or watch).
  * Each phase lives in `./handler-parts/run-*.ts`; a phase returning `true`
  * (or `undefined` from the workspace load) ends the run early.
@@ -66,6 +66,3 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 };
 
 export default execute as CommandExecute<Toolbox>;
-
-export type { RetryBudget } from "./handler-parts/executor";
-export { createRetryBudget } from "./handler-parts/executor";
