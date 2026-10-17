@@ -40,7 +40,7 @@ const execute = async ({ options, visConfig, workspaceRoot: wsRoot }: Toolbox<Co
         if (!options.syncNative) {
             pail.notice("");
             pail.notice("Tip: vis.config.ts security.policies.installScripts.allow may now be out of sync with pnpm-workspace.yaml.");
-            pail.notice("Run 'vis check --security-config' to compare, or copy the new entries into vis.config.ts.");
+            pail.notice("Run 'vis outdated --security-config' to compare, or copy the new entries into vis.config.ts.");
 
             return;
         }

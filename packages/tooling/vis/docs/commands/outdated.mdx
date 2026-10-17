@@ -1,39 +1,90 @@
 ---
 title: "vis outdated"
-description: "Check for outdated packages using the detected package manager"
+description: "Check for outdated dependencies, security vulnerabilities, and supply chain settings"
 ---
 
 # vis outdated
 
-Report packages whose installed version is behind the latest published version. Delegates to the detected PM (`pnpm outdated`, `npm outdated`, `yarn outdated`, `bun outdated`) and normalizes the output.
+Check for outdated dependencies, known security vulnerabilities, and supply-chain
+settings. On **pnpm** / **bun** workspaces it checks catalog dependencies; on
+**npm** / **yarn** it checks `dependencies` / `devDependencies` (scope with `--dev` /
+`--prod`).
+
 
 ## Usage
 
 ```bash
-vis outdated [packages...] [options]
+vis outdated [packages] [options]
 ```
 
 ## Examples
 
 ```bash
-vis outdated
-vis outdated react
-vis outdated --format json
-vis outdated -r                      # all workspaces
-vis outdated --compatible            # only semver-compatible updates (pnpm)
+vis outdated                              # Check all catalog dependencies
+vis outdated react                        # Check specific packages
+vis outdated --target minor               # Only show minor/patch updates
+vis outdated --exclude '@types/*'         # Exclude packages by pattern
+vis outdated --no-security                # Skip vulnerability scanning
+vis outdated --security-config            # Audit supply-chain security settings
+vis outdated --security-config --sync     # Sync security config to pnpm-workspace.yaml
+vis outdated --format json                # Machine-readable output
+vis outdated --exit-code                  # Exit 1 if outdated (for CI)
 ```
 
 ## Options
 
-| Option             | Alias | Default | Description                                   |
-| ------------------ | ----- | ------- | --------------------------------------------- |
-| `--long`           |       | `false` | Show extended information                     |
-| `--format`         |       | `table` | Output format: `table`, `list`, or `json`     |
-| `--recursive`      | `-r`  | `false` | Check all workspaces                          |
-| `--workspace-root` | `-w`  | `false` | Include workspace root                        |
-| `--prod`           | `-P`  | `false` | Production dependencies only (pnpm)           |
-| `--dev`            | `-D`  | `false` | Dev dependencies only (pnpm)                  |
-| `--no-optional`    |       | `false` | Exclude optional dependencies (pnpm)          |
-| `--compatible`     |       | `false` | Show only semver-compatible updates (pnpm)    |
-| `--global`         | `-g`  | `false` | Check globally installed packages             |
-| `--filter`         | `-F`  |         | Filter by workspace package name (repeatable) |
+| Option               | Alias | Default  | Description                                                                           |
+| -------------------- | ----- | -------- | ------------------------------------------------------------------------------------- |
+| `--target`           | `-t`  | `latest` | Update target: `latest`, `minor`, or `patch`                                          |
+| `--include`          |       |          | Glob pattern to include packages (repeatable)                                         |
+| `--exclude`          |       |          | Glob pattern to exclude packages (repeatable)                                         |
+| `--prerelease`       |       | `false`  | Include prerelease versions                                                           |
+| `--no-security`      |       | `false`  | Skip security vulnerability scanning                                                  |
+| `--security-config`  |       | `false`  | Audit supply-chain security settings                                                  |
+| `--sync`             |       | `false`  | Sync security settings to `pnpm-workspace.yaml` (pnpm only, with `--security-config`) |
+| `--format`           |       | `table`  | Output format: `table`, `json`, or `minimal`                                          |
+| `--exit-code`        |       | `false`  | Exit with code 1 if outdated dependencies found (for CI)                              |
+| `--ai`               |       | `false`  | Run AI analysis on outdated packages                                                  |
+| `--ai-type`          |       |          | AI analysis type: `impact`, `security`, `compatibility`, or `recommend`               |
+| `--dev`              | `-D`  | `false`  | Check only `devDependencies` (npm/yarn mode; conflicts with `--prod`)                 |
+| `--prod`             | `-P`  | `false`  | Check only `dependencies` (npm/yarn mode; conflicts with `--dev`)                     |
+| `--peer`             |       | `false`  | Include `peerDependencies` in outdated checks                                         |
+| `--include-internal` |       | `false`  | Also check workspace-owned package names against the registry                         |
+
+## Output Formats
+
+### Table (default)
+
+Displays a color-coded table showing package name, catalog, current version, target version, and update type (patch/minor/major).
+
+### JSON
+
+Machine-readable JSON output including both outdated entries and any packages that failed to fetch:
+
+```json
+{
+    "failed": [],
+    "outdated": [
+        {
+            "packageName": "typescript",
+            "catalog": "default",
+            "currentVersion": "5.3.0",
+            "targetVersion": "5.7.0",
+            "updateType": "minor"
+        }
+    ]
+}
+```
+
+### Minimal
+
+Compact one-line-per-package output, suitable for scripting.
+
+## CI Usage
+
+Use `--exit-code` to fail CI when outdated dependencies are found:
+
+```yaml
+- name: Check dependencies
+  run: vis outdated --exit-code --format json > deps-report.json
+```

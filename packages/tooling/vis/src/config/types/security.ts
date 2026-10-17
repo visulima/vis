@@ -570,7 +570,7 @@ export interface VisSecurityConfig {
              * Minimum overall Socket.dev score (0–1). Set to 0 to
              * disable the gate while keeping Socket data fetched.
              *
-             * Consulted by `vis add`, `audit`, `doctor`, `check`, and
+             * Consulted by `vis add`, `audit`, `doctor`, `outdated`, and
              * `update`; resolved once in `buildSocketOptions`, then
              * threaded through every consumer. Falls back to
              * `DEFAULT_LOW_SCORE_THRESHOLD` (`0.4`) when unset.
