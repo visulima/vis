@@ -51,7 +51,7 @@ interface DynamicOutputOptions {
     totalTaskCount?: number;
 }
 
-interface DynamicOutputResult {
+export interface DynamicOutputResult {
     lifeCycle: LifeCycleInterface;
     renderIsDone: Promise<void>;
     store: TaskStore;

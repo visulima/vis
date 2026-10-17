@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isGemVersionRbPath } from "../../../src/release/core/orchestrator";
+import { isGemVersionRbPath } from "../../../src/release/core/ecosystems";
 
 // The regex that isGemVersionRbPath replaces. Kept here only as the reference for the equivalence check.
 const legacy = (path: string): boolean => /(?:^|\/)lib\/.+\/version\.rb$/.test(path);

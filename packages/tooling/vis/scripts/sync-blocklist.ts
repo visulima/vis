@@ -45,7 +45,7 @@ const writeBlocklist = (data: Blocklist): void => {
         sorted[key] = [...new Set(data[key])].sort();
     }
 
-    writeFileSync(DATA_FILE, JSON.stringify(sorted, null, 2) + "\n");
+    writeFileSync(DATA_FILE, JSON.stringify(sorted, null, 4) + "\n");
 };
 
 const packageExists = async (name: string): Promise<boolean> => {

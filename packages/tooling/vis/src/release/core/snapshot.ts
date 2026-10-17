@@ -56,6 +56,156 @@ export interface RunSnapshotResult {
     tag: string;
 }
 
+interface SnapshotTagRefs {
+    branch?: string;
+    prFromEnv?: string;
+    sha: string;
+    shortSha: string;
+}
+
+const snapshotTagAlias = (kind: string, refs: SnapshotTagRefs): string | undefined => {
+    switch (kind) {
+        case "branch": {
+            return refs.branch && refs.branch !== "HEAD" ? refs.branch : undefined;
+        }
+        case "pr": {
+            return refs.prFromEnv ? `pr-${refs.prFromEnv}` : undefined;
+        }
+        case "sha": {
+            return refs.sha;
+        }
+        case "short-sha": {
+            return refs.shortSha;
+        }
+        default: {
+            return undefined;
+        }
+    }
+};
+
+// Multi-tag support (RFC §13.2): the same tarball can be published under
+// multiple aliases (sha / short-sha / branch / pr) so reviewers can pin to
+// whatever granularity. Default = the single user-supplied tag; aliases are
+// only added when `release.snapshot.tags` is configured.
+const resolveSnapshotTags = (tag: string, tagKinds: ReadonlyArray<string>, refs: SnapshotTagRefs): string[] => {
+    const tags: string[] = [tag];
+
+    for (const kind of tagKinds) {
+        const extra = snapshotTagAlias(kind, refs);
+
+        if (extra && extra !== tag && !tags.includes(extra)) {
+            tags.push(extra);
+        }
+    }
+
+    return tags;
+};
+
+const selectSnapshotTargets = async (packages: ReadonlyArray<WorkspacePackage>, filter: string | undefined): Promise<WorkspacePackage[]> => {
+    let targets = [...packages];
+
+    if (filter) {
+        const { default: zeptomatch } = await import("zeptomatch");
+        const globs = filter
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+        targets = targets.filter((p) => globs.some((g) => p.name === g || zeptomatch(g, p.name)));
+    }
+
+    // Snapshots are for installable previews — skip private packages.
+    return targets.filter((p) => !p.private);
+};
+
+interface SnapshotPublishDeps {
+    ctx: OrchestratorContext;
+    npmCli: NpmAdapter;
+    registry: string | undefined;
+    tags: string[];
+}
+
+type SnapshotPackageOutcome = { kind: "published" } | { kind: "skipped"; reason: string } | { kind: "failed"; reason: string };
+
+type SnapshotPublishResult = Awaited<ReturnType<NpmAdapter["publish"]>>;
+
+const publishTarballUnderTags = async (tarball: string, deps: SnapshotPublishDeps): Promise<SnapshotPublishResult | undefined> => {
+    let firstResult: SnapshotPublishResult | undefined;
+
+    for (const t of deps.tags) {
+        const r = await deps.npmCli.publish({
+            access: "public",
+            extraArgs: ["--no-git-checks"],
+            registry: deps.registry,
+            tag: t,
+            tarball,
+        });
+
+        firstResult ??= r;
+    }
+
+    return firstResult;
+};
+
+// First tag's outcome determines the per-package status; later tags are
+// best-effort (already-published is success).
+const snapshotOutcomeFromPublish = (result: SnapshotPublishResult | undefined): SnapshotPackageOutcome => {
+    if (result?.published) {
+        return { kind: "published" };
+    }
+
+    if (result?.alreadyPublished) {
+        return { kind: "skipped", reason: "already-published" };
+    }
+
+    return { kind: "skipped", reason: result?.output ?? "unknown" };
+};
+
+// Packs the rewritten manifest and publishes the tarball under every tag alias.
+// The source manifest is always restored, even when packing or publishing fails.
+const publishSnapshotManifest = async (
+    pkg: WorkspacePackage,
+    cleaned: PackageManifest,
+    deps: SnapshotPublishDeps,
+): Promise<SnapshotPackageOutcome> => {
+    let original: string | undefined;
+
+    try {
+        original = await readFile(pkg.manifestPath, "utf8");
+
+        await writeFile(pkg.manifestPath, `${JSON.stringify(cleaned, null, 4)}\n`);
+
+        // Pack to a temp dir to keep the worktree clean.
+        const { mkdtempSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const { join } = await import("node:path");
+        const tempDir = mkdtempSync(join(tmpdir(), "vis-snapshot-"));
+
+        const packed = await deps.ctx.pm.pack({ cwd: pkg.dir, destination: tempDir });
+
+        return snapshotOutcomeFromPublish(await publishTarballUnderTags(packed.tarball, deps));
+    } catch (error) {
+        return { kind: "failed", reason: (error as Error).message };
+    } finally {
+        if (original !== undefined) {
+            try {
+                await writeFile(pkg.manifestPath, original);
+            } catch {
+                // best-effort restore
+            }
+        }
+    }
+};
+
+// Builds the manifest that would be published for `pkg`: versioned workspace
+// deps, catalog references resolved, publish-only fields cleaned.
+const buildSnapshotManifest = (pkg: WorkspacePackage, deps: { catalogs: ReturnType<typeof parseCatalogs>; ctx: OrchestratorContext; versionedByName: ReadonlyMap<string, PackageManifest> }): PackageManifest => {
+    const composed = composeSnapshotManifest(pkg, deps.versionedByName);
+    const catalogResolved = rewriteCatalogRefs(composed, deps.catalogs);
+
+    return cleanPackageJsonForPublish(catalogResolved, deps.ctx.config.publish?.cleanPackageJson);
+};
+
 /**
  * Run the snapshot workflow against an orchestrator context. Caller is
  * responsible for surfacing the result (CLI handlers print + set exit code;
@@ -77,66 +227,18 @@ export const runSnapshot = async (options: RunSnapshotOptions): Promise<RunSnaps
     const template = ctx.config.snapshot?.versionTemplate ?? "0.0.0-{tag}-{shortSha}";
     const timestamp = new Date().toISOString().replaceAll(/[:.]/g, "").slice(0, 14);
 
-    // Multi-tag support (RFC §13.2): the same tarball can be published
-    // under multiple aliases (sha / short-sha / branch / pr) so reviewers
-    // can pin to whatever granularity. Default = the single user-supplied
-    // tag; expand only when `release.snapshot.tags` is configured.
-    const tagKinds = ctx.config.snapshot?.tags ?? [];
     const branch = await runner
         .run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: ctx.cwd, silent: true })
         .then((r) => (r.exitCode === 0 ? r.stdout.trim() : undefined))
         .catch(() => undefined);
     const prFromEnv = process.env["VIS_PR_NUMBER"] ?? process.env["PR_NUMBER"];
+    const resolvedBranch = branch && branch !== "HEAD" ? branch : undefined;
 
-    const tags: string[] = [tag];
-
-    for (const kind of tagKinds) {
-        let extra: string | undefined;
-
-        switch (kind) {
-            case "branch": {
-                extra = branch && branch !== "HEAD" ? branch : undefined;
-                break;
-            }
-            case "pr": {
-                extra = prFromEnv ? `pr-${prFromEnv}` : undefined;
-                break;
-            }
-            case "sha": {
-                extra = sha;
-                break;
-            }
-            case "short-sha": {
-                extra = shortSha;
-                break;
-            }
-            default: {
-                extra = undefined;
-            }
-        }
-
-        if (extra && extra !== tag && !tags.includes(extra)) {
-            tags.push(extra);
-        }
-    }
-
-    let targets = ctx.packages;
-
-    if (options.filter) {
-        const { default: zeptomatch } = await import("zeptomatch");
-        const globs = options.filter
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-
-        targets = targets.filter((p) => globs.some((g) => p.name === g || zeptomatch(g, p.name)));
-    }
-
-    // Snapshots are for installable previews — skip private packages.
-    targets = targets.filter((p) => !p.private);
+    const tags = resolveSnapshotTags(tag, ctx.config.snapshot?.tags ?? [], { branch, prFromEnv, sha, shortSha });
+    const targets = await selectSnapshotTargets(ctx.packages, options.filter);
 
     const snapshotVersion = interpolateTemplate(template, {
-        branch: branch && branch !== "HEAD" ? branch : undefined,
+        branch: resolvedBranch,
         pr: prFromEnv,
         sha,
         shortSha,
@@ -151,7 +253,7 @@ export const runSnapshot = async (options: RunSnapshotOptions): Promise<RunSnaps
     }
 
     const catalogs = parseCatalogs(await ctx.pm.readCatalogYaml(ctx.cwd));
-    const npmCli = new NpmAdapter(runner);
+    const deps: SnapshotPublishDeps = { ctx, npmCli: new NpmAdapter(runner), registry, tags };
 
     const published: SnapshotItem[] = [];
     const skipped: { name: string; reason: string }[] = [];
@@ -186,65 +288,22 @@ export const runSnapshot = async (options: RunSnapshotOptions): Promise<RunSnaps
                 continue;
             }
 
-            const composed = composeSnapshotManifest(pkg, versionedByName);
-            const catalogResolved = rewriteCatalogRefs(composed, catalogs);
-            const cleaned = cleanPackageJsonForPublish(catalogResolved, ctx.config.publish?.cleanPackageJson);
+            const cleaned = buildSnapshotManifest(pkg, { catalogs, ctx, versionedByName });
 
             if (dryRun) {
                 published.push({ name: pkg.name, version: snapshotVersion });
+
                 continue;
             }
 
-            let original: string | undefined;
+            const outcome = await publishSnapshotManifest(pkg, cleaned, deps);
 
-            try {
-                original = await readFile(pkg.manifestPath, "utf8");
-
-                await writeFile(pkg.manifestPath, `${JSON.stringify(cleaned, null, 4)}\n`);
-
-                // Pack to a temp dir to keep the worktree clean.
-                const { mkdtempSync } = await import("node:fs");
-                const { tmpdir } = await import("node:os");
-                const { join } = await import("node:path");
-                const tempDir = mkdtempSync(join(tmpdir(), "vis-snapshot-"));
-
-                const packed = await ctx.pm.pack({ cwd: pkg.dir, destination: tempDir });
-
-                // Publish the same tarball under every requested tag alias.
-                // First tag's outcome determines the per-package status; later
-                // tags are best-effort (already-published is success).
-                let firstResult: Awaited<ReturnType<typeof npmCli.publish>> | undefined;
-
-                for (const t of tags) {
-                    const r = await npmCli.publish({
-                        access: "public",
-                        extraArgs: ["--no-git-checks"],
-                        registry,
-                        tag: t,
-                        tarball: packed.tarball,
-                    });
-
-                    firstResult ??= r;
-                }
-
-                if (firstResult?.published) {
-                    published.push({ name: pkg.name, version: snapshotVersion });
-                } else if (firstResult?.alreadyPublished) {
-                    skipped.push({ name: pkg.name, reason: "already-published" });
-                } else {
-                    skipped.push({ name: pkg.name, reason: firstResult?.output ?? "unknown" });
-                }
-            } catch (error) {
-                failed.push({ name: pkg.name, reason: (error as Error).message });
-            } finally {
-                // Always restore the source manifest.
-                if (original !== undefined) {
-                    try {
-                        await writeFile(pkg.manifestPath, original);
-                    } catch {
-                        // best-effort restore
-                    }
-                }
+            if (outcome.kind === "published") {
+                published.push({ name: pkg.name, version: snapshotVersion });
+            } else if (outcome.kind === "skipped") {
+                skipped.push({ name: pkg.name, reason: outcome.reason });
+            } else {
+                failed.push({ name: pkg.name, reason: outcome.reason });
             }
         }
     } finally {
