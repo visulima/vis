@@ -1,3 +1,9 @@
+## @visulima/vis [6.1.3](https://github.com/visulima/vis/compare/@visulima/vis@6.1.2...@visulima/vis@6.1.3) (2026-10-17)
+
+### Bug Fixes
+
+* **vis:** tear down run services and report preflight errors ([#30](https://github.com/visulima/vis/issues/30)) ([80d5a91](https://github.com/visulima/vis/commit/80d5a91718a11ebedd7386b72c85e56568f37bb4))
+
 ## @visulima/vis [6.1.2](https://github.com/visulima/vis/compare/@visulima/vis@6.1.1...@visulima/vis@6.1.2) (2026-10-17)
 
 ### Bug Fixes
