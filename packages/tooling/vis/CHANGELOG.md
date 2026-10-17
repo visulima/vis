@@ -1,3 +1,9 @@
+## @visulima/vis [6.1.2](https://github.com/visulima/vis/compare/@visulima/vis@6.1.1...@visulima/vis@6.1.2) (2026-10-17)
+
+### Bug Fixes
+
+* **bench:** bump fixture express to 4.22.3 so path-to-regexp resolves patched ([#29](https://github.com/visulima/vis/issues/29)) ([ccb03ee](https://github.com/visulima/vis/commit/ccb03eecc172389d2f532f17af71493ca3c6e24b))
+
 ## @visulima/vis [6.1.1](https://github.com/visulima/vis/compare/@visulima/vis@6.1.0...@visulima/vis@6.1.1) (2026-10-17)
 
 ### Bug Fixes
