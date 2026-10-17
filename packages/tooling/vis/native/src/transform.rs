@@ -32,7 +32,7 @@ pub fn transform_ts(filename: String, source: String) -> napi::Result<TransformR
 
     let parser_return = Parser::new(&allocator, &source, source_type).parse();
 
-    if parser_return.panicked {
+    if parser_return.fatal_error {
         return Err(napi::Error::from_reason(format!("vis-native: failed to parse {filename}")));
     }
 
