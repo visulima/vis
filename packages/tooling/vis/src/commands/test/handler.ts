@@ -10,20 +10,20 @@ import type { TestOptions } from "./index";
 export type ReadText = (path: string) => Promise<string | undefined>;
 
 /**
- * Locate the Vitest CLI entry by walking up from `start` through each parent's
- * `node_modules/vitest`, so a test run from a workspace package still finds the
- * hoisted install. Returns `undefined` when no ancestor has Vitest installed.
+ * Locate a package's bin entry by walking up from `start` through each parent's
+ * `node_modules/&lt;packageName>`, so a test run from a workspace package still finds
+ * a hoisted install. Returns `undefined` when no ancestor has the package.
  */
-export const resolveVitestEntry = async (start: string, readText: ReadText): Promise<string | undefined> => {
+export const resolveBinEntry = async (start: string, readText: ReadText, packageName: string, binName: string): Promise<string | undefined> => {
     let directory = start;
 
     for (;;) {
-        const packageDirectory = join(directory, "node_modules", "vitest");
+        const packageDirectory = join(directory, "node_modules", packageName);
         const manifestText = await readText(join(packageDirectory, "package.json"));
 
         if (manifestText !== undefined) {
             const manifest = JSON.parse(manifestText) as { bin?: string | Record<string, string> };
-            const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.["vitest"];
+            const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
 
             if (bin) {
                 return join(packageDirectory, bin);
@@ -39,6 +39,14 @@ export const resolveVitestEntry = async (start: string, readText: ReadText): Pro
         directory = parent;
     }
 };
+
+/** Locate the Vitest CLI entry. */
+export const resolveVitestEntry = (start: string, readText: ReadText): Promise<string | undefined> =>
+    resolveBinEntry(start, readText, "vitest", "vitest");
+
+/** Locate the Rstest CLI entry (shipped by `@rstest/core`). */
+export const resolveRstestEntry = (start: string, readText: ReadText): Promise<string | undefined> =>
+    resolveBinEntry(start, readText, "@rstest/core", "rstest");
 
 /**
  * The package's own `test` script, or `undefined` when there is none. npm's
@@ -59,6 +67,12 @@ export const readTestScript = async (directory: string, readText: ReadText): Pro
     }
 
     return script;
+};
+
+const runNodeEntry = (entry: string, args: string[], cwd: string): [number | null, Error | undefined] => {
+    const result = spawnSync(process.execPath, [entry, ...args], { cwd, stdio: "inherit" });
+
+    return [result.status, result.error];
 };
 
 const exitWithStatus = (status: number | null, error: Error | undefined): void => {
@@ -100,19 +114,26 @@ const execute = async ({ argument, fs, logger, options, rawUnknown }: Toolbox<Co
         return;
     }
 
+    // Vitest first, then Rstest: the same order the inference detectors use.
     const vitestEntry = await resolveVitestEntry(cwd, readText);
 
-    if (vitestEntry === undefined) {
-        throw new VisUserError("Vitest is not installed. Add it with `vis add -D vitest`, then run `vis test` again.");
+    if (vitestEntry !== undefined) {
+        // Vitest's `run` subcommand exits after one pass; without it Vitest watches,
+        // which is what `--watch` asks for.
+        const vitestArguments = [...(options.watch ? [] : ["run"]), ...forwarded];
+
+        exitWithStatus(...runNodeEntry(vitestEntry, vitestArguments, cwd));
+
+        return;
     }
 
-    // Vitest's `run` subcommand exits after one pass; without it Vitest watches,
-    // which is what `--watch` asks for.
-    const vitestArguments = [...(options.watch ? [] : ["run"]), ...forwarded];
+    const rstestEntry = await resolveRstestEntry(cwd, readText);
 
-    const result = spawnSync(process.execPath, [vitestEntry, ...vitestArguments], { cwd, stdio: "inherit" });
+    if (rstestEntry === undefined) {
+        throw new VisUserError("No test runner is installed. Add Vitest with `vis add -D vitest`, or Rstest with `vis add -D @rstest/core`, then run `vis test` again.");
+    }
 
-    exitWithStatus(result.status, result.error);
+    exitWithStatus(...runNodeEntry(rstestEntry, [options.watch ? "watch" : "run", ...forwarded], cwd));
 };
 
 // fallow-ignore-next-line unused-export -- lazy-loaded command entry (cerebro loader/lazyNamed dynamic import)
