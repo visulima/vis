@@ -40,6 +40,11 @@ import { pythonDetector } from "./detectors/python";
 import { remixDetector } from "./detectors/remix";
 import { rolldownDetector } from "./detectors/rolldown";
 import { rollupDetector } from "./detectors/rollup";
+import { rsbuildDetector } from "./detectors/rsbuild";
+import { rslibDetector } from "./detectors/rslib";
+import { rslintDetector } from "./detectors/rslint";
+import { rspackDetector } from "./detectors/rspack";
+import { rstestDetector } from "./detectors/rstest";
 import { storybookDetector } from "./detectors/storybook";
 import { stylelintDetector } from "./detectors/stylelint";
 import { swiftDetector } from "./detectors/swift";
@@ -62,12 +67,12 @@ export type { DetectContext, Detector } from "./types";
  * priorities baked into this list:
  *
  * - `build`: nuxt > next > remix > astro > gatsby > docusaurus > vite >
- *   nest > rolldown > tsdown > tsup > packem > rollup > webpack
+ *   nest > rolldown > tsdown > tsup > packem > rollup > rsbuild > rslib > rspack > webpack
  * - `dev` / `preview` / `start` / `serve`: cascades from `build` order;
  *   gatsby owns `develop` uniquely
- * - `test`: vitest > jest > bun (`test:e2e` is playwright >
+ * - `test`: vitest > jest > rstest > bun (`test:e2e` is playwright >
  *   cypress)
- * - `lint`: eslint > biome > oxlint
+ * - `lint`: eslint > biome > oxlint > rslint
  * - `format` / `format:check`: prettier > biome > oxfmt > dprint
  *
  * Single-owner targets (no collision possible): `typecheck` (typescript),
@@ -94,9 +99,13 @@ export const BUILT_IN_DETECTORS: ReadonlyArray<Detector> = [
     tsupDetector,
     packemDetector,
     rollupDetector,
+    rsbuildDetector,
+    rslibDetector,
+    rspackDetector,
     webpackDetector,
     vitestDetector,
     jestDetector,
+    rstestDetector,
     bunDetector,
     playwrightDetector,
     cypressDetector,
@@ -107,6 +116,7 @@ export const BUILT_IN_DETECTORS: ReadonlyArray<Detector> = [
     prettierDetector,
     biomeDetector,
     oxlintDetector,
+    rslintDetector,
     oxfmtDetector,
     dprintDetector,
     stylelintDetector,

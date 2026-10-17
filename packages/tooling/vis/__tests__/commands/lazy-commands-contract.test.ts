@@ -8,6 +8,7 @@ import aiCommands from "../../src/commands/ai";
 import analyzeCommand from "../../src/commands/analyze";
 import approveBuildsCommand from "../../src/commands/approve-builds";
 import auditCommand from "../../src/commands/audit";
+import buildCommand from "../../src/commands/build";
 import cacheCommands from "../../src/commands/cache";
 import checkCommand from "../../src/commands/check";
 import ciCommand from "../../src/commands/ci";
@@ -15,6 +16,7 @@ import ciIgnoreCommand from "../../src/commands/ci-ignore";
 import cleanCommand from "../../src/commands/clean";
 import createCommand from "../../src/commands/create";
 import dedupeCommand from "../../src/commands/dedupe";
+import devCommand from "../../src/commands/dev";
 import devcontainerCommand from "../../src/commands/devcontainer";
 import dlxCommand from "../../src/commands/dlx";
 import dockerCommands from "../../src/commands/docker";
@@ -34,6 +36,7 @@ import migrateCommands from "../../src/commands/migrate";
 import optimizeCommand from "../../src/commands/optimize";
 import outdatedCommand from "../../src/commands/outdated";
 import pmCommand from "../../src/commands/pm";
+import rebuildCommand from "../../src/commands/rebuild";
 import removeCommand from "../../src/commands/remove";
 import runCommand from "../../src/commands/run";
 import sbomCommand from "../../src/commands/sbom";
@@ -56,11 +59,13 @@ const FLAT_COMMANDS: Command[] = [
     analyzeCommand,
     approveBuildsCommand,
     auditCommand,
+    buildCommand,
     checkCommand,
     ciCommand,
     cleanCommand,
     createCommand,
     dedupeCommand,
+    devCommand,
     devcontainerCommand,
     dlxCommand,
     doctorCommand,
@@ -77,6 +82,7 @@ const FLAT_COMMANDS: Command[] = [
     optimizeCommand,
     outdatedCommand,
     pmCommand,
+    rebuildCommand,
     removeCommand,
     runCommand,
     sbomCommand,
