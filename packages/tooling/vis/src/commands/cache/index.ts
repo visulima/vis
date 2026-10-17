@@ -48,7 +48,7 @@ const cacheClean: Command = {
         ["vis cache clean --dry-run", "Preview what clean would remove"],
     ],
     group: "Workspace",
-    loader: lazyNamed(() => import("./handler"), "cacheCleanExecute"),
+    loader: lazyNamed(() => import("./maintenance"), "cacheCleanExecute"),
     name: "clean",
     options: [
         cacheDirectoryOption,
@@ -77,7 +77,7 @@ const cachePrune: Command = {
         ["vis cache prune --keep-last=30", "Keep only the 30 most recent entries"],
     ],
     group: "Workspace",
-    loader: lazyNamed(() => import("./handler"), "cachePruneExecute"),
+    loader: lazyNamed(() => import("./maintenance"), "cachePruneExecute"),
     name: "prune",
     options: [
         cacheDirectoryOption,
@@ -149,7 +149,7 @@ const cacheWhy: Command = {
         ["vis cache why @myorg/app:build --run 2026-04-28T...", "Inspect a specific historical run"],
     ],
     group: "Workspace",
-    loader: lazyNamed(() => import("./handler"), "cacheWhyExecute"),
+    loader: lazyNamed(() => import("./why"), "cacheWhyExecute"),
     name: "why",
     options: [formatOption, runOption],
 };
