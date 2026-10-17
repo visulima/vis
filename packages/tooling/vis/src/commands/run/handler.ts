@@ -1,11 +1,10 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 
 import { buildRunGraph, printDryRunPlan, runPreflightChecks, shapeTaskGraph } from "./handler-parts/run-graph";
-import { runInteractiveMode } from "./handler-parts/run-modes";
+import { runInteractiveMode, runStaticMode } from "./handler-parts/run-modes";
 import { armRunCleanup, prepareRunRuntime, teardownRun } from "./handler-parts/run-runtime";
 import { buildInitialTasks, loadRunWorkspace, selectProjectsWithTarget, selectRunProjects } from "./handler-parts/run-select";
 import { attachRegisteredServices, finalizeServiceGraph, injectMissingServices } from "./handler-parts/run-services";
-import { runStaticMode } from "./handler-parts/run-static";
 import type { RunOptions } from "./index";
 
 /**

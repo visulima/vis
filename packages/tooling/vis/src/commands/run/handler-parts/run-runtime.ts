@@ -10,12 +10,12 @@ import { resolveOutputStyle } from "../../../tui/static-life-cycle";
 import { createVisHooks, HookableLifeCycle, registerPlugins } from "../../../util/hooks";
 import { getVisWorkspaceDataDir } from "../../../util/vis-paths";
 import { createTaskSpawnContext, effectiveChildEnvPolicy, getTaskOptions, resolveTaskSpawn } from "../task-env";
-import { createRetryBudget } from "./executor";
-import { parseCacheBackend, parseCacheMode, parseEnvConcurrency } from "./parse";
-import { cleanupEphemeralServices } from "./persistent-tasks";
 import type { RunContext } from "./run-context";
+import { createRetryBudget } from "./run-executor";
+import { parseCacheBackend, parseCacheMode, parseEnvConcurrency } from "./run-parse";
+import { cleanupEphemeralServices } from "./run-persistent-tasks";
 import type { ServiceRegistryResult } from "./run-services";
-import { resolveTaskCommand } from "./shell";
+import { resolveTaskCommand } from "./run-shell";
 
 /**
  * Phase 8: everything the run modes need — hooks, runner options, remote cache,

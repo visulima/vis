@@ -10,8 +10,8 @@ import { applyServiceRegistry } from "../apply-service-registry";
 import type { ServiceBridgeEntry } from "../service-event-bridge";
 import { ServiceEventBridge } from "../service-event-bridge";
 import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "../service-preflight";
-import { SERVICE_PROBE_TIMEOUT_MS } from "./persistent-tasks";
 import type { RunContext } from "./run-context";
+import { SERVICE_PROBE_TIMEOUT_MS } from "./run-persistent-tasks";
 
 export type ServiceRegistryResult = Awaited<ReturnType<typeof applyServiceRegistry>>;
 

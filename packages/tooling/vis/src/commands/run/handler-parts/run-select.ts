@@ -17,10 +17,10 @@ import { cleanupLegacyTaskRunnerLayout } from "../../../util/vis-paths";
 import { applyFilterStrings } from "../filter";
 import { resolveTaskArguments } from "../task-arguments";
 import { AFFECTED_FILES_ENV, getTaskOptions, TASK_ARG_ENV_KEY } from "../task-env";
-import { parseHashMode, renderLastRunSummary } from "./parse";
 import type { RunContext, RunToolbox } from "./run-context";
 import { createRunContext } from "./run-context";
-import { FORWARDED_ARGS_KEY } from "./shell";
+import { parseHashMode, renderLastRunSummary } from "./run-parse";
+import { FORWARDED_ARGS_KEY } from "./run-shell";
 
 /**
  * Phase 0: resolve the runtime, sweep legacy state, handle `--last-details`,

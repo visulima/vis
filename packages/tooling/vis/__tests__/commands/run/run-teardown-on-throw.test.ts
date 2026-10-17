@@ -47,7 +47,7 @@ vi.mock(import("../../../src/commands/run/handler-parts/run-runtime"), async (im
     return { ...actual, prepareRunRuntime: state.prepareRunRuntime };
 });
 
-vi.mock(import("../../../src/commands/run/handler-parts/persistent-tasks"), async (importOriginal) => {
+vi.mock(import("../../../src/commands/run/handler-parts/run-persistent-tasks"), async (importOriginal) => {
     const actual = await importOriginal();
 
     return { ...actual, cleanupEphemeralServices: state.cleanupEphemeralServices };

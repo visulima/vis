@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createRetryBudget } from "../../../src/commands/run/handler-parts/executor";
+import { createRetryBudget } from "../../../src/commands/run/handler-parts/run-executor";
 
 describe(createRetryBudget, () => {
     it("grants up to the requested amount and decrements remaining", () => {

@@ -10,8 +10,8 @@ import type { StdinEntry } from "../../../tui/types";
 import { isPidAlive } from "../../../util/process-alive";
 import type { TaskSpawnContext } from "../task-env";
 import { resolveTaskSpawn } from "../task-env";
-import { MAX_OUTPUT_BYTES } from "./output";
-import { resolveTaskCommand } from "./shell";
+import { MAX_OUTPUT_BYTES } from "./run-output";
+import { resolveTaskCommand } from "./run-shell";
 
 /**
  * Per-service readiness re-check budget for the auto-attach probe.

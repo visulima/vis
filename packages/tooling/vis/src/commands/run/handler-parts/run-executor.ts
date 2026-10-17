@@ -9,7 +9,7 @@ import { scheduleTimeoutKill } from "../../../util/signal-escalation";
 import type { ServiceEventBridge } from "../service-event-bridge";
 import type { TaskSpawnContext } from "../task-env";
 import { getTaskOptions, resolveTaskSpawn } from "../task-env";
-import { MAX_OUTPUT_BYTES, OutputRingBuffer } from "./output";
+import { MAX_OUTPUT_BYTES, OutputRingBuffer } from "./run-output";
 
 /**
  * Serializes tasks that share a mutex name. Keyed by mutex name, each
