@@ -68,7 +68,7 @@ export interface PublishWave {
     state: StateFile;
 }
 
-export interface PublishWaveModules {
+interface PublishWaveModules {
     registry: {
         readStagedRegistry: typeof readStagedRegistry;
         removePendingStages: typeof removePendingStages;
@@ -85,7 +85,7 @@ export interface PublishWaveModules {
 }
 
 /** Phase-independent inputs handed to {@link openPublishWave}. */
-export interface PublishWaveBase {
+interface PublishWaveBase {
     context: OrchestratorContext;
     options: PublishContextOptions;
     result: PublishContextResult;
