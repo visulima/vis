@@ -148,13 +148,26 @@ export const runPublishPreflight = async (
     // a developer runs `vis release publish` while CI is mid-release-PR cycle.
     if (!options.dryRun && context.channel?.mode === "version-pr") {
         const { createRemoteClient, detectRemoteProvider } = await import("../remote/detect");
-        const provider = await detectRemoteProvider(context.cwd, runner, context.config.provider);
-        const client = createRemoteClient(provider, {
-            githubHost: context.config.githubHost,
-            gitlabHost: context.config.gitlabHost,
-            httpProxy: context.config.httpProxy,
-        });
-        const repo = await client.detectRepoSlug(context.cwd, runner);
+        let repo: string | undefined;
+
+        try {
+            const provider = await detectRemoteProvider(context.cwd, runner, context.config.provider);
+            const client = createRemoteClient(provider, {
+                githubHost: context.config.githubHost,
+                gitlabHost: context.config.gitlabHost,
+                httpProxy: context.config.httpProxy,
+            });
+
+            repo = await client.detectRepoSlug(context.cwd, runner);
+        } catch (error) {
+            result.failed.push({
+                name: "_preflight",
+                reason: `Could not read the remote to check for an open release PR: ${(error as Error).message}`,
+            });
+
+            return true;
+        }
+
         const branch = context.config.versionPr?.branch ?? "vis-release/version-packages";
 
         if (repo) {
@@ -196,7 +209,15 @@ export const runPublishPreflight = async (
     // Fail before publishing when the pushes later in this run would be
     // rejected, so packages don't land on the registry without their tags.
     if (!options.dryRun && !options.noPush) {
-        const pushError = await verifyReleasePushes(context, runner, { noTag: options.noTag === true });
+        let pushError: string | undefined;
+
+        try {
+            pushError = await verifyReleasePushes(context, runner, { noTag: options.noTag === true });
+        } catch (error) {
+            result.failed.push({ name: "_preflight", reason: `Could not verify the release pushes: ${(error as Error).message}` });
+
+            return true;
+        }
 
         if (pushError !== undefined) {
             result.failed.push({ name: "_pushAccess", reason: pushError });
