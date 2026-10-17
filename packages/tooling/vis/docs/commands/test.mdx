@@ -7,6 +7,8 @@ description: "Run the package's test script, or Vitest when it has none"
 
 Runs the project's tests. If the package has a `test` script in its `package.json`, `vis test` runs that script through the workspace's package manager, so the command your team already uses stays the source of truth. Otherwise it runs [Vitest](https://vitest.dev) directly, with no script or config entry needed. When Vitest is not installed, it runs [Rstest](https://rstest.rs) instead (`rstest run`, or `rstest watch` with `--watch`). Either runner is found in the nearest `node_modules`, walking up from the current directory, so a hoisted install works from a workspace package.
 
+If neither runner is installed, `vis test` asks which one to add as a devDependency, then runs it. Nothing is installed without that choice. In a non-interactive run (CI, or no terminal) it stops and lists the install commands instead.
+
 When the `test` script is used, `vis test` prints a warning first, so it is clear which runner ran. Remove the script to fall back to Vitest.
 
 Vitest is not bundled. Add it to your project first:
