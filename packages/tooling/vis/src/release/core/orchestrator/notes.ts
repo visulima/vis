@@ -19,15 +19,14 @@ export const composeRelatedReleasesBlock = (recent: ReadonlyArray<{ name: string
 
 /**
  * Wrap a per-package release body with operator-supplied header / footer
- * text (release-please #1274 parity). Tokens supported in both fields:
+ * text. Tokens supported in both fields:
  *   - `{name}` — package name
  *   - `{version}` — new version
  *   - `{previousVersion}` — previous version
  *   - `{date}` — `YYYY-MM-DD` of the release wave
  *   - `{repo}` — `owner/repo` slug
  *   - `{contributors}` — bullet-list of authors collected from the
- *     entire wave's change-file `author:` frontmatter (release-please
- *     #292). Wave-scoped — every per-package release sees the same set,
+ *     entire wave's change-file `author:` frontmatter. Wave-scoped — every per-package release sees the same set,
  *     so cascade / dependency-only bumps still credit the upstream
  *     author. Empty string when no change file in the wave declared an
  *     author. Block-only; keep on its own line.

@@ -80,14 +80,13 @@ export const createRemoteReleases = async (
     // Wave-scoped tokens hoisted out of the per-package loop:
     //   - `date`: previously recomputed per iteration, which gave
     //     packages on either side of UTC midnight different `{date}`
-    //     stamps within the same wave (audit V4).
+    //     stamps within the same wave.
     //   - `contributors`: previously collected from per-package
     //     `planned.changeFiles`, which dropped attribution on
-    //     cascade / dependency-only bumps (audit V3) and split the
-    //     contributor list across two releases on `--resume` after a
-    //     partial publish failure (audit S-4). Sourced from the plan's
-    //     `consumedChangeFiles` for true wave scope per release-please
-    //     #292 semantics (audit S-8).
+    //     cascade / dependency-only bumps and split the contributor
+    //     list across two releases on `--resume` after a partial
+    //     publish failure. Sourced from the plan's
+    //     `consumedChangeFiles` so the list covers the whole wave.
     const date = new Date().toISOString().slice(0, 10);
     const internalAuthors = extractInternalAuthors(context.config.changelog);
     const waveContributors = collectContributors(context.plan.consumedChangeFiles ?? [], { internalAuthors });
@@ -152,7 +151,7 @@ export const createRemoteReleases = async (
         }
 
         if (addReleases !== undefined && addReleases !== false) {
-            // Semantic-release/github parity: link the immediately
+            // Link the immediately
             // previous N releases of THIS package. Tag pattern is the
             // same one we used to mint the current tag — `@scope/pkg@`
             // for the default `{name}@{version}`, derived empirically
@@ -179,7 +178,7 @@ export const createRemoteReleases = async (
             }
         }
 
-        // releaseNoteTemplate (release-please #1274 parity): wrap the
+        // releaseNoteTemplate: wrap the
         // composed body with operator-supplied header / footer. The
         // tokens cover the common case ("link to the migration guide",
         // "thank a sponsor") without requiring a custom formatter. Skipped
