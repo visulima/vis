@@ -5,13 +5,27 @@ import { VisReleaseError } from "../../errors";
 import type { PackageManifest, PerPackageReleaseConfig, ReleasePlan, VisReleaseConfig, WorkspacePackage } from "../../types";
 import { readChangeFiles } from "../change-file-reader";
 import { detectCurrentBranch, resolveChannel } from "../channels";
+import type { ComposerProject } from "../composer-projects";
+import type { DartProject } from "../dart-projects";
 import { DependencyGraph } from "../dep-graph";
 import { ecosystemPerPackage, isDiscoveryEnabled, RELEASE_ECOSYSTEMS } from "../ecosystems";
+import type { GemProject } from "../gem-projects";
+import type { GoProject } from "../go-projects";
+import type { GradleProject } from "../gradle-projects";
+import type { HexProject } from "../hex-projects";
+import type { MavenProject } from "../maven-projects";
+import type { NuGetProject } from "../nuget-projects";
 import { createAdapter, detectPackageManager } from "../package-managers/detect";
 import type { PackageManagerAdapter } from "../package-managers/interface";
+import type { PreModeFile } from "../pre-mode";
 import { assembleReleasePlan } from "../release-plan";
 import { createShellRunner } from "../shell-runner";
+import type { SwiftProject } from "../swift-projects";
 import { discoverPackages } from "../workspace";
+import type { ZigProject } from "../zig-projects";
+
+/** A project any discovered ecosystem can return. The ecosystem table erases this per entry. */
+export type EcosystemProject = ComposerProject | DartProject | GemProject | GoProject | GradleProject | HexProject | MavenProject | NuGetProject | SwiftProject | WorkspacePackage | ZigProject;
 
 export interface OrchestratorContext {
     branch?: string;
@@ -43,10 +57,10 @@ export interface OrchestratorContext {
      * while exit-pending cleanup also fires. Undefined when no pre.json
      * exists.
      */
-    preMode?: import("../pre-mode").PreModeFile;
+    preMode?: PreModeFile;
 
     /** Projects each discovered ecosystem produced, keyed by its id (`maven`, `gradle`, ...). An id is absent when its discover flag is off. */
-    projectsByEcosystem?: ReadonlyMap<string, ReadonlyArray<unknown>>;
+    projectsByEcosystem?: ReadonlyMap<string, ReadonlyArray<EcosystemProject>>;
 }
 
 export interface BuildContextOptions {
@@ -181,7 +195,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
 
     // Discovered ecosystems are added in table order. Each one claims directories from the packages and per-package config that
     // earlier ones have already added, so the loop runs one entry at a time.
-    const projectsByEcosystem = new Map<string, ReadonlyArray<unknown>>();
+    const projectsByEcosystem = new Map<string, ReadonlyArray<EcosystemProject>>();
 
     if (RELEASE_ECOSYSTEMS.some((eco) => isDiscoveryEnabled(config, eco))) {
         for (const eco of RELEASE_ECOSYSTEMS) {
@@ -206,7 +220,8 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
             }
 
             packages = [...packages, ...projects.map((project) => eco.toPackage(project))];
-            projectsByEcosystem.set(eco.id, projects);
+            // The table erases each ecosystem's project type; `discover` returns that ecosystem's own EcosystemProject members.
+            projectsByEcosystem.set(eco.id, projects as ReadonlyArray<EcosystemProject>);
         }
 
         // Discovered modules are named by their own coordinates (bare `core`, `group:artifact`, …), so a
