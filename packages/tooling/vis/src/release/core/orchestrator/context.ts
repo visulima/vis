@@ -1,17 +1,17 @@
 import semver from "semver";
 
-import { DEFAULT_CONFIG } from "../../config";
 import { VisReleaseError } from "../../errors";
-import type { PackageManifest, PerPackageReleaseConfig, ReleasePlan, VisReleaseConfig, WorkspacePackage } from "../../types";
+import type { PerPackageReleaseConfig, ReleasePlan, VisReleaseConfig, WorkspacePackage } from "../../types";
 import { readChangeFiles } from "../change-file-reader";
 import { detectCurrentBranch, resolveChannel } from "../channels";
 import { DependencyGraph } from "../dep-graph";
-import { ecosystemPerPackage, isDiscoveryEnabled, RELEASE_ECOSYSTEMS } from "../ecosystems";
 import { createAdapter, detectPackageManager } from "../package-managers/detect";
 import type { PackageManagerAdapter } from "../package-managers/interface";
 import { assembleReleasePlan } from "../release-plan";
 import { createShellRunner } from "../shell-runner";
-import { discoverPackages } from "../workspace";
+import { detectCatalogConsumers } from "./context-catalog";
+import { loadReleaseConfig } from "./context-config";
+import { discoverReleasePackages } from "./context-packages";
 
 export interface OrchestratorContext {
     branch?: string;
@@ -25,9 +25,6 @@ export interface OrchestratorContext {
      *   - currentVersionResolver is forced to "disk"
      *   - per-package remote tag-collision checks are skipped
      *   - missing prior tags are treated as the bootstrap case, not an error.
-     *
-     * Equivalent to `nx release --first-release` and release-please's
-     * `bootstrap-sha` knob.
      */
     firstRelease: boolean;
     packages: WorkspacePackage[];
@@ -37,7 +34,7 @@ export interface OrchestratorContext {
 
     /**
      * Snapshot of `&lt;changesDir>/pre.json` at the time `buildContext` ran.
-     * Pinned here (M9 fix) so `applyContext` doesn't re-read the file —
+     * Pinned here so `applyContext` doesn't re-read the file —
      * otherwise a concurrent `vis release pre exit` between `buildContext`
      * and `applyContext` could leave the version computed as a prerelease
      * while exit-pending cleanup also fires. Undefined when no pre.json
@@ -61,8 +58,7 @@ export interface BuildContextOptions {
      * Treat this run as the first release on a greenfield monorepo (or a
      * freshly-added package). Forces `currentVersionResolver: "disk"`,
      * skips tag-collision checks against the remote, and bypasses any
-     * "missing prior tag" failure path. Maps to `nx release --first-release`
-     * and release-please's `bootstrap-sha` mechanism.
+     * "missing prior tag" failure path.
      */
     firstRelease?: boolean;
     /** Limit to packages matching these globs (post-discovery filter). */
@@ -109,29 +105,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
         });
     }
 
-    // Load vis.config.ts → extract `release` block → merge with inline options.
-    // Missing config is fine (treat as empty); a present-but-broken config must
-    // surface so we don't silently version/publish with the wrong settings.
-    let fileConfig: VisReleaseConfig = {};
-
-    try {
-        const { loadVisConfig } = await import("../../../config/config");
-        const visConfig = await loadVisConfig(cwd);
-
-        if (visConfig.release) {
-            fileConfig = visConfig.release;
-        }
-    } catch (error) {
-        const { code } = error as NodeJS.ErrnoException;
-        const message = (error as Error).message ?? "";
-        const isMissing = code === "ENOENT" || code === "MODULE_NOT_FOUND" || /cannot find module/i.test(message);
-
-        if (!isMissing) {
-            throw error;
-        }
-    }
-
-    const config = mergeConfig(fileConfig, options.config ?? {});
+    const config = await loadReleaseConfig(cwd, options.config);
 
     // Print unstable warning unless suppressed (RFC §21.2).
     if (!config.acknowledgeUnstable && process.env["VIS_RELEASE_SUPPRESS_UNSTABLE"] !== "1") {
@@ -144,100 +118,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     const branch = options.channel ?? (await detectCurrentBranch(cwd, runner));
     const resolved = branch ? resolveChannel(branch, config.channels) : undefined;
 
-    // Discover packages via the active PM adapter. Manifest reads run in
-    // parallel (Promise.all + filter) — for a 49-package monorepo this cuts
-    // ~150ms of sequential fs latency to ~10ms wall time.
-    const fs = await import("node:fs/promises");
-    const reader = {
-        listPackages: async () => {
-            const entries = await pm.listWorkspacePackages(cwd);
-
-            const settled = await Promise.all(
-                entries.map(async (entry) => {
-                    const manifestPath = `${entry.path}/package.json`;
-
-                    try {
-                        const content = await fs.readFile(manifestPath, "utf8");
-                        const manifest = JSON.parse(content) as PackageManifest;
-
-                        return { manifest, manifestPath };
-                    } catch {
-                        // Safe to swallow: a PM adapter can list a stale workspace
-                        // path (lockfile drift, partially-deleted package). Dropping
-                        // it from discovery is the right call — releasing against a
-                        // missing manifest would fail later anyway.
-                        return undefined;
-                    }
-                }),
-            );
-
-            return settled.filter((entry): entry is { manifest: PackageManifest; manifestPath: string } => entry !== undefined);
-        },
-    };
-
-    const discovered = await discoverPackages(reader, config, { cwd });
-    const { perPackageConfig } = discovered;
-    let { packages } = discovered;
-
-    // Discovered ecosystems are added in table order. Each one claims directories from the packages and per-package config that
-    // earlier ones have already added, so the loop runs one entry at a time.
-    const projectsByEcosystem = new Map<string, ReadonlyArray<unknown>>();
-
-    if (RELEASE_ECOSYSTEMS.some((eco) => isDiscoveryEnabled(config, eco))) {
-        for (const eco of RELEASE_ECOSYSTEMS) {
-            if (!isDiscoveryEnabled(config, eco)) {
-                continue;
-            }
-
-            const claimedDirs = new Set<string>();
-
-            for (const pkg of packages) {
-                for (const dir of eco.claimedDirs(pkg, perPackageConfig.get(pkg.name) ?? {}, cwd)) {
-                    claimedDirs.add(dir);
-                }
-            }
-
-            const projects = await eco.discover({ claimedDirs, cwd });
-
-            for (const project of projects) {
-                const { name } = eco.toPackage(project);
-
-                perPackageConfig.set(name, { ...ecosystemPerPackage(eco, project, cwd), ...config.packages?.[name] });
-            }
-
-            packages = [...packages, ...projects.map((project) => eco.toPackage(project))];
-            projectsByEcosystem.set(eco.id, projects);
-        }
-
-        // Discovered modules are named by their own coordinates (bare `core`, `group:artifact`, …), so a
-        // clash with an earlier package is an error for every ecosystem, not only Gradle. JS packages keep
-        // their historic last-wins behaviour between themselves.
-        const owners = new Map<string, WorkspacePackage>();
-
-        for (const pkg of packages) {
-            const prior = owners.get(pkg.name);
-
-            if (prior !== undefined && pkg.ecosystem !== undefined) {
-                throw new VisReleaseError({
-                    code: "CONFIG_INVALID",
-                    message: `${pkg.name} is discovered as a ${pkg.ecosystem} project, but ${prior.dir} already has that name. Rename one of them in config.packages.`,
-                    packageName: pkg.name,
-                });
-            }
-
-            owners.set(pkg.name, pkg);
-        }
-    }
-
-    // Reject unsupported versionFiles before planning, so a config error never
-    // reaches the point where writes are produced.
-    {
-        const { assertSupportedVersionFiles } = await import("../version-files");
-
-        for (const [name, perPkg] of perPackageConfig) {
-            assertSupportedVersionFiles(name, perPkg.versionFiles ?? []);
-        }
-    }
+    const { packages, perPackageConfig, projectsByEcosystem } = await discoverReleasePackages(pm, config, cwd);
     const depGraph = new DependencyGraph(packages);
 
     // Read change files
@@ -248,8 +129,8 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     // / channel. Channel-derived prerelease still applies when pre.json
     // is absent.
     //
-    // Pre-mode tri-state effective-prerelease (C6 fix):
-    //   - mode: "pre"          → force `preMode.tag` (changesets parity)
+    // Pre-mode tri-state effective-prerelease:
+    //   - mode: "pre"          → force `preMode.tag`
     //   - mode: "exit-pending" → force `undefined` (consolidation = stable
     //                            bump); previously this fell through to
     //                            the channel's prerelease, which on an
@@ -286,81 +167,13 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
         skipRegistryLookup: options.skipRegistryLookup === true,
     });
 
-    // Catalog change-detection (changesets #1707, opt-in via
-    // `release.detectCatalogChanges`). When enabled, we diff
-    // `pnpm-workspace.yaml` at HEAD~1 vs HEAD; consumer packages of
-    // any moved catalog entry are fed into the plan as patch bumps
-    // tagged CATALOG_CHANGED.
-    //
-    // Soft-failures (no git repo, no HEAD~1, malformed YAML) surface
-    // as plan warnings — we don't want a freshly-cloned greenfield
-    // repo to fail the version step over a missing baseline.
-    const catalogConsumerEntries: NonNullable<import("../release-plan").AssembleReleasePlanOptions["catalogConsumers"]>[number][] = [];
-    const catalogWarnings: string[] = [];
-
-    if (config.detectCatalogChanges === true) {
-        try {
-            const { detectCatalogChanges, findCatalogConsumers, parseCatalogs: parseCatalogSnapshot } = await import("../catalog-detector");
-            const currentYaml = await pm.readCatalogYaml(cwd);
-            const currentCatalogs = parseCatalogSnapshot(currentYaml);
-
-            let prevYaml: string | undefined;
-
-            try {
-                const result = await runner.run("git", ["show", "HEAD~1:pnpm-workspace.yaml"], { cwd, silent: true });
-
-                if (result.exitCode === 0) {
-                    prevYaml = result.stdout;
-                }
-            } catch {
-                // git unreachable / no prior commit — degrade to "no prior
-                // snapshot" which surfaces every current catalog entry as
-                // an addition. That's not actually useful for cascading
-                // (additions don't move existing consumers), but keeping
-                // the detector resilient means greenfield repos don't
-                // throw here.
-            }
-
-            const prevCatalogs = parseCatalogSnapshot(prevYaml);
-            const changes = detectCatalogChanges(prevCatalogs, currentCatalogs);
-
-            // Only true bumps (both sides present and version differs)
-            // cascade — additions / removals don't affect existing
-            // consumers' resolved versions.
-            const bumps = changes.filter((c) => c.oldVersion !== undefined && c.newVersion !== undefined);
-
-            if (bumps.length > 0) {
-                // Use the CURRENT catalog snapshot to find consumers —
-                // we want the dependents of the catalog entry at HEAD
-                // (the version that will be published), not the prior
-                // wave's snapshot.
-                const consumersIndex = findCatalogConsumers(packages, currentCatalogs);
-
-                for (const change of bumps) {
-                    const depTable = consumersIndex.get(change.catalog);
-                    const consumers = depTable?.get(change.dep) ?? [];
-
-                    for (const consumer of consumers) {
-                        catalogConsumerEntries.push({
-                            catalog: change.catalog,
-                            dep: change.dep,
-                            newVersion: change.newVersion,
-                            oldVersion: change.oldVersion,
-                            packageName: consumer.packageName,
-                        });
-                    }
-                }
-
-                if (catalogConsumerEntries.length > 0) {
-                    catalogWarnings.push(
-                        `Catalog change-detection: ${bumps.length} catalog dep(s) moved; ${catalogConsumerEntries.length} consumer-package patch bump(s) tagged CATALOG_CHANGED.`,
-                    );
-                }
-            }
-        } catch (error) {
-            catalogWarnings.push(`Catalog change-detection skipped: ${(error as Error).message}.`);
-        }
-    }
+    const { entries: catalogConsumerEntries, warnings: catalogWarnings } = await detectCatalogConsumers(
+        pm,
+        runner,
+        cwd,
+        packages,
+        config.detectCatalogChanges === true,
+    );
 
     // Assemble plan
     const plan = assembleReleasePlan(changeFiles, depGraph, config, {
@@ -445,21 +258,11 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
         perPackageConfig,
         plan,
         pm,
-        // M9: snapshot pre-mode here so applyContext doesn't race with a
+        // Snapshot pre-mode here so applyContext doesn't race with a
         // concurrent `pre exit` between context-build and apply.
         preMode,
         projectsByEcosystem,
     };
-};
-
-const mergeConfig = (...sources: VisReleaseConfig[]): VisReleaseConfig => {
-    let merged: VisReleaseConfig = { ...DEFAULT_CONFIG };
-
-    for (const source of sources) {
-        merged = { ...merged, ...source };
-    }
-
-    return merged;
 };
 
 /**
