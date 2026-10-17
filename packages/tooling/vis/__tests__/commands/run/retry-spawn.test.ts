@@ -140,7 +140,9 @@ describe(resolveRetrySpawn, () => {
     it("builds the retry spawn with resolveRetrySpawn in the handler's retry branch", () => {
         expect.assertions(4);
 
-        const handlerSource = readFileSync(fileURLToPath(new URL("../../../src/commands/run/handler.ts", import.meta.url)), "utf8");
+        const handlerSource = ["handler.ts", "handler-parts/run-modes.ts"]
+            .map((file) => readFileSync(fileURLToPath(new URL(`../../../src/commands/run/${file}`, import.meta.url)), "utf8"))
+            .join("\n");
         const start = handlerSource.indexOf("loopAction === \"retry\" && retryTaskId");
         const end = handlerSource.indexOf("retryTaskId = null;", start);
 
@@ -158,7 +160,9 @@ describe(resolveRetrySpawn, () => {
     it("retries the resolved task command, not the raw override", () => {
         expect.assertions(3);
 
-        const handlerSource = readFileSync(fileURLToPath(new URL("../../../src/commands/run/handler.ts", import.meta.url)), "utf8");
+        const handlerSource = ["handler.ts", "handler-parts/run-modes.ts"]
+            .map((file) => readFileSync(fileURLToPath(new URL(`../../../src/commands/run/${file}`, import.meta.url)), "utf8"))
+            .join("\n");
         const start = handlerSource.indexOf("loopAction === \"retry\" && retryTaskId");
         const retryBranch = handlerSource.slice(start, handlerSource.indexOf("retryTaskId = null;", start));
 
