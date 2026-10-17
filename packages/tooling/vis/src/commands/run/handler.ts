@@ -44,16 +44,21 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
     injectMissingServices(ctx, serviceResult);
     finalizeServiceGraph(ctx, serviceResult);
-    shapeTaskGraph(ctx);
 
-    if (printDryRunPlan(ctx)) {
-        return;
-    }
-
-    const runtime = await prepareRunRuntime(ctx, serviceResult);
+    // Arm before anything that can throw: services may already be booted by
+    // now, so a failure in shaping, the runtime hooks or the modes must still
+    // tear them down.
     const cleanup = armRunCleanup(ctx);
 
     try {
+        shapeTaskGraph(ctx);
+
+        if (printDryRunPlan(ctx)) {
+            return;
+        }
+
+        const runtime = await prepareRunRuntime(ctx, serviceResult);
+
         await (runtime.isTTY ? runInteractiveMode(ctx, runtime) : runStaticMode(ctx, runtime));
     } finally {
         await teardownRun(ctx, cleanup);
