@@ -1,6 +1,6 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import type { ChildEnvOptions, LogMode, OutputSpec, ProcessEvent, TargetConfiguration, Task, TaskResults, TaskRunnerOptions, TaskTarget } from "@visulima/task-runner";
-import { CompositeLifeCycle, createLogReporter, createTaskGraph, defaultTaskRunner, enforceProjectConstraints, expandTokensInString, generateRunSummary, parsePartition, pickChildParentEnv, reverseTaskGraph, runConcurrently, splitCompoundTasks, TaskScheduler, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
+import { CompositeLifeCycle, createLogReporter, createTaskGraph, defaultTaskRunner, expandTokensInString, generateRunSummary, parsePartition, pickChildParentEnv, reverseTaskGraph, runConcurrently, splitCompoundTasks, TaskScheduler, TerminalBuffer, writeChromeTrace, writeRunSummary } from "@visulima/task-runner";
 import isInCi from "is-in-ci";
 
 import { applyBranchScope, resolveSharedCacheDirectory } from "../../cache/cache-directory";
@@ -12,21 +12,16 @@ import { resolveCommandRuntime } from "../../runtime/command-runtime";
 import { runReadiness } from "../../services/readiness";
 import { readAllEntries } from "../../services/registry";
 import type { ServiceEntry } from "../../services/types";
-import { selectAffectedProjects } from "../../task/affected-selection";
 import { describeMisplacedTargetKeys, findMisplacedTargetKeys } from "../../task/misplaced-options";
-import { filterProjectsByNames } from "../../task/project-name-filter";
-import { filterProjectsByQuery, filterProjectsByTags, resolveSelector } from "../../task/selectors";
 import { resolveSkipCachePatterns } from "../../task/skip-cache";
 import { checkStrictEnv, formatStrictEnvError } from "../../task/strict-env";
-import { buildAliasMap, collectAvailableTargets, formatTargetList, promptTargetInteractively, resolveTargetAlias, suggestTargets } from "../../task/target-discovery";
 import type { VisTargetConfiguration, VisTargetOptions } from "../../task/target-options";
-import { detectCurrentOs, matchesRunnerTags, resolveTargetShell, shouldRunInCI } from "../../task/target-options";
+import { detectCurrentOs, resolveTargetShell } from "../../task/target-options";
 import { ServiceDockStore } from "../../tui/components/service-dock/service-dock-store";
 import { createDynamicOutputRenderer } from "../../tui/dynamic-life-cycle";
 import { resolveOutputStyle, StaticOutputLifeCycle } from "../../tui/static-life-cycle";
 import type { StdinEntry } from "../../tui/types";
 import { createVisHooks, HookableLifeCycle, registerPlugins } from "../../util/hooks";
-import { appendToShellHistory } from "../../util/shell-history";
 import { cleanupLegacyTaskRunnerLayout, getVisWorkspaceDataDir } from "../../util/vis-paths";
 import { collectTrackedWatchTargets, createTrackedFileFilter, startWatcher } from "../../watch/watch";
 import { applyProjectFilter } from "../../watch/watch-filter";
@@ -35,7 +30,6 @@ import { installKeybinds, writeHelp } from "../../watch/watch-keybinds";
 import { applyServiceRegistry } from "./apply-service-registry";
 import type { MutexPool } from "./executor";
 import { createConcurrentExecutor, createRetryBudget } from "./executor";
-import { applyFilterStrings } from "./filter";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
 import { parseEnvConcurrency, parseHashMode, renderLastRunSummary } from "./parse";
@@ -44,7 +38,9 @@ import { createRunCleanup } from "./run-cleanup";
 import { printDryRunPlan } from "./run-dry-run";
 import { runStartupPreflights } from "./run-preflight";
 import { applyRemoteCacheConfig } from "./run-remote-cache";
+import { enforceRunConstraints, narrowProjectSelection, narrowToAffectedProjects, pickRunTarget, validateAffectedOnlyFlags } from "./run-selection";
 import { logRegistryServiceHint, reportRunOutcome } from "./run-summary";
+import { selectProjectsWithTarget } from "./run-target-projects";
 import type { ServiceBridgeEntry } from "./service-event-bridge";
 import { ServiceEventBridge } from "./service-event-bridge";
 import { buildBootstrapPaths, describeServicesPolicySource, extractPreflightTasks, injectServiceTasks, resolveServicesPolicy } from "./service-preflight";
@@ -93,215 +89,55 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     const { config, fileOwners, packageJsons, projectOptions, workspace } = discoverWorkspace(workspaceRoot, visConfig, taskConfigs);
     const projectGraph = buildProjectGraph(workspaceRoot, workspace, packageJsons);
 
-    let rawSelector = argument[0];
+    const rawSelector = await pickRunTarget({ argument, logger, workspace });
 
-    if (!rawSelector) {
-        const available = collectAvailableTargets(workspace);
-
-        if (process.stdout.isTTY && process.stdin.isTTY) {
-            const picked = await promptTargetInteractively(available);
-
-            if (!picked) {
-                logger.info("No target selected.");
-
-                return;
-            }
-
-            rawSelector = picked;
-
-            // The user ran `vis run` (no target) — without this, the
-            // resolved pick never appears in shell history, so
-            // up-arrow replays the picker, not the task. Best-effort,
-            // skipped on Windows / unrecognized shell.
-            await appendToShellHistory(`vis run ${picked}`);
-        } else {
-            // Non-interactive and no target: there is nothing to pick and
-            // nothing to run. Returning 0 here made the missing target a
-            // *passing* CI job that printed a target list where its task
-            // output should have been.
-            logger.info("Available targets:");
-            logger.info("");
-            logger.info(formatTargetList(available));
-            logger.info("");
-
-            throw new VisUserError("Missing target. Usage: vis run <target>");
-        }
+    if (rawSelector === undefined) {
+        return;
     }
 
-    if (config.constraints && !options.skipConstraints) {
-        const violations = enforceProjectConstraints(projectGraph, config.constraints);
+    enforceRunConstraints({ config, logger, options, projectGraph });
 
-        if (violations.length > 0) {
-            for (const v of violations) {
-                logger.error(`[${v.rule}] ${v.message}`);
-            }
+    validateAffectedOnlyFlags({ options, rawSelector });
 
-            throw new Error(`${violations.length} project constraint violation(s) found. Use --skip-constraints to bypass.`);
-        }
+    const selection = await narrowProjectSelection({
+        logger,
+        options,
+        packageJsons,
+        projectGraph,
+        projectOptions,
+        rawSelector,
+        visConfig,
+        workspace,
+        workspaceRoot,
+    });
+
+    if (!selection) {
+        return;
     }
 
-    // The `--affected` modifiers are meaningless on their own. Reject them
-    // rather than accepting a flag that changes nothing — silently ignoring
-    // `--base` here is how a CI job ends up "passing" without running.
-    if (!options.affected) {
-        // `--no-uncommitted` arrives here as `uncommitted: false`, so report
-        // the flag the user actually typed rather than its positive twin.
-        const uncommittedFlag = options.uncommitted ? "--uncommitted" : "--no-uncommitted";
-        const affectedOnlyFlags = (
-            [
-                ["--base", options.base],
-                ["--head", options.head],
-                ["--downstream", options.downstream],
-                ["--upstream", options.upstream],
-                [uncommittedFlag, options.uncommitted],
-            ] as [string, string | boolean | undefined][]
-        )
-            .filter(([, value]) => value !== undefined)
-            .map(([flag]) => flag);
-
-        if (affectedOnlyFlags.length > 0) {
-            throw new VisUserError(
-                `${affectedOnlyFlags.join(", ")} ${affectedOnlyFlags.length === 1 ? "requires" : "require"} --affected.\n`
-                + `Did you mean: vis run ${rawSelector} --affected ${affectedOnlyFlags.map((flag) => (flag.includes("uncommitted") ? flag : `${flag}=…`)).join(" ")}`
-                + `\nOr use the dedicated command: vis affected ${rawSelector} …`,
-            );
-        }
-    }
-
-    const selectorResult = await resolveSelector(rawSelector, workspace, process.cwd(), workspaceRoot);
-    // Resolve target aliases declared on any VisTargetConfiguration
-    // before any further filtering so `vis run t` picks up `test`.
-    const aliasMap = buildAliasMap(projectOptions);
-    const target = resolveTargetAlias(selectorResult.target, aliasMap);
-
-    if (target !== selectorResult.target) {
-        logger.debug?.(`Resolved alias "${selectorResult.target}" → "${target}"`);
-    }
-
-    let projectNames = selectorResult.projects;
+    const { target } = selection;
 
     // Any positional args past the target name are forwarded only to the
     // invoked task — not to `dependsOn` deps. The task-runner string-form
     // resolver strips overrides so deps start with a clean slate.
     const forwardedArgs: string[] = argument.slice(1).map(String);
 
-    // `!== undefined`, not truthiness: `--projects=` must reach the filter
-    // and error rather than silently running the whole workspace.
-    if (options.projects !== undefined) {
-        projectNames = filterProjectsByNames(projectNames, String(options.projects), Object.keys(workspace.projects));
+    const narrowed = await narrowToAffectedProjects({
+        fileOwners,
+        logger,
+        options,
+        projectGraph,
+        projectNames: selection.projectNames,
+        visConfig,
+        workspace,
+        workspaceRoot,
+    });
+
+    if (!narrowed) {
+        return;
     }
 
-    // A selection that matches nothing must not look like a pass: throw so the CLI exits
-    // non-zero. `--if-present` opts back into a quiet exit 0 with a one-line notice.
-    const onEmptySelection = (summary: string): void => {
-        if (options.ifPresent) {
-            logger.info(`${summary}; skipping (--if-present).`);
-
-            return;
-        }
-
-        throw new VisUserError(`${summary}.\n\nPass --if-present to skip quietly when nothing matches.`);
-    };
-
-    // Apply pnpm-style `--filter`/`-F` selectors. They compose with the
-    // selector + `--projects` set above (intersection) so a filter never
-    // pulls in projects the selector already excluded. Multiple `--filter`
-    // flags are unioned, matching pnpm.
-    if (options.filter && options.filter.length > 0) {
-        const packageNameByProject = new Map<string, string | undefined>();
-
-        for (const [name, pkg] of packageJsons) {
-            packageNameByProject.set(name, pkg.name);
-        }
-
-        const filtered = await applyFilterStrings(options.filter, {
-            defaultBase: visConfig?.defaultBase,
-            packageNameByProject,
-            projectGraph,
-            workspaceRoot,
-        });
-
-        const filteredSet = new Set(filtered);
-
-        projectNames = projectNames.filter((name) => filteredSet.has(name));
-
-        if (projectNames.length === 0) {
-            onEmptySelection(`Filter ${options.filter.map((f: string) => `"${f}"`).join(", ")} matched no projects`);
-
-            return;
-        }
-    }
-
-    // Apply --query filter (language=X && tag=Y style).
-    if (options.query) {
-        projectNames = filterProjectsByQuery(projectNames, workspace, options.query);
-
-        if (projectNames.length === 0) {
-            onEmptySelection(`Query "${String(options.query)}" matched no projects`);
-
-            return;
-        }
-    }
-
-    // `--tag` shorthand, applied as its own pass so it composes with
-    // `--query` regardless of which operator that query uses.
-    if (options.tag && options.tag.length > 0) {
-        projectNames = filterProjectsByTags(projectNames, workspace, options.tag);
-
-        if (projectNames.length === 0) {
-            onEmptySelection(`Tag filter ${options.tag.map((t: string) => `"${t}"`).join(", ")} matched no projects`);
-
-            return;
-        }
-    }
-
-    // `--affected` narrows the selection in-process rather than re-invoking
-    // `vis affected`. The old delegation round-trip could only forward the
-    // handful of flags it enumerated, so --dry-run, --fail-fast, --partition
-    // and friends were silently dropped on the way out. Computing here keeps
-    // every option on this run intact.
-    let affectedChangedFiles: string[] | undefined;
-
-    if (options.affected) {
-        const affected = await selectAffectedProjects(
-            {
-                base: options.base,
-                downstream: options.downstream,
-                head: options.head,
-                uncommitted: options.uncommitted,
-                upstream: options.upstream,
-            },
-            { fileOwners, projectGraph, projects: workspace.projects, workspaceRoot },
-            { affectedIgnore: visConfig?.affectedIgnore, defaultBase: visConfig?.defaultBase },
-        );
-
-        for (const note of affected.notes) {
-            logger.info(`▸ ${note}`);
-        }
-
-        if (affected.changedFiles.length === 0) {
-            logger.info("No files changed. Nothing to run.");
-
-            return;
-        }
-
-        const affectedSet = new Set(affected.affectedProjects);
-
-        projectNames = projectNames.filter((name) => affectedSet.has(name));
-
-        if (projectNames.length === 0) {
-            logger.info("No projects affected by the changes.");
-
-            return;
-        }
-
-        // Paths skipped by `affectedIgnore` changed nothing, so tasks don't receive them either.
-        const ignoredFiles = new Set(affected.ignoredFiles);
-
-        affectedChangedFiles = affected.changedFiles.filter((file) => !ignoredFiles.has(file));
-
-        logger.info(`Affected projects: ${projectNames.join(", ")}`);
-    }
+    const { affectedChangedFiles, projectNames } = narrowed;
 
     const currentOs = detectCurrentOs();
 
@@ -311,96 +147,13 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     const affectedFilesRaw = process.env[AFFECTED_FILES_ENV];
     const affectedFiles = affectedChangedFiles ?? (affectedFilesRaw ? affectedFilesRaw.split("\n").filter(Boolean) : undefined);
 
-    // Runner-tag filter: CLI flag wins over env so a script can override
-    // a CI-injected default. Empty string after splitting is dropped so
-    // `--runner-tags=` (no value) doesn't accidentally enable a filter
-    // with one empty tag. `undefined` keeps the filter inactive.
-    const runnerTagsRaw = (typeof options.runnerTags === "string" ? options.runnerTags : process.env["VIS_RUNNER_TAGS"]) ?? undefined;
-    const runnerTags = runnerTagsRaw
-        ? new Set(
-            runnerTagsRaw
-                .split(",")
-                .map((tag: string) => tag.trim())
-                .filter(Boolean),
-        )
-        : undefined;
+    const targetSelection = selectProjectsWithTarget({ logger, options, projectNames, projectOptions, target, workspace });
 
-    const projectsWithTarget: string[] = [];
-    const projectTargetIndex = new Map<string, VisTargetConfiguration>();
-
-    for (const name of projectNames) {
-        const visTargets = projectOptions.get(name);
-        const visTarget = visTargets?.[target];
-
-        if (!visTarget) {
-            continue;
-        }
-
-        const visOptions = visTarget.options;
-
-        if (visOptions?.internal) {
-            continue;
-        }
-
-        if (!shouldRunInCI(visOptions, Boolean(isInCi))) {
-            logger.debug?.(`Skipping ${name}:${target} — runInCI filter`);
-            continue;
-        }
-
-        if (!matchesRunnerTags(visOptions, runnerTags)) {
-            logger.debug?.(`Skipping ${name}:${target} — runner-tags filter`);
-            continue;
-        }
-
-        // when:/os gates are evaluated by the task-runner orchestrator
-        // just before launch — see TargetConfiguration.when. Letting them
-        // through to the graph means skipped tasks show up with a reason
-        // in the run summary instead of being silently filtered here.
-
-        projectsWithTarget.push(name);
-        projectTargetIndex.set(name, visTarget);
+    if (!targetSelection) {
+        return;
     }
 
-    if (projectsWithTarget.length === 0) {
-        if (options.ifPresent) {
-            logger.info(`No projects have the "${target}" target; skipping (--if-present).`);
-
-            return;
-        }
-
-        const available = collectAvailableTargets(workspace);
-        const exactMatchProjects = Object.entries(workspace.projects)
-            .filter(([, proj]) => proj.targets?.[target] !== undefined)
-            .map(([name]) => name);
-
-        // A run that executed nothing must not look like a pass: throw so the CLI exits non-zero.
-        // `--if-present` (handled above) is the explicit opt-out.
-        const lines = [`No projects have the "${target}" target.`];
-
-        if (exactMatchProjects.length > 0) {
-            // The target exists somewhere in the workspace — it was
-            // just filtered out by selector/query/os/runInCI/runner-tags.
-            // Tell the user which projects do implement it.
-            lines.push("", `Target "${target}" exists in these projects but was filtered out:`, ...exactMatchProjects.slice(0, 5).map((name) => `  - ${name}`));
-
-            if (exactMatchProjects.length > 5) {
-                lines.push(`  …and ${exactMatchProjects.length - 5} more`);
-            }
-        } else {
-            const suggestions = suggestTargets(target, available, 3);
-
-            if (suggestions.length > 0) {
-                lines.push(
-                    "",
-                    suggestions.length === 1 ? `Did you mean "${suggestions[0]}"?` : `Did you mean one of: ${suggestions.map((s) => `"${s}"`).join(", ")}?`,
-                );
-            }
-
-            lines.push("", "Run `vis run` without arguments to see all available targets, or pass --if-present to skip when no project has the target.");
-        }
-
-        throw new VisUserError(lines.join("\n"));
-    }
+    const { projectsWithTarget, projectTargetIndex } = targetSelection;
 
     const ptyFlag = options.pty;
 
