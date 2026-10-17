@@ -5,7 +5,7 @@ import { runHook } from "./apply";
 import type { OrchestratorContext } from "./context";
 import { runPublishLoop } from "./publish-loop";
 import { commitStagedRegistry, runPostPublish, writeChangelogWave } from "./publish-post";
-import { createPublishTags } from "./publish-tags";
+import { createPublishTags, planPublishTags } from "./publish-tags";
 import { openPublishWave } from "./publish-wave";
 
 // ── Publish phase ──────────────────────────────────────────────────
@@ -54,7 +54,6 @@ export interface PublishContextResult {
  * because they are never published, so never tagged.
  */
 const plannedPushTags = async (context: OrchestratorContext): Promise<{ created: string[]; updated: string[] }> => {
-    const { defaultTagFor, floatingMajorTagFor, renderTagPattern } = await import("../git");
     const { resolveSyncTagGroups } = await import("../group-tags");
     const planned = context.plan.releases
         .filter((release) => context.depGraph.getPackage(release.name)?.manifest?.private !== true)
@@ -62,30 +61,12 @@ const plannedPushTags = async (context: OrchestratorContext): Promise<{ created:
             return { name: release.name, version: release.newVersion };
         });
     const syncTags = resolveSyncTagGroups(context.config, planned);
-    const created = syncTags.groups.map((group) => group.tag);
-    const updated: string[] = [];
-    const isPrerelease = Boolean(context.channel?.prerelease) || Boolean(context.preMode);
+    const plan = await planPublishTags(context, planned, syncTags);
 
-    for (const { name, version } of planned) {
-        if (syncTags.grouped.has(name)) {
-            continue;
-        }
-
-        const perPkg = context.perPackageConfig.get(name);
-        const pattern = perPkg?.releaseTagPattern ?? context.config.releaseTagPattern;
-
-        created.push(pattern ? renderTagPattern(pattern, { channel: context.channel?.tag, name, version }) : defaultTagFor(name, version));
-
-        if (context.config.floatingMajorTag === true && !isPrerelease && !pattern?.includes("{major}") && perPkg?.skipNpmPublish !== true) {
-            const floatTag = floatingMajorTagFor(name, version);
-
-            if (floatTag !== undefined) {
-                updated.push(floatTag);
-            }
-        }
-    }
-
-    return { created, updated };
+    return {
+        created: [...plan.groups.map((group) => group.tag), ...plan.packages.map((pkg) => pkg.tag)],
+        updated: plan.packages.flatMap((pkg) => (pkg.floatTag === undefined ? [] : [pkg.floatTag])),
+    };
 };
 
 /**

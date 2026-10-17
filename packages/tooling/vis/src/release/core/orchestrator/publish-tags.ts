@@ -1,13 +1,85 @@
 import { VisReleaseError } from "../../errors";
 import type { resolveSyncTagGroups } from "../group-tags";
+import type { OrchestratorContext } from "./context";
 import type { PublishWave } from "./publish-wave";
 import { commitPublishLock, persistWaveState } from "./publish-wave";
+
+type SyncTagResolution = ReturnType<typeof resolveSyncTagGroups>;
+
+export interface PublishTagPlan {
+    /** One shared tag per syncGitTag group, created after the per-package tags. */
+    groups: SyncTagResolution["groups"];
+    /** One entry per release that is not part of a syncGitTag group, in input order. */
+    packages: { floatTag?: string; name: string; tag: string; version: string }[];
+}
+
+/**
+ * The tags a publish of `releases` creates: a release tag per package (or one
+ * shared tag per syncGitTag group), and a floating major tag where the rules
+ * allow it. Shared by the publish-time tag phase and the push-rule preflight,
+ * so the preflight checks the tags the run will actually create.
+ */
+export const planPublishTags = async (
+    context: OrchestratorContext,
+    releases: { name: string; version: string }[],
+    syncTags: SyncTagResolution,
+): Promise<PublishTagPlan> => {
+    const { defaultTagFor, floatingMajorTagFor, renderTagPattern } = await import("../git");
+    const rootTagPattern = context.config.releaseTagPattern;
+    const channelName = context.channel?.tag;
+    const floatingMajorEnabled = context.config.floatingMajorTag === true;
+    // Floating major tags must NOT move across prerelease channels —
+    // an unstable `v1` pointer would yank consumers from a stable
+    // major into a half-finished release. Skipped when the active
+    // channel resolved to a prerelease identifier.
+    const isPrerelease = Boolean(context.channel?.prerelease) || Boolean(context.preMode);
+    const packages: PublishTagPlan["packages"] = [];
+
+    for (const { name, version } of releases) {
+        if (syncTags.grouped.has(name)) {
+            continue;
+        }
+
+        const perPkg = context.perPackageConfig.get(name);
+        const pattern = perPkg?.releaseTagPattern ?? rootTagPattern;
+        const tag = pattern ? renderTagPattern(pattern, { channel: channelName, name, version }) : defaultTagFor(name, version);
+
+        // Floating major tag (`<safe-name>-v<major>`) —
+        // semantic-release #1515 parity. Force-update so the
+        // pointer always tracks the latest patch / minor under the
+        // current major.
+        //
+        // Conditions to emit:
+        //   - `release.floatingMajorTag === true`
+        //   - active channel is NOT a prerelease (incl. pre-mode)
+        //   - the resolved tag pattern doesn't already contain
+        //     `{major}` (the pattern is already serving that role)
+        //   - the package is NOT private and does NOT set
+        //     `skipNpmPublish` (no published artifact for a
+        //     consumer to pin against — a floating tag would
+        //     just clutter the tag history)
+        const isPrivate = context.depGraph.getPackage(name)?.manifest?.private === true;
+        const skipNpmPublish = perPkg?.skipNpmPublish === true;
+        let floatTag: string | undefined;
+
+        if (floatingMajorEnabled && !isPrerelease && !pattern?.includes("{major}") && !isPrivate && !skipNpmPublish) {
+            // Scope-qualified (`@acme/cli` → `acme-cli-v1`) so two packages
+            // with the same unscoped name never retarget each other's tag
+            // (audit F2); undefined for an empty name or major.
+            floatTag = floatingMajorTagFor(name, version);
+        }
+
+        packages.push({ floatTag, name, tag, version });
+    }
+
+    return { groups: syncTags.groups, packages };
+};
 
 /**
  * Create and push release tags for the successfully published packages.
  * Returns the syncGitTag resolution so the post-publish phase reuses it.
  */
-export const createPublishTags = async (wave: PublishWave): Promise<ReturnType<typeof resolveSyncTagGroups>> => {
+export const createPublishTags = async (wave: PublishWave): Promise<SyncTagResolution> => {
     const { context, options, result, runner } = wave;
     // syncGitTag groups: members collapse to one shared tag +
     // aggregate release. Resolved once for the wave — both the tag-creation
@@ -17,26 +89,10 @@ export const createPublishTags = async (wave: PublishWave): Promise<ReturnType<t
 
     // Create + push tags for successfully-published releases (RFC §14 / §19.1).
     if (!options.dryRun && !options.noTag && result.published.length > 0) {
-        const { createOrUpdateFloatingTag, createTag, defaultTagFor, floatingMajorTagFor, pushTags, renderTagPattern } = await import("../git");
-        const rootTagPattern = context.config.releaseTagPattern;
+        const { createOrUpdateFloatingTag, createTag, pushTags } = await import("../git");
+        const plan = await planPublishTags(context, result.published, syncTags);
 
-        const channelName = context.channel?.tag;
-        const floatingMajorEnabled = context.config.floatingMajorTag === true;
-        // Floating major tags must NOT move across prerelease channels —
-        // an unstable `v1` pointer would yank consumers from a stable
-        // major into a half-finished release. Skipped when the active
-        // channel resolved to a prerelease identifier.
-        const isPrerelease = Boolean(context.channel?.prerelease) || Boolean(context.preMode);
-
-        for (const { name, version } of result.published) {
-            if (syncTags.grouped.has(name)) {
-                continue;
-            }
-
-            const perPkgPattern = context.perPackageConfig.get(name)?.releaseTagPattern;
-            const pattern = perPkgPattern ?? rootTagPattern;
-            const tag = pattern ? renderTagPattern(pattern, { channel: channelName, name, version }) : defaultTagFor(name, version);
-
+        for (const { floatTag, name, tag, version } of plan.packages) {
             try {
                 await createTag(
                     { cwd: context.cwd, runner },
@@ -64,56 +120,29 @@ export const createPublishTags = async (wave: PublishWave): Promise<ReturnType<t
                 }
             }
 
-            // Floating major tag (`<safe-name>-v<major>`) —
-            // semantic-release #1515 parity. Force-update so the
-            // pointer always tracks the latest patch / minor under the
-            // current major.
-            //
-            // Conditions to emit:
-            //   - `release.floatingMajorTag === true`
-            //   - active channel is NOT a prerelease (incl. pre-mode)
-            //   - the resolved tag pattern doesn't already contain
-            //     `{major}` (the pattern is already serving that role)
-            //   - the package is NOT private and does NOT set
-            //     `skipNpmPublish` (no published artifact for a
-            //     consumer to pin against — a floating tag would
-            //     just clutter the tag history)
-            //
             // Errors are soft-fail: a floating-tag hiccup must not
             // prevent the rest of the wave from publishing.
-            const pkgForFloat = context.depGraph.getPackage(name);
-            const perPkgForFloat = context.perPackageConfig.get(name);
-            const isPrivate = pkgForFloat?.manifest?.private === true;
-            const skipNpmPublish = perPkgForFloat?.skipNpmPublish === true;
-
-            if (floatingMajorEnabled && !isPrerelease && !pattern?.includes("{major}") && !isPrivate && !skipNpmPublish) {
-                // Scope-qualified (`@acme/cli` → `acme-cli-v1`) so two packages
-                // with the same unscoped name never retarget each other's tag
-                // (audit F2); undefined for an empty name or major.
-                const floatTag = floatingMajorTagFor(name, version);
-
-                if (floatTag !== undefined) {
-                    try {
-                        await createOrUpdateFloatingTag({ cwd: context.cwd, runner }, floatTag, {
-                            push: !options.noPush,
-                            signing: context.config.signing,
-                        });
-                        // Recorded in result.tags so the operator
-                        // sees it on the summary line.
-                        result.tags.push(floatTag);
-                    } catch (error) {
-                        result.skipped.push({
-                            name: floatTag,
-                            reason: `floating-major-tag: ${(error as Error).message}`,
-                        });
-                    }
+            if (floatTag !== undefined) {
+                try {
+                    await createOrUpdateFloatingTag({ cwd: context.cwd, runner }, floatTag, {
+                        push: !options.noPush,
+                        signing: context.config.signing,
+                    });
+                    // Recorded in result.tags so the operator
+                    // sees it on the summary line.
+                    result.tags.push(floatTag);
+                } catch (error) {
+                    result.skipped.push({
+                        name: floatTag,
+                        reason: `floating-major-tag: ${(error as Error).message}`,
+                    });
                 }
             }
         }
 
         // One shared tag per syncGitTag group (created after per-package tags
         // so it's a single annotated tag for the whole group).
-        for (const group of syncTags.groups) {
+        for (const group of plan.groups) {
             try {
                 await createTag({ cwd: context.cwd, runner }, group.tag, `Release ${group.name} ${group.version}`, {
                     signing: context.config.signing,
