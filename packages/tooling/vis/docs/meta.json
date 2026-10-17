@@ -35,6 +35,7 @@
                 "commands/deps",
                 "commands/lint",
                 "commands/fmt",
+                "commands/test",
                 "commands/update",
                 "commands/upgrade",
                 "commands/install",
