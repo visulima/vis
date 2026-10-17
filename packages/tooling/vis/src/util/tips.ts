@@ -97,21 +97,21 @@ const tips: Tip[] = [
     },
     {
         id: "security-check",
-        matches: (context) => (context.command === "check" || context.command === "update") && context.success && !context.args.includes("--security"),
+        matches: (context) => (context.command === "outdated" || context.command === "update") && context.success && !context.args.includes("--security"),
         message: () => "Add --security to check for known vulnerabilities via OSV.dev",
         probability: 0.3,
     },
     {
         cooldownMs: 60 * 60 * 1000, // 1 hour
         id: "ai-analysis",
-        matches: (context) => (context.command === "check" || context.command === "update") && context.success && !context.args.includes("--ai"),
+        matches: (context) => (context.command === "outdated" || context.command === "update") && context.success && !context.args.includes("--ai"),
         message: () => "Add --ai to run AI analysis on outdated packages before updating.",
         probability: 0.2,
     },
     {
         cooldownMs: 24 * 60 * 60 * 1000, // 24 hours
         id: "socket-security",
-        matches: (context) => (context.command === "install" || context.command === "update" || context.command === "check") && context.success,
+        matches: (context) => (context.command === "install" || context.command === "update" || context.command === "outdated") && context.success,
         message: () => "Enable Socket.dev in vis.config.ts for security scores and supply chain alerts: security.socket.enabled = true",
         probability: 0.15,
     },

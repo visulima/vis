@@ -32,6 +32,7 @@ import linkCommand from "../../src/commands/link";
 import listCommand from "../../src/commands/list";
 import migrateCommands from "../../src/commands/migrate";
 import optimizeCommand from "../../src/commands/optimize";
+import outdatedCommand from "../../src/commands/outdated";
 import pmCommand from "../../src/commands/pm";
 import removeCommand from "../../src/commands/remove";
 import runCommand from "../../src/commands/run";
@@ -74,6 +75,7 @@ const FLAT_COMMANDS: Command[] = [
     linkCommand,
     listCommand,
     optimizeCommand,
+    outdatedCommand,
     pmCommand,
     removeCommand,
     runCommand,

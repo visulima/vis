@@ -77,19 +77,19 @@ pipelines and cache configuration.
 For pnpm or bun workspaces with catalogs, check which dependencies are outdated:
 
 ```bash
-vis check
+vis outdated
 ```
 
 Check only specific packages:
 
 ```bash
-vis check react typescript
+vis outdated react typescript
 ```
 
 Only show minor and patch updates:
 
 ```bash
-vis check --target minor
+vis outdated --target minor
 ```
 
 ## Updating Dependencies

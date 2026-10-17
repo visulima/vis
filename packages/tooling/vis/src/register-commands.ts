@@ -44,6 +44,7 @@ import lintCommand from "./commands/lint";
 import listCommand from "./commands/list";
 import migrateCommands from "./commands/migrate";
 import optimizeCommand from "./commands/optimize";
+import outdatedCommand from "./commands/outdated";
 import pmCommand from "./commands/pm";
 import releaseCommands from "./commands/release";
 import releaseRootCommand from "./commands/release/root-command";
@@ -91,6 +92,7 @@ const registerCommands = (cli: Cli<Console>): void => {
     cli.addCommand(ignoreCommand);
     cli.addCommand(updateCommand);
     cli.addCommand(checkCommand);
+    cli.addCommand(outdatedCommand);
     cli.addCommand(depsCommand);
     cli.addCommand(analyzeCommand);
     cli.addCommand(sortPackageJsonCommand);

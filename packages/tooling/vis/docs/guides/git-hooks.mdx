@@ -172,8 +172,8 @@ pnpm run typecheck
 ```bash
 #!/bin/sh
 # .vis/hooks/pre-commit
-vis check --exit-code --format minimal || {
-  echo "Outdated dependencies detected. Run 'vis check' for details."
+vis outdated --exit-code --format minimal || {
+  echo "Outdated dependencies detected. Run 'vis outdated' for details."
   exit 1
 }
 ```
