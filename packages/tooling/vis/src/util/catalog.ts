@@ -532,7 +532,7 @@ const applyCatalogUpdates = (
 export { applyCatalogUpdates, applyPackageJsonUpdates, collectInternalOutdated, hasCatalogs, hasPackageJsonDeps, readCatalogs, readPackageJsonDeps, toFilterArray };
 
 export { createBackup, hasBackup, restoreFromBackup } from "./catalog/backup";
-export { detectJsonIndent, parseBunCatalogs } from "./catalog/bun";
+export { parseBunCatalogs } from "./catalog/bun";
 export { fetchChangelogInfo } from "./catalog/changelog";
 export { parseCompositeCatalogName } from "./catalog/composite";
 export { formatOutdatedJson, formatOutdatedMinimal, formatOutdatedTable, formatSummary, groupByCatalog } from "./catalog/format";
@@ -546,3 +546,4 @@ export { promptPackageSelection } from "./catalog/prompt";
 export { fetchPackageVersions } from "./catalog/registry";
 export type { ApplyCatalogUpdatesOptions, CatalogCheckOptions, ChangelogInfo, CheckOutdatedResult, NpmrcConfig, OutdatedEntry, ReadCatalogOptions, SecurityVulnerability, SocketReport, UpdateTarget } from "./catalog/types";
 export { extractPrefix, getUpdateType, isNewer, parseVersion } from "./catalog/version";
+export { detectJsonIndent } from "./json-indent";
