@@ -1,7 +1,10 @@
+import { TOOL_SIGNATURES } from "../../util/tool-signatures";
 import type { Detector } from "../types";
 
+// No `fallbackDependency`: rslint exits with "no rslint config found" when there is no
+// config, so a dependency alone would synthesize a lint target that always fails.
 export const rslintDetector: Detector = {
-    configFiles: ["rslint.config.ts", "rslint.config.js", "rslint.config.mjs"],
+    configFiles: TOOL_SIGNATURES.rslint.configFiles,
     detect: ({ matchedConfigs }) => {
         return {
             targets: {
@@ -23,6 +26,5 @@ export const rslintDetector: Detector = {
             },
         };
     },
-    fallbackDependency: "@rslint/core",
     name: "rslint",
 };

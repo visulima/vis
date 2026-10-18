@@ -18,6 +18,7 @@ export type AdapterId
         | "prettier"
         | "ruff-check"
         | "ruff-fmt"
+        | "rslint"
         | "shellcheck"
         | "stylelint"
         | "typecheck";
@@ -26,7 +27,7 @@ export type AdapterId
 export type FmtAdapterId = "biome" | "dprint" | "oxfmt" | "prettier" | "ruff-fmt";
 
 /** Adapter IDs that can lint (adapter `kind` is `"lint"` or `"both"`). */
-export type LintAdapterId = "biome" | "eslint" | "markdownlint" | "oxlint" | "ruff-check" | "shellcheck" | "stylelint" | "typecheck";
+export type LintAdapterId = "biome" | "eslint" | "markdownlint" | "oxlint" | "ruff-check" | "rslint" | "shellcheck" | "stylelint" | "typecheck";
 
 export type FindingSeverity = "error" | "info" | "warning";
 

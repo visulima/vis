@@ -92,6 +92,14 @@ describe("rstack target inference", () => {
         expect(targetsOf("unit")["test"]?.command).toBe("vitest run");
     });
 
+    it("does not infer rslint from the dependency alone, since it needs a config", () => {
+        expect.assertions(1);
+
+        writeProject(scratch, "style", [], { devDependencies: { "@rslint/core": "^0.9.5" } });
+
+        expect(targetsOf("style")["lint"]).toBeUndefined();
+    });
+
     it("infers rslint from rslint.config.ts", () => {
         expect.assertions(1);
 

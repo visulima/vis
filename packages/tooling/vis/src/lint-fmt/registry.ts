@@ -26,6 +26,7 @@ const ADAPTER_ORDER: ReadonlyArray<AdapterId> = [
     "oxfmt",
     "biome",
     "eslint",
+    "rslint",
     "dprint",
     "prettier",
     "stylelint",
