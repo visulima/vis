@@ -141,7 +141,10 @@ const configLoaderPlugin: Plugin = {
             const command = process.argv[2] ?? "";
             const skipHint = new Set(["--help", "--version", "-h", "-V", "create", "help", "implode", "init"]);
 
-            if (!skipHint.has(command) && !configFilePath && !isInCi) {
+            // `VIS_NO_CONFIG_PROMPT` is set by vis when it runs its own subcommands (for
+            // example `vis add` from a tool offer), so the parent process has already
+            // answered this question and the child does not ask it again.
+            if (!skipHint.has(command) && !configFilePath && !isInCi && process.env.VIS_NO_CONFIG_PROMPT !== "1") {
                 if (process.stdin.isTTY) {
                     const rl = createInterface({ input: process.stdin, output: process.stderr });
                     const answer = await new Promise<string>((_resolve) => {

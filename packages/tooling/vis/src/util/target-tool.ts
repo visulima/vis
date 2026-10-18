@@ -9,7 +9,7 @@
  */
 
 import type { CerebroFs } from "@visulima/cerebro";
-import { join, relative } from "@visulima/path";
+import { dirname, join, relative, resolve } from "@visulima/path";
 
 import { discoverWorkspace, loadVisTaskConfigsForWorkspace } from "../config/workspace";
 import { VisUserError } from "../errors/vis-user-error";
@@ -18,8 +18,8 @@ import { chooseTool, installDevDependency } from "./tool-choice";
 import { pathExists } from "./toolbox-fs";
 
 export interface TargetToolChoice {
-    /** Config file the tool's inference needs. Written only when it does not exist yet. */
-    config?: { contents: string; file: string };
+    /** Files the tool needs to run: its config and an entry. Each is written only when it does not exist yet. */
+    files?: ReadonlyArray<{ contents: string; file: string }>;
     /** Shown in the list, e.g. "Vite". */
     label: string;
     /** Installed as devDependencies with `vis add -D`. */
@@ -59,10 +59,11 @@ export const discoverProjects = async (root: string, visConfig: TargetToolParams
     const taskConfigs = await loadVisTaskConfigsForWorkspace(root, visConfig);
     const { workspace } = discoverWorkspace(root, visConfig, taskConfigs);
 
+    // Discovery stores project roots relative to the workspace root, not the current directory.
     return Object.entries(workspace.projects).map(([name, project]) => {
         return {
             name,
-            root: project.root,
+            root: resolve(root, project.root),
             targets: project.targets,
         };
     });
@@ -153,9 +154,14 @@ export const offerTargetTool = async (params: TargetToolParams, deps: TargetTool
     await addScript(fs, join(project.root, "package.json"), target, picked.script);
     logger.info(`Added "${target}": "${picked.script}" to ${where}.`);
 
-    if (picked.config !== undefined && !(await pathExists(fs, join(project.root, picked.config.file)))) {
-        await fs.writeFile(join(project.root, picked.config.file), picked.config.contents, "utf8");
-        logger.info(`Added ${picked.config.file}.`);
+    for (const file of picked.files ?? []) {
+        const path = join(project.root, file.file);
+
+        if (!(await pathExists(fs, path))) {
+            await fs.mkdir(dirname(path), { recursive: true });
+            await fs.writeFile(path, file.contents, "utf8");
+            logger.info(`Added ${file.file}.`);
+        }
     }
 
     return true;

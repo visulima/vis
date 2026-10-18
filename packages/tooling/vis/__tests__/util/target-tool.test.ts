@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,11 +10,11 @@ import type { TargetToolChoice } from "../../src/util/target-tool";
 import { offerTargetTool } from "../../src/util/target-tool";
 
 const CHOICES: ReadonlyArray<TargetToolChoice> = [
-    { config: { contents: "export default {};\n", file: "vite.config.mts" }, label: "Vite", packages: ["vite"], script: "vite" },
+    { files: [{ contents: "export default {};\n", file: "vite.config.mts" }, { contents: "<!doctype html>\n", file: "index.html" }], label: "Vite", packages: ["vite"], script: "vite" },
     { label: "Rspack", packages: ["@rspack/cli", "@rspack/core"], script: "rspack serve" },
 ];
 
-const fs = { access, readFile, writeFile } as unknown as CerebroFs;
+const fs = { access, mkdir, readFile, writeFile } as unknown as CerebroFs;
 
 describe(offerTargetTool, () => {
     let root: string;
@@ -108,6 +108,16 @@ describe(offerTargetTool, () => {
         await offerTargetTool(params(), { install: () => 0, isInteractive: () => true, projects: oneProject, readline: async () => "1" });
 
         expect(readFileSync(join(app, "vite.config.mts"), "utf8")).toBe("export default {};\n");
+    });
+
+    it("writes the entry file the tool needs, creating its directory", async () => {
+        expect.assertions(1);
+
+        const choices = [{ files: [{ contents: "export {};\n", file: "src/index.ts" }], label: "Entry", packages: ["x"], script: "x" }];
+
+        await offerTargetTool(params({ choices }), { install: () => 0, isInteractive: () => true, projects: oneProject, readline: async () => "1" });
+
+        expect(readFileSync(join(app, "src", "index.ts"), "utf8")).toBe("export {};\n");
     });
 
     it("keeps an existing config file untouched", async () => {

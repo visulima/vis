@@ -8,19 +8,19 @@ import type { DevOptions } from "./index";
 /** Dev servers vis can set up when no project defines a `dev` target. Rslib has no dev server. */
 export const DEV_CHOICES: ReadonlyArray<TargetToolChoice> = [
     {
-        config: { contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.mts" },
+        files: [{ contents: "import { defineConfig } from \"vite\";\n\nexport default defineConfig({});\n", file: "vite.config.mts" }, { contents: "<!doctype html>\n<html>\n  <head>\n    <meta charset=\"UTF-8\" />\n    <title>App</title>\n  </head>\n  <body></body>\n</html>\n", file: "index.html" }],
         label: "Vite",
         packages: ["vite"],
         script: "vite",
     },
     {
-        config: { contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.mts" },
+        files: [{ contents: "import { defineConfig } from \"@rsbuild/core\";\n\nexport default defineConfig({});\n", file: "rsbuild.config.mts" }, { contents: "export {};\n", file: "src/index.ts" }],
         label: "Rsbuild",
         packages: ["@rsbuild/core"],
         script: "rsbuild dev",
     },
     {
-        config: { contents: "export default {};\n", file: "rspack.config.mjs" },
+        files: [{ contents: "export default {};\n", file: "rspack.config.mjs" }, { contents: "export {};\n", file: "src/index.js" }],
         label: "Rspack",
         packages: ["@rspack/cli", "@rspack/core", "@rspack/dev-server"],
         script: "rspack serve",

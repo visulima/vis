@@ -14,7 +14,7 @@ A package's own `dev` script in `package.json` always wins. When a project has n
 - `rslib.config.*` → `rslib build --watch` (a watch build, since Rslib has no dev server)
 - `rspack.config.*` → `rspack serve`
 
-If no project defines a `dev` target, `vis dev` asks which dev server to set up: Vite, Rsbuild, or Rspack. Your choice is the consent. vis installs the tool with `vis add -D` into the nearest package, and adds the matching `dev` script to that package's `package.json`. The tool's config file (for example `vite.config.ts`) is also written, unless one already exists. The script and config are what keep the choice, so later runs use it without asking.
+If no project defines a `dev` target, `vis dev` asks which dev server to set up: Vite, Rsbuild, or Rspack. Your choice is the consent. vis installs the tool with `vis add -D` into the nearest package, and adds the matching `dev` script to that package's `package.json`. The tool's config file and the entry file it needs are also written, unless they already exist. The script and config are what keep the choice, so later runs use it without asking.
 
 In a non-interactive run (CI, or no terminal) it stops and lists each tool and its install command instead. It never picks one for you. Run it from the workspace root, the same as `vis run`. If the workspace has more than one project, pass `--filter <package>` to choose where the script goes.
 
@@ -42,3 +42,7 @@ vis dev -- --port 3000
 ## Scope
 
 Without `--filter`, `vis dev` starts every project that has a `dev` target. In a large workspace, pass `--filter` to start one package.
+
+## Entry files
+
+The offer writes the entry each tool needs, unless the file exists: Vite gets `index.html`, Rsbuild gets `src/index.ts`, and Rspack gets `src/index.js`. Rslib builds from `src/index.ts`. These are minimal starting points. Replace them with your app.
