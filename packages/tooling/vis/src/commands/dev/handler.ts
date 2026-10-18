@@ -1,7 +1,7 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 
 import type { TargetToolChoice, TargetToolDeps } from "../../util/target-tool";
-import { offerTargetTool } from "../../util/target-tool";
+import { offerTargetTool, scopedTarget } from "../../util/target-tool";
 import runExecute from "../run/handler";
 import type { DevOptions } from "./index";
 
@@ -39,7 +39,7 @@ export const runDev = async (toolbox: Toolbox<Console, DevOptions>, deps: Target
         return;
     }
 
-    await runExecute({ ...toolbox, argument: ["dev", ...(argument ?? []), ...(rawUnknown ?? [])], rawUnknown });
+    await runExecute({ ...toolbox, argument: [scopedTarget("dev", options, process.cwd(), workspaceRoot ?? process.cwd()), ...(argument ?? []), ...(rawUnknown ?? [])], rawUnknown });
 };
 
 const execute = (toolbox: Toolbox<Console, DevOptions>): Promise<void> => runDev(toolbox);

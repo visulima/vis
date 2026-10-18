@@ -48,7 +48,8 @@ describe("vis dev and vis build with no target", () => {
         await runDev(toolbox(root), { install: () => 0, isInteractive: () => false, projects: async () => [{ name: "@fix/app", root: join(root, "packages", "app"), targets: { dev: {} } }] });
 
         expect(runExecute).toHaveBeenCalledTimes(1);
-        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["dev"]);
+        // The current directory is not the workspace root here, so the selector is scoped to the package.
+        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["~:dev"]);
     });
 
     it("errors for build in a non-interactive run, and does not run the target", async () => {

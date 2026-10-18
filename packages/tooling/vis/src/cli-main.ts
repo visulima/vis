@@ -6,7 +6,6 @@
 import { createCerebro } from "@visulima/cerebro";
 import { errorHandlerPlugin } from "@visulima/cerebro/plugins/error-handler";
 import { readJsonSync } from "@visulima/fs";
-import { findMonorepoRootSync } from "@visulima/package";
 import { join } from "@visulima/path";
 
 import { runAndExit } from "./cli-run";
@@ -21,6 +20,7 @@ import registerCommands from "./register-commands";
 import { parseEarlyCaCert } from "./util/ca-cert";
 import getPackageVersion from "./util/package-version";
 import { startUpgradeCheck } from "./util/upgrade-check";
+import { findWorkspaceRootSync } from "./util/workspace-root";
 
 /**
  * Construct and run the full vis CLI. Invoked from `bin.ts` for every command
@@ -43,7 +43,11 @@ export const runCli = async (): Promise<void> => {
     // Set terminal title to the project name and stash the resolved root on an
     // env var so `config-loader.ts` doesn't walk the tree a second time.
     try {
-        const rootDir = findMonorepoRootSync(process.cwd()).path;
+        const rootDir = findWorkspaceRootSync(process.cwd());
+
+        if (rootDir === undefined) {
+            throw new Error("Could not determine workspace root");
+        }
 
         process.env["VIS_MONOREPO_ROOT"] = rootDir;
 

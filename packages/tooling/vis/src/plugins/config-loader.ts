@@ -4,7 +4,6 @@ import { createInterface } from "node:readline";
 import type { Plugin } from "@visulima/cerebro";
 import { bold, cyan, red, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
-import { findMonorepoRootSync } from "@visulima/package";
 import { join, resolve } from "@visulima/path";
 import isInCi from "is-in-ci";
 import { satisfies, validRange } from "semver";
@@ -12,6 +11,7 @@ import { satisfies, validRange } from "semver";
 import { findVisConfigFile, loadVisConfig } from "../config/config";
 import type { VisConfig } from "../config/workspace";
 import getPackageVersion from "../util/package-version";
+import { findWorkspaceRootSync } from "../util/workspace-root";
 
 const DENO_FILES = ["deno.json", "deno.jsonc", "deno.lock"];
 const JS_LOCKFILES = ["bun.lock", "bun.lockb", "npm-shrinkwrap.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
@@ -49,7 +49,14 @@ const configLoaderPlugin: Plugin = {
                 // walking the directory tree a second time.
                 const cached = process.env["VIS_MONOREPO_ROOT"];
 
-                workspaceRoot = cached && cached.length > 0 ? cached : findMonorepoRootSync(process.cwd()).path;
+                const found = cached && cached.length > 0 ? cached : findWorkspaceRootSync(process.cwd());
+
+                // The outer catch treats this message as a quiet "no workspace" result.
+                if (found === undefined) {
+                    throw new Error("Could not find the monorepo root");
+                }
+
+                workspaceRoot = found;
             }
 
             toolbox.workspaceRoot = workspaceRoot;

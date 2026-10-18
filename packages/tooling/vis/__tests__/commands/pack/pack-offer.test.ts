@@ -46,7 +46,8 @@ describe("vis pack", () => {
 
         await runPack(toolbox({}, ["--sourcemap"]), { install: () => 0, isInteractive: () => false, projects: withPack });
 
-        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["pack", "--sourcemap"]);
+        // The current directory is not the workspace root here, so the selector is scoped to the package.
+        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["~:pack", "--sourcemap"]);
         expect(process.exitCode).toBeUndefined();
     });
 
@@ -71,6 +72,6 @@ describe("vis pack", () => {
         expect(install.mock.calls.map(([name]) => name)).toStrictEqual(["@visulima/packem", "esbuild", "typescript"]);
         expect(readFileSync(join(app, "packem.config.ts"), "utf8")).toContain("emitESM: true");
         expect(readFileSync(join(app, "src", "index.ts"), "utf8")).toBe("export {};\n");
-        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["pack"]);
+        expect(runExecute.mock.calls[0][0].argument).toStrictEqual(["~:pack"]);
     });
 });

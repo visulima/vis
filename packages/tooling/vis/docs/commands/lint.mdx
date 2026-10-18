@@ -124,6 +124,9 @@ The orchestrator probes each adapter against the workspace root and runs the one
 | shellcheck   | `.shellcheckrc` (system binary — not an npm package)                                                                  | `shellcheck`                               |
 | typecheck    | `tsconfig.json` at the workspace root (opt-in — see [Type checking](#type-checking))                                  | `typescript`, `@typescript/native-preview` |
 
+Rslint runs without its `--type-check` mode, so TypeScript type errors are reported by the typecheck adapter, not by rslint. Enable `typecheck` (it is opt-in) to get them.
+
+
 When multiple lint adapters are detected, they run in this default precedence: `oxlint → biome → eslint → rslint → stylelint → ruff-check → markdownlint → shellcheck → typecheck`. The Rust-native oxlint pass runs first as a fast pre-filter, biome handles its bespoke rule set, ESLint catches what the others don't, stylelint covers CSS/SCSS, and the remaining adapters (ruff-check, markdownlint, shellcheck) plus the opt-in typecheck run after. Override with `lint.order` in `vis.config.ts`.
 
 ## Configuration
