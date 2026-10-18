@@ -1,0 +1,24 @@
+---
+title: "vis node"
+description: "Run node in the current directory, with its arguments passed through"
+---
+
+# vis node
+
+Runs the `node` binary that is running vis, with the arguments you pass, in the current directory. It exits with node's status. Use it when you want the same Node version as vis, without changing your shell's `PATH`.
+
+## Usage
+
+```bash
+vis node [args…]
+```
+
+## Examples
+
+```bash
+# Run a script
+vis node scripts/release.mjs
+
+# Evaluate an expression
+vis node -e "console.log(process.version)"
+```

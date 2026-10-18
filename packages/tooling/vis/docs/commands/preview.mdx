@@ -1,0 +1,35 @@
+---
+title: "vis preview"
+description: "Serve the production build: the package's preview script, or the inferred Vite, Rsbuild, or Rspack preview"
+---
+
+# vis preview
+
+Serves the built output. `vis preview` is `vis run preview`, so it uses the same target resolution, filters, and caching.
+
+A package's own `preview` script always wins. Otherwise vis infers one from the config file:
+
+- `vite.config.*` → `vite preview`
+- `rsbuild.config.*` → `rsbuild preview`
+- `rspack.config.*` → `rspack preview`
+
+Unlike `vis dev` and `vis build`, `vis preview` does not offer to install a tool. A preview needs a build first, so run `vis build` before it.
+
+## Usage
+
+```bash
+vis preview [args…] [options]
+```
+
+## Examples
+
+```bash
+# Serve the built output across the workspace
+vis preview
+
+# Serve one package's build output
+vis preview --filter @org/web
+
+# Forward flags to the preview server
+vis preview -- --port 4173
+```
