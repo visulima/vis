@@ -13,6 +13,8 @@ A package's own `preview` script always wins. Otherwise vis infers one from the 
 - `rsbuild.config.*` → `rsbuild preview`
 - `rspack.config.*` → `rspack preview`
 
+Preview is a long-running server, so it runs in an interactive terminal. In CI or with piped input, vis skips it and reports that instead.
+
 Unlike `vis dev` and `vis build`, `vis preview` does not offer to install a tool. A preview needs a build first, so run `vis build` before it.
 
 ## Usage

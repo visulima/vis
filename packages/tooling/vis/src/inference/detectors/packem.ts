@@ -17,6 +17,19 @@ export const packemDetector: Detector = {
                     outputs: ["{projectRoot}/dist"],
                     type: "build",
                 },
+                // `pack` is the library build for `vis pack`. `build` stays for `vis build`.
+                pack: {
+                    command: "packem build",
+                    description: "@visulima/packem library build (inferred)",
+                    inputs: [
+                        "{projectRoot}/src/**/*",
+                        `{projectRoot}/${matchedConfigs[0] ?? "packem.config.ts"}`,
+                        "{projectRoot}/package.json",
+                        "{projectRoot}/tsconfig.json",
+                    ],
+                    outputs: ["{projectRoot}/dist"],
+                    type: "build",
+                },
             },
         };
     },

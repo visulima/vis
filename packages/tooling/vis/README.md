@@ -224,8 +224,7 @@ When aube is the installer, `vis doctor` surfaces aube's effective hardening pos
 | `vis dev`               |        | Start the dev server: the package dev script, or the inferred Vite, Rsbuild, Rslib, or Rspack server |
 | `vis build`             |        | Run the build: the package build script, or the inferred Vite, Rsbuild, Rslib, or Rspack build |
 | `vis preview`           |        | Serve the production build: the package preview script, or the inferred Vite, Rsbuild, or Rspack preview |
-| `vis node [args]`       |        | Run node with the Node version vis runs on, passing arguments through                  |
-| `vis env`               |        | Print the Node, platform, package manager, and workspace vis sees from this directory   |
+| `vis pack`              |        | Build a library for publishing: the package pack script, or the inferred Rslib or packem build |
 | `vis affected <target>` |        | Run tasks only on projects affected by git changes                                     |
 | `vis ci <targets>`      |        | One-shot CI entry point: toolchain, install, then affected runs for each comma-separated target |
 | `vis ignore <project>`  |        | CI build gating for Vercel / Netlify "Ignored Build Step"                              |

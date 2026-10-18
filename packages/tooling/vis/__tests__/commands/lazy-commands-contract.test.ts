@@ -21,7 +21,6 @@ import devcontainerCommand from "../../src/commands/devcontainer";
 import dlxCommand from "../../src/commands/dlx";
 import dockerCommands from "../../src/commands/docker";
 import doctorCommand from "../../src/commands/doctor";
-import envCommand from "../../src/commands/env";
 import execCommand from "../../src/commands/exec";
 import generateCommand from "../../src/commands/generate";
 import graphCommand from "../../src/commands/graph";
@@ -34,9 +33,9 @@ import installCommand from "../../src/commands/install";
 import linkCommand from "../../src/commands/link";
 import listCommand from "../../src/commands/list";
 import migrateCommands from "../../src/commands/migrate";
-import nodeCommand from "../../src/commands/node";
 import optimizeCommand from "../../src/commands/optimize";
 import outdatedCommand from "../../src/commands/outdated";
+import packCommand from "../../src/commands/pack";
 import pmCommand from "../../src/commands/pm";
 import previewCommand from "../../src/commands/preview";
 import rebuildCommand from "../../src/commands/rebuild";
@@ -68,7 +67,6 @@ const FLAT_COMMANDS: Command[] = [
     cleanCommand,
     createCommand,
     dedupeCommand,
-    envCommand,
     devCommand,
     devcontainerCommand,
     dlxCommand,
@@ -84,8 +82,8 @@ const FLAT_COMMANDS: Command[] = [
     linkCommand,
     listCommand,
     optimizeCommand,
+    packCommand,
     outdatedCommand,
-    nodeCommand,
     pmCommand,
     previewCommand,
     rebuildCommand,

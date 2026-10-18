@@ -19,6 +19,14 @@ export const rslibDetector: Detector = {
                     description: "rslib watch build (inferred)",
                     preset: "server",
                 },
+                // `pack` is the library build for `vis pack`. `build` stays for `vis build`.
+                pack: {
+                    command: "rslib build",
+                    description: "rslib library build (inferred)",
+                    inputs: ["{projectRoot}/src/**/*", `{projectRoot}/${matchedConfigs[0]!}`, "{projectRoot}/package.json", "{projectRoot}/tsconfig.json"],
+                    outputs: ["{projectRoot}/dist"],
+                    type: "build",
+                },
             },
         };
     },

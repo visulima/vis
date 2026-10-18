@@ -100,10 +100,9 @@ describe("inference", () => {
             });
 
             expect(result.targets["build"]?.command).toBe("vite build");
-            // packem still ran, but didn't contribute a unique target — its
-            // name should be absent from sources, since packem only had the
-            // (now-shadowed) `build` target on offer in v1.
-            expect(result.sources).toStrictEqual(["vite"]);
+            // packem's `build` is shadowed by vite, but packem still contributes its
+            // unique `pack` target, so it is a source. Its `build` is not used.
+            expect(result.sources).toStrictEqual(["vite", "packem"]);
         });
 
         it("should combine targets across detectors that don't collide", () => {

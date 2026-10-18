@@ -42,7 +42,7 @@ export interface TargetToolParams {
     filter?: ReadonlyArray<string>;
     fs: CerebroFs;
     logger: Pick<Console, "info">;
-    target: "build" | "dev";
+    target: "build" | "dev" | "pack";
     visConfig: Parameters<typeof discoverWorkspace>[1];
     workspaceRoot: string;
 }
