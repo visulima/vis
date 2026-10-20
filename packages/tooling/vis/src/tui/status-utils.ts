@@ -5,6 +5,7 @@ import { renderToString } from "@visulima/tui";
 import { Text } from "@visulima/tui/components/text";
 import React from "react";
 
+import { writeCiOutput } from "./ci-output-writer";
 import { CROSS, DASH, TICK } from "./symbols";
 
 export const isCacheStatus = (status: string): boolean => status === "local-cache" || status === "local-cache-kept-existing" || status === "remote-cache";
@@ -148,6 +149,12 @@ const toGitLabSectionKey = (taskId: string): string => {
  * intentionally left expanded so the failure is visible without an
  * extra click. Pass `mode` from `vis-config.ts → run.ciGrouping`;
  * `auto` (the default) detects the runner via env vars.
+ *
+ * All writes flow through {@link writeCiOutput} (see `ci-output-writer.ts`)
+ * so a CI runner that stops draining our stdout pipe cannot wedge the
+ * whole log behind one unbounded write: chunks stay bounded, a stall is
+ * reported on stderr, and the remaining output is rerouted rather than
+ * silently swallowed.
  */
 export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: string, mode: CiGroupingMode | undefined = "auto"): void => {
     const trimmed = output.trim();
@@ -166,9 +173,9 @@ export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: s
     // otherwise tidy log; the failed task's group sits at the tail of the log
     // and is a single click away.
     if (grouping === "github") {
-        process.stdout.write(`::group::${getStatusIcon(status)} ${taskId}${EOL}`);
-        process.stdout.write(trimmed + EOL);
-        process.stdout.write(`::endgroup::${EOL}`);
+        writeCiOutput(`::group::${getStatusIcon(status)} ${taskId}${EOL}`, taskId);
+        writeCiOutput(trimmed + EOL, taskId);
+        writeCiOutput(`::endgroup::${EOL}`, taskId);
 
         return;
     }
@@ -188,12 +195,12 @@ export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: s
         // bytes from the rendered log so the directive itself stays hidden.
         const eraseLine = "[0K";
 
-        process.stdout.write(`${eraseLine}section_start:${String(startTs)}:${key}${collapsed}\r${eraseLine}${getStatusIcon(status)} ${taskId}${EOL}`);
-        process.stdout.write(trimmed + EOL);
+        writeCiOutput(`${eraseLine}section_start:${String(startTs)}:${key}${collapsed}\r${eraseLine}${getStatusIcon(status)} ${taskId}${EOL}`, taskId);
+        writeCiOutput(trimmed + EOL, taskId);
 
         const endTs = Math.floor(Date.now() / 1000);
 
-        process.stdout.write(`${eraseLine}section_end:${String(endTs)}:${key}\r${eraseLine}${EOL}`);
+        writeCiOutput(`${eraseLine}section_end:${String(endTs)}:${key}\r${eraseLine}${EOL}`, taskId);
 
         return;
     }
@@ -205,8 +212,8 @@ export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: s
         // a failed task is expanded by default while successes stay folded.
         const heading = status === "failure" ? "+++" : "---";
 
-        process.stdout.write(`${heading} ${getStatusIcon(status)} ${taskId}${EOL}`);
-        process.stdout.write(trimmed + EOL);
+        writeCiOutput(`${heading} ${getStatusIcon(status)} ${taskId}${EOL}`, taskId);
+        writeCiOutput(trimmed + EOL, taskId);
 
         return;
     }
@@ -215,9 +222,9 @@ export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: s
         // Azure Pipelines only offers a collapsed `##[group]` — there is no
         // expanded-group directive — so, like GitHub, a failed task is
         // grouped collapsed and sits one click from the error.
-        process.stdout.write(`##[group]${getStatusIcon(status)} ${taskId}${EOL}`);
-        process.stdout.write(trimmed + EOL);
-        process.stdout.write(`##[endgroup]${EOL}`);
+        writeCiOutput(`##[group]${getStatusIcon(status)} ${taskId}${EOL}`, taskId);
+        writeCiOutput(trimmed + EOL, taskId);
+        writeCiOutput(`##[endgroup]${EOL}`, taskId);
 
         return;
     }
@@ -228,8 +235,8 @@ export const logCommandOutputCI = (taskId: string, status: TaskStatus, output: s
     const prefix = getStatusPrefix(status);
     const boldTaskId = renderToString(React.createElement(Text, { bold: true }, taskId), { columns: width }).trim();
 
-    process.stdout.write(`${separator}${EOL}`);
-    process.stdout.write(`${prefix} ${boldTaskId}${EOL}`);
-    process.stdout.write(trimmed + EOL);
-    process.stdout.write(`${separator}${EOL}`);
+    writeCiOutput(`${separator}${EOL}`, taskId);
+    writeCiOutput(`${prefix} ${boldTaskId}${EOL}`, taskId);
+    writeCiOutput(trimmed + EOL, taskId);
+    writeCiOutput(`${separator}${EOL}`, taskId);
 };

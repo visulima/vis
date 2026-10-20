@@ -37,6 +37,13 @@ jobs:
                   cache-prefix: "vis"
                   skip-playwright: "true"
                   upgrade-npm-version: false
+                  # TODO: re-enable once pnpm/npm audit works with the unpublished workspace
+                  # binding packages — `@visulima/secret-scanner-binding-*` installs as the
+                  # placeholder `0.0.0-alpha.0`, which `npm audit signatures` looks up in the
+                  # registry and fails on with ETARGET. Every other workflow disables it the
+                  # same way (see build-native.yml, codspeed.yml, lint.yml).
+                  run-signatures-audit: false
+                  run-npm-audit: false
 
             - name: "Download native build artifacts"
               uses: "./.github/actions/native-test-artifacts"

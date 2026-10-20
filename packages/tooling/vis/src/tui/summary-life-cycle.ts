@@ -2,6 +2,7 @@ import type { LifeCycleInterface, Task, TaskResult, TaskStatus } from "@visulima
 import { renderToString } from "@visulima/tui";
 import React from "react";
 
+import { writeCiOutput } from "./ci-output-writer";
 import TaskSummaryView from "./components/task-summary-view";
 
 interface TaskSummaryEntry {
@@ -77,7 +78,7 @@ export class SummaryLifeCycle implements LifeCycleInterface {
         const columns = process.stdout.columns || 80;
         const output = renderToString(React.createElement(TaskSummaryView, { entries }), { columns });
 
-        process.stdout.write(`\n${output}\n`);
+        writeCiOutput(`\n${output}\n`, "run summary");
     }
 }
 
