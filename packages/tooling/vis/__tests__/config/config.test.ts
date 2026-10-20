@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { join } from "@visulima/path";
@@ -235,12 +235,11 @@ export default config;
     });
 });
 
-describe("config cache", () => {
+describe("config loading (no stale cache)", () => {
     let tmpDir: string;
 
     beforeEach(() => {
-        tmpDir = mkdtempSync(join(tmpdir(), "vis-cache-test-"));
-        // Create node_modules so find-cache-dir can resolve
+        tmpDir = mkdtempSync(join(tmpdir(), "vis-config-test-"));
         mkdirSync(join(tmpDir, "node_modules"), { recursive: true });
     });
 
@@ -248,71 +247,63 @@ describe("config cache", () => {
         rmSync(tmpDir, { force: true, recursive: true });
     });
 
-    it("should create a cache file after first load", async () => {
-        expect.assertions(2);
+    it("should keep plugin functions on repeated loads", async () => {
+        expect.assertions(4);
 
-        writeFileSync(join(tmpDir, "vis.config.mjs"), "export default { update: { target: \"patch\" } };");
-
-        const config = await loadVisConfig(tmpDir);
-
-        expect(config.update?.target).toBe("patch");
-
-        const cachePath = join(tmpDir, "node_modules", ".cache", "vis", "vis-config-cache.json");
-        const cacheExists = (() => {
-            try {
-                readFileSync(cachePath);
-
-                return true;
-            } catch {
-                return false;
-            }
-        })();
-
-        expect(cacheExists).toBe(true);
-    });
-
-    it("should return cached config on second load without recompiling", async () => {
-        expect.assertions(2);
-
-        writeFileSync(join(tmpDir, "vis.config.mjs"), "export default { update: { target: \"patch\" } };");
+        writeFileSync(join(tmpDir, "vis.config.ts"), "export default { plugins: [{ name: \"marker\", hooks: { \"task:before\": () => {} }, setup: () => {} }] };");
 
         const first = await loadVisConfig(tmpDir);
+
+        expect(first.plugins?.[0]?.setup).toBeTypeOf("function");
+        expect(first.plugins?.[0]?.hooks?.["task:before"]).toBeTypeOf("function");
+
         const second = await loadVisConfig(tmpDir);
 
-        expect(first.update?.target).toBe("patch");
-        expect(second.update?.target).toBe("patch");
+        expect(second.plugins?.[0]?.setup).toBeTypeOf("function");
+        expect(second.plugins?.[0]?.hooks?.["task:before"]).toBeTypeOf("function");
     });
 
-    it("should invalidate cache when config file changes", async () => {
+    it("should reflect env var changes on repeated loads", async () => {
         expect.assertions(2);
 
-        writeFileSync(join(tmpDir, "vis.config.mjs"), "export default { update: { target: \"patch\" } };");
+        writeFileSync(join(tmpDir, "vis.config.ts"), "export default { tasks: { build: { cache: process.env.VIS_TEST_FLAG === \"on\" } } };");
+
+        const originalValue = process.env.VIS_TEST_FLAG;
+
+        try {
+            process.env.VIS_TEST_FLAG = "off";
+
+            const off = await loadVisConfig(tmpDir);
+
+            expect(off.tasks?.build?.cache).toBe(false);
+
+            process.env.VIS_TEST_FLAG = "on";
+
+            const on = await loadVisConfig(tmpDir);
+
+            expect(on.tasks?.build?.cache).toBe(true);
+        } finally {
+            if (originalValue === undefined) {
+                delete process.env.VIS_TEST_FLAG;
+            } else {
+                process.env.VIS_TEST_FLAG = originalValue;
+            }
+        }
+    });
+
+    it("should pick up edits to the config file on reload", async () => {
+        expect.assertions(2);
+
+        writeFileSync(join(tmpDir, "vis.config.ts"), "export default { update: { target: \"patch\" } };");
 
         const first = await loadVisConfig(tmpDir);
 
         expect(first.update?.target).toBe("patch");
 
-        // Modify the config file
-        writeFileSync(join(tmpDir, "vis.config.mjs"), "export default { update: { target: \"latest\" } };");
+        writeFileSync(join(tmpDir, "vis.config.ts"), "export default { update: { target: \"latest\" } };");
 
         const second = await loadVisConfig(tmpDir);
 
         expect(second.update?.target).toBe("latest");
-    });
-
-    it("should handle corrupt cache gracefully", async () => {
-        expect.assertions(1);
-
-        writeFileSync(join(tmpDir, "vis.config.mjs"), "export default { update: { target: \"minor\" } };");
-
-        // Write corrupt cache
-        const cacheDir = join(tmpDir, "node_modules", ".cache", "vis");
-
-        mkdirSync(cacheDir, { recursive: true });
-        writeFileSync(join(cacheDir, "vis-config-cache.json"), "not valid json{{{");
-
-        const config = await loadVisConfig(tmpDir);
-
-        expect(config.update?.target).toBe("minor");
     });
 });

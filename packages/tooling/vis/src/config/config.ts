@@ -152,78 +152,7 @@ const findVisTaskConfigFile = (projectDirectory: string): string | undefined => 
     return undefined;
 };
 
-interface ConfigCache {
-    config: VisConfig;
-    hash: string;
-}
-
 const hashFileContents = (filePath: string): string => createHash("sha256").update(fsReadFileSync(filePath)).digest("hex");
-
-/**
- * Composite hash for a chain of config files. Sorting by absolute path
- * makes the result independent of resolution order — diamond imports
- * (A and B both extend C) collapse to one entry.
- */
-const hashConfigChain = (paths: ReadonlyArray<string>): string => {
-    const hasher = createHash("sha256");
-    const sorted = [...paths].sort();
-
-    for (const path of sorted) {
-        hasher.update(path);
-        hasher.update(":");
-        hasher.update(hashFileContents(path));
-        hasher.update("\n");
-    }
-
-    return hasher.digest("hex");
-};
-
-const getConfigCachePath = (workspaceRoot: string): string | undefined => {
-    // First try: use node_modules/.cache/vis directly if node_modules exists
-    // in the workspace root. This avoids findCacheDirSync traversing to a
-    // parent project's node_modules when the workspace root lacks package.json.
-    const nodeModulesDir = join(workspaceRoot, "node_modules");
-
-    if (isAccessibleSync(nodeModulesDir)) {
-        const directCacheDir = join(nodeModulesDir, ".cache", "vis");
-
-        ensureDirSync(directCacheDir);
-
-        return join(directCacheDir, "vis-config-cache.json");
-    }
-
-    // Fallback: standard cache dir resolution
-    const cacheDir = findCacheDirSync("vis", { create: true, cwd: workspaceRoot });
-
-    return cacheDir ? join(cacheDir, "vis-config-cache.json") : undefined;
-};
-
-const readConfigCache = (cachePath: string, hash: string): VisConfig | undefined => {
-    if (!isAccessibleSync(cachePath)) {
-        return undefined;
-    }
-
-    try {
-        const cache = readJsonSync(cachePath) as unknown as ConfigCache;
-
-        if (cache.hash === hash) {
-            return cache.config;
-        }
-    } catch {
-        // Corrupt cache — ignore
-    }
-
-    return undefined;
-};
-
-const writeConfigCache = (cachePath: string, hash: string, config: VisConfig): void => {
-    try {
-        ensureDirSync(dirname(cachePath));
-        writeJsonSync(cachePath, { config, hash } satisfies ConfigCache);
-    } catch {
-        // Non-critical
-    }
-};
 
 const normalizeExtends = (value: VisConfig["extends"]): string[] => {
     if (value === undefined) {
@@ -428,9 +357,7 @@ const resolveConfigChain = async (
  * Load the vis configuration from a `vis.config.ts` (or `.js`, `.mjs`, `.cjs`, `.mts`, `.cts`) file.
  *
  * Resolves the entire `extends` chain, post-order, and folds it into a
- * single merged config (extends first, root last — child wins). The
- * cache key covers every file in the chain, so editing any extended
- * file invalidates the cache.
+ * single merged config (extends first, root last — child wins).
  *
  * Falls back to secure defaults if no config file is found.
  * @param workspaceRoot The workspace root directory to search for the config file.
@@ -466,30 +393,13 @@ const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPa
 
     await resolveConfigChain(rootConfigPath, [], inFlight, loaded, order);
 
-    const chainHash = hashConfigChain(order);
-    const cachePath = getConfigCachePath(workspaceRoot);
-
-    if (cachePath) {
-        const cached = readConfigCache(cachePath, chainHash);
-
-        if (cached) {
-            return cached;
-        }
-    }
-
     let merged: VisConfig = {};
 
     for (const path of order) {
         merged = mergeVisConfigs(merged, loaded.get(path)!);
     }
 
-    const finalConfig = applyDefaults(merged);
-
-    if (cachePath) {
-        writeConfigCache(cachePath, chainHash, finalConfig);
-    }
-
-    return finalConfig;
+    return applyDefaults(merged);
 };
 
 interface VisTaskConfigCache {
@@ -549,8 +459,7 @@ const writeVisTaskCache = (cachePath: string, hash: string, config: VisTaskConfi
  * Returns `undefined` when no overlay file exists. Otherwise compiles
  * the file via the oxc TS loader and caches the result under
  * `node_modules/.cache/vis/task-configs/&lt;project>.json`, keyed by the
- * file's content hash. Editing one project's overlay does not invalidate
- * the root config cache.
+ * file's content hash.
  *
  * Errors thrown by the file are wrapped in `VisConfigLoadError` so the
  * source path is reported instead of an opaque workspace.ts failure.
