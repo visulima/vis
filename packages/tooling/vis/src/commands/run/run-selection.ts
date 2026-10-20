@@ -1,4 +1,5 @@
 import type { Toolbox } from "@visulima/cerebro";
+import { join } from "@visulima/path";
 import { enforceProjectConstraints } from "@visulima/task-runner";
 
 import { VisUserError } from "../../errors/vis-user-error";
@@ -247,6 +248,7 @@ export const narrowProjectSelection = async ({
  * affected, so the run exits without executing anything.
  */
 export const narrowToAffectedProjects = async ({
+    cacheDirectory,
     fileOwners,
     logger,
     options,
@@ -256,6 +258,7 @@ export const narrowToAffectedProjects = async ({
     workspace,
     workspaceRoot,
 }: {
+    cacheDirectory?: string;
     fileOwners: DiscoveredWorkspace["fileOwners"];
     logger: RunLogger;
     options: RunOptions;
@@ -264,8 +267,18 @@ export const narrowToAffectedProjects = async ({
     visConfig: Toolbox<Console, RunOptions>["visConfig"];
     workspace: DiscoveredWorkspace["workspace"];
     workspaceRoot: string;
-}): Promise<{ affectedChangedFiles: string[] | undefined; projectNames: string[] } | undefined> => {
+}): Promise<
+    | {
+        affectedChangedFiles: string[] | undefined;
+        externalInputHashes?: Record<string, string>;
+        externalInputStatePath?: string;
+        projectNames: string[];
+    }
+    | undefined
+> => {
     let projectNames = projectNamesIn;
+    let externalInputHashes: Record<string, string> | undefined;
+    let externalInputStatePath: string | undefined;
     // `--affected` narrows the selection in-process rather than re-invoking
     // `vis affected`. The old delegation round-trip could only forward the
     // handful of flags it enumerated, so --dry-run, --fail-fast, --partition
@@ -282,15 +295,23 @@ export const narrowToAffectedProjects = async ({
                 uncommitted: options.uncommitted,
                 upstream: options.upstream,
             },
-            { fileOwners, projectGraph, projects: workspace.projects, workspaceRoot },
-            { affectedIgnore: visConfig?.affectedIgnore, defaultBase: visConfig?.defaultBase },
+            { fileOwners, namedInputs: visConfig?.namedInputs, projectGraph, projects: workspace.projects, workspaceRoot },
+            {
+                affectedIgnore: visConfig?.affectedIgnore,
+                defaultBase: visConfig?.defaultBase,
+                externalInputStatePath: cacheDirectory ? join(cacheDirectory, "external-inputs.json") : undefined,
+                persistExternalInputState: false,
+            },
         );
 
         for (const note of affected.notes) {
             logger.info(`▸ ${note}`);
         }
 
-        if (affected.changedFiles.length === 0) {
+        externalInputHashes = affected.externalInputHashes;
+        externalInputStatePath = affected.externalInputStatePath;
+
+        if (affected.changedFiles.length === 0 && (affected.changedExternalInputs?.length ?? 0) === 0) {
             logger.info("No files changed. Nothing to run.");
 
             return undefined;
@@ -314,7 +335,7 @@ export const narrowToAffectedProjects = async ({
         logger.info(`Affected projects: ${projectNames.join(", ")}`);
     }
 
-    return { affectedChangedFiles, projectNames };
+    return { affectedChangedFiles, externalInputHashes, externalInputStatePath, projectNames };
 };
 
 /**
@@ -325,6 +346,7 @@ export const narrowToAffectedProjects = async ({
  */
 export const resolveRunSelection = async ({
     argument,
+    cacheDirectory,
     config,
     fileOwners,
     logger,
@@ -337,6 +359,7 @@ export const resolveRunSelection = async ({
     workspaceRoot,
 }: {
     argument: string[];
+    cacheDirectory?: string;
     config: DiscoveredWorkspace["config"];
     fileOwners: DiscoveredWorkspace["fileOwners"];
     logger: RunLogger;
@@ -349,6 +372,7 @@ export const resolveRunSelection = async ({
     workspaceRoot: string;
 }): Promise<
     | {
+        affectedExternalInputState?: { hashes: Record<string, string>; path: string };
         affectedFiles: string[] | undefined;
         currentOs: ReturnType<typeof detectCurrentOs>;
         forwardedArgs: string[];
@@ -392,6 +416,7 @@ export const resolveRunSelection = async ({
     const forwardedArgs: string[] = argument.slice(1).map(String);
 
     const narrowed = await narrowToAffectedProjects({
+        cacheDirectory,
         fileOwners,
         logger,
         options,
@@ -406,7 +431,7 @@ export const resolveRunSelection = async ({
         return undefined;
     }
 
-    const { affectedChangedFiles, projectNames } = narrowed;
+    const { affectedChangedFiles, externalInputHashes, externalInputStatePath, projectNames } = narrowed;
 
     const currentOs = detectCurrentOs();
 
@@ -423,6 +448,8 @@ export const resolveRunSelection = async ({
     }
 
     const { projectsWithTarget, projectTargetIndex } = targetSelection;
+    const affectedExternalInputState
+        = externalInputStatePath && externalInputHashes ? { hashes: externalInputHashes, path: externalInputStatePath } : undefined;
 
-    return { affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target };
+    return { affectedExternalInputState, affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target };
 };

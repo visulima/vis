@@ -1,5 +1,7 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
+import { join } from "@visulima/path";
 
+import { resolveRunCacheDirectory } from "../../cache/cache-directory";
 import { buildProjectGraph, discoverWorkspace } from "../../config/workspace";
 import { VisUserError } from "../../errors/vis-user-error";
 import { selectAffectedProjects } from "../../task/affected-selection";
@@ -68,8 +70,16 @@ const execute = async ({
     // over rather than maintaining a second copy of the filter pipeline.
     if (options.sparseCheckout) {
         const workspaceRoot = wsRoot;
-        const { fileOwners, packageJsons, workspace } = discoverWorkspace(workspaceRoot, visConfig);
+        const { config, fileOwners, packageJsons, workspace } = discoverWorkspace(workspaceRoot, visConfig);
         const projectGraph = buildProjectGraph(workspaceRoot, workspace, packageJsons);
+        const configTaskRunner = (config.taskRunner ?? {}) as { cacheDirectory?: string };
+        const cacheDirectory = resolveRunCacheDirectory({
+            branchScopedCache: config.branchScopedCache,
+            configCacheDir: configTaskRunner.cacheDirectory,
+            optionsCacheDir: undefined,
+            sharedWorktreeCache: config.sharedWorktreeCache,
+            workspaceRoot,
+        });
 
         const result = await selectAffectedProjects(
             {
@@ -79,8 +89,12 @@ const execute = async ({
                 uncommitted: options.uncommitted,
                 upstream: options.upstream,
             },
-            { fileOwners, projectGraph, projects: workspace.projects, workspaceRoot },
-            { affectedIgnore: visConfig?.affectedIgnore, defaultBase: visConfig?.defaultBase },
+            { fileOwners, namedInputs: visConfig?.namedInputs, projectGraph, projects: workspace.projects, workspaceRoot },
+            {
+                affectedIgnore: visConfig?.affectedIgnore,
+                defaultBase: visConfig?.defaultBase,
+                externalInputStatePath: join(cacheDirectory, "external-inputs.json"),
+            },
         );
 
         let affectedProjects = filterProjectsByQuery(result.affectedProjects, workspace, options.query);

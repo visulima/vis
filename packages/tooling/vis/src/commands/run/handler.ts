@@ -2,8 +2,10 @@ import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import type { ProcessEvent, TaskResults } from "@visulima/task-runner";
 import { runConcurrently, TerminalBuffer } from "@visulima/task-runner";
 
+import { resolveRunCacheDirectory } from "../../cache/cache-directory";
 import { buildProjectGraph, discoverWorkspace, loadVisTaskConfigsForWorkspace } from "../../config/workspace";
 import { resolveCommandRuntime } from "../../runtime/command-runtime";
+import { invalidateExternalInputState, persistExternalInputHashes } from "../../task/affected-selection";
 import { cleanupLegacyTaskRunnerLayout } from "../../util/vis-paths";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
@@ -62,9 +64,18 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
     const taskConfigs = await loadVisTaskConfigsForWorkspace(workspaceRoot, visConfig);
     const { config, fileOwners, packageJsons, projectOptions, workspace } = discoverWorkspace(workspaceRoot, visConfig, taskConfigs);
     const projectGraph = buildProjectGraph(workspaceRoot, workspace, packageJsons);
+    const configTaskRunner = (config.taskRunner ?? {}) as { cacheDirectory?: string };
+    const runCacheDirectory = resolveRunCacheDirectory({
+        branchScopedCache: config.branchScopedCache,
+        configCacheDir: configTaskRunner.cacheDirectory,
+        optionsCacheDir: options.cacheDir,
+        sharedWorktreeCache: config.sharedWorktreeCache,
+        workspaceRoot,
+    });
 
     const selection = await resolveRunSelection({
         argument,
+        cacheDirectory: runCacheDirectory,
         config,
         fileOwners,
         logger,
@@ -81,7 +92,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         return;
     }
 
-    const { affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target } = selection;
+    const { affectedExternalInputState, affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target } = selection;
 
     const runTasks = buildRunTasks({
         affectedFiles,
@@ -159,6 +170,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
             options,
             persistentTasks,
             projectsWithTarget,
+            runCacheDirectory,
             serviceEnvByTaskId,
             serviceResult,
             target,
@@ -166,6 +178,27 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
             visConfig,
             workspaceRoot,
         });
+
+        if (affectedExternalInputState) {
+            runtime.hooks.hook("run:after", async (results) => {
+                const failed = [...results.values()].some((result) => result.code !== 0);
+
+                if (!failed) {
+                    await persistExternalInputHashes(affectedExternalInputState.path, affectedExternalInputState.hashes);
+                }
+            });
+
+            // Persistent tasks start after `run:after` and never appear in the
+            // results map. If one exits non-zero, drop the snapshot written
+            // above so the next selection re-checks those external inputs.
+            const persistentTaskIds = new Set(persistentTasks.map((task) => task.id));
+
+            runtime.hooks.hook("task:failure", async (task) => {
+                if (persistentTaskIds.has(task.id)) {
+                    await invalidateExternalInputState(affectedExternalInputState.path);
+                }
+            });
+        }
 
         await runtime.hooks.callHook("run:before", { tasks: initialTasks, workspaceRoot });
 
