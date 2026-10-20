@@ -60,9 +60,9 @@ const setupFixture = (): { cwd: string; rootSha: string } => {
         `${JSON.stringify({ name: "fixture-root", packageManager: "pnpm@10.32.1", private: true, version: "0.0.0", workspaces: ["packages/*"] }, null, 4)}\n`,
     );
     writeFileSync(join(cwd, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
-    // `loadVisConfig` writes `node_modules/.cache/vis/vis-config-cache.json`;
-    // in a real repo that path is gitignored, so the fixture must be too or
-    // the clean-tree guard would fire on the tool's own cache.
+    // vis writes its caches under `node_modules/.cache/vis`; in a real repo
+    // that path is gitignored, so the fixture must be too or the clean-tree
+    // guard would fire on the tool's own cache.
     writeFileSync(join(cwd, ".gitignore"), "node_modules\n");
     mkdirSync(join(cwd, "packages", "a", "src"), { recursive: true });
     writeFileSync(join(cwd, "packages", "a", "package.json"), `${JSON.stringify({ name: "@scope/a", version: "1.0.0" }, null, 4)}\n`);

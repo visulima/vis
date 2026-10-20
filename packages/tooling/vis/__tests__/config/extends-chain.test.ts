@@ -20,9 +20,9 @@ describe("vis.config.ts extends chain", () => {
 
     beforeEach(() => {
         scratch = mkdtempSync(join(realpathSync(tmpdir()), "vis-extends-"));
-        // node_modules has to exist so getConfigCachePath finds a writable
-        // location — without it the loader falls back to findCacheDirSync
-        // which traverses upward and may resolve outside the fixture.
+        // node_modules has to exist so vis's caches (vis.task overlays) land
+        // in the fixture — without it findCacheDirSync traverses upward and
+        // may resolve outside the fixture.
         mkdirSync(join(scratch, "node_modules"), { recursive: true });
         writeFileSync(join(scratch, "package.json"), JSON.stringify({ name: "fixture-root", private: true }));
     });
