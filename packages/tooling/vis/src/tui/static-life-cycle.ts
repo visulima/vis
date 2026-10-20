@@ -4,6 +4,7 @@ import { Text } from "@visulima/tui/components/text";
 import React from "react";
 
 import type { VisTargetOptions } from "../task/target-options";
+import { writeCiOutput } from "./ci-output-writer";
 import CommandSummary from "./components/command-summary";
 import Header from "./components/header";
 import { renderFailureOutput } from "./failure-render";
@@ -92,6 +93,11 @@ export const declaredFallbackMessage = (task: Task): string => `${task.id}: trac
 /**
  * A lifecycle handler for CI environments that produces static, append-only output.
  * No cursor manipulation — just linear log lines.
+ *
+ * Every line goes through {@link writeCiOutput} (see `ci-output-writer.ts`)
+ * so CI-path output shares one bounded, backpressure-aware path — a runner
+ * that stops draining our stdout pipe cannot freeze or silently swallow
+ * the rest of the run's log.
  */
 export class StaticOutputLifeCycle implements LifeCycleInterface {
     readonly #projectNames: string[];
@@ -133,21 +139,21 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
         const title = `Running ${formatTargetsAndProjects(this.#projectNames, this.#targets, this.#tasks)}`;
         const header = renderToString(React.createElement(Header, { title, variant: "info" }), { columns });
 
-        process.stdout.write(header);
+        writeCiOutput(header, "run header");
 
         // Print overrides if any (skip internal "command" key)
         const firstTask = this.#tasks[0];
         const overrideEntries = firstTask?.overrides ? Object.entries(firstTask.overrides).filter(([flag]) => flag !== "command") : [];
 
         if (overrideEntries.length > 0) {
-            process.stdout.write(`\n  With additional flags:\n`);
+            writeCiOutput(`\n  With additional flags:\n`, "run header");
 
             for (const [flag, value] of overrideEntries) {
-                process.stdout.write(`${formatFlags("    ", flag, value)}\n`);
+                writeCiOutput(`${formatFlags("    ", flag, value)}\n`, "run header");
             }
         }
 
-        process.stdout.write("\n");
+        writeCiOutput("\n", "run header");
     }
 
     // fallow-ignore-next-line unused-class-member -- public TUI store/life-cycle method driven by the React TUI components
@@ -157,7 +163,7 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
         for (const task of tasks) {
             const line = renderToString(React.createElement(Text, null, React.createElement(Text, { dimColor: true }, ">"), ` ${task.id}`), { columns });
 
-            process.stdout.write(`${line}\n`);
+            writeCiOutput(`${line}\n`, task.id);
         }
     }
 
@@ -198,7 +204,7 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
                 { columns },
             );
 
-            process.stdout.write(`${line}\n`);
+            writeCiOutput(`${line}\n`, result.task.id);
         }
     }
 
@@ -206,7 +212,7 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
         const columns = process.stdout.columns || 80;
         const line = renderToString(React.createElement(Text, { dimColor: true }, `  ⓘ ${message}`), { columns });
 
-        process.stdout.write(`${line}\n`);
+        writeCiOutput(`${line}\n`, "cache notice");
     }
 
     // fallow-ignore-next-line unused-class-member -- public TUI store/life-cycle method driven by the React TUI components
@@ -267,7 +273,7 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
         const skippedIds = this.#tasks.filter((t) => !this.#allCompletedTasks.has(t.id)).map((t) => t.id);
 
         // Empty line between task output and summary
-        process.stdout.write("\n");
+        writeCiOutput("\n", "run summary");
 
         const columns = process.stdout.columns || 80;
         const summary = renderToString(
@@ -286,6 +292,6 @@ export class StaticOutputLifeCycle implements LifeCycleInterface {
             { columns },
         );
 
-        process.stdout.write(`${summary}\n`);
+        writeCiOutput(`${summary}\n`, "run summary");
     }
 }
