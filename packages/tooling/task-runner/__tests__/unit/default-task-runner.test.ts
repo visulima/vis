@@ -308,3 +308,46 @@ describe(defaultTaskRunner, () => {
         expect(getCount()).toBe(2);
     });
 });
+
+describe("defaultTaskRunner cache directory setup", () => {
+    it("runs the task and warns once when the cache directory cannot be created", async () => {
+        expect.assertions(4);
+
+        const workspaceRoot = await createTemporaryDirectory();
+
+        await mkdir(join(workspaceRoot, "packages/app/src"), { recursive: true });
+        await writeFile(join(workspaceRoot, "packages/app/src/index.ts"), "const x = 1;");
+
+        const blockingPath = join(workspaceRoot, "cache-is-a-file");
+
+        await writeFile(blockingPath, "not a directory");
+
+        const task = makeTask();
+        const { executor, getCount } = createCountingExecutor();
+        const context = createContext(workspaceRoot, [task], executor);
+        const diagnostics: { message: string; taskId: string }[] = [];
+
+        try {
+            const results = await defaultTaskRunner(
+                [task],
+                {
+                    cacheDirectory: blockingPath,
+                    onDiagnostic: (taskId, message) => {
+                        diagnostics.push({ message, taskId });
+                    },
+                },
+                context,
+            );
+
+            expect(results.get("app:build")?.status).toBe("success");
+            expect(getCount()).toBe(1);
+
+            const warnings = diagnostics.filter((entry) => entry.taskId === "cache");
+
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0]?.message).toContain(blockingPath);
+        } finally {
+            await rm(workspaceRoot, { force: true, recursive: true });
+        }
+    });
+});

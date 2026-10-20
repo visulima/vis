@@ -265,17 +265,29 @@ const defaultTaskRunner = async (_tasks: Task[], options: TaskRunnerOptions, con
         ? computeGlobalEnvNamespace(options.globalEnv, (name) => childEnvVisible?.(name) ?? true)
         : undefined;
 
-    // Create the cache
+    // Create the cache. Readiness is established once here so an unusable
+    // directory (EACCES, EROFS, ENOSPC, …) becomes a reported degraded mode
+    // rather than a per-task failure.
     const cache = new Cache({
         cacheDirectory: options.cacheDirectory,
         cacheNamespace,
         maxCacheAge: options.maxCacheAge,
         maxCacheSize: options.maxCacheSize,
+        onSetupError: (directory, error) => {
+            const message = error instanceof Error ? error.message : String(error);
+
+            options.onDiagnostic?.(
+                "cache",
+                `Local cache disabled for this run: cannot create cache directory "${directory}" (${message}). Tasks will run without caching.`,
+            );
+        },
         onWriteError: options.onDiagnostic
             ? (hash, error) => options.onDiagnostic?.(hash, `cache write failed: ${error instanceof Error ? error.message : String(error)}`)
             : undefined,
         workspaceRoot,
     });
+
+    await cache.ensureReady();
 
     // Clean old cache entries in the background
     cache.removeOldEntries().catch(() => {});
