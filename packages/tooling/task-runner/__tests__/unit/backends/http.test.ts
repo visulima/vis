@@ -5,9 +5,11 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createRemoteCacheBackend } from "../../../src/backends/factory";
 import { actionDigestForTaskHash, containsByTaskHash, retrieveByTaskHash, storeByTaskHash } from "../../../src/backends/hash-bridge";
 import { HttpRemoteCache } from "../../../src/backends/http";
 
@@ -1191,6 +1193,83 @@ describe(HttpRemoteCache, () => {
 
                 expect(stored).toBe(true);
                 expect(retrieved).toBe(true);
+            } finally {
+                await closeServer(server);
+            }
+        });
+    });
+
+    describe("remote cache error resilience", () => {
+        it("treats a 502 read as a miss and reports each failure without throwing", async () => {
+            expect.assertions(3);
+
+            const { server, url } = await startMockServer((_request, response) => {
+                response.writeHead(502);
+                response.end();
+            });
+
+            try {
+                const errors: unknown[] = [];
+                const cache = createRemoteCacheBackend({ localCasRoot: cacheDirectory, timeout: 250, url }, (error) => errors.push(error));
+
+                const first = await retrieveByTaskHash(cache, "first", cacheDirectory);
+                const second = await retrieveByTaskHash(cache, "second", cacheDirectory);
+
+                expect(first).toBe(false);
+                expect(second).toBe(false);
+                expect(errors).toHaveLength(2);
+
+                await cache.close();
+            } finally {
+                await closeServer(server);
+            }
+        });
+
+        it("falls back to the caller's onUploadError hook when no reporter is supplied", async () => {
+            expect.assertions(2);
+
+            const { server, url } = await startMockServer((_request, response) => {
+                response.writeHead(500);
+                response.end();
+            });
+
+            try {
+                const onUploadError = vi.fn<(hash: string, error: unknown) => void>();
+                const cache = createRemoteCacheBackend({ localCasRoot: cacheDirectory, onUploadError, timeout: 250, url });
+
+                await retrieveByTaskHash(cache, "first", cacheDirectory);
+                await retrieveByTaskHash(cache, "second", cacheDirectory);
+
+                expect(onUploadError).toHaveBeenCalledTimes(2);
+                expect(onUploadError.mock.calls[0]?.[0]).toBe("remote-cache");
+            } finally {
+                await closeServer(server);
+            }
+        });
+
+        it("treats a 502 write as a failed upload without throwing", async () => {
+            expect.assertions(2);
+
+            const { server, url } = await startMockServer((_request, response) => {
+                response.writeHead(502);
+                response.end();
+            });
+
+            try {
+                const errors: unknown[] = [];
+                const cache = createRemoteCacheBackend({ timeout: 250, url }, (error) => errors.push(error));
+                const bytes = Buffer.from("payload", "utf8");
+                const digest = { hash: createHash("sha256").update(bytes).digest("hex"), sizeBytes: bytes.byteLength };
+                const stored = await cache.storeAction(
+                    actionDigestForTaskHash("write-502"),
+                    { exitCode: 0, outputDirectories: [], outputFiles: [{ digest, isExecutable: false, path: "vis-entry.tar.gz" }] },
+                    [{ digest, open: () => Promise.resolve(Readable.from(bytes)) }],
+                );
+
+                expect(stored).toBe(false);
+                expect(errors).toHaveLength(1);
+
+                await cache.close();
             } finally {
                 await closeServer(server);
             }

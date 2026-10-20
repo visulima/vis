@@ -646,7 +646,7 @@ class TaskOrchestrator {
             }
 
             if (this.#remoteCache) {
-                const retrieved = await retrieveByTaskHash(this.#remoteCache, hash, this.#cache.cacheDirectory);
+                const retrieved = await retrieveByTaskHash(this.#remoteCache, hash, this.#cache.cacheDirectory, this.#onRemoteUploadError);
 
                 if (retrieved) {
                     const remoteCached = await this.#cache.get(hash);

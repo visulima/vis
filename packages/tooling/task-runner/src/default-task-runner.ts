@@ -368,8 +368,41 @@ const defaultTaskRunner = async (_tasks: Task[], options: TaskRunnerOptions, con
 
     // Create remote cache if configured. `createRemoteCacheBackend`
     // centralizes backend selection so new backends (REAPI gRPC) can
-    // land without touching this file.
-    const remoteCache = options.remoteCache ? createRemoteCacheBackend(options.remoteCache) : undefined;
+    // land without touching this file. Remote caching is an optimisation:
+    // a transport failure on read or write degrades to a cache miss, and the
+    // operator sees one warning for the run rather than one per task.
+    let remoteCacheErrorReported = false;
+    const reportRemoteCacheError = (error: unknown): void => {
+        // The caller's hook still sees every failure, so debug logging can
+        // retain the full sequence; only the console-facing diagnostic is
+        // collapsed to one message per run.
+        options.remoteCache?.onUploadError?.("remote-cache", error);
+
+        if (remoteCacheErrorReported) {
+            return;
+        }
+
+        remoteCacheErrorReported = true;
+
+        const message = error instanceof Error ? error.message : String(error);
+
+        options.onDiagnostic?.("remote-cache", `Remote cache unavailable; continuing without it for this run: ${message}`);
+    };
+
+    const remoteCache = options.remoteCache
+        ? createRemoteCacheBackend(
+            {
+                ...options.remoteCache,
+                // HTTP downloads hydrate the local CAS before the cache entry
+                // is extracted. Default that root to this run's cache so a
+                // remote read can actually populate a local hit.
+                localCasRoot: options.remoteCache.localCasRoot ?? cache.cacheDirectory,
+            },
+            (error) => {
+                reportRemoteCacheError(error);
+            },
+        )
+        : undefined;
 
     // Merge framework-inferred env patterns with explicitly configured ones
     // This makes frameworkInference work with both Nx-style and autoFingerprint modes
@@ -395,9 +428,12 @@ const defaultTaskRunner = async (_tasks: Task[], options: TaskRunnerOptions, con
         fingerprintEnvPatterns,
         lifeCycle,
         // Bridge-local upload errors (tar/digest in hash-bridge) flow back
-        // through the same callback the wire-level backend uses, so a user
-        // observes upload failures regardless of where they originate.
-        onRemoteUploadError: options.remoteCache?.onUploadError,
+        // through the same once-per-run reporter the wire-level backend uses,
+        // so a user observes upload failures regardless of where they
+        // originate without the warning repeating for every task.
+        onRemoteUploadError: (_hash, error) => {
+            reportRemoteCacheError(error);
+        },
         preTraceCheck: context.preTraceCheck,
         remoteCache,
         resolveChildEnv,

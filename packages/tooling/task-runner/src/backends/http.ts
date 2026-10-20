@@ -338,7 +338,13 @@ class HttpRemoteCache implements RemoteCacheBackend {
                 outputDirectories: [],
                 outputFiles: [{ digest: blobDigest, isExecutable: false, path: BLOB_OUTPUT_PATH }],
             };
-        } catch {
+        } catch (error) {
+            // A connection error, timeout, or abort reached the end of the
+            // retry budget. Surface it through the same hook as a non-OK
+            // status so a persistent cache outage is visible once per run
+            // while the read still degrades to a miss.
+            this.#onUploadError?.(actionDigest.hash, error);
+
             return null;
         } finally {
             await rm(stagingPath, { force: true }).catch(() => {});

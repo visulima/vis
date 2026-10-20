@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { actionDigestForTaskHash, containsByTaskHash, retrieveByTaskHash, storeByTaskHash } from "../../../src/backends/hash-bridge";
 import { ReapiRemoteCache } from "../../../src/backends/reapi";
@@ -421,6 +421,27 @@ describe(ReapiRemoteCache, () => {
             const result = await cache.retrieveAction({ hash: "deadbeef".repeat(8), sizeBytes: 1 });
 
             expect(result).toBeNull();
+        });
+
+        it("treats a non-NOT_FOUND gRPC error as a cache miss through the hash bridge", async () => {
+            expect.assertions(3);
+
+            fixture.server.getActionResultErrorOverride = { code: 13, message: "internal" };
+
+            const cache = new ReapiRemoteCache({ url: fixture.server.address });
+            const directory = await createTemporaryDirectory();
+            const onError = vi.fn<(hash: string, error: unknown) => void>();
+
+            try {
+                // The backend method still surfaces the transport error; the
+                // orchestrator's bridge is where a failed read becomes a miss
+                // so the task can run normally.
+                await expect(cache.retrieveAction({ hash: "c".repeat(64), sizeBytes: 1 })).rejects.toMatchObject({ code: 13 });
+                await expect(retrieveByTaskHash(cache, "unreachable", directory, onError)).resolves.toBe(false);
+                expect(onError).toHaveBeenCalledTimes(1);
+            } finally {
+                await rm(directory, { force: true, recursive: true });
+            }
         });
     });
 
