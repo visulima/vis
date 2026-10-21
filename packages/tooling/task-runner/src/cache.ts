@@ -54,6 +54,16 @@ interface CacheOptions {
     maxCacheSize?: string;
 
     /**
+     * Called when the cache directory cannot be created (EACCES, EROFS,
+     * ENOSPC, …). The instance disables itself for the rest of the run:
+     * reads miss, writes are no-ops, and tasks execute normally. Setup
+     * therefore never crashes the run. The callback receives the directory
+     * that failed and the underlying error so the caller can name both in a
+     * warning.
+     */
+    onSetupError?: (directory: string, error: unknown) => void;
+
+    /**
      * Diagnostic sink for best-effort cache writes that fail (ENOSPC,
      * EACCES, EROFS, …). {@link Cache.put} stays non-throwing so a
      * broken cache never fails a build, but a full disk or read-only
@@ -190,12 +200,21 @@ class Cache {
 
     readonly #onWriteError: ((hash: string, error: unknown) => void) | undefined;
 
+    readonly #onSetupError: ((directory: string, error: unknown) => void) | undefined;
+
+    /** Set when the cache directory could not be created; every operation degrades to a miss/no-op. */
+    #disabled = false;
+
+    /** Memoized setup so concurrent callers share one mkdir and one error report. */
+    #readyPromise: Promise<void> | undefined;
+
     /** Serializes concurrent setTaskIndex writes to prevent lost updates */
     #indexWriteQueue: Promise<void> = Promise.resolve();
 
     public constructor(options: CacheOptions) {
         this.#workspaceRoot = options.workspaceRoot;
         this.#onWriteError = options.onWriteError;
+        this.#onSetupError = options.onSetupError;
 
         const baseDirectory = options.cacheDirectory ?? join(options.workspaceRoot, DEFAULT_CACHE_DIRECTORY_NAME);
 
@@ -212,6 +231,37 @@ class Cache {
         this.#cacheDirectory = options.cacheNamespace && options.cacheNamespace.length > 0 ? join(baseDirectory, "ns", options.cacheNamespace) : baseDirectory;
         this.#maxCacheAge = options.maxCacheAge ?? DEFAULT_MAX_CACHE_AGE;
         this.#maxCacheSize = options.maxCacheSize ? parseCacheSize(options.maxCacheSize) : undefined;
+    }
+
+    /**
+     * Creates the cache directory once, before the run starts. Callers that
+     * route through this method get a clear degraded mode instead of an
+     * EACCES surfacing later from a per-task write or crashing setup.
+     *
+     * Kept asynchronous (rather than creating the directory in the
+     * constructor) so read-only users — cache inspection, `cache clean` —
+     * do not materialise a directory as a side effect of constructing Cache.
+     * Calling it more than once is safe.
+     */
+    public ensureReady(): Promise<void> {
+        this.#readyPromise ??= (async () => {
+            try {
+                await mkdir(this.#cacheDirectory, { recursive: true });
+            } catch (error) {
+                this.#disabled = true;
+                this.#onSetupError?.(this.#cacheDirectory, error);
+            }
+        })();
+
+        return this.#readyPromise;
+    }
+
+    /**
+     * True when the cache directory could not be created and the instance is
+     * running in degraded mode for this process.
+     */
+    public get disabled(): boolean {
+        return this.#disabled;
     }
 
     /**
@@ -238,6 +288,10 @@ class Cache {
      * the workspace.
      */
     public async getActionResult(actionDigest: CasDigest): Promise<ActionResult | null> {
+        if (this.#disabled) {
+            return null;
+        }
+
         return readActionEntry(this.#cacheDirectory, actionDigest.hash);
     }
 
@@ -247,6 +301,10 @@ class Cache {
      * through to the legacy `&lt;hash>/` layout (or executes the task).
      */
     public async resolveActionDigestForTaskHash(taskHash: string): Promise<string | null> {
+        if (this.#disabled) {
+            return null;
+        }
+
         return readTaskHashIndex(this.#cacheDirectory, taskHash);
     }
 
@@ -257,6 +315,10 @@ class Cache {
      * partial failure can't surface a half-written entry.
      */
     public async putActionResult(taskHash: string, actionDigest: CasDigest, result: ActionResult, blobs: ReadonlyArray<BlobSource>): Promise<void> {
+        if (this.#disabled) {
+            return;
+        }
+
         await this.#ensureBlobs(blobs);
         await writeActionEntry(this.#cacheDirectory, actionDigest.hash, result);
         await writeTaskHashIndex(this.#cacheDirectory, taskHash, actionDigest.hash);
@@ -269,6 +331,10 @@ class Cache {
      * as a cache miss and re-executes.
      */
     public async materializeOutputs(result: ActionResult, workspaceRoot: string): Promise<boolean> {
+        if (this.#disabled) {
+            return false;
+        }
+
         for (const file of result.outputFiles) {
             const destination = resolve(workspaceRoot, file.path);
 
@@ -338,6 +404,10 @@ class Cache {
      * Returns undefined if no valid cache entry exists.
      */
     public async get(hash: string): Promise<CachedResult | undefined> {
+        if (this.#disabled) {
+            return undefined;
+        }
+
         const cacheEntryDirectory = join(this.#cacheDirectory, hash);
 
         try {
@@ -395,6 +465,10 @@ class Cache {
         fingerprint?: TaskFingerprint,
         autoWrites?: ReadonlyArray<string>,
     ): Promise<void> {
+        if (this.#disabled) {
+            return;
+        }
+
         const cacheEntryDirectory = join(this.#cacheDirectory, hash);
         const temporaryDirectory = join(this.#cacheDirectory, `.tmp-${hash}-${uniqueId()}`);
 
@@ -476,6 +550,10 @@ class Cache {
      * for backward compat.
      */
     public async restoreOutputs(hash: string, _outputs?: OutputSpec[], options?: ExtractOptions): Promise<boolean> {
+        if (this.#disabled) {
+            return false;
+        }
+
         const cacheEntryDirectory = join(this.#cacheDirectory, hash);
 
         return restoreOutputsCompressed(cacheEntryDirectory, this.#workspaceRoot, options);
@@ -487,6 +565,10 @@ class Cache {
      * tracked file accesses rather than computed upfront.
      */
     public async getByTaskId(taskId: string): Promise<CachedResult | undefined> {
+        if (this.#disabled) {
+            return undefined;
+        }
+
         const indexFile = join(this.#cacheDirectory, ".task-index.json");
 
         try {
@@ -510,6 +592,10 @@ class Cache {
      * Each write is atomic (temp file + rename).
      */
     public async setTaskIndex(taskId: string, hash: string): Promise<void> {
+        if (this.#disabled) {
+            return;
+        }
+
         // Serialize writes through a queue to prevent concurrent
         // read-modify-write races. Two promises here: one for THIS
         // caller (must reject if the write actually fails) and one
@@ -523,7 +609,9 @@ class Cache {
 
         this.#indexWriteQueue = writePromise.catch(() => {});
 
-        return writePromise;
+        // Await rather than return the promise so this async method has a
+        // single (void) return shape; rejection still reaches the caller.
+        await writePromise;
     }
 
     async #writeTaskIndex(taskId: string, hash: string): Promise<void> {
@@ -637,6 +725,10 @@ class Cache {
      */
 
     public async removeOldEntries(): Promise<void> {
+        if (this.#disabled) {
+            return;
+        }
+
         try {
             const entries = await readdir(this.#cacheDirectory);
             const now = Date.now();
@@ -716,6 +808,10 @@ class Cache {
      * Clears the entire cache.
      */
     public async clear(): Promise<void> {
+        if (this.#disabled) {
+            return;
+        }
+
         const directory = resolve(this.#cacheDirectory);
 
         // Never recursively delete the workspace root or the filesystem root —

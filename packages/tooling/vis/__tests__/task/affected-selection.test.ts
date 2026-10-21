@@ -1,8 +1,12 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { ProjectConfiguration, ProjectGraph } from "@visulima/task-runner";
 import { describe, expect, it, vi } from "vitest";
 
 import { VisUserError } from "../../src/errors/vis-user-error";
-import { parsePorcelainStatus, selectAffectedProjects } from "../../src/task/affected-selection";
+import { invalidateExternalInputState, parsePorcelainStatus, persistExternalInputHashes, selectAffectedProjects } from "../../src/task/affected-selection";
 
 const { getAffectedProjectsMock } = vi.hoisted(() => {
     return { getAffectedProjectsMock: vi.fn() };
@@ -214,5 +218,205 @@ describe(selectAffectedProjects, () => {
 
         expect(getAffectedProjectsMock).toHaveBeenCalledWith(expect.objectContaining({ ignoredFiles: ["api-snapshots/**", "*.md"] }));
         expect(result.notes).toStrictEqual(["ignoring 2 changed path(s) outside any project matching affectedIgnore"]);
+    });
+});
+
+describe("selectAffectedProjects external inputs", () => {
+    it("defaults the external-input snapshot to the workspace cache directory", async () => {
+        expect.assertions(1);
+
+        const root = await mkdtemp(join(tmpdir(), "vis-affected-external-default-"));
+        const externalDirectory = await mkdtemp(join(tmpdir(), "vis-affected-shared-default-"));
+        const externalFile = join(externalDirectory, "shared.ts");
+
+        await mkdir(join(root, "packages/api"), { recursive: true });
+        await writeFile(externalFile, "export const shared = 1;\n");
+
+        const externalProjects: Record<string, ProjectConfiguration> = {
+            api: { root: "packages/api", targets: { build: { inputs: [`file://${externalFile}`] } } },
+        };
+
+        try {
+            getAffectedProjectsMock.mockResolvedValueOnce({
+                ...emptyResult,
+                changedExternalInputs: [externalFile],
+                changedProjects: ["api"],
+                externalInputHashes: { [externalFile]: "hash-default" },
+            });
+
+            await selectAffectedProjects(
+                { base: "HEAD", head: "HEAD", uncommitted: false },
+                {
+                    projectGraph,
+                    projects: externalProjects,
+                    workspaceRoot: root,
+                },
+            );
+
+            const snapshotPath = join(root, "node_modules", ".cache", "vis", "external-inputs.json");
+
+            expect(JSON.parse(await readFile(snapshotPath, "utf8"))).toStrictEqual({ [externalFile]: "hash-default" });
+        } finally {
+            await rm(root, { force: true, recursive: true });
+            await rm(externalDirectory, { force: true, recursive: true });
+        }
+    });
+
+    it("does not advance the snapshot when persistence is deferred", async () => {
+        expect.assertions(1);
+
+        const root = await mkdtemp(join(tmpdir(), "vis-affected-external-deferred-"));
+        const externalDirectory = await mkdtemp(join(tmpdir(), "vis-affected-shared-deferred-"));
+        const externalFile = join(externalDirectory, "shared.ts");
+        const statePath = join(root, "external-inputs.json");
+
+        await mkdir(join(root, "packages/api"), { recursive: true });
+        await writeFile(externalFile, "export const shared = 1;\n");
+
+        const externalProjects: Record<string, ProjectConfiguration> = {
+            api: { root: "packages/api", targets: { build: { inputs: [`file://${externalFile}`] } } },
+        };
+
+        try {
+            getAffectedProjectsMock.mockResolvedValueOnce({
+                ...emptyResult,
+                changedExternalInputs: [externalFile],
+                changedProjects: ["api"],
+                externalInputHashes: { [externalFile]: "hash-deferred" },
+            });
+
+            await selectAffectedProjects(
+                { base: "HEAD", head: "HEAD", uncommitted: false },
+                { projectGraph, projects: externalProjects, workspaceRoot: root },
+                { externalInputStatePath: statePath, persistExternalInputState: false },
+            );
+
+            await expect(readFile(statePath, "utf8")).rejects.toThrow(/ENOENT/);
+        } finally {
+            await rm(root, { force: true, recursive: true });
+            await rm(externalDirectory, { force: true, recursive: true });
+        }
+    });
+
+    it("ignores a snapshot that is not a plain object", async () => {
+        expect.assertions(1);
+
+        const root = await mkdtemp(join(tmpdir(), "vis-affected-external-shape-"));
+        const externalDirectory = await mkdtemp(join(tmpdir(), "vis-affected-shared-shape-"));
+        const externalFile = join(externalDirectory, "shared.ts");
+        const statePath = join(root, "external-inputs.json");
+
+        await mkdir(join(root, "packages/api"), { recursive: true });
+        await writeFile(externalFile, "export const shared = 1;\n");
+        await writeFile(statePath, "null");
+
+        const externalProjects: Record<string, ProjectConfiguration> = {
+            api: { root: "packages/api", targets: { build: { inputs: [`file://${externalFile}`] } } },
+        };
+
+        try {
+            getAffectedProjectsMock.mockResolvedValueOnce({ ...emptyResult, externalInputHashes: {} });
+
+            await selectAffectedProjects(
+                { base: "HEAD", head: "HEAD", uncommitted: false },
+                { projectGraph, projects: externalProjects, workspaceRoot: root },
+                { externalInputStatePath: statePath, persistExternalInputState: false },
+            );
+
+            const call = getAffectedProjectsMock.mock.calls.at(-1)?.[0];
+
+            expect(call.previousExternalInputHashes).toBeUndefined();
+        } finally {
+            await rm(root, { force: true, recursive: true });
+            await rm(externalDirectory, { force: true, recursive: true });
+        }
+    });
+
+    it("passes the shared external-input ownership map and persists its hashes", async () => {
+        expect.assertions(6);
+
+        const root = await mkdtemp(join(tmpdir(), "vis-affected-external-"));
+        const externalDirectory = await mkdtemp(join(tmpdir(), "vis-affected-shared-"));
+        const externalFile = join(externalDirectory, "shared.ts");
+        const statePath = join(root, ".vis", "external-inputs.json");
+
+        await mkdir(join(root, "packages/api"), { recursive: true });
+        await writeFile(externalFile, "export const shared = 1;\n");
+
+        const externalProjects: Record<string, ProjectConfiguration> = {
+            api: { root: "packages/api", targets: { build: { inputs: [`file://${externalFile}`] } } },
+        };
+
+        try {
+            getAffectedProjectsMock.mockResolvedValueOnce({
+                ...emptyResult,
+                changedExternalInputs: [externalFile],
+                changedProjects: ["api"],
+                externalInputHashes: { [externalFile]: "hash-1" },
+            });
+
+            const first = await selectAffectedProjects(
+                { base: "HEAD", head: "HEAD", uncommitted: false },
+                {
+                    projectGraph,
+                    projects: externalProjects,
+                    workspaceRoot: root,
+                },
+                { externalInputStatePath: statePath },
+            );
+
+            const firstCall = getAffectedProjectsMock.mock.calls.at(-1)?.[0];
+
+            expect(firstCall.externalInputs).toStrictEqual([{ pattern: externalFile, projects: ["api"] }]);
+            expect(firstCall.previousExternalInputHashes).toBeUndefined();
+            expect(first.changedProjects).toStrictEqual(["api"]);
+            expect(JSON.parse(await readFile(statePath, "utf8"))).toStrictEqual({ [externalFile]: "hash-1" });
+
+            getAffectedProjectsMock.mockResolvedValueOnce({
+                ...emptyResult,
+                changedExternalInputs: [],
+                externalInputHashes: { [externalFile]: "hash-1" },
+            });
+
+            await selectAffectedProjects(
+                { base: "HEAD", head: "HEAD", uncommitted: false },
+                {
+                    projectGraph,
+                    projects: externalProjects,
+                    workspaceRoot: root,
+                },
+                { externalInputStatePath: statePath },
+            );
+
+            const secondCall = getAffectedProjectsMock.mock.calls.at(-1)?.[0];
+
+            expect(secondCall.previousExternalInputHashes).toStrictEqual({ [externalFile]: "hash-1" });
+            expect(first.notes.join("\n")).toMatch(/changed external input/);
+        } finally {
+            await rm(root, { force: true, recursive: true });
+            await rm(externalDirectory, { force: true, recursive: true });
+        }
+    });
+});
+
+describe("external input snapshot persistence", () => {
+    it("writes the snapshot atomically and can invalidate it after a failure", async () => {
+        expect.assertions(3);
+
+        const root = await mkdtemp(join(tmpdir(), "vis-affected-snapshot-"));
+        const statePath = join(root, "external-inputs.json");
+
+        try {
+            await persistExternalInputHashes(statePath, { pattern: "hash-1" });
+
+            expect(JSON.parse(await readFile(statePath, "utf8"))).toStrictEqual({ pattern: "hash-1" });
+            await expect(readFile(`${statePath}.${process.pid}.tmp`, "utf8")).rejects.toThrow(/ENOENT/);
+
+            await invalidateExternalInputState(statePath);
+
+            await expect(readFile(statePath, "utf8")).rejects.toThrow(/ENOENT/);
+        } finally {
+            await rm(root, { force: true, recursive: true });
+        }
     });
 });

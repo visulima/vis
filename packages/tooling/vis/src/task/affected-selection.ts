@@ -1,11 +1,22 @@
 import { spawnSync } from "node:child_process";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 
-import type { AffectedResult, AffectedScope, ProjectConfiguration, ProjectGraph } from "@visulima/task-runner";
-import { getAffectedProjects } from "@visulima/task-runner";
+import { dirname, join } from "@visulima/path";
+import type {
+    AffectedResult,
+    AffectedScope,
+    ExternalInputDefinition,
+    NamedInputs,
+    ProjectConfiguration,
+    ProjectGraph,
+    TargetConfiguration,
+} from "@visulima/task-runner";
+import { collectExternalInputs, getAffectedProjects } from "@visulima/task-runner";
 import isInCi from "is-in-ci";
 
 import { VisUserError } from "../errors/vis-user-error";
 import { resolveAffectedShas } from "../runtime/affected-shas";
+import { DEFAULT_WORKSPACE_CACHE_DIRECTORY } from "../util/vis-paths";
 
 const VALID_SCOPES = new Set<string>(["deep", "direct", "none"]);
 
@@ -40,6 +51,23 @@ export interface SelectAffectedInput {
     /** Default base branch from `vis.config.ts#defaultBase`. */
     defaultBase?: string;
 
+    /**
+     * Where the previous run's external-input hashes are stored. Defaults to
+     * `{workspaceRoot}/node_modules/.cache/vis/external-inputs.json` so the
+     * snapshot lives with derived cache state and is cleaned with it.
+     * Callers that resolved a custom cache directory should pass it here.
+     */
+    externalInputStatePath?: string;
+
+    /**
+     * Whether to write the external-input snapshot immediately. Defaults to
+     * `true` for selection-only commands (`vis affected --sparse-checkout`).
+     * `vis run --affected` sets this to `false` and persists after a
+     * successful run, so a failed run cannot advance the baseline past input
+     * state the tasks never processed.
+     */
+    persistExternalInputState?: boolean;
+
     /** Injectable for tests; defaults to a real `git` invocation. */
     readWorkingTreeChanges?: (workspaceRoot: string) => string[];
 
@@ -48,6 +76,13 @@ export interface SelectAffectedInput {
 }
 
 export interface SelectAffectedResult extends AffectedResult {
+    /**
+     * Location of the external-input snapshot. Present when the selection
+     * declared external inputs; `vis run` uses it to persist after a
+     * successful run.
+     */
+    externalInputStatePath?: string;
+
     /** Human-readable provenance lines describing how base/head were picked. */
     notes: string[];
 
@@ -116,6 +151,42 @@ const defaultReadWorkingTreeChanges = (workspaceRoot: string): string[] => {
     return parsePorcelainStatus(result.stdout);
 };
 
+const readExternalInputHashes = async (statePath: string): Promise<Record<string, string> | undefined> => {
+    try {
+        const content = await readFile(statePath, "utf8");
+        const parsed: unknown = JSON.parse(content);
+
+        return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string>) : undefined;
+    } catch {
+        // No snapshot yet (or an unreadable/corrupt one): affected detection
+        // treats every external input as changed, which is the safe answer.
+        return undefined;
+    }
+};
+
+export const persistExternalInputHashes = async (statePath: string, hashes: Record<string, string>): Promise<void> => {
+    const temporaryPath = `${statePath}.${process.pid}.tmp`;
+
+    try {
+        await mkdir(dirname(statePath), { recursive: true });
+        await writeFile(temporaryPath, JSON.stringify(hashes));
+        await rename(temporaryPath, statePath);
+    } catch {
+        // Best-effort: a read-only workspace must not fail affected detection.
+        await rm(temporaryPath, { force: true }).catch(() => {});
+    }
+};
+
+/**
+ * Drops the external-input snapshot after a failure that happened outside the
+ * regular task-results map (for example a persistent task exiting non-zero).
+ * The next selection then treats every external input as changed, which is the
+ * safe outcome.
+ */
+export const invalidateExternalInputState = async (statePath: string): Promise<void> => {
+    await rm(statePath, { force: true }).catch(() => {});
+};
+
 /**
  * Resolve which projects are affected, applying the same base/head
  * resolution, scope validation and working-tree handling regardless of
@@ -125,7 +196,14 @@ const defaultReadWorkingTreeChanges = (workspaceRoot: string): string[] => {
  */
 export const selectAffectedProjects = async (
     options: AffectedSelectionOptions,
-    workspace: { fileOwners?: Record<string, string[]>; projectGraph: ProjectGraph; projects: Record<string, ProjectConfiguration>; workspaceRoot: string },
+    workspace: {
+        fileOwners?: Record<string, string[]>;
+        namedInputs?: NamedInputs;
+        projectGraph: ProjectGraph;
+        projects: Record<string, ProjectConfiguration>;
+        targetDefaults?: Record<string, Partial<TargetConfiguration>>;
+        workspaceRoot: string;
+    },
     input: SelectAffectedInput = {},
 ): Promise<SelectAffectedResult> => {
     const downstreamValue = options.downstream ?? "deep";
@@ -139,7 +217,7 @@ export const selectAffectedProjects = async (
         throw new VisUserError(`Invalid --upstream value: "${upstreamValue}". Must be "none", "direct", or "deep".`);
     }
 
-    const { fileOwners, projectGraph, projects, workspaceRoot } = workspace;
+    const { fileOwners, namedInputs, projectGraph, projects, targetDefaults, workspaceRoot } = workspace;
     const notes: string[] = [];
 
     let { base } = options;
@@ -209,22 +287,41 @@ export const selectAffectedProjects = async (
         }
     }
 
+    const externalInputs: ExternalInputDefinition[] = collectExternalInputs(workspaceRoot, projects, { namedInputs, targetDefaults });
+    const externalInputStatePath = input.externalInputStatePath ?? join(workspaceRoot, DEFAULT_WORKSPACE_CACHE_DIRECTORY, "external-inputs.json");
+    const previousExternalInputHashes = externalInputs.length > 0 ? await readExternalInputHashes(externalInputStatePath) : undefined;
+
     const result = await getAffectedProjects({
         additionalChangedFiles,
         base,
         downstream: downstreamValue as AffectedScope,
+        externalInputs,
         fileOwners,
         head,
         ignoredFiles: input.affectedIgnore,
+        previousExternalInputHashes,
         projectGraph,
         projects,
         upstream: upstreamValue as AffectedScope,
         workspaceRoot,
     });
 
+    if (externalInputs.length > 0 && result.externalInputHashes && input.persistExternalInputState !== false) {
+        await persistExternalInputHashes(externalInputStatePath, result.externalInputHashes);
+    }
+
+    if (result.changedExternalInputs && result.changedExternalInputs.length > 0) {
+        notes.push(`including ${result.changedExternalInputs.length} changed external input(s) outside the workspace`);
+    }
+
     if (result.ignoredFiles.length > 0) {
         notes.push(`ignoring ${result.ignoredFiles.length} changed path(s) outside any project matching affectedIgnore`);
     }
 
-    return { ...result, notes, uncommittedFileCount: additionalChangedFiles.length };
+    return {
+        ...result,
+        externalInputStatePath: externalInputs.length > 0 ? externalInputStatePath : undefined,
+        notes,
+        uncommittedFileCount: additionalChangedFiles.length,
+    };
 };

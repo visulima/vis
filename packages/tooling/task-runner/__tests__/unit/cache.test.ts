@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ActionResult } from "../../src/backends/types";
 import { Cache, formatCacheSize, parseCacheSize } from "../../src/cache";
@@ -102,20 +102,22 @@ describe(Cache, () => {
         it("surfaces write failures through onWriteError without throwing", async () => {
             expect.assertions(3);
 
-            // Point the cache directory at a regular file so every staging
-            // mkdir inside put() fails (ENOTDIR). put() must stay non-throwing
-            // (best-effort caching) but report the failure so a broken cache
-            // isn't silently invisible.
-            const notADirectory = join(workspaceRoot, "cache-is-a-file");
-
-            await writeFile(notADirectory, "x");
+            // Let the constructor create the cache directory, then replace it
+            // with a regular file so the per-entry staging mkdir inside put()
+            // fails (ENOTDIR). put() must stay non-throwing (best-effort
+            // caching) but report the failure so a broken cache isn't
+            // silently invisible.
+            const cacheDirectory = join(workspaceRoot, "cache-is-a-file");
 
             const failures: { error: unknown; hash: string }[] = [];
             const failingCache = new Cache({
-                cacheDirectory: notADirectory,
+                cacheDirectory,
                 onWriteError: (hash, error) => failures.push({ error, hash }),
                 workspaceRoot,
             });
+
+            await rm(cacheDirectory, { force: true, recursive: true });
+            await writeFile(cacheDirectory, "x");
 
             await expect(failingCache.put("boom", "output", [], 0)).resolves.toBeUndefined();
 
@@ -660,5 +662,46 @@ describe(formatCacheSize, () => {
     it("should format GB", () => {
         expect.assertions(1);
         expect(formatCacheSize(2 * 1024 * 1024 * 1024)).toBe("2.0GB");
+    });
+});
+
+describe("cache directory setup", () => {
+    it("disables the cache instead of throwing when the directory cannot be created", async () => {
+        expect.assertions(8);
+
+        const workspaceRoot = await createTemporaryDirectory();
+        const blockingPath = join(workspaceRoot, "not-a-directory");
+
+        await writeFile(blockingPath, "a regular file blocks mkdir");
+
+        const onSetupError = vi.fn<(directory: string, error: unknown) => void>();
+        let cache: Cache | undefined;
+
+        // Constructing is side-effect free: read-only callers (cache
+        // inspection, `cache clean`) must not materialise directories.
+        expect(() => {
+            cache = new Cache({ cacheDirectory: blockingPath, onSetupError, workspaceRoot });
+        }).not.toThrow();
+
+        const disabledCache = cache as Cache;
+
+        expect(disabledCache.disabled).toBe(false);
+
+        await disabledCache.ensureReady();
+
+        expect(disabledCache.disabled).toBe(true);
+        expect(onSetupError).toHaveBeenCalledTimes(1);
+
+        const [failedDirectory, error] = onSetupError.mock.calls[0] as [string, NodeJS.ErrnoException];
+
+        expect(failedDirectory).toBe(blockingPath);
+        expect(error.code).toMatch(/EEXIST|ENOTDIR/);
+
+        // Every operation degrades to a miss/no-op rather than throwing, so
+        // the run continues without caching.
+        await expect(disabledCache.put("hash", "output", [], 0)).resolves.toBeUndefined();
+        await expect(disabledCache.get("hash")).resolves.toBeUndefined();
+
+        await rm(workspaceRoot, { force: true, recursive: true });
     });
 });

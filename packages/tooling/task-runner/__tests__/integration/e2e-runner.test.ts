@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { defaultTaskRunner } from "../../src/default-task-runner";
 import { EmptyLifeCycle } from "../../src/life-cycle";
@@ -125,7 +125,7 @@ describe("defaultTaskRunner (E2E via real subprocess)", () => {
     });
 
     afterEach(async () => {
-        await rm(workspaceRoot, { force: true, recursive: true });
+        await rm(workspaceRoot, { force: true, maxRetries: 20, recursive: true, retryDelay: 100 });
     });
 
     it("round-trips a real subprocess through the cache (cold miss → warm hit restores output)", async () => {
@@ -348,5 +348,64 @@ describe("defaultTaskRunner (E2E via real subprocess)", () => {
 
         expect(libCount).toBe(2);
         expect(checkCount).toBe(2);
+    });
+});
+
+describe("remote cache failures degrade to a miss", () => {
+    let workspaceRoot: string;
+
+    beforeEach(async () => {
+        workspaceRoot = await createTemporaryDirectory();
+
+        await mkdir(join(workspaceRoot, "packages/app/src"), { recursive: true });
+        await writeFile(join(workspaceRoot, "packages/app/src/index.ts"), "export const x = 1;\n");
+        await writeFile(join(workspaceRoot, "packages/app/package.json"), JSON.stringify({ name: "app" }));
+    });
+
+    afterEach(async () => {
+        await rm(workspaceRoot, { force: true, maxRetries: 20, recursive: true, retryDelay: 100 });
+    });
+
+    it("runs the tasks normally and warns once when the remote cache is unreachable", async () => {
+        expect.assertions(5);
+
+        const build = makeTask("app:build", "packages/app");
+        const check = makeTask("app:check", "packages/app");
+
+        const executor = createNodeExecutor(workspaceRoot, {
+            "app:build": "process.stdout.write('built');",
+            "app:check": "process.stdout.write('checked');",
+        });
+        const context = createContext(workspaceRoot, [build, check], { "app:build": [], "app:check": [] }, executor);
+        const diagnostics: { message: string; taskId: string }[] = [];
+        const onUploadError = vi.fn<(hash: string, error: unknown) => void>();
+
+        const results = await defaultTaskRunner(
+            [build, check],
+            {
+                onDiagnostic: (taskId, message) => {
+                    diagnostics.push({ message, taskId });
+                },
+                remoteCache: {
+                    mode: "read",
+                    onUploadError,
+                    timeout: 100,
+                    url: "http://127.0.0.1:1",
+                },
+            },
+            context,
+        );
+
+        expect(results.get("app:build")?.status).toBe("success");
+        expect(results.get("app:check")?.status).toBe("success");
+
+        const remoteWarnings = diagnostics.filter((entry) => entry.taskId === "remote-cache");
+
+        expect(remoteWarnings).toHaveLength(1);
+        expect(remoteWarnings[0]?.message).toMatch(/Remote cache unavailable/);
+
+        // The caller's detail hook still sees every failed operation, so a
+        // debug logger can retain the full sequence.
+        expect(onUploadError).toHaveBeenCalledTimes(2);
     });
 });

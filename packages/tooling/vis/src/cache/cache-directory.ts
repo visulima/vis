@@ -189,6 +189,27 @@ export const applyBranchScope = (cacheDirectory: string, workspaceRoot: string, 
 };
 
 /**
+ * Resolves the cache directory a `vis run` invocation will use: the shared
+ * worktree anchor, explicit path precedence, and branch scoping applied in one
+ * place. Both the runner and affected detection call this so the external-input
+ * snapshot lives beside the cache entries it describes.
+ */
+export const resolveRunCacheDirectory = ({
+    branchScopedCache,
+    configCacheDir,
+    optionsCacheDir,
+    sharedWorktreeCache,
+    workspaceRoot,
+}: {
+    branchScopedCache: boolean | undefined;
+    configCacheDir: string | undefined;
+    optionsCacheDir: string | undefined;
+    sharedWorktreeCache: boolean | undefined;
+    workspaceRoot: string;
+}): string =>
+    applyBranchScope(resolveSharedCacheDirectory(workspaceRoot, optionsCacheDir, configCacheDir, sharedWorktreeCache), workspaceRoot, branchScopedCache);
+
+/**
  * Returns `true` when `cacheDirectory` sits inside `workspaceRoot`. Uses
  * `relative()` instead of `startsWith()` so paths with a common string
  * prefix but different parents (e.g. `/work` vs `/workspace`) are correctly

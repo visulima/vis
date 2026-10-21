@@ -200,7 +200,9 @@ jobs:
                   export GIT_CONFIG_COUNT=1
                   export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
                   export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}"
-                  pnpm exec multi-semantic-release --ignore-packages='packages/tooling/task-runner/npm/**,packages/terminal/tui/npm/**,packages/tooling/vis/npm/**,packages/tooling/secret-scanner/npm/**'
+                  # Keep the log for the recovery step below: a rejected push is
+                  # only recoverable if its text can be recognised after the fact.
+                  pnpm exec multi-semantic-release --ignore-packages='packages/tooling/task-runner/npm/**,packages/terminal/tui/npm/**,packages/tooling/vis/npm/**,packages/tooling/secret-scanner/npm/**' 2>&1 | tee "${RUNNER_TEMP}/semantic-release.log"
 
             # multi-semantic-release pushes per-package `chore(release)` commits that
             # bump each package.json (and any cross-package dependency ranges), but
@@ -256,6 +258,36 @@ jobs:
                   git fetch --quiet origin "$BRANCH"
                   if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
                       echo "${BRANCH} did not move during the release."
+                      exit 0
+                  fi
+                  echo "${BRANCH} moved to $(git rev-parse --short FETCH_HEAD) during the release; dispatching a new release run."
+                  gh workflow run semantic-release.yml --repo "$REPO" --ref "$BRANCH"
+
+            # @semantic-release/git pushes HEAD:<branch> from inside the release. If
+            # anything else lands on the branch between checkout and that push (a bot
+            # commit, a merge), git rejects it with "fetch first" and the release
+            # aborts: some packages are already on npm, but the failed package has no
+            # tag and no release commit. Both npm and the native-addon plugin skip
+            # versions that already exist, so a fresh run from the new tip can finish
+            # the release instead of leaving the branch red until someone re-runs it.
+            - name: "Re-run the release after a rejected push"
+              if: "failure()"
+              shell: "bash"
+              env:
+                  GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+                  BRANCH: "${{ github.ref_name }}"
+                  REPO: "${{ github.repository }}"
+                  RUN_SHA: "${{ github.sha }}"
+                  RELEASE_LOG: "${{ runner.temp }}/semantic-release.log"
+              run: |
+                  set -euo pipefail
+                  if [ ! -f "$RELEASE_LOG" ] || ! grep -q "failed to push some refs" "$RELEASE_LOG"; then
+                      echo "The release did not fail on a rejected push; nothing to recover."
+                      exit 0
+                  fi
+                  git fetch --quiet origin "$BRANCH"
+                  if [ "$(git rev-parse "$RUN_SHA")" = "$(git rev-parse FETCH_HEAD)" ]; then
+                      echo "The push was rejected but ${BRANCH} has not moved since this run started; not re-dispatching."
                       exit 0
                   fi
                   echo "${BRANCH} moved to $(git rev-parse --short FETCH_HEAD) during the release; dispatching a new release run."

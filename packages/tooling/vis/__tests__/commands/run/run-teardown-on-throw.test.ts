@@ -50,7 +50,7 @@ vi.mock(import("../../../src/runtime/command-runtime"), () => {
 });
 
 vi.mock(import("../../../src/util/vis-paths"), () => {
-    return { cleanupLegacyTaskRunnerLayout: () => {} };
+    return { cleanupLegacyTaskRunnerLayout: () => {}, DEFAULT_WORKSPACE_CACHE_DIRECTORY: "node_modules/.cache/vis" };
 });
 
 vi.mock(import("../../../src/config/workspace"), () => {

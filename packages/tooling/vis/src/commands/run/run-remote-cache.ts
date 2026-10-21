@@ -41,6 +41,17 @@ export const applyRemoteCacheConfig = async ({
             ...(cliBackend ? { backend: cliBackend } : {}),
         };
 
+        // Remote cache failures degrade to misses and produce one console
+        // warning per run. Keep the full sequence available under --debug so
+        // repeated connection or upload errors can still be diagnosed. Any
+        // hook supplied programmatically keeps running first.
+        const configuredOnUploadError = runnerOptions.remoteCache.onUploadError;
+
+        runnerOptions.remoteCache.onUploadError = (hash, error) => {
+            configuredOnUploadError?.(hash, error);
+            logger.debug?.(`[vis run] remote cache error (${hash}): ${error instanceof Error ? error.message : String(error)}`);
+        };
+
         // Config can only carry serializable attestation knobs
         // (`requireOnDownload`, `expectedIdentity`); the actual keyless
         // sign/verify callbacks can't live in vis.config.ts. When the
