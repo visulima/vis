@@ -1,3 +1,15 @@
+## @visulima/task-runner [3.0.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.0...@visulima/task-runner@3.0.1) (2026-10-21)
+
+### Bug Fixes
+
+* **deps:** bump npm and rust dependencies ([#33](https://github.com/visulima/vis/issues/33)) ([bb0d78e](https://github.com/visulima/vis/commit/bb0d78e0f7d55608761a24c21e445bf9fff707ab))
+* harden cache resilience and support external task inputs ([#38](https://github.com/visulima/vis/issues/38)) ([92c7907](https://github.com/visulima/vis/commit/92c7907a39b6e70f3b85b4a49d10fcd1fcb2e019))
+* **release:** unblock re-runs and recover from a rejected release push ([#39](https://github.com/visulima/vis/issues/39)) ([fe85a9f](https://github.com/visulima/vis/commit/fe85a9f1878bfdeb879cc3b588e3bf16c61e9c4b))
+
+### Miscellaneous Chores
+
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
 ## @visulima/task-runner [3.0.0](https://github.com/visulima/visulima/compare/@visulima/task-runner@2.0.0...@visulima/task-runner@3.0.0) (2026-10-15)
 
 ### ⚠ BREAKING CHANGES
