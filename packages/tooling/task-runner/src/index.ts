@@ -58,6 +58,17 @@ export { runConcurrentFallback } from "./concurrent-fallback";
 export { DEFAULT_UNTRACKED_ENV_PATTERNS, defaultTaskRunner } from "./default-task-runner";
 // Shell detection
 export { detectScriptShell } from "./detect-shell";
+// External file-set inputs (outside the workspace root)
+export type { ExternalInputDefinition } from "./external-inputs";
+export {
+    collectExternalInputs,
+    computeExternalInputHashes,
+    findChangedExternalInputs,
+    isExternalPattern,
+    normalizeFileset,
+    projectsForExternalPatterns,
+    resolveFilesetPattern,
+} from "./external-inputs";
 // File access tracking
 export type { FileAccess, TrackingResult } from "./file-access-tracker";
 export { FileAccessTracker, generatePreloadScript } from "./file-access-tracker";

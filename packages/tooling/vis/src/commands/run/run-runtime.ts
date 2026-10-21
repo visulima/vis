@@ -3,7 +3,6 @@ import type { ChildEnvOptions, Task, TaskGraph, TaskResults, TaskRunnerOptions }
 import { generateRunSummary, pickChildParentEnv, writeChromeTrace } from "@visulima/task-runner";
 import isInCi from "is-in-ci";
 
-import { applyBranchScope, resolveSharedCacheDirectory } from "../../cache/cache-directory";
 import { FailureLogLifeCycle } from "../../report/failure-log";
 import { checkStrictEnv, formatStrictEnvError } from "../../task/strict-env";
 import type { detectCurrentOs } from "../../task/target-options";
@@ -36,6 +35,7 @@ export const createRunRuntime = async ({
     options,
     persistentTasks,
     projectsWithTarget,
+    runCacheDirectory,
     serviceEnvByTaskId,
     serviceResult,
     target,
@@ -52,6 +52,7 @@ export const createRunRuntime = async ({
     options: RunOptions;
     persistentTasks: Task[];
     projectsWithTarget: string[];
+    runCacheDirectory: string;
     serviceEnvByTaskId: ApplyServiceRegistryResult["serviceEnvByTaskId"];
     serviceResult: ApplyServiceRegistryResult;
     target: string;
@@ -95,20 +96,11 @@ export const createRunRuntime = async ({
         logger.info(`Profile written to ${profilePath}`);
     };
 
-    // Resolve the cache directory through the shared helper so precedence
-    // (CLI > vis.config.ts > default) stays consistent with `vis cache`
-    // and relative --cache-dir values are normalized against the
-    // workspace root. Other fields keep their existing spread semantics
-    // to avoid changing override precedence for parallel/dryRun/etc.
+    // The handler resolves the cache directory once so affected selection and
+    // the runner write external-input state and cache entries to the same
+    // location. Other fields keep their existing spread semantics to avoid
+    // changing override precedence for parallel/dryRun/etc.
     const configTaskRunner = (config.taskRunner ?? {}) as TaskRunnerOptions & { cacheDirectory?: string };
-    // Anchor the default cache path to the *main* worktree root when this
-    // workspace is a linked git worktree, so sibling agents share one cache
-    // instead of rebuilding the same hash N times. Explicit paths
-    // (--cache-dir, vis.config.ts, VIS_CACHE_DIRECTORY) win unchanged.
-    const baseCacheDirectory = resolveSharedCacheDirectory(workspaceRoot, options.cacheDir, configTaskRunner.cacheDirectory, config.sharedWorktreeCache);
-    // Branch-scope the cache dir when configured so main/feature
-    // branches stop overwriting each other's entries.
-    const resolvedCacheDirectory = applyBranchScope(baseCacheDirectory, workspaceRoot, config.branchScopedCache);
 
     // Concurrency resolution order: --parallel CLI flag > VIS_RUN_CONCURRENCY_LIMIT
     // env > built-in default of 3. The env variable lets CI runners set a
@@ -142,7 +134,7 @@ export const createRunRuntime = async ({
         // Applied after the config spread so the user's `--cache-dir` flag
         // wins over a config value and relative paths are normalized
         // against `workspaceRoot` via `resolveCacheDirectory()`.
-        cacheDirectory: resolvedCacheDirectory,
+        cacheDirectory: runCacheDirectory,
         // Forward the vis-owned data directory so run summaries land in
         // `<workspaceRoot>/.vis/` rather than the task-runner default
         // `<workspaceRoot>/.task-runner/`. The config-supplied value

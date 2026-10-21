@@ -7,6 +7,8 @@ import { existsSync } from "node:fs";
 import { matchesGlob } from "node:path";
 
 // path utilities not needed - git returns workspace-relative paths
+import type { ExternalInputDefinition } from "./external-inputs";
+import { computeExternalInputHashes, findChangedExternalInputs, projectsForExternalPatterns } from "./external-inputs";
 import type { AffectedScope, ProjectConfiguration, ProjectGraph } from "./types";
 
 /**
@@ -56,6 +58,14 @@ interface AffectedOptions {
     downstream?: AffectedScope;
 
     /**
+     * File-set inputs that resolve outside `workspaceRoot`, together with the
+     * projects that declared them. Built by `collectExternalInputs` so
+     * affected detection maps external paths to the same owners the hasher
+     * used for the cache key.
+     */
+    externalInputs?: ExternalInputDefinition[];
+
+    /**
      * Owners for files that lie outside every project root but belong to
      * specific projects rather than the whole workspace, keyed by
      * workspace-relative path. A Cargo workspace's root `Cargo.lock` is the
@@ -85,6 +95,13 @@ interface AffectedOptions {
      * `docs/guide.md`; use `docs/**` for a whole folder.
      */
     ignoredFiles?: string[];
+
+    /**
+     * External-input content hashes from the previous run, keyed by pattern.
+     * When omitted every external input counts as changed, because affected
+     * detection has no baseline to compare against.
+     */
+    previousExternalInputHashes?: Record<string, string>;
     /** Project graph for dependency resolution */
     projectGraph: ProjectGraph;
     /** All project configurations keyed by name */
@@ -105,12 +122,20 @@ interface AffectedOptions {
 interface AffectedResult {
     /** All affected projects (union of changed, downstream, and upstream) */
     affectedProjects: string[];
+    /** External input patterns whose contents changed since the previous snapshot */
+    changedExternalInputs: string[];
     /** Files that changed between base and head */
     changedFiles: string[];
     /** Projects that were directly changed */
     changedProjects: string[];
     /** Projects affected because they depend on changed projects */
     downstreamProjects: string[];
+
+    /**
+     * Current content hashes for every external input pattern. Callers
+     * persist this as the next run's baseline.
+     */
+    externalInputHashes: Record<string, string>;
     /** Changed files outside every project that were skipped because they matched `ignoredFiles` */
     ignoredFiles: string[];
     /** Projects that changed projects depend on */
@@ -367,9 +392,11 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
         additionalChangedFiles,
         base = "main",
         downstream = "deep",
+        externalInputs,
         fileOwners,
         head = "HEAD",
         ignoredFiles: ignoredPatterns,
+        previousExternalInputHashes,
         projectGraph,
         projects,
         upstream = "none",
@@ -412,15 +439,30 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
         }
     }
 
+    // External inputs live outside the git work tree, so `git diff` cannot
+    // see them. Compare their content hashes with the previous run's snapshot
+    // and attribute a change to the same projects the hasher credits with the
+    // input. When there is no snapshot, every external input counts as
+    // changed — reporting "nothing changed" for state we have never observed
+    // would silently skip the owning projects.
+    const externalInputHashes = externalInputs && externalInputs.length > 0 ? await computeExternalInputHashes(externalInputs) : {};
+    const changedExternalInputs = externalInputs ? findChangedExternalInputs(externalInputs, externalInputHashes, previousExternalInputHashes) : [];
+
     if (globalChange) {
         return {
             affectedProjects: Object.keys(projects),
+            changedExternalInputs,
             changedFiles,
             changedProjects: [...changedProjects],
             downstreamProjects: [],
+            externalInputHashes,
             ignoredFiles,
             upstreamProjects: [],
         };
+    }
+
+    for (const project of projectsForExternalPatterns(externalInputs ?? [], changedExternalInputs)) {
+        changedProjects.add(project);
     }
 
     // Walk the dependency graph with scope control
@@ -428,9 +470,11 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
 
     return {
         affectedProjects: [...result.affected],
+        changedExternalInputs,
         changedFiles,
         changedProjects: [...changedProjects],
         downstreamProjects: [...result.downstream],
+        externalInputHashes,
         ignoredFiles,
         upstreamProjects: [...result.upstream],
     };

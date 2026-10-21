@@ -304,9 +304,10 @@ export interface RemoteCacheOptions {
     mode?: CacheMode;
 
     /**
-     * Called when a fire-and-forget upload fails. Uploads are
-     * non-blocking, so without this hook errors are silently dropped.
-     * Provide it to log or report upload failures.
+     * Called when a remote cache upload or read fails. Failures are
+     * non-fatal (they degrade to a miss), so without this hook an operator
+     * sees only the console-facing warning. Invoked for every failed
+     * operation; callers that log should dedupe if they want a single line.
      */
     onUploadError?: (hash: string, error: unknown) => void;
 

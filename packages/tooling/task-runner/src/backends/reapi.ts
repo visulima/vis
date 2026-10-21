@@ -349,8 +349,9 @@ export class ReapiRemoteCache implements RemoteCacheBackend {
             }
 
             return await this.#streamRead(digest, destinationPath);
-        } catch {
+        } catch (error) {
             await rm(destinationPath, { force: true }).catch(() => {});
+            this.#onUploadError?.(digest.hash, error);
 
             return false;
         }

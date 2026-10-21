@@ -5,8 +5,9 @@ import { matchesGlob } from "node:path";
 
 // eslint-disable-next-line import/no-extraneous-dependencies -- bundled inline by packem from workspace devDependency
 import { createXxh3Hasher, xxh3Hash } from "@shared/xxh3";
-import { join, resolve } from "@visulima/path";
+import { isAbsolute, join, relative, resolve } from "@visulima/path";
 
+import { normalizeFileset, resolveFilesetPattern } from "./external-inputs";
 import { createEnvMatcher, resolveEnvPatterns } from "./fingerprint";
 import { getFrameworkEnvVariables } from "./framework-inference";
 import type { IncrementalFileHasher } from "./incremental-hasher";
@@ -289,29 +290,6 @@ export const extractReferencedEnvVars = (command: string): string[] => {
 
 // Type guards
 const isFileSetInput = (input: InputDefinition): input is FileSetInput => "fileset" in input;
-
-/**
- * Normalizes a fileset entry into a string pattern that uses
- * `{projectRoot}` / `{workspaceRoot}` tokens for downstream resolution.
- *
- * - Bare strings are returned unchanged.
- * - Object form `{ pattern, base: "workspace" }` → `{workspaceRoot}/&lt;pattern>`
- *   (or `!{workspaceRoot}/...` when `pattern` starts with `!`).
- * - Object form `{ pattern, base: "package" }` → `{projectRoot}/&lt;pattern>`.
- */
-const normalizeFileset = (fileset: FileSetInput["fileset"]): string => {
-    if (typeof fileset === "string") {
-        return fileset;
-    }
-
-    const token = fileset.base === "workspace" ? "{workspaceRoot}" : "{projectRoot}";
-
-    if (fileset.pattern.startsWith("!")) {
-        return `!${token}/${fileset.pattern.slice(1)}`;
-    }
-
-    return `${token}/${fileset.pattern}`;
-};
 
 const isRuntimeInput = (input: InputDefinition): input is RuntimeInput => "runtime" in input;
 
@@ -664,7 +642,7 @@ class InProcessTaskHasher implements TaskHasher {
                 continue;
             }
 
-            const resolved = normalizeFileset(input.fileset).replace("{projectRoot}", projectRoot).replace("{workspaceRoot}", ".");
+            const resolved = resolveFilesetPattern(this.#workspaceRoot, projectRoot, input.fileset);
 
             if (resolved.startsWith("!")) {
                 patterns.push(resolved.slice(1));
@@ -682,7 +660,7 @@ class InProcessTaskHasher implements TaskHasher {
         const project = this.#projects[task.target.project];
         const projectRoot = project?.root ?? "";
 
-        const resolvedPattern = pattern.replace("{projectRoot}", projectRoot).replace("{workspaceRoot}", ".");
+        const resolvedPattern = resolveFilesetPattern(this.#workspaceRoot, projectRoot, pattern);
 
         if (resolvedPattern.startsWith("!")) {
             // Negation patterns are collected and applied by the caller
@@ -733,7 +711,13 @@ class InProcessTaskHasher implements TaskHasher {
                     continue;
                 }
 
-                result[path] = hash;
+                // Key by the path relative to the workspace, not the native
+                // walker's spelling. Inside the root the walker already returns
+                // the relative path, so only the rarer external case pays for
+                // the extra path arithmetic. Outside it, this keeps the key
+                // deterministic across machines instead of embedding an
+                // absolute checkout path in the cache key.
+                result[isAbsolute(path) ? relative(this.#workspaceRoot, path) : path] = hash;
 
                 // Intentionally NOT seeded into `#fileHashCache`: that cache is
                 // mtime/size-revalidated in `#hashFile`, but the native batch

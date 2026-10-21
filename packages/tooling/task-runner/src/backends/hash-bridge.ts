@@ -59,10 +59,16 @@ export const actionDigestForTaskHash = (taskHash: string): CasDigest => {
  * the orchestrator's task hash. Resolves `false` on any wire failure —
  * the orchestrator treats existence checks as best-effort.
  */
-export const containsByTaskHash = async (backend: RemoteCacheBackend, taskHash: string): Promise<boolean> => {
+export const containsByTaskHash = async (
+    backend: RemoteCacheBackend,
+    taskHash: string,
+    onError?: (taskHash: string, error: unknown) => void,
+): Promise<boolean> => {
     try {
         return await backend.containsAction(actionDigestForTaskHash(taskHash));
-    } catch {
+    } catch (error) {
+        onError?.(taskHash, error);
+
         return false;
     }
 };
@@ -73,9 +79,27 @@ export const containsByTaskHash = async (backend: RemoteCacheBackend, taskHash: 
  * directory has been fully populated; partial-extract failures clean
  * up after themselves so the local cache never observes a half-populated
  * entry.
+ *
+ * Any backend failure — a 502, a dropped connection, a timeout, a
+ * transport-level gRPC status — is reported through `onError` and resolved
+ * as a miss. Remote caching is an optimisation: an unreachable cache must
+ * never fail the task that would otherwise run normally.
  */
-export const retrieveByTaskHash = async (backend: RemoteCacheBackend, taskHash: string, localCacheDirectory: string): Promise<boolean> => {
-    const action = await backend.retrieveAction(actionDigestForTaskHash(taskHash));
+export const retrieveByTaskHash = async (
+    backend: RemoteCacheBackend,
+    taskHash: string,
+    localCacheDirectory: string,
+    onError?: (taskHash: string, error: unknown) => void,
+): Promise<boolean> => {
+    let action;
+
+    try {
+        action = await backend.retrieveAction(actionDigestForTaskHash(taskHash));
+    } catch (error) {
+        onError?.(taskHash, error);
+
+        return false;
+    }
 
     if (action === null || action.outputFiles.length === 0) {
         return false;
@@ -138,8 +162,10 @@ export const retrieveByTaskHash = async (backend: RemoteCacheBackend, taskHash: 
         }
 
         return true;
-    } catch {
+    } catch (error) {
         await rm(stagingDirectory, { force: true, recursive: true }).catch(() => {});
+
+        onError?.(taskHash, error);
 
         return false;
     } finally {
