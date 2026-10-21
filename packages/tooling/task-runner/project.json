@@ -4,5 +4,5 @@
     "sourceRoot": "packages/tooling/task-runner/src",
     "projectType": "library",
     "tags": ["task-runner", "type:package", "category:dev-tools"],
-    "implicitDependencies": []
+    "implicitDependencies": ["scripts/semantic-release-native-addons.mjs"]
 }
