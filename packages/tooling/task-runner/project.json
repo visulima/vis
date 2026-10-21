@@ -4,5 +4,10 @@
     "sourceRoot": "packages/tooling/task-runner/src",
     "projectType": "library",
     "tags": ["task-runner", "type:package", "category:dev-tools"],
-    "implicitDependencies": []
+    "implicitDependencies": [],
+    "targets": {
+        "test": {
+            "inputs": ["default", "^production", "{workspaceRoot}/scripts/semantic-release-native-addons.mjs"]
+        }
+    }
 }

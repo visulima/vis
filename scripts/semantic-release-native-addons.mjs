@@ -141,6 +141,46 @@ export const patchVersionCheck = (content, version) => {
     return { count: matches.length, patched: content.replace(VERSION_CHECK_PATTERN, replacement) };
 };
 
+// A publish retried after a partial release must treat "that version is
+// already on the registry" as success: the binding exists, only the parent
+// package, tag and release commit still have to land. Matching on
+// `error.message` alone is not enough — pnpm 11 writes its publish report to
+// stdout and leaves stderr empty, so the registry's 403 text never reaches
+// the message and the release aborts on a version that is impossible to
+// republish.
+const ALREADY_PUBLISHED_PATTERNS = ["EPUBLISHCONFLICT", "cannot publish over", "previously published versions"];
+
+/**
+ * True when `error` is a registry "version already exists" rejection, no
+ * matter which stream the package manager wrote the report to.
+ *
+ * @param {unknown} error Thrown by the publish command.
+ * @returns {boolean}
+ */
+export const isAlreadyPublishedError = (error) => {
+    const parts = [];
+
+    if (error instanceof Error) {
+        parts.push(error.message);
+    } else {
+        parts.push(String(error));
+    }
+
+    for (const stream of ["stdout", "stderr"]) {
+        const value = error?.[stream];
+
+        if (typeof value === "string") {
+            parts.push(value);
+        } else if (value) {
+            parts.push(String(value));
+        }
+    }
+
+    const text = parts.join("\n");
+
+    return ALREADY_PUBLISHED_PATTERNS.some((pattern) => text.includes(pattern));
+};
+
 export const verifyConditions = async (_pluginConfig, context) => {
     const { cwd, env, logger } = context;
     const platformDirs = await getPlatformDirs(cwd);
@@ -232,7 +272,7 @@ export const prepare = async (_pluginConfig, context) => {
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
 
-                if (message.includes("You cannot publish over the previously published versions")) {
+                if (isAlreadyPublishedError(error)) {
                     logger.warn(`${pkg.name}@${version} already published, skipping`);
                 } else {
                     pkg.version = originalVersion;
