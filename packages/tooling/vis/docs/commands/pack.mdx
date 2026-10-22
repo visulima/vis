@@ -1,0 +1,47 @@
+---
+title: "vis pack"
+description: "Build a library for publishing: the package's pack script, or the inferred Rslib or packem build"
+---
+
+# vis pack
+
+Builds a library for publishing. `vis pack` runs the `pack` target, so it uses the same target resolution, filters, and caching as `vis run pack`.
+
+A package's own `pack` script in `package.json` always wins. When a project has no `pack` script, vis infers one from its config file:
+
+- `rslib.config.*` → `rslib build`
+- `packem.config.*` → `packem build`
+
+A project with a `packem.config.*` also gets `vis build`, the same command. `vis pack` is the name to use for libraries.
+
+## Setting one up
+
+If no project defines a `pack` target, `vis pack` asks which library builder to set up: Rslib or packem. Your choice is the consent. vis installs the tool with `vis add -D` into the chosen project, and adds a `pack` script to its `package.json`. It also writes the tool's config file and `src/index.ts`, unless they already exist.
+
+- **Rslib** installs `@rslib/core` and `typescript`, and writes `rslib.config.mts` with ESM output.
+- **packem** installs `@visulima/packem`, `esbuild` (the transformer packem's config uses), and `typescript`, and writes `packem.config.ts` with ESM output, `src/index.ts` as the entry, and warnings that do not fail the build.
+
+packem prints `package.json` warnings for a new library (missing `exports`, `engines`, or `sideEffects`), but the offered config sets `failOnWarn: false`, so they do not fail the build. Add the fields it names when you publish. Set `failOnWarn: true` to make them fail the build.
+
+In a non-interactive run (CI, or no terminal) it stops and lists the options instead.
+
+## Usage
+
+```bash
+vis pack [args…] [options]
+```
+
+## Examples
+
+```bash
+# Build every library that has a pack target
+vis pack
+
+# Build one package
+vis pack --filter @org/utils
+
+# Forward flags to the pack target
+vis pack -- --sourcemap
+```
+
+Run from a package directory, `vis pack` builds that package. Run from the workspace root, it builds every project that has a `pack` target. `--filter` chooses projects explicitly. Like the other commands, vis treats the directory you run from as the workspace root, and the nearest ancestor that declares a workspace is used.

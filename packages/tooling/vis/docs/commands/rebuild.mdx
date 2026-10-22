@@ -1,0 +1,23 @@
+---
+title: "vis rebuild"
+description: "Rebuild native dependencies through the detected package manager"
+---
+
+# vis rebuild
+
+Rebuilds native dependencies through the detected package manager, for example after switching Node versions. It runs `pnpm rebuild` or `npm rebuild`; Yarn berry and aube pass through to the package manager's own command.
+
+Yarn 1 and Bun have no `rebuild` command. `vis rebuild` fails with a message on those package managers instead of exiting successfully without rebuilding anything. Reinstall the dependencies there instead.
+
+## Usage
+
+```bash
+vis rebuild
+```
+
+## Examples
+
+```bash
+# Rebuild native dependencies in the current workspace
+vis rebuild
+```

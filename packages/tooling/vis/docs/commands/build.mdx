@@ -1,0 +1,44 @@
+---
+title: "vis build"
+description: "Run the production build: the package's build script, or the inferred Vite, Rsbuild, Rslib, or Rspack build"
+---
+
+# vis build
+
+Runs the `build` target. `vis build` is `vis run build`, so it uses the same target resolution, filters, and caching.
+
+A package's own `build` script in `package.json` always wins. When a project has no `build` script, vis infers one from its config file:
+
+- `vite.config.*` → `vite build`
+- `rsbuild.config.*` → `rsbuild build`
+- `rslib.config.*` → `rslib build` (a library build)
+- `rspack.config.*` → `rspack build`
+
+If no project defines a `build` target, `vis build` asks which bundler to set up: Vite, Rsbuild, Rslib, or Rspack. The choice works the same way as for `vis dev`: the tool is installed with `vis add -D` into the chosen project, and a `build` script is added to its `package.json`, along with the tool's config and entry files, unless they already exist. Non-interactive runs stop and list the options instead. As with `vis dev`, pass `--filter <package>` when the workspace has more than one project.
+
+When a project has more than one bundler config, the first match in this order wins: Vite, then Rsbuild, then Rslib, then Rspack.
+
+## Usage
+
+```bash
+vis build [args…] [options]
+```
+
+Positional arguments and flags after `--` are passed to the `build` target.
+
+## Examples
+
+```bash
+# Build every project that has a build target
+vis build
+
+# Build only one package
+vis build --filter @org/web
+
+# Forward flags to the build
+vis build -- --mode production
+```
+
+## Scope
+
+Run from a package directory, it builds that package. Run from the workspace root, it builds every project that has the target. `--filter` or `--projects` chooses projects explicitly.

@@ -75,7 +75,9 @@ export const installDevDependency = (packageName: string, cwd: string, logger: P
 };
 
 const spawnVisAdd: Installer = (packageName, cwd) => {
-    const result = spawnSync(process.execPath, [process.argv[1]!, "add", "-D", packageName], { cwd, stdio: "inherit" });
+    // The child is vis itself, so suppress the questions and promos the parent already handled.
+    const env = { ...process.env, VIS_NO_CONFIG_PROMPT: "1", VIS_NO_MCP_PROMOTE: "1", VIS_NO_SPONSOR: "1" };
+    const result = spawnSync(process.execPath, [process.argv[1]!, "add", "-D", packageName], { cwd, env, stdio: "inherit" });
 
     if (result.error) {
         throw result.error;

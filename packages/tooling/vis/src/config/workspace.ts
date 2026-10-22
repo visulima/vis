@@ -1,5 +1,5 @@
 import { isAccessibleSync, readFileSync, readJsonSync, walkSync } from "@visulima/fs";
-import { basename, join, resolve } from "@visulima/path";
+import { basename, dirname, join, resolve } from "@visulima/path";
 import type {
     DependencyType,
     InputDefinition,
@@ -76,7 +76,30 @@ const hasPackageJson = (directory: string): boolean => isAccessibleSync(join(dir
 /**
  * Reads and parses a JSON file, returning undefined on failure.
  */
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the caller-supplied typed-cast convenience; the alternative is a verbose `as X | undefined` at every callsite
+
+/** The nearest ancestor of `start` that declares a workspace, or `undefined` when there is none. */
+const findWorkspaceAbove = (start: string): string | undefined => {
+    let directory = dirname(start);
+
+    for (;;) {
+        const rootPackage = readJsonFileSafe<PackageJson>(join(directory, "package.json"));
+
+        if (isAccessibleSync(join(directory, "pnpm-workspace.yaml")) || rootPackage?.workspaces !== undefined) {
+            return directory;
+        }
+
+        const parent = dirname(directory);
+
+        if (parent === directory) {
+            return undefined;
+        }
+
+        directory = parent;
+    }
+};
+
+// The caller names the shape it expects; nothing here checks it at runtime.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const readJsonFileSafe = <T>(filePath: string): T | undefined => {
     try {
         return readJsonSync(filePath) as T;
@@ -1100,7 +1123,13 @@ const discoverWorkspace = (
     }
 
     if (!workspacePatterns) {
-        throw new VisUserError("No workspace configuration found. Expected pnpm-workspace.yaml or package.json workspaces field.");
+        const above = findWorkspaceAbove(workspaceRoot);
+
+        throw new VisUserError(
+            above === undefined
+                ? "No workspace configuration found. Expected pnpm-workspace.yaml or package.json workspaces field."
+                : `No workspace configuration found in ${workspaceRoot}, but ${above} is one. vis uses the directory it runs from as the workspace root, so run it from ${above}.`,
+        );
     }
 
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(

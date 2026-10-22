@@ -1,0 +1,48 @@
+---
+title: "vis dev"
+description: "Start the dev server: the package's dev script, or the inferred Vite, Rsbuild, Rslib, or Rspack dev server"
+---
+
+# vis dev
+
+Starts the `dev` target. `vis dev` is `vis run dev`, so it uses the same target resolution, filters, and caching.
+
+A package's own `dev` script in `package.json` always wins. When a project has no `dev` script, vis infers one from its config file:
+
+- `vite.config.*` → `vite`
+- `rsbuild.config.*` → `rsbuild dev`
+- `rslib.config.*` → `rslib build --watch` (a watch build, since Rslib has no dev server)
+- `rspack.config.*` → `rspack serve`
+
+If no project defines a `dev` target, `vis dev` asks which dev server to set up: Vite, Rsbuild, or Rspack. Your choice is the consent. vis installs the tool with `vis add -D` into the nearest package, and adds the matching `dev` script to that package's `package.json`. The tool's config file and the entry file it needs are also written, unless they already exist. The script and config are what keep the choice, so later runs use it without asking.
+
+In a non-interactive run (CI, or no terminal) it stops and lists each tool and its install command instead. It never picks one for you. Run it from the workspace root, the same as `vis run`. If the workspace has more than one project, pass `--filter <package>` to choose where the script goes.
+
+## Usage
+
+```bash
+vis dev [args…] [options]
+```
+
+Positional arguments and flags after `--` are passed to the `dev` target.
+
+## Examples
+
+```bash
+# Start the dev target across the workspace
+vis dev
+
+# Start only one package
+vis dev --filter @org/web
+
+# Forward flags to the dev server
+vis dev -- --port 3000
+```
+
+## Scope
+
+Run from a package directory, it starts that package. Run from the workspace root, it starts every project that has the target. `--filter` or `--projects` chooses projects explicitly.
+
+## Entry files
+
+The offer writes the entry each tool needs, unless the file exists: Vite gets `index.html`, Rsbuild gets `src/index.ts`, and Rspack gets `src/index.js`. Rslib builds from `src/index.ts`. These are minimal starting points. Replace them with your app.
