@@ -19,9 +19,9 @@ A project with a `packem.config.*` also gets `vis build`, the same command. `vis
 If no project defines a `pack` target, `vis pack` asks which library builder to set up: Rslib or packem. Your choice is the consent. vis installs the tool with `vis add -D` into the chosen project, and adds a `pack` script to its `package.json`. It also writes the tool's config file and `src/index.ts`, unless they already exist.
 
 - **Rslib** installs `@rslib/core` and `typescript`, and writes `rslib.config.mts` with ESM output.
-- **packem** installs `@visulima/packem`, `esbuild` (the transformer packem's config uses), and `typescript`, and writes `packem.config.ts` with ESM output and `src/index.ts` as the entry.
+- **packem** installs `@visulima/packem`, `esbuild` (the transformer packem's config uses), and `typescript`, and writes `packem.config.ts` with ESM output, `src/index.ts` as the entry, and warnings that do not fail the build.
 
-A new packem library can fail its first build on `package.json` warnings: missing `exports`, `engines`, or `sideEffects`. packem exits non-zero on warnings by default. Add the fields it names, or set `failOnWarn: false` in `packem.config.ts`.
+packem prints `package.json` warnings for a new library (missing `exports`, `engines`, or `sideEffects`), but the offered config sets `failOnWarn: false`, so they do not fail the build. Add the fields it names when you publish. Set `failOnWarn: true` to make them fail the build.
 
 In a non-interactive run (CI, or no terminal) it stops and lists the options instead.
 
@@ -44,4 +44,4 @@ vis pack --filter @org/utils
 vis pack -- --sourcemap
 ```
 
-Like `vis dev` and `vis build`, vis treats the directory it runs from as the workspace root. Run it from the root, and use `--filter` when the workspace has several projects.
+Run from a package directory, `vis pack` builds that package. Run from the workspace root, it builds every project that has a `pack` target. `--filter` chooses projects explicitly. Like the other commands, vis treats the directory you run from as the workspace root, and the nearest ancestor that declares a workspace is used.

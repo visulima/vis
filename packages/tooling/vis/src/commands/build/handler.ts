@@ -1,7 +1,7 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 
 import type { TargetToolChoice, TargetToolDeps } from "../../util/target-tool";
-import { offerTargetTool } from "../../util/target-tool";
+import { offerTargetTool, scopedTarget } from "../../util/target-tool";
 import runExecute from "../run/handler";
 import type { BuildOptions } from "./index";
 
@@ -45,7 +45,7 @@ export const runBuild = async (toolbox: Toolbox<Console, BuildOptions>, deps: Ta
         return;
     }
 
-    await runExecute({ ...toolbox, argument: ["build", ...(argument ?? []), ...(rawUnknown ?? [])], rawUnknown });
+    await runExecute({ ...toolbox, argument: [scopedTarget("build", options, process.cwd(), workspaceRoot ?? process.cwd()), ...(argument ?? []), ...(rawUnknown ?? [])], rawUnknown });
 };
 
 const execute = (toolbox: Toolbox<Console, BuildOptions>): Promise<void> => runBuild(toolbox);

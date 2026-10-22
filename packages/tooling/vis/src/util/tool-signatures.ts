@@ -107,6 +107,10 @@ export const TOOL_SIGNATURES = {
         ],
         packageNames: ["prettier"],
     },
+    rslint: {
+        configFiles: ["rslint.config.ts", "rslint.config.js", "rslint.config.mjs", "rslint.config.mts"],
+        packageNames: ["@rslint/core"],
+    },
     ruff: {
         // pyproject.toml is *not* listed here — it only signals ruff
         // presence when it contains a `[tool.ruff]` table, and the

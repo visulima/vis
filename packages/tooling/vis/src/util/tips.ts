@@ -167,8 +167,8 @@ const tips: Tip[] = [
     },
     {
         id: "env-pin",
-        matches: (context) => context.command === "env" && context.args.includes("install") && context.success,
-        message: () => "Use 'vis env pin <version>' to pin the Node.js version for your project.",
+        matches: (context) => context.command === "toolchain" && context.args.includes("install") && context.success,
+        message: () => "Use 'vis toolchain pin node@<version>' to pin the Node.js version for your project.",
         probability: 0.5,
     },
     {

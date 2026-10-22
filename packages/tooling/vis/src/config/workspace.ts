@@ -98,6 +98,8 @@ const findWorkspaceAbove = (start: string): string | undefined => {
     }
 };
 
+// The caller names the shape it expects; nothing here checks it at runtime.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const readJsonFileSafe = <T>(filePath: string): T | undefined => {
     try {
         return readJsonSync(filePath) as T;

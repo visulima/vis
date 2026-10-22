@@ -166,3 +166,17 @@ export const offerTargetTool = async (params: TargetToolParams, deps: TargetTool
 
     return true;
 };
+
+/**
+ * The run selector for `dev`, `build`, `pack`, and `preview`. Run from a package
+ * directory with no `--filter` or `--projects`, it selects that package's target
+ * (`~:&lt;target>`, the project closest to the current directory). Run from the workspace
+ * root, or with an explicit selection, it selects the target across the workspace.
+ */
+export const scopedTarget = (target: string, options: { filter?: ReadonlyArray<string>; projects?: string }, cwd: string, workspaceRoot: string): string => {
+    if ((options.filter?.length ?? 0) > 0 || options.projects !== undefined) {
+        return target;
+    }
+
+    return resolve(cwd) === resolve(workspaceRoot) ? target : `~:${target}`;
+};

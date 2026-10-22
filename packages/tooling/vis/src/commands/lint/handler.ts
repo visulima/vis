@@ -7,6 +7,7 @@ import { biomeAdapter } from "../../lint-fmt/adapters/biome";
 import { eslintAdapter } from "../../lint-fmt/adapters/eslint";
 import { markdownlintAdapter } from "../../lint-fmt/adapters/markdownlint";
 import { oxlintAdapter } from "../../lint-fmt/adapters/oxlint";
+import { rslintAdapter } from "../../lint-fmt/adapters/rslint";
 import { ruffCheckAdapter } from "../../lint-fmt/adapters/ruff";
 import { shellcheckAdapter } from "../../lint-fmt/adapters/shellcheck";
 import { stylelintAdapter } from "../../lint-fmt/adapters/stylelint";
@@ -33,6 +34,7 @@ const SOURCE_ADAPTERS = [
     stylelintAdapter,
     ruffCheckAdapter,
     markdownlintAdapter,
+    rslintAdapter,
     shellcheckAdapter,
     typecheckAdapter,
 ];
@@ -60,7 +62,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     }
 
     if (eligible.length === 0) {
-        logger.warn("vis lint: no linter detected in this workspace (looked for: oxlint, biome, eslint, stylelint, ruff, markdownlint, shellcheck; typecheck runs only when enabled).");
+        logger.warn("vis lint: no linter detected in this workspace (looked for: oxlint, biome, eslint, rslint, stylelint, ruff, markdownlint, shellcheck; typecheck runs only when enabled).");
 
         return;
     }

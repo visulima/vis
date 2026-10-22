@@ -41,7 +41,7 @@ vis dev -- --port 3000
 
 ## Scope
 
-Without `--filter`, `vis dev` starts every project that has a `dev` target. In a large workspace, pass `--filter` to start one package.
+Run from a package directory, it starts that package. Run from the workspace root, it starts every project that has the target. `--filter` or `--projects` chooses projects explicitly.
 
 ## Entry files
 
