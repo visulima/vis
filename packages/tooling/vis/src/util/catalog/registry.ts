@@ -93,7 +93,7 @@ export const fetchVersionsBatched = async (
     // from the queue the instant any one settles, instead of waiting for a
     // whole fixed-size batch to finish. This stops a single slow registry
     // response (up to DEFAULT_FETCH_TIMEOUT) from head-of-line-blocking the
-    // next batch, which meaningfully cuts `vis check` wall time on large
+    // next batch, which meaningfully cuts `vis outdated` wall time on large
     // catalogs behind a flaky private registry.
     const worker = async (): Promise<void> => {
         while (nextIndex < uniquePackages.length) {
