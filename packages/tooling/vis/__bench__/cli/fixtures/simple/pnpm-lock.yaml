@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.11
+  '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.12
   brace-expansion@<1.1.21: ^1.1.21
   esbuild@<=0.24.2: ^0.25.0
   js-yaml@>=4.0.0 <4.3.2: ^4.3.2
