@@ -833,7 +833,8 @@ minimumReleaseAgeExclude:
   - protobufjs@8.4.3
   - dompurify@3.4.9
   - dompurify@3.4.8
-  - markdown-it@14.1.2
+  # Renovate security update: markdown-it@14.3.3
+  - markdown-it@14.1.2 || 14.3.3
   - '@opentelemetry/core@2.8.0'
   - undici@8.5.0
   - undici@7.28.0
@@ -1126,7 +1127,7 @@ overrides:
   form-data@>=4.0.0 <4.0.6: ^4.0.6
   js-yaml@<=4.1.1: ^4.3.2
   launch-editor@<=2.14.0: ^2.14.1
-  markdown-it@<=14.1.1: ^14.1.2
+  markdown-it@<=14.1.1: ^14.3.3
   nodemailer@<=9.0.0: ^9.0.1
   protobufjs@<=7.6.0: ^7.6.1
   protobufjs@<=7.6.2: ^7.6.3
