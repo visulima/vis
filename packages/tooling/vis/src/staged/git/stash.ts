@@ -92,6 +92,34 @@ export const createHideAllStash = async (cwd: string): Promise<string | null> =>
 };
 
 /**
+ * Tree sha of the tracked working tree as it stands now, or `""` when there is
+ * nothing to snapshot. `git stash create` writes the snapshot without touching
+ * the stash stack or the worktree. Untracked files are not part of it.
+ */
+export const snapshotWorkingTree = async (cwd: string): Promise<string> => {
+    const sha = await gitOut(["stash", "create"], { cwd });
+
+    if (sha.length === 0) {
+        return "";
+    }
+
+    return gitOut(["rev-parse", `${sha}^{tree}`], { cwd });
+};
+
+/**
+ * The trees a backup stash holds: the working tree it was taken from, and the
+ * index (stored as the stash commit's second parent).
+ */
+export const readBackupTrees = async (cwd: string, sha: string): Promise<{ indexTree: string; worktreeTree: string }> => {
+    const [worktreeTree, indexTree] = await Promise.all([
+        gitOut(["rev-parse", `${sha}^{tree}`], { cwd }),
+        gitOut(["rev-parse", `${sha}^2^{tree}`], { cwd }),
+    ]);
+
+    return { indexTree, worktreeTree };
+};
+
+/**
  * Resolves a stash commit sha to the live `stash@{N}` reference.
  * Uses the reflog for `refs/stash` rather than `git stash list` so
  * matching is exact (sha equality) and robust against concurrent

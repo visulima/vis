@@ -16,7 +16,7 @@ import {
     updateIndexAgain,
 } from "./diff";
 import { assertGitVersion, getGitDirectory, getWorkTree, git, headTreeSha, isGitRepo, writeIndexTree } from "./exec";
-import { applyBackupStash, createBackupStash, createHideAllStash, dropBackupStash, popHideAllStash } from "./stash";
+import { applyBackupStash, createBackupStash, createHideAllStash, dropBackupStash, popHideAllStash, readBackupTrees, snapshotWorkingTree } from "./stash";
 
 interface MergeFile {
     readonly body: Buffer | null;
@@ -209,12 +209,16 @@ export class GitWorkflow {
             return;
         }
 
+        const { patch } = this;
+
         const applyArguments: ReadonlyArray<string> = ["apply", "--whitespace=nowarn", "--recount", "--unidiff-zero"];
 
         let firstError: string | undefined;
 
         try {
-            await git(applyArguments, { cwd: this.workTree, input: this.patch });
+            await git(applyArguments, { cwd: this.workTree, input: patch });
+
+            this.patch = null;
 
             return;
         } catch (error) {
@@ -222,7 +226,7 @@ export class GitWorkflow {
         }
 
         try {
-            await git([...applyArguments, "--3way"], { cwd: this.workTree, input: this.patch });
+            await git([...applyArguments, "--3way"], { cwd: this.workTree, input: patch });
         } catch (error) {
             const detail = error instanceof GitError && error.stderr ? error.stderr : String(error);
 
@@ -232,6 +236,32 @@ export class GitWorkflow {
                 { cause: error as Error },
             );
         }
+
+        this.patch = null;
+    }
+
+    /**
+     * Drops the backup stash once the working tree and index hold exactly what
+     * the backup holds, so nothing is lost by dropping it. Otherwise the backup
+     * is kept. Call only after the hidden unstaged changes have been put back.
+     */
+    public async releaseBackupIfRestored(): Promise<void> {
+        if (this.backupStashSha === null) {
+            return;
+        }
+
+        const backup = await readBackupTrees(this.workTree, this.backupStashSha);
+
+        // Sequential on purpose: running both git commands at once fights over `index.lock`.
+        const worktreeTree = await snapshotWorkingTree(this.workTree);
+        const indexTree = await writeIndexTree(this.workTree);
+
+        if (worktreeTree !== backup.worktreeTree || indexTree !== backup.indexTree) {
+            return;
+        }
+
+        await dropBackupStash(this.workTree, this.backupStashSha);
+        this.backupStashSha = null;
     }
 
     /** Restores index + working tree from the backup stash and drops it. */
@@ -249,6 +279,7 @@ export class GitWorkflow {
         }
 
         await dropBackupStash(this.workTree, this.backupStashSha);
+        this.backupStashSha = null;
 
         // Restore the intent-to-add markers we removed in prepare() — on a revert we want the
         // pre-run state exactly, including the declarative "planned to add" index entries.
@@ -265,11 +296,17 @@ export class GitWorkflow {
 
     /**
      * On success, drops the backup stash and pops the hide-all stash (if any).
-     * On failure without --revert, leaves the backup stash in place so the
-     * user can recover manually.
+     * On failure, puts back any hidden unstaged changes, then drops the backup
+     * only if the repo is back at the state it holds. Otherwise the backup stays
+     * so the user can recover manually.
      */
     public async cleanup(success: boolean): Promise<void> {
         this.restoreMergeState();
+
+        // A run that threw never reached the restore at the end of the try body, so the hidden hunks are still in memory.
+        if (!success && !this.revertApplied) {
+            await this.restoreUnstagedChanges();
+        }
 
         // Always try to restore the hide-all stash, even on failure — the untracked files belong to the user, not to us.
         if (this.hideAllStashSha !== null) {
@@ -283,6 +320,8 @@ export class GitWorkflow {
 
         if (success && this.backupStashSha !== null && !this.revertApplied) {
             await dropBackupStash(this.workTree, this.backupStashSha);
+        } else if (!success && !this.revertApplied) {
+            await this.releaseBackupIfRestored();
         }
     }
 

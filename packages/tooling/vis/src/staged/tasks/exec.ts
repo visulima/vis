@@ -141,6 +141,8 @@ export interface ExecCommandOptions {
     readonly maxArgLength?: number;
     /** Aborted when the caller cancels the run (e.g. another task failed without `continueOnError`). */
     readonly signal?: AbortSignal;
+    /** Run once with the command as written, ignoring `files`. */
+    readonly verbatim?: boolean;
 }
 
 export interface ExecCommandResult {
@@ -167,7 +169,8 @@ export const execCommand = async (command: string, files: ReadonlyArray<string>,
     }
 
     const prefixLength = Buffer.byteLength(program) + baseArgs.reduce((total, argument) => total + Buffer.byteLength(argument) + 1, 0);
-    const chunks = chunkFiles(files, prefixLength, options.maxArgLength ?? DEFAULT_MAX_ARG_LENGTH);
+    // A verbatim command is one invocation: the file list is not argv for it.
+    const chunks = options.verbatim === true ? [[]] : chunkFiles(files, prefixLength, options.maxArgLength ?? DEFAULT_MAX_ARG_LENGTH);
     const started = Date.now();
     const outputs: string[] = [];
 

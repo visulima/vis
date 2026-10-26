@@ -167,18 +167,18 @@ export const runStaged = async (options: RunOptions = {}): Promise<RunResult> =>
                 }
 
                 if (options.allowEmpty !== true && workflow.postTaskIndexMatchesHead()) {
+                    // The commit would be empty and is aborted, so put the original changes back from the backup first.
+                    // Not with --hide-all: restoring the backup would collide with the hide-all stash popped in cleanup.
+                    if (options.hideAll !== true) {
+                        await workflow.revert();
+                    }
+
                     throw new ApplyEmptyCommitError("All staged changes were reverted by tasks. Re-stage changes or rerun with --allow-empty.");
                 }
             }
         } else if (options.revert === true) {
             renderer.info({ message: "Reverting working tree from backup stash." });
             await workflow.revert();
-        } else {
-            const hint = workflow.recoveryHint();
-
-            if (hint) {
-                renderer.warn({ message: hint });
-            }
         }
 
         await workflow.restoreUnstagedChanges();
@@ -206,6 +206,13 @@ export const runStaged = async (options: RunOptions = {}): Promise<RunResult> =>
                 await workflow.cleanup(finalSuccess);
             } catch (error) {
                 renderer.error({ error: error as Error, message: "Cleanup failed." });
+            }
+
+            // Only a backup that is still there after cleanup needs pointing out.
+            const hint = finalSuccess ? null : workflow.recoveryHint();
+
+            if (hint) {
+                renderer.warn({ message: hint });
             }
         }
 

@@ -350,7 +350,39 @@ describe("runStaged — integration", () => {
         expect(sh(["stash", "list"], root)).toBe("");
     });
 
-    it("leaves the backup stash in place on failure without --revert", async () => {
+    it("leaves the backup stash in place on failure without --revert when the task changed files", async () => {
+        expect.assertions(2);
+
+        writeFileSync(join(root, "a.txt"), "x\n");
+        sh(["add", "a.txt"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        writeFileSync(join(root, "a.txt"), "y\n");
+        sh(["add", "a.txt"], root);
+
+        const result = await runStaged({
+            config: {
+                "*.txt": {
+                    task: (files) => {
+                        for (const file of files) {
+                            writeFileSync(file, "rewritten\n");
+                        }
+
+                        throw new Error("task failed");
+                    },
+                    title: "boom",
+                },
+            },
+            cwd: root,
+            revert: false,
+            stash: true,
+        });
+
+        expect(result.success).toBe(false);
+        expect(sh(["stash", "list"], root)).toMatch(/vis_staged_automatic_backup/);
+    });
+
+    it("drops the backup stash after a failure when the task left the repo untouched", async () => {
         expect.assertions(2);
 
         writeFileSync(join(root, "a.txt"), "x\n");
@@ -375,6 +407,145 @@ describe("runStaged — integration", () => {
         });
 
         expect(result.success).toBe(false);
+        expect(sh(["stash", "list"], root)).toBe("");
+    });
+
+    it("restores the original changes and drops the backup stash when tasks revert every staged change", async () => {
+        expect.assertions(3);
+
+        writeFileSync(join(root, "a.txt"), "original\n");
+        sh(["add", "a.txt"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        writeFileSync(join(root, "a.txt"), "modified\n");
+        sh(["add", "a.txt"], root);
+
+        const result = await runStaged({
+            config: {
+                "*.txt": {
+                    task: (files) => {
+                        for (const file of files) {
+                            writeFileSync(file, "original\n");
+                        }
+                    },
+                    title: "revert-to-head",
+                },
+            },
+            cwd: root,
+            stash: true,
+        });
+
+        expect(result.success).toBe(false);
+        expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("modified\n");
+        expect(sh(["stash", "list"], root)).toBe("");
+    });
+
+    it("runs a command returned by a task function once, without appending the matched files", async () => {
+        expect.assertions(2);
+
+        writeFileSync(join(root, "README.md"), "initial\n");
+        sh(["add", "README.md"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        writeFileSync(join(root, "note.txt"), "hello\n");
+        sh(["add", "note.txt"], root);
+
+        const result = await runStaged({
+            config: {
+                // `process.argv.length` is 1 when no file arguments are passed.
+                "*.txt": (files) => `node -e "require('fs').writeFileSync('argv.txt', String(process.argv.length) + ':' + ${files.length})"`,
+            },
+            cwd: root,
+            stash: false,
+        });
+
+        expect(result.success).toBe(true);
+        expect(readFileSync(join(root, "argv.txt"), "utf8")).toBe("1:1");
+    });
+
+    it("puts hidden unstaged hunks back when a run throws before the tasks finish", async () => {
+        expect.assertions(2);
+
+        writeFileSync(join(root, "a.txt"), "x\n");
+        sh(["add", "a.txt"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        // One staged change and one unstaged change on the same file.
+        writeFileSync(join(root, "a.txt"), "y\n");
+        sh(["add", "a.txt"], root);
+        writeFileSync(join(root, "a.txt"), "y\nz\n");
+
+        const result = await runStaged({
+            // Returns a value the config rejects, so the run throws before any task executes.
+            config: { "*.txt": (() => undefined) as unknown as string },
+            cwd: root,
+            stash: true,
+        });
+
+        expect(result.success).toBe(false);
+        expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("y\nz\n");
+    });
+
+    it("restores hidden unstaged hunks and drops the backup after a read-only task fails", async () => {
+        expect.assertions(3);
+
+        writeFileSync(join(root, "a.txt"), "x\n");
+        sh(["add", "a.txt"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        writeFileSync(join(root, "a.txt"), "y\n");
+        sh(["add", "a.txt"], root);
+        writeFileSync(join(root, "a.txt"), "y\nz\n");
+
+        const result = await runStaged({
+            config: {
+                "*.txt": {
+                    task: () => {
+                        throw new Error("task failed");
+                    },
+                    title: "boom",
+                },
+            },
+            cwd: root,
+            stash: true,
+        });
+
+        expect(result.success).toBe(false);
+        expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("y\nz\n");
+        expect(sh(["stash", "list"], root)).toBe("");
+    });
+
+    it("keeps untracked files hidden by --hide-all when a task reverts every staged change", async () => {
+        expect.assertions(3);
+
+        writeFileSync(join(root, "a.txt"), "original\n");
+        sh(["add", "a.txt"], root);
+        sh(["commit", "-q", "-m", "chore: init"], root);
+
+        writeFileSync(join(root, "a.txt"), "modified\n");
+        sh(["add", "a.txt"], root);
+        writeFileSync(join(root, "untracked.txt"), "keep me\n");
+
+        const result = await runStaged({
+            config: {
+                "*.txt": {
+                    task: (files) => {
+                        for (const file of files) {
+                            writeFileSync(file, "original\n");
+                        }
+                    },
+                    title: "revert-to-head",
+                },
+            },
+            cwd: root,
+            hideAll: true,
+            stash: true,
+        });
+
+        expect(result.success).toBe(false);
+        // The hide-all stash is popped on the way out, so the untracked file is back where the user left it.
+        expect(readFileSync(join(root, "untracked.txt"), "utf8")).toBe("keep me\n");
+        // The original changes stay recoverable from the backup, and the run tells the user where it is.
         expect(sh(["stash", "list"], root)).toMatch(/vis_staged_automatic_backup/);
     });
 
