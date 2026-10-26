@@ -20,14 +20,14 @@ const HUSKY_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/_\/husky\.sh"\s*/m;
 const VIS_HOOK_INSTALL = "vis hook install";
 
 /**
- * A husky install call that stands alone: `husky`, `husky install`, or `npx husky`,
- * followed by a shell separator or the end of the script. Replaced in place by
- * {@link VIS_HOOK_INSTALL}.
+ * A husky install call in command position: `husky`, `husky install`, or `npx husky`, at the start of a
+ * command (after `^`, `&amp;&amp;`, `||`, `;`, `|` or `(`) and followed by a separator or the end of the script.
+ * Replaced in place by {@link VIS_HOOK_INSTALL}. Arguments such as `rm -rf husky` are not command positions.
  */
-const HUSKY_CALL_RE = /(?<![\w./-])(?:npx\s+)?husky(?:\s+install)?(?=\s*(?:&&|\|\||;|$))/g;
+const HUSKY_CALL_RE = /(?<=(?:^|[;&|(])\s*)(?:npx\s+)?husky(?:\s+install)?(?=\s*(?:&&|\|\||;|$))/g;
 
 /** `husky install DIR`, which vis does not take a directory for. Matched first so the directory is dropped with the call. */
-const HUSKY_INSTALL_DIR_RE = /(?<![\w./-])(?:npx\s+)?husky\s+install\s+[\w./-]+(?=\s*(?:&&|\|\||;|$))/g;
+const HUSKY_INSTALL_DIR_RE = /(?<=(?:^|[;&|(])\s*)(?:npx\s+)?husky\s+install\s+[\w./-]+(?=\s*(?:&&|\|\||;|$))/g;
 
 /**
  * Detects which husky directory is in use, if any.

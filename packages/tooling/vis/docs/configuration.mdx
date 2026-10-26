@@ -932,6 +932,11 @@ For an end-to-end walkthrough including CI examples, see [Conditional and finall
 
 vis automatically discovers your workspace structure:
 
+1. **pnpm** — Reads `pnpm-workspace.yaml` for package patterns
+2. **npm/yarn/bun** — Falls back to the `workspaces` field in root `package.json`
+3. **Project metadata** — Reads `project.json` files for targets, tags, layer, stack, language, owners
+4. **Dependency graph** — Built from `dependencies`, `devDependencies`, and `peerDependencies` in each project's `package.json`, and from path dependencies in each crate's `Cargo.toml`
+
 To keep packages out of the project graph while the workspace file still lists them, set `projectIgnore` in `vis.config.ts` to a list of globs over workspace-relative directories:
 
 ```ts
@@ -941,11 +946,6 @@ export default defineConfig({
 ```
 
 Ignored directories are not discovered, so `vis list`, `vis affected` and `--query` never see them. The same globs also apply to `--query`'s `*` wildcard, which matches any run of characters in a tag or name value.
-
-1. **pnpm** — Reads `pnpm-workspace.yaml` for package patterns
-2. **npm/yarn/bun** — Falls back to the `workspaces` field in root `package.json`
-3. **Project metadata** — Reads `project.json` files for targets, tags, layer, stack, language, owners
-4. **Dependency graph** — Built from `dependencies`, `devDependencies`, and `peerDependencies` in each project's `package.json`, and from path dependencies in each crate's `Cargo.toml`
 
 ### Cargo crates
 

@@ -383,14 +383,14 @@ describe("child process FORCE_COLOR policy", () => {
     };
 
     beforeEach(() => {
-        for (const name of ["FORCE_COLOR", "NO_COLOR"]) {
+        for (const name of ["FORCE_COLOR", "NO_COLOR", "CI"]) {
             saved[name] = process.env[name];
             Reflect.deleteProperty(process.env, name);
         }
     });
 
     afterEach(() => {
-        for (const name of ["FORCE_COLOR", "NO_COLOR"]) {
+        for (const name of ["FORCE_COLOR", "NO_COLOR", "CI"]) {
             if (saved[name] === undefined) {
                 Reflect.deleteProperty(process.env, name);
             } else {
@@ -419,11 +419,7 @@ describe("child process FORCE_COLOR policy", () => {
         setStdoutIsTTY(false);
         process.env["CI"] = "true";
 
-        try {
-            await expect(runProbe()).resolves.toBe("undefined");
-        } finally {
-            Reflect.deleteProperty(process.env, "CI");
-        }
+        await expect(runProbe()).resolves.toBe("undefined");
     });
 
     it.skipIf(process.platform === "win32")("should never force colour when NO_COLOR is set, even on a TTY", async () => {

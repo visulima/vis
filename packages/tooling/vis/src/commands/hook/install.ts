@@ -363,14 +363,18 @@ const installHooks = (directory: string = DEFAULT_HOOKS_DIRECTORY, options: { fo
         }
     }
 
-    const { status, stderr } = spawnSync("git", ["config", "core.hooksPath", target]);
+    // Skip the write when the effective value already is `target`. That covers a worktree override that was kept:
+    // writing it unscoped would move the shared `core.hooksPath` of every other checkout.
+    if (target !== readRepoHooksPath()) {
+        const { status, stderr } = spawnSync("git", ["config", "core.hooksPath", target]);
 
-    if (status === null) {
-        return { isError: true, message: "git command not found" };
-    }
+        if (status === null) {
+            return { isError: true, message: "git command not found" };
+        }
 
-    if (status) {
-        return { isError: true, message: String(stderr) };
+        if (status) {
+            return { isError: true, message: String(stderr) };
+        }
     }
 
     const notes = [migrationNote, alsoWritten > 0 ? `installed dispatchers in ${alsoWritten} linked worktree(s)` : undefined].filter(Boolean);

@@ -406,7 +406,7 @@ describe(installHooks, () => {
     });
 
     it.skipIf(process.platform === "win32")("should honour a linked worktree's own core.hooksPath over the shared value", () => {
-        expect.assertions(2);
+        expect.assertions(3);
 
         const { cleanup, root } = createTemporaryGitRepo();
         const { cleanup: cleanupWorktree, root: worktreeParent } = createTemporaryDirectory();
@@ -427,6 +427,8 @@ describe(installHooks, () => {
             expect(result.isError).toBe(false);
             // Reading the shared value would report `.husky/_` as another tool's claim on this checkout.
             expect(result.isWarning).not.toBe(true);
+            // Accepting the worktree override must not move the shared path that the main checkout runs with.
+            expect(execSync("git config --local core.hooksPath", { cwd: root, encoding: "utf8" }).trim()).toBe(".husky/_");
         } finally {
             process.chdir(root);
             execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: root, stdio: "ignore" });
@@ -804,12 +806,12 @@ describe(cleanPackageJsonScripts, () => {
         expect(pkg.scripts.postinstall).toBe("vis hook install");
     });
 
-    it("should leave paths that merely contain husky untouched", () => {
-        expect.assertions(2);
+    it("should leave husky as an argument to another command untouched", () => {
+        expect.assertions(3);
 
         writeFileSync(
             join(temporary.root, "package.json"),
-            JSON.stringify({ scripts: { clean: "rm -rf .husky && ./node_modules/.bin/husky-lint" } }, undefined, 4),
+            JSON.stringify({ scripts: { announce: "echo husky", clean: "rm -rf husky && ./node_modules/.bin/husky-lint" } }, undefined, 4),
         );
 
         const result = cleanPackageJsonScripts(temporary.root);
@@ -818,7 +820,8 @@ describe(cleanPackageJsonScripts, () => {
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts.clean).toBe("rm -rf .husky && ./node_modules/.bin/husky-lint");
+        expect(pkg.scripts.announce).toBe("echo husky");
+        expect(pkg.scripts.clean).toBe("rm -rf husky && ./node_modules/.bin/husky-lint");
     });
 
     it("should not add vis hook install twice when the script already has it", () => {

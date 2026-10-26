@@ -1456,7 +1456,9 @@ const applyImplicitDependencies = (
         for (const entry of config.implicitDependencies ?? []) {
             const excluded = entry.startsWith("!");
             const reference = excluded ? entry.slice(1) : entry;
-            const targets = resolveImplicitReference(reference, projectNames, pkgNameToProjectName).filter((target) => target !== name);
+            // An entry that only names this project still matches something, so it is not an error; it just adds no edge.
+            const matched = resolveImplicitReference(reference, projectNames, pkgNameToProjectName);
+            const targets = matched.filter((target) => target !== name);
 
             if (excluded) {
                 dependencies[name] = (dependencies[name] ?? []).filter((dep) => !targets.includes(dep.target));
@@ -1464,7 +1466,7 @@ const applyImplicitDependencies = (
                 continue;
             }
 
-            if (targets.length === 0) {
+            if (matched.length === 0) {
                 throw new VisUserError(`Project "${name}" lists implicit dependency "${entry}", which matches no project or package in this workspace.`);
             }
 
