@@ -1768,7 +1768,7 @@
                             "properties": {
                                 "minimum": {
                                     "type": "number",
-                                    "description": "Minimum overall Socket.dev score (0–1). Set to 0 to disable the gate while keeping Socket data fetched.\n\nConsulted by `vis add`, `audit`, `doctor`, `check`, and `update`; resolved once in `buildSocketOptions`, then threaded through every consumer. Falls back to `DEFAULT_LOW_SCORE_THRESHOLD` (`0.4`) when unset."
+                                    "description": "Minimum overall Socket.dev score (0–1). Set to 0 to disable the gate while keeping Socket data fetched.\n\nConsulted by `vis add`, `audit`, `doctor`, `outdated`, and `update`; resolved once in `buildSocketOptions`, then threaded through every consumer. Falls back to `DEFAULT_LOW_SCORE_THRESHOLD` (`0.4`) when unset."
                                 }
                             },
                             "additionalProperties": false,
