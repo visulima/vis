@@ -1,5 +1,5 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
-import { join } from "@visulima/path";
+import { resolve } from "@visulima/path";
 
 import { VisUserError } from "../../errors/vis-user-error";
 import { typecheckAdapter } from "../../lint-fmt/adapters/typecheck";
@@ -24,7 +24,7 @@ const execute = async ({ argument, fs, options, visConfig, workspaceRoot, ...too
     // would hand "react" to lint and fmt as a path they silently skip.
     for (const file of files) {
         try {
-            await fs.access(join(root, file));
+            await fs.access(resolve(root, file));
         } catch {
             throw new VisUserError(`"${file}" is not a file or directory. Dependency checks moved to \`vis outdated\`.`);
         }

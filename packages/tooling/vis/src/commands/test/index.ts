@@ -1,12 +1,15 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../util/negatable-option";
+
 const testOptionDefinitions = {
-    watch: {
+    ...negatable({
         defaultValue: false,
         description: "Keep Vitest running and re-run tests on change (Vitest's default watch mode)",
+        name: "watch",
         type: Boolean,
-    },
+    }),
 } as const;
 
 const test = defineCommand({

@@ -1,6 +1,8 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../util/negatable-option";
+
 const outdatedOptionDefinitions = {
     ai: {
         defaultValue: false,
@@ -41,11 +43,13 @@ const outdatedOptionDefinitions = {
         description: "Also check workspace-owned package names against the registry",
         type: Boolean,
     },
-    "no-security": {
-        defaultValue: false,
-        description: "Skip security vulnerability scanning",
+    ...negatable({
+        // No `defaultValue`: the handler falls back to config when neither
+        // flag is passed, so collapsing it to a boolean here would erase that.
+        description: "Scan for known security vulnerabilities (default: true; --no-security to skip)",
+        name: "security",
         type: Boolean,
-    },
+    }),
     peer: {
         defaultValue: false,
         description: "Include peerDependencies in outdated checks",
