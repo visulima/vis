@@ -260,8 +260,19 @@ export class GitWorkflow {
             return;
         }
 
-        await dropBackupStash(this.workTree, this.backupStashSha);
-        this.backupStashSha = null;
+        await this.dropBackup();
+    }
+
+    /**
+     * Puts the original changes back from the backup before an emptied commit is aborted. Skipped under
+     * --hide-all, where restoring the backup would collide with the hide-all stash popped in cleanup.
+     */
+    public async revertForEmptyCommit(): Promise<void> {
+        if (this.shouldHideAll) {
+            return;
+        }
+
+        await this.revert();
     }
 
     /** Restores index + working tree from the backup stash and drops it. */
@@ -278,8 +289,7 @@ export class GitWorkflow {
             });
         }
 
-        await dropBackupStash(this.workTree, this.backupStashSha);
-        this.backupStashSha = null;
+        await this.dropBackup();
 
         // Restore the intent-to-add markers we removed in prepare() — on a revert we want the
         // pre-run state exactly, including the declarative "planned to add" index entries.
@@ -318,11 +328,18 @@ export class GitWorkflow {
             }
         }
 
-        if (success && this.backupStashSha !== null && !this.revertApplied) {
-            await dropBackupStash(this.workTree, this.backupStashSha);
-        } else if (!success && !this.revertApplied) {
-            await this.releaseBackupIfRestored();
+        // revert() already dropped the backup, so there is nothing left to decide.
+        if (this.revertApplied) {
+            return;
         }
+
+        if (success) {
+            await this.dropBackup();
+
+            return;
+        }
+
+        await this.releaseBackupIfRestored();
     }
 
     /**
@@ -397,5 +414,11 @@ export class GitWorkflow {
                 // Best effort — merge state is non-critical on cleanup.
             }
         }
+    }
+
+    /** Drops the backup stash and forgets its sha, so later steps never try to drop it again. */
+    private async dropBackup(): Promise<void> {
+        await dropBackupStash(this.workTree, this.backupStashSha);
+        this.backupStashSha = null;
     }
 }

@@ -824,6 +824,30 @@ describe(cleanPackageJsonScripts, () => {
         expect(pkg.scripts.clean).toBe("rm -rf husky && ./node_modules/.bin/husky-lint");
     });
 
+    it("should keep a husky argument intact in a script that already installs through vis", () => {
+        expect.assertions(1);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "rm -rf husky && vis hook install" } }, undefined, 4));
+
+        cleanPackageJsonScripts(temporary.root);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("rm -rf husky && vis hook install");
+    });
+
+    it("should name a custom hooks directory in the install command", () => {
+        expect.assertions(1);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "is-ci || husky || exit 0" } }, undefined, 4));
+
+        cleanPackageJsonScripts(temporary.root, undefined, ".githooks");
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("is-ci || vis hook install --hooks-dir .githooks || exit 0");
+    });
+
     it("should not add vis hook install twice when the script already has it", () => {
         expect.assertions(1);
 

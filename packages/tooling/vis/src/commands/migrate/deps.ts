@@ -6,7 +6,7 @@ import { join } from "@visulima/path";
 import type { VisConfig } from "../../config/workspace";
 import { discoverWorkspace } from "../../config/workspace";
 import { backupFile } from "./backup";
-import { cleanHuskyFromScript, REPLACED_PACKAGES } from "./constants";
+import { REPLACED_PACKAGES, rewriteHuskyScript } from "./constants";
 import { editJsonFile } from "./json";
 import type { MigrationReport, PackageManagerType } from "./types";
 
@@ -29,8 +29,8 @@ const rewriteScripts = (scripts: Record<string, string>, report: MigrationReport
             continue;
         }
 
-        // Clean husky references using shared function
-        let cleaned = cleanHuskyFromScript(value);
+        // Husky install calls become `vis hook install`, so hook installation survives the migration.
+        let cleaned: string | undefined = rewriteHuskyScript(value);
 
         // Replace lint-staged with vis staged
         if (cleaned) {

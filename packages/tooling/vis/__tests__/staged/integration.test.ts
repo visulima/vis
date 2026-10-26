@@ -382,34 +382,6 @@ describe("runStaged — integration", () => {
         expect(sh(["stash", "list"], root)).toMatch(/vis_staged_automatic_backup/);
     });
 
-    it("drops the backup stash after a failure when the task left the repo untouched", async () => {
-        expect.assertions(2);
-
-        writeFileSync(join(root, "a.txt"), "x\n");
-        sh(["add", "a.txt"], root);
-        sh(["commit", "-q", "-m", "chore: init"], root);
-
-        writeFileSync(join(root, "a.txt"), "y\n");
-        sh(["add", "a.txt"], root);
-
-        const result = await runStaged({
-            config: {
-                "*.txt": {
-                    task: () => {
-                        throw new Error("task failed");
-                    },
-                    title: "boom",
-                },
-            },
-            cwd: root,
-            revert: false,
-            stash: true,
-        });
-
-        expect(result.success).toBe(false);
-        expect(sh(["stash", "list"], root)).toBe("");
-    });
-
     it("restores the original changes and drops the backup stash when tasks revert every staged change", async () => {
         expect.assertions(3);
 
@@ -475,18 +447,26 @@ describe("runStaged — integration", () => {
         sh(["add", "a.txt"], root);
         writeFileSync(join(root, "a.txt"), "y\nz\n");
 
-        const result = await runStaged({
-            // Returns a value the config rejects, so the run throws before any task executes.
-            config: { "*.txt": (() => undefined) as unknown as string },
-            cwd: root,
-            stash: true,
-        });
+        // A function task runs while the task graph is built, so this throws before any task is executed.
+        await expect(
+            runStaged({
+                config: {
+                    "*.txt": () => {
+                        throw new Error("cannot build the task graph");
+                    },
+                },
+                cwd: root,
+                stash: true,
+            }),
+        ).rejects.toThrow("cannot build the task graph");
 
-        expect(result.success).toBe(false);
         expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("y\nz\n");
     });
 
-    it("restores hidden unstaged hunks and drops the backup after a read-only task fails", async () => {
+    it.each([
+        ["drops the backup stash after a failure when the task left the repo untouched", "y\n"],
+        ["restores hidden unstaged hunks and drops the backup after a read-only task fails", "y\nz\n"],
+    ])("%s", async (_title, worktreeContent) => {
         expect.assertions(3);
 
         writeFileSync(join(root, "a.txt"), "x\n");
@@ -495,7 +475,7 @@ describe("runStaged — integration", () => {
 
         writeFileSync(join(root, "a.txt"), "y\n");
         sh(["add", "a.txt"], root);
-        writeFileSync(join(root, "a.txt"), "y\nz\n");
+        writeFileSync(join(root, "a.txt"), worktreeContent);
 
         const result = await runStaged({
             config: {
@@ -507,11 +487,12 @@ describe("runStaged — integration", () => {
                 },
             },
             cwd: root,
+            revert: false,
             stash: true,
         });
 
         expect(result.success).toBe(false);
-        expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("y\nz\n");
+        expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(worktreeContent);
         expect(sh(["stash", "list"], root)).toBe("");
     });
 

@@ -4,6 +4,7 @@ import { relative } from "@visulima/path";
 import type { WorkspaceConfiguration } from "@visulima/task-runner";
 
 import type { VisProjectConfiguration } from "../config/workspace";
+import { starGlobToRegExp } from "../util/star-glob";
 
 /**
  * Parsed form of a target selector.
@@ -234,8 +235,6 @@ export const parseQuery = (input: string): ParsedQuery | undefined => {
     return { clauses, op };
 };
 
-const REGEX_SPECIAL_CHARS_RE = /[$()+.?[\\\]^{|}]/g;
-
 /**
  * Whether a clause value matches an actual value. `*` matches any run of
  * characters and everything else is literal, so `project!=examples_*`
@@ -246,9 +245,7 @@ const valueMatches = (value: string, actual: string): boolean => {
         return actual === value;
     }
 
-    const escaped = value.replaceAll(REGEX_SPECIAL_CHARS_RE, String.raw`\$&`).replaceAll("*", ".*");
-
-    return new RegExp(`^${escaped}$`).test(actual);
+    return starGlobToRegExp(value).test(actual);
 };
 
 /**

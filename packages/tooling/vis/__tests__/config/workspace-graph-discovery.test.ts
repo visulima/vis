@@ -122,6 +122,14 @@ describe("project.json implicitDependencies", () => {
         expect([graph.dependencies["b"], graph.dependencies["c"]]).toStrictEqual([[], [{ source: "c", target: "a", type: "implicit" }]]);
     });
 
+    it("should drop an excluded edge even when a glob that selects it comes later in the list", () => {
+        expect.assertions(1);
+
+        writePackage(scratch, "packages/b", { devDependencies: { a: "workspace:*" }, name: "b" }, { implicitDependencies: ["!a", "*"], name: "b" });
+
+        expect(graphFor().dependencies["b"]).toStrictEqual([]);
+    });
+
     it("should accept a positive entry that names only the project itself, adding no edge", () => {
         expect.assertions(1);
 

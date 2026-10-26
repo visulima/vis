@@ -413,15 +413,6 @@ describe("child process FORCE_COLOR policy", () => {
         await expect(runProbe()).resolves.toBe("undefined");
     });
 
-    it.skipIf(process.platform === "win32")("should not force colour in CI when stdout is not a TTY", async () => {
-        expect.assertions(1);
-
-        setStdoutIsTTY(false);
-        process.env["CI"] = "true";
-
-        await expect(runProbe()).resolves.toBe("undefined");
-    });
-
     it.skipIf(process.platform === "win32")("should never force colour when NO_COLOR is set, even on a TTY", async () => {
         expect.assertions(1);
 

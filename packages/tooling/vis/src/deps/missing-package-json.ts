@@ -3,6 +3,7 @@ import { join, resolve } from "@visulima/path";
 
 import { isProjectDirectory } from "../config/cargo-projects";
 import { readPnpmWorkspacePatterns, readWorkspacePatterns } from "../config/workspace";
+import { starGlobToRegExp } from "../util/star-glob";
 
 /**
  * A workspace pattern matched a directory, but the directory has no
@@ -25,7 +26,6 @@ export interface MissingPackageJsonIssue {
 const TRAILING_SLASH_RE = /\/+$/;
 const NODE_MODULES_RE = /node_modules/;
 const DOT_GIT_RE = /\.git/;
-const REGEX_SPECIALS_RE = /[$()+.?[\\\]^{|}]/g;
 const NESTED_OR_DOUBLE_SUFFIX_RE = /\/\*\*$|\/\*\/\*$/;
 
 /** True when a `package.json` lives anywhere beneath `directory`. */
@@ -110,8 +110,7 @@ const collectPatternMatches = (workspaceRoot: string, pattern: string): string[]
     }
 
     if (!cleanPattern.includes("/") && cleanPattern.includes("*")) {
-        const escaped = cleanPattern.replaceAll(REGEX_SPECIALS_RE, String.raw`\$&`).replaceAll("*", ".*");
-        const regex = new RegExp(`^${escaped}$`);
+        const regex = starGlobToRegExp(cleanPattern);
 
         for (const entry of walkSync(workspaceRoot, { includeFiles: false, includeSymlinks: false, maxDepth: 1, skip: [NODE_MODULES_RE, DOT_GIT_RE] })) {
             if (entry.path === workspaceRoot) {

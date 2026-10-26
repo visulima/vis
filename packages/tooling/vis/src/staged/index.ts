@@ -168,10 +168,7 @@ export const runStaged = async (options: RunOptions = {}): Promise<RunResult> =>
 
                 if (options.allowEmpty !== true && workflow.postTaskIndexMatchesHead()) {
                     // The commit would be empty and is aborted, so put the original changes back from the backup first.
-                    // Not with --hide-all: restoring the backup would collide with the hide-all stash popped in cleanup.
-                    if (options.hideAll !== true) {
-                        await workflow.revert();
-                    }
+                    await workflow.revertForEmptyCommit();
 
                     throw new ApplyEmptyCommitError("All staged changes were reverted by tasks. Re-stage changes or rerun with --allow-empty.");
                 }

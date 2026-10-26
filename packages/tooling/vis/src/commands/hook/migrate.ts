@@ -5,10 +5,10 @@ import { ensureDirSync, isAccessibleSync, readFileSync } from "@visulima/fs";
 import { join } from "@visulima/path";
 
 import { resolveIndentForFile } from "../../util/editorconfig";
-import { cleanHuskyFromScript } from "../migrate/constants";
+import { rewriteHuskyScript, VIS_HOOK_INSTALL } from "../migrate/constants";
 import type { PackageManagerType } from "../migrate/types";
 import type { InstallResult } from "./constants";
-import { HOOKS } from "./constants";
+import { DEFAULT_HOOKS_DIRECTORY, HOOKS } from "./constants";
 import { installHooks } from "./install";
 
 const HUSKY_DIRECTORIES = [".husky", ".config/husky"];
@@ -16,18 +16,6 @@ const HUSKY_DIRECTORIES = [".husky", ".config/husky"];
 const COMMON_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/common\.sh"\s*/m;
 
 const HUSKY_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/_\/husky\.sh"\s*/m;
-
-const VIS_HOOK_INSTALL = "vis hook install";
-
-/**
- * A husky install call in command position: `husky`, `husky install`, or `npx husky`, at the start of a
- * command (after `^`, `&amp;&amp;`, `||`, `;`, `|` or `(`) and followed by a separator or the end of the script.
- * Replaced in place by {@link VIS_HOOK_INSTALL}. Arguments such as `rm -rf husky` are not command positions.
- */
-const HUSKY_CALL_RE = /(?<=(?:^|[;&|(])\s*)(?:npx\s+)?husky(?:\s+install)?(?=\s*(?:&&|\|\||;|$))/g;
-
-/** `husky install DIR`, which vis does not take a directory for. Matched first so the directory is dropped with the call. */
-const HUSKY_INSTALL_DIR_RE = /(?<=(?:^|[;&|(])\s*)(?:npx\s+)?husky\s+install\s+[\w./-]+(?=\s*(?:&&|\|\||;|$))/g;
 
 /**
  * Detects which husky directory is in use, if any.
@@ -141,43 +129,31 @@ const uninstallHuskyPackage = (root: string, logger: Console): boolean => {
  * Process a single script entry and apply husky cleanup.
  * Returns a description of the change, or undefined if unchanged.
  */
-const processScript = (scripts: Record<string, string>, scriptName: string, scriptValue: string): string | undefined => {
-    // Keep the install step: replace husky's call with `vis hook install` where it stands.
-    // A script that already installs through vis only loses the husky call, so the command is never added twice.
-    if (!scriptValue.includes(VIS_HOOK_INSTALL)) {
-        const withVisInstall = scriptValue.replaceAll(HUSKY_INSTALL_DIR_RE, VIS_HOOK_INSTALL).replaceAll(HUSKY_CALL_RE, VIS_HOOK_INSTALL);
+const processScript = (scripts: Record<string, string>, scriptName: string, scriptValue: string, installCommand: string): string | undefined => {
+    const rewritten = rewriteHuskyScript(scriptValue, installCommand);
 
-        if (withVisInstall === scriptValue) {
-            return undefined;
-        }
-
-        scripts[scriptName] = withVisInstall;
-
-        return `replaced husky with "${VIS_HOOK_INSTALL}" in "${scriptName}" script`;
-    }
-
-    const cleaned = cleanHuskyFromScript(scriptValue);
-
-    if (cleaned === scriptValue) {
+    if (rewritten === scriptValue) {
         return undefined;
     }
 
-    if (cleaned) {
-        scripts[scriptName] = cleaned;
+    scripts[scriptName] = rewritten;
 
-        return `updated "${scriptName}" script`;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- mutating scripts object passed by caller
-    delete scripts[scriptName];
-
-    return `removed "${scriptName}" script (was: "${scriptValue}")`;
+    return scriptValue.includes(VIS_HOOK_INSTALL)
+        ? `updated "${scriptName}" script`
+        : `replaced husky with "${installCommand}" in "${scriptName}" script`;
 };
 
 /**
  * Replaces husky install calls in package.json scripts with `vis hook install`.
  */
-const cleanPackageJsonScripts = (root: string, useEditorconfig?: boolean): { modified: boolean; removedScriptReferences: string[] } => {
+const cleanPackageJsonScripts = (
+    root: string,
+    useEditorconfig?: boolean,
+    hooksDirectory: string = DEFAULT_HOOKS_DIRECTORY,
+): { modified: boolean; removedScriptReferences: string[] } => {
+    // Installs into a custom hooks directory must say so, or the next `vis hook install` moves core.hooksPath back to the default.
+    const installCommand = hooksDirectory === DEFAULT_HOOKS_DIRECTORY ? VIS_HOOK_INSTALL : `${VIS_HOOK_INSTALL} --hooks-dir ${hooksDirectory}`;
+
     const packageJsonPath = join(root, "package.json");
 
     if (!isAccessibleSync(packageJsonPath)) {
@@ -195,7 +171,7 @@ const cleanPackageJsonScripts = (root: string, useEditorconfig?: boolean): { mod
                 continue;
             }
 
-            const change = processScript(scripts, scriptName, scriptValue);
+            const change = processScript(scripts, scriptName, scriptValue, installCommand);
 
             if (change) {
                 removedScriptReferences.push(change);
@@ -298,7 +274,7 @@ const migrateFromHusky = (root: string, hooksDirectory: string, logger: Console,
     } else {
         uninstallHuskyPackage(root, logger);
 
-        const packageResult = cleanPackageJsonScripts(root, options.useEditorconfig);
+        const packageResult = cleanPackageJsonScripts(root, options.useEditorconfig, hooksDirectory);
 
         if (packageResult.modified) {
             logger.info("Updated package.json scripts:");

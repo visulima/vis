@@ -660,14 +660,14 @@ describe(rewritePreCommitHook, () => {
 });
 
 describe(rewriteScripts, () => {
-    it("should remove standalone husky script", () => {
+    it("should replace a standalone husky script with vis hook install", () => {
         expect.assertions(2);
 
         const report = createMigrationReport();
         const result = rewriteScripts({ prepare: "husky" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["prepare"]).toBeUndefined();
+        expect(result.scripts["prepare"]).toBe("vis hook install");
     });
 
     it("should replace lint-staged with vis staged", () => {
@@ -687,7 +687,7 @@ describe(rewriteScripts, () => {
         const result = rewriteScripts({ prepare: "husky && lint-staged" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["prepare"]).toBe("vis staged");
+        expect(result.scripts["prepare"]).toBe("vis hook install && vis staged");
     });
 
     it("should not modify unrelated scripts", () => {
@@ -913,7 +913,7 @@ describe(rewritePackageJson, () => {
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts["prepare"]).toBeUndefined();
+        expect(pkg.scripts["prepare"]).toBe("vis hook install");
         expect(pkg.scripts["pre-commit"]).toBe("vis staged");
     });
 });
@@ -1172,44 +1172,44 @@ describe("insertStagedIntoVisConfig edge cases", () => {
 });
 
 describe("rewriteScripts edge cases", () => {
-    it("should remove husky install standalone", () => {
+    it("should replace husky install standalone with vis hook install", () => {
         expect.assertions(2);
 
         const report = createMigrationReport();
         const result = rewriteScripts({ prepare: "husky install" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["prepare"]).toBeUndefined();
+        expect(result.scripts["prepare"]).toBe("vis hook install");
     });
 
-    it("should clean (is-ci || husky || exit 0) && pattern", () => {
+    it("should keep the install step in (is-ci || husky || exit 0) && pattern", () => {
         expect.assertions(2);
 
         const report = createMigrationReport();
         const result = rewriteScripts({ postinstall: "(is-ci || husky || exit 0) && node setup.js" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["postinstall"]).toBe("node setup.js");
+        expect(result.scripts["postinstall"]).toBe("(is-ci || vis hook install || exit 0) && node setup.js");
     });
 
-    it("should clean && husky install pattern", () => {
+    it("should keep the install step in && husky install pattern", () => {
         expect.assertions(2);
 
         const report = createMigrationReport();
         const result = rewriteScripts({ prepare: "tsc && husky install" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["prepare"]).toBe("tsc");
+        expect(result.scripts["prepare"]).toBe("tsc && vis hook install");
     });
 
-    it("should clean || husky pattern", () => {
+    it("should keep the install step in || husky pattern", () => {
         expect.assertions(2);
 
         const report = createMigrationReport();
         const result = rewriteScripts({ prepare: "is-ci || husky" }, report);
 
         expect(result.modified).toBe(true);
-        expect(result.scripts["prepare"]).toBe("is-ci");
+        expect(result.scripts["prepare"]).toBe("is-ci || vis hook install");
     });
 
     it("should replace lint-staged in compound scripts", () => {
@@ -1400,7 +1400,7 @@ describe(migrateDeps, () => {
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
         expect(pkg.devDependencies["husky"]).toBeUndefined();
-        expect(pkg.scripts["prepare"]).toBeUndefined();
+        expect(pkg.scripts["prepare"]).toBe("vis hook install");
     });
 
     it("should only log in dry-run mode without modifying files", () => {

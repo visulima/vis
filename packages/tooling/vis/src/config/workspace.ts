@@ -32,6 +32,7 @@ import { mergeTargetWithInherit } from "../task/target-merge";
 import type { VisTargetConfiguration } from "../task/target-options";
 import { applyPreset, defaultCacheForType } from "../task/target-options";
 import { buildGitignoreMatcher } from "../util/gitignore-matcher";
+import { starGlobToRegExp } from "../util/star-glob";
 import { readZigManifestName } from "../util/zig-manifest";
 import {
     buildCargoFileOwners,
@@ -47,6 +48,7 @@ import { resolveGemProjectDirectories } from "./gem-projects";
 import { resolveGoProjectDirectories } from "./go-projects";
 import { resolveGradleProjectDirectories } from "./gradle-projects";
 import { resolveHexProjectDirectories } from "./hex-projects";
+import { applyImplicitDependencies } from "./implicit-dependencies";
 import { readMavenProjectArtifact, resolveMavenProjectDirectories } from "./maven-projects";
 import { resolveNuGetProjectDirectories } from "./nuget-projects";
 import { readPythonProjectName, resolvePythonProjectDirectories } from "./python-projects";
@@ -156,16 +158,13 @@ const resolveExactDirectory = (workspaceRoot: string, cleanPattern: string, resu
     }
 };
 
-const REGEX_SPECIALS_RE = /[$()+.?[\\\]^{|}]/g;
-
 /**
  * Top-level bare globs like `@*` or `pkg-*` — pnpm allows them as
  * shortcuts for "scope-prefixed children of the workspace root". `*` is
  * the only meta-character supported; everything else is escaped.
  */
 const resolveBareGlob = (workspaceRoot: string, cleanPattern: string, results: string[], isProjectDirectory: (directory: string) => boolean): void => {
-    const escaped = cleanPattern.replaceAll(REGEX_SPECIALS_RE, String.raw`\$&`).replaceAll("*", ".*");
-    const regex = new RegExp(`^${escaped}$`);
+    const regex = starGlobToRegExp(cleanPattern);
 
     for (const entry of walkSync(workspaceRoot, { includeFiles: false, includeSymlinks: false, maxDepth: 1, skip: [NODE_MODULES_RE, DOT_GIT_RE] })) {
         if (entry.path === workspaceRoot) {
@@ -543,7 +542,9 @@ const validateDependsOnEntries = (entries: ReadonlyArray<unknown>, projectName: 
         const { target } = entry;
 
         if (typeof target !== "string") {
-            throw new VisUserError(`Invalid dependsOn entry on ${where}: \`target\` must be a string (got ${JSON.stringify(target)}).`);
+            throw new VisUserError(
+                `Invalid dependsOn entry on ${where}: \`target\` must be a string (got ${JSON.stringify(target)}).`,
+            );
         }
 
         assertValidTargetName(target, entry);
@@ -1057,7 +1058,8 @@ const resolveProjectName = (
     pkg: PackageJson | undefined,
     projectJson: ProjectJson | undefined,
     ecosystem: NonJsEcosystem | undefined,
-): string | undefined => projectJson?.name ?? (pkg ? pkg.name : (ecosystem?.readName(join(workspaceRoot, projectDirectory)) ?? basename(projectDirectory)));
+): string | undefined =>
+    projectJson?.name ?? (pkg ? pkg.name : (ecosystem?.readName(join(workspaceRoot, projectDirectory)) ?? basename(projectDirectory)));
 
 /**
  * The non-JS discovery flags for a config. Shared by `discoverWorkspace` and
@@ -1415,68 +1417,6 @@ const buildProjectGraph = (workspaceRoot: string, workspace: WorkspaceConfigurat
     applyImplicitDependencies(workspace, dependencies, projectNames, pkgNameToProjectName);
 
     return { dependencies, nodes };
-};
-
-/**
- * Project names an `implicitDependencies` reference selects. A reference with
- * `*` is a glob over project names; any other reference is a project name,
- * or an npm package name when no project has that name.
- */
-const resolveImplicitReference = (reference: string, projectNames: Set<string>, pkgNameToProjectName: Map<string, string>): string[] => {
-    if (reference.includes("*")) {
-        const matcher = new RegExp(`^${reference.replaceAll(REGEX_SPECIALS_RE, String.raw`\$&`).replaceAll("*", ".*")}$`);
-
-        return [...projectNames].filter((name) => matcher.test(name));
-    }
-
-    const targetName = projectNames.has(reference) ? reference : pkgNameToProjectName.get(reference);
-
-    return targetName ? [targetName] : [];
-};
-
-/**
- * Applies `project.json#implicitDependencies` on top of the edges read from
- * package.json, using nx's semantics: a bare `name` adds an `implicit` edge
- * that the task graph treats as a hard ordering constraint, and `!name`
- * removes every edge from this project to `name`, whatever its type. A
- * `name` may be a project name, an npm package name, or a `*` glob over
- * project names.
- *
- * A positive entry that selects no project is an error, since the edge can
- * never be honoured. A `!` entry that selects nothing is a no-op: there is
- * no edge to remove.
- */
-const applyImplicitDependencies = (
-    workspace: WorkspaceConfiguration,
-    dependencies: Record<string, ProjectGraphDependency[]>,
-    projectNames: Set<string>,
-    pkgNameToProjectName: Map<string, string>,
-): void => {
-    for (const [name, config] of Object.entries(workspace.projects)) {
-        for (const entry of config.implicitDependencies ?? []) {
-            const excluded = entry.startsWith("!");
-            const reference = excluded ? entry.slice(1) : entry;
-            // An entry that only names this project still matches something, so it is not an error; it just adds no edge.
-            const matched = resolveImplicitReference(reference, projectNames, pkgNameToProjectName);
-            const targets = matched.filter((target) => target !== name);
-
-            if (excluded) {
-                dependencies[name] = (dependencies[name] ?? []).filter((dep) => !targets.includes(dep.target));
-
-                continue;
-            }
-
-            if (matched.length === 0) {
-                throw new VisUserError(`Project "${name}" lists implicit dependency "${entry}", which matches no project or package in this workspace.`);
-            }
-
-            for (const target of targets) {
-                if (!(dependencies[name] ?? []).some((dep) => dep.target === target)) {
-                    dependencies[name] = [...(dependencies[name] ?? []), { source: name, target, type: "implicit" }];
-                }
-            }
-        }
-    }
 };
 
 /**
