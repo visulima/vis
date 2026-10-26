@@ -202,12 +202,50 @@ const probeHooksPath = (hooksPath: string, root: string): "empty" | "missing" | 
 };
 
 /**
+ * Parses `git config --show-scope --get` output, `&lt;scope>\t&lt;value>`. The value
+ * counts only when the winning scope is the repo's own (`local` or `worktree`).
+ */
+const parseScopedValue = (output: string): string => {
+    const separator = output.indexOf("\t");
+
+    if (separator === -1) {
+        return "";
+    }
+
+    const scope = output.slice(0, separator);
+
+    return scope === "local" || scope === "worktree" ? output.slice(separator + 1).trimEnd() : "";
+};
+
+/**
+ * The `core.hooksPath` this checkout runs with: the value from its repo-level
+ * scopes, where a linked worktree's `config.worktree` wins over the shared
+ * `config`. Returns `""` when it is unset or only set globally or system-wide,
+ * which install should not treat as another tool's claim on the repo.
+ */
+const readRepoHooksPath = (): string => {
+    const { status, stdout } = spawnSync("git", ["config", "--show-scope", "--get", "core.hooksPath"], { encoding: "utf8" });
+
+    if (status === 0) {
+        return parseScopedValue(stdout);
+    }
+
+    // Exit 1 means unset. Any other failure is git predating `--show-scope` (2.26), so read the local scope instead.
+    if (status === 1) {
+        return "";
+    }
+
+    const local = spawnSync("git", ["config", "--local", "core.hooksPath"], { encoding: "utf8" });
+
+    return local.status === 0 ? (local.stdout?.trim() ?? "") : "";
+};
+
+/**
  * Picks the `core.hooksPath` install should end up with, or refuses to touch
  * it. Returns `{ target }` to proceed, or `{ yielded }` to stop.
  */
 const arbitrateHooksPath = (directory: string, target: string, topLevel: string, force: boolean): { target: string } | { yielded: InstallResult } => {
-    const checkResult = spawnSync("git", ["config", "--local", "core.hooksPath"]);
-    const existing = checkResult.status === 0 ? (checkResult.stdout?.toString().trim() ?? "") : "";
+    const existing = readRepoHooksPath();
 
     if (!existing || force) {
         return { target };

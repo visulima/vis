@@ -15,6 +15,20 @@ const HUSKY_DIRECTORIES = [".husky", ".config/husky"];
 
 const COMMON_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/common\.sh"\s*/m;
 
+const HUSKY_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/_\/husky\.sh"\s*/m;
+
+const VIS_HOOK_INSTALL = "vis hook install";
+
+/**
+ * A husky install call that stands alone: `husky`, `husky install`, or `npx husky`,
+ * followed by a shell separator or the end of the script. Replaced in place by
+ * {@link VIS_HOOK_INSTALL}.
+ */
+const HUSKY_CALL_RE = /(?<![\w./-])(?:npx\s+)?husky(?:\s+install)?(?=\s*(?:&&|\|\||;|$))/g;
+
+/** `husky install DIR`, which vis does not take a directory for. Matched first so the directory is dropped with the call. */
+const HUSKY_INSTALL_DIR_RE = /(?<![\w./-])(?:npx\s+)?husky\s+install\s+[\w./-]+(?=\s*(?:&&|\|\||;|$))/g;
+
 /**
  * Detects which husky directory is in use, if any.
  */
@@ -61,9 +75,16 @@ const readHuskyHooks = (root: string, huskyDirectory: string): Map<string, strin
 
 /**
  * Transforms a husky hook script for vis.
- * Removes the common.sh sourcing line since vis handles PATH setup in its dispatcher.
+ * Removes husky's own `_/husky.sh` sourcing, which vis never provides. The
+ * `common.sh` sourcing line stays when `keepCommonSh` is set, because the
+ * migrated copy is written next to the hooks and resolves via `$0`. Otherwise
+ * that line would point at nothing and is removed.
  */
-const transformHookScript = (content: string): string => content.replace(COMMON_SH_SOURCE_RE, "");
+const transformHookScript = (content: string, keepCommonSh = false): string => {
+    const withoutHusky = content.replace(HUSKY_SH_SOURCE_RE, "");
+
+    return keepCommonSh ? withoutHusky : withoutHusky.replace(COMMON_SH_SOURCE_RE, "");
+};
 
 /**
  * Detects the package manager used in the project.
@@ -121,6 +142,20 @@ const uninstallHuskyPackage = (root: string, logger: Console): boolean => {
  * Returns a description of the change, or undefined if unchanged.
  */
 const processScript = (scripts: Record<string, string>, scriptName: string, scriptValue: string): string | undefined => {
+    // Keep the install step: replace husky's call with `vis hook install` where it stands.
+    // A script that already installs through vis only loses the husky call, so the command is never added twice.
+    if (!scriptValue.includes(VIS_HOOK_INSTALL)) {
+        const withVisInstall = scriptValue.replaceAll(HUSKY_INSTALL_DIR_RE, VIS_HOOK_INSTALL).replaceAll(HUSKY_CALL_RE, VIS_HOOK_INSTALL);
+
+        if (withVisInstall === scriptValue) {
+            return undefined;
+        }
+
+        scripts[scriptName] = withVisInstall;
+
+        return `replaced husky with "${VIS_HOOK_INSTALL}" in "${scriptName}" script`;
+    }
+
     const cleaned = cleanHuskyFromScript(scriptValue);
 
     if (cleaned === scriptValue) {
@@ -140,7 +175,7 @@ const processScript = (scripts: Record<string, string>, scriptName: string, scri
 };
 
 /**
- * Cleans husky references from package.json scripts.
+ * Replaces husky install calls in package.json scripts with `vis hook install`.
  */
 const cleanPackageJsonScripts = (root: string, useEditorconfig?: boolean): { modified: boolean; removedScriptReferences: string[] } => {
     const packageJsonPath = join(root, "package.json");
@@ -247,7 +282,7 @@ const migrateFromHusky = (root: string, hooksDirectory: string, logger: Console,
         if (dryRun) {
             logger.info(`  (would migrate) ${hookName}`);
         } else {
-            const transformed = transformHookScript(content);
+            const transformed = transformHookScript(content, huskyHooks.has("common.sh"));
 
             writeFileSync(join(targetDirectory, hookName), transformed, { mode: 0o755 });
             logger.info(`  Migrated ${hookName}`);
@@ -257,7 +292,8 @@ const migrateFromHusky = (root: string, hooksDirectory: string, logger: Console,
     }
 
     if (dryRun) {
-        logger.info(`  (would remove) husky npm package and clean package.json scripts`);
+        logger.info(`  (would remove) husky npm package`);
+        logger.info(`  (would replace) husky install calls in package.json scripts with "${VIS_HOOK_INSTALL}"`);
         logger.info(`  (would remove) ${huskyDirectory}/ directory`);
     } else {
         uninstallHuskyPackage(root, logger);
