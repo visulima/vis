@@ -4,6 +4,7 @@ import { relative } from "@visulima/path";
 import type { WorkspaceConfiguration } from "@visulima/task-runner";
 
 import type { VisProjectConfiguration } from "../config/workspace";
+import { starGlobToRegExp } from "../util/star-glob";
 
 /**
  * Parsed form of a target selector.
@@ -235,6 +236,19 @@ export const parseQuery = (input: string): ParsedQuery | undefined => {
 };
 
 /**
+ * Whether a clause value matches an actual value. `*` matches any run of
+ * characters and everything else is literal, so `project!=examples_*`
+ * excludes every project whose name starts with `examples_`.
+ */
+const valueMatches = (value: string, actual: string): boolean => {
+    if (!value.includes("*")) {
+        return actual === value;
+    }
+
+    return starGlobToRegExp(value).test(actual);
+};
+
+/**
  * Evaluates a single clause against a project configuration. Supports
  * the following fields (matching moon's where possible):
  *
@@ -249,14 +263,14 @@ const matchClause = (clause: QueryClause, name: string, project: VisProjectConfi
     const { field, op, value } = clause;
 
     const test = (actual: string | undefined): boolean => {
-        const matched = actual === value;
+        const matched = actual !== undefined && valueMatches(value, actual);
 
         return op === "=" ? matched : !matched;
     };
 
     const testList = (actuals: string[] | undefined): boolean => {
         const list = actuals ?? [];
-        const matched = list.includes(value);
+        const matched = list.some((actual) => valueMatches(value, actual));
 
         return op === "=" ? matched : !matched;
     };

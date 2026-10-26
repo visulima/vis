@@ -599,6 +599,16 @@ export interface VisConfig {
     };
 
     /**
+     * Workspace package directories to leave out of the project graph:
+     * `vis list`, `run`, `affected` and the graph never see them. The
+     * package manager still installs them, so use this for fixtures that
+     * must be in `pnpm-workspace.yaml` but should not be built or tested.
+     * Uses the same `!`-exclusion semantics as `pnpm-workspace.yaml`.
+     * @example ["packages/fixtures/**"]
+     */
+    projectIgnore?: string[];
+
+    /**
      * Python projects as task projects. Off by default: a directory with a
      * `pyproject.toml` (and `[project]`) gets an inferred build target only when this is set.
      */

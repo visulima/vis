@@ -814,6 +814,8 @@ If two projects already have a `package.json` dependency edge (`"dependencies": 
 
 Add the same project name to multiple consumers' `implicitDependencies` to fan it out; vis deduplicates during graph construction.
 
+Entries can also be a glob over project names (`"@myorg/*"`), and a leading `!` removes an edge that `package.json` would otherwise create: `"!@myorg/lib"` drops the `workspace:*` edge to that project, so a dependency that is only used for types does not trigger rebuilds. An entry that matches no project or package name is a configuration error, not a silent no-op.
+
 ### Targets in project.json
 
 Target definitions in `project.json` are merged on top of package.json scripts. If a target has a `command`, it overrides the script. If not, the package.json script is used as the command.
@@ -934,6 +936,16 @@ vis automatically discovers your workspace structure:
 2. **npm/yarn/bun** — Falls back to the `workspaces` field in root `package.json`
 3. **Project metadata** — Reads `project.json` files for targets, tags, layer, stack, language, owners
 4. **Dependency graph** — Built from `dependencies`, `devDependencies`, and `peerDependencies` in each project's `package.json`, and from path dependencies in each crate's `Cargo.toml`
+
+To keep packages out of the project graph while the workspace file still lists them, set `projectIgnore` in `vis.config.ts` to a list of globs over workspace-relative directories:
+
+```ts
+export default defineConfig({
+    projectIgnore: ["packages/fixtures/**", "**/__fixtures__/**"],
+});
+```
+
+Ignored directories are not discovered, so `vis list`, `vis affected` and `--query` never see them. The same globs also apply to `--query`'s `*` wildcard, which matches any run of characters in a tag or name value.
 
 ### Cargo crates
 

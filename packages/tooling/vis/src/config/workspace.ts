@@ -32,6 +32,7 @@ import { mergeTargetWithInherit } from "../task/target-merge";
 import type { VisTargetConfiguration } from "../task/target-options";
 import { applyPreset, defaultCacheForType } from "../task/target-options";
 import { buildGitignoreMatcher } from "../util/gitignore-matcher";
+import { starGlobToRegExp } from "../util/star-glob";
 import { readZigManifestName } from "../util/zig-manifest";
 import {
     buildCargoFileOwners,
@@ -47,6 +48,7 @@ import { resolveGemProjectDirectories } from "./gem-projects";
 import { resolveGoProjectDirectories } from "./go-projects";
 import { resolveGradleProjectDirectories } from "./gradle-projects";
 import { resolveHexProjectDirectories } from "./hex-projects";
+import { applyImplicitDependencies } from "./implicit-dependencies";
 import { readMavenProjectArtifact, resolveMavenProjectDirectories } from "./maven-projects";
 import { resolveNuGetProjectDirectories } from "./nuget-projects";
 import { readPythonProjectName, resolvePythonProjectDirectories } from "./python-projects";
@@ -135,6 +137,13 @@ const resolveDoubleGlob = (workspaceRoot: string, cleanPattern: string, results:
         return;
     }
 
+    // pnpm's `dir/**` matches `dir` itself as well as everything under it;
+    // the recursive scan below only visits descendants, so check the base.
+    // `dir/*/*` does not match `dir`, so this only applies to `/**`.
+    if (DOUBLE_GLOB_SUFFIX_RE.test(cleanPattern) && isProjectDirectory(baseDirectory)) {
+        results.push(base);
+    }
+
     scanDirectoryRecursive(baseDirectory, base, results, isProjectDirectory);
 };
 
@@ -149,16 +158,13 @@ const resolveExactDirectory = (workspaceRoot: string, cleanPattern: string, resu
     }
 };
 
-const REGEX_SPECIALS_RE = /[$()+.?[\\\]^{|}]/g;
-
 /**
  * Top-level bare globs like `@*` or `pkg-*` — pnpm allows them as
  * shortcuts for "scope-prefixed children of the workspace root". `*` is
  * the only meta-character supported; everything else is escaped.
  */
 const resolveBareGlob = (workspaceRoot: string, cleanPattern: string, results: string[], isProjectDirectory: (directory: string) => boolean): void => {
-    const escaped = cleanPattern.replaceAll(REGEX_SPECIALS_RE, String.raw`\$&`).replaceAll("*", ".*");
-    const regex = new RegExp(`^${escaped}$`);
+    const regex = starGlobToRegExp(cleanPattern);
 
     for (const entry of walkSync(workspaceRoot, { includeFiles: false, includeSymlinks: false, maxDepth: 1, skip: [NODE_MODULES_RE, DOT_GIT_RE] })) {
         if (entry.path === workspaceRoot) {
@@ -231,9 +237,11 @@ const resolveWorkspacePatterns = (workspaceRoot: string, patterns: string[], isP
         return directories;
     }
 
+    // Overlapping patterns (`tools` and `tools/**`) can resolve the same
+    // directory twice; keep the first occurrence.
     const matcher = buildGitignoreMatcher({ cwd: workspaceRoot, extraPatterns: negatives });
 
-    return matcher.filterDirectories(directories);
+    return matcher.filterDirectories([...new Set(directories)]);
 };
 
 /**
@@ -369,6 +377,15 @@ const NON_JS_ECOSYSTEMS: ReadonlyArray<NonJsEcosystem> = [
 ];
 
 const NON_JS_DETECTORS: ReadonlySet<Detector> = new Set(NON_JS_ECOSYSTEMS.map((ecosystem) => ecosystem.detector));
+
+/**
+ * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
+ * discovery drops those directories exactly as it drops pnpm `!` entries.
+ */
+const withProjectIgnore = (workspacePatterns: string[], config: VisConfig): string[] => [
+    ...workspacePatterns,
+    ...(config.projectIgnore ?? []).map((pattern) => `!${pattern}`),
+];
 
 const resolveProjectDirectories = (
     workspaceRoot: string,
@@ -1105,7 +1122,7 @@ const discoverWorkspace = (
 
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        workspacePatterns,
+        withProjectIgnore(workspacePatterns, config),
         nonJsDiscoverOptions(config),
     );
 
@@ -1397,6 +1414,8 @@ const buildProjectGraph = (workspaceRoot: string, workspace: WorkspaceConfigurat
         }
     }
 
+    applyImplicitDependencies(workspace, dependencies, projectNames, pkgNameToProjectName);
+
     return { dependencies, nodes };
 };
 
@@ -1432,7 +1451,7 @@ const loadVisTaskConfigsForWorkspace = async (workspaceRoot: string, config: Vis
     // that is not discovered could fail to load and reject the whole workspace.
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        workspacePatterns,
+        withProjectIgnore(workspacePatterns, config),
         nonJsDiscoverOptions(config),
     );
     const result: VisTaskConfigIndex = new Map();

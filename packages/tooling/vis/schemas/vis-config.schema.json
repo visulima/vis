@@ -930,6 +930,18 @@
             "additionalProperties": false,
             "description": "Pre-flight checks fired before `vis run` starts the orchestrator. Each check is opt-out (`false`) — defaults are sensible for the common monorepo case."
         },
+        "projectIgnore": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Workspace package directories to leave out of the project graph: `vis list`, `run`, `affected` and the graph never see them. The package manager still installs them, so use this for fixtures that must be in `pnpm-workspace.yaml` but should not be built or tested. Uses the same `!`-exclusion semantics as `pnpm-workspace.yaml`.",
+            "examples": [
+                [
+                    "packages/fixtures/**"
+                ]
+            ]
+        },
         "python": {
             "type": "object",
             "properties": {

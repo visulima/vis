@@ -61,40 +61,37 @@ const STALE_NANO_STAGED_PATTERNS: ReadonlyArray<RegExp> = [
 // stripped from devDependencies without their scripts/configs being rewritten.
 const REPLACED_PACKAGES = ["husky", "lint-staged", "nano-staged"] as const;
 
-// Husky script patterns — shared between hook/migrate and migrate/deps
-const HUSKY_STANDALONE_RE = /\(is-ci \|\| husky \|\| exit 0\)\s*&&\s*/g;
-const HUSKY_INSTALL_AND_RE = /\bhusky(?:\s+install)?\s*&&\s*/g;
-
-const AND_HUSKY_INSTALL_RE = /\s*&&\s*husky(?:\s+install)?/g;
-
-const OR_HUSKY_INSTALL_RE = /\s*\|\|\s*husky(?:\s+install)?/g;
-
-const HUSKY_SCRIPT_PATTERNS: ReadonlyArray<RegExp> = [HUSKY_STANDALONE_RE, HUSKY_INSTALL_AND_RE, AND_HUSKY_INSTALL_RE, OR_HUSKY_INSTALL_RE];
+const VIS_HOOK_INSTALL = "vis hook install";
 
 /**
- * Remove husky references from a single script value.
- * Returns the cleaned script, or undefined if the entire script should be removed.
+ * A husky install call in command position: `husky`, `husky install`, `husky install DIR`, or `npx husky`, at
+ * the start of a command, that is after the start of the script or a shell separator (`;`, `|`, `(` or a logical
+ * AND or OR), and followed by a separator or the end of the script. Arguments such as `rm -rf husky` are not command positions.
  */
-const cleanHuskyFromScript = (scriptValue: string): string | undefined => {
-    // Remove standalone husky commands entirely
-    if (scriptValue === "husky" || scriptValue === "husky install") {
-        return undefined;
+const HUSKY_CALL = String.raw`(?:npx\s+)?husky(?:\s+install(?:\s+[\w./-]+)?)?`;
+
+const HUSKY_CALL_RE = new RegExp(String.raw`(?<=(?:^|[;&|(])\s*)${HUSKY_CALL}(?=\s*(?:&&|\|\||;|\)|$))`, "g");
+
+/** A husky call together with the separator that joins it to the rest of the script, for scripts that already install through vis. */
+const HUSKY_CALL_WITH_SEPARATOR_RE = new RegExp(
+    String.raw`(?<=(?:^|[;&|(])\s*)${HUSKY_CALL}\s*(?:&&|\|\||;)\s*|\s*(?:&&|\|\||;)\s*${HUSKY_CALL}(?=\s*(?:$|[;&|)]))`,
+    "g",
+);
+
+/**
+ * Rewrites a script that calls husky, so that installing hooks keeps working. A husky install call in
+ * command position becomes `installCommand` in place. A script that already installs through vis only
+ * loses the husky call, so the command never appears twice.
+ */
+const rewriteHuskyScript = (scriptValue: string, installCommand: string = VIS_HOOK_INSTALL): string => {
+    if (scriptValue.includes(VIS_HOOK_INSTALL)) {
+        return scriptValue.replaceAll(HUSKY_CALL_WITH_SEPARATOR_RE, "").trim();
     }
 
-    let cleaned = scriptValue;
-
-    for (const pattern of HUSKY_SCRIPT_PATTERNS) {
-        cleaned = cleaned.replace(pattern, "");
-    }
-
-    cleaned = cleaned.trim();
-
-    return cleaned === scriptValue ? scriptValue : cleaned || undefined;
+    return scriptValue.replaceAll(HUSKY_CALL_RE, installCommand);
 };
 
 export {
-    cleanHuskyFromScript,
-    HUSKY_SCRIPT_PATTERNS,
     LINT_STAGED_ALL_CONFIG_FILES,
     LINT_STAGED_JSON_CONFIG_FILES,
     LINT_STAGED_OTHER_CONFIG_FILES,
@@ -102,6 +99,8 @@ export {
     NANO_STAGED_JSON_CONFIG_FILES,
     NANO_STAGED_OTHER_CONFIG_FILES,
     REPLACED_PACKAGES,
+    rewriteHuskyScript,
     STALE_LINT_STAGED_PATTERNS,
     STALE_NANO_STAGED_PATTERNS,
+    VIS_HOOK_INSTALL,
 };

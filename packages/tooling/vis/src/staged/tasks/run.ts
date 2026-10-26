@@ -184,6 +184,7 @@ const runCommand = async (command: CommandDescriptor, options: RunTasksOptions, 
                 killSignal: options.killSignal,
                 maxArgLength: options.maxArgLength,
                 signal,
+                verbatim: command.verbatim === true,
             });
 
             return { durationMs: result.durationMs, output: options.verbose ? result.output : undefined, status: "success" };

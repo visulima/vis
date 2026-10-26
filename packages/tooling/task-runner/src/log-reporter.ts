@@ -25,10 +25,11 @@ export type LogMode = "grouped" | "interleaved" | "labeled";
  *   understands ANSI.
  * - `never`: always strip — useful for log files / JSON-collecting CI.
  *
- * Live spawn output is captured with `FORCE_COLOR=1` so cache entries
- * always contain colored bytes; without this control, replaying a cache
- * hit into a non-color destination prints raw escape sequences. See
- * voidzero-dev/vite-task#358 / #378.
+ * Children get `FORCE_COLOR=1` only when the runner's own stdout is a TTY,
+ * so a terminal run caches colored bytes. Output from a piped or CI run has
+ * no colour, and replaying it into a terminal shows it uncoloured. Cache
+ * hits into a non-color destination still need the stripping below, or raw
+ * escape sequences are printed. See voidzero-dev/vite-task#358 / #378.
  */
 export type ColorMode = "always" | "auto" | "never";
 

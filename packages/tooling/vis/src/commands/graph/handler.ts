@@ -7,7 +7,6 @@ import isInCi from "is-in-ci";
 import React from "react";
 
 import { buildProjectGraph, discoverWorkspace } from "../../config/workspace";
-import { emitGraphHtml } from "../../report/graph/html";
 import { GraphStore } from "../../tui/components/graph/graph-store";
 import VisGraphApp from "../../tui/components/graph/vis-graph-app";
 import type { GraphOptions } from "./index";
@@ -201,7 +200,11 @@ const projectGraphToJson = (
     return { edges, nodes };
 };
 
-const projectGraphToHtml = (projectGraph: ProjectGraph): string => {
+const projectGraphToHtml = async (projectGraph: ProjectGraph): Promise<string> => {
+    // Loaded on demand: the HTML runtime needs sigma and floating-ui, which the
+    // other formats do not, so they must not be required at command load time.
+    const { emitGraphHtml } = await import("../../report/graph/html");
+
     const nodes = Object.values(projectGraph.nodes).map((node) => {
         return {
             name: node.name,
@@ -249,7 +252,7 @@ const execute = async ({ fs, logger, options, visConfig, workspaceRoot: wsRoot }
         }
 
         case "html": {
-            output = projectGraphToHtml(projectGraph);
+            output = await projectGraphToHtml(projectGraph);
             break;
         }
 

@@ -149,6 +149,13 @@ export interface CommandDescriptor {
     readonly run?: (files: string[]) => unknown;
     readonly source: "custom" | "function" | "string";
     readonly title: string;
+
+    /**
+     * Run the command exactly as returned, once, with no matched files appended.
+     * Set for command strings a task function returned, since the function has
+     * already decided which files go where.
+     */
+    readonly verbatim?: boolean;
 }
 
 /** A runtime descriptor for a glob pattern and its resolved commands. */

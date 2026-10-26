@@ -1,9 +1,7 @@
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync as fsReadFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 
-import { findCacheDirSync } from "@visulima/find-cache-dir";
-import { ensureDirSync, isAccessibleSync, readJsonSync, writeJsonSync } from "@visulima/fs";
+import { isAccessibleSync } from "@visulima/fs";
 import { dirname, isAbsolute, join } from "@visulima/path";
 
 import { VisConfigCycleError, VisConfigLoadError, VisConfigNotFoundError } from "../errors";
@@ -151,8 +149,6 @@ const findVisTaskConfigFile = (projectDirectory: string): string | undefined => 
 
     return undefined;
 };
-
-const hashFileContents = (filePath: string): string => createHash("sha256").update(fsReadFileSync(filePath)).digest("hex");
 
 const normalizeExtends = (value: VisConfig["extends"]): string[] => {
     if (value === undefined) {
@@ -402,87 +398,25 @@ const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPa
     return applyDefaults(merged);
 };
 
-interface VisTaskConfigCache {
-    config: VisTaskConfig;
-    hash: string;
-}
-
-const sanitizeProjectName = (projectName: string): string => projectName.replaceAll(/[^\w.-]+/g, "_");
-
-const getVisTaskCachePath = (workspaceRoot: string, projectName: string): string | undefined => {
-    const nodeModulesDir = join(workspaceRoot, "node_modules");
-    const safeName = sanitizeProjectName(projectName);
-
-    if (isAccessibleSync(nodeModulesDir)) {
-        const directCacheDir = join(nodeModulesDir, ".cache", "vis", "task-configs");
-
-        ensureDirSync(directCacheDir);
-
-        return join(directCacheDir, `${safeName}.json`);
-    }
-
-    const cacheDir = findCacheDirSync("vis", { create: true, cwd: workspaceRoot });
-
-    return cacheDir ? join(cacheDir, "task-configs", `${safeName}.json`) : undefined;
-};
-
-const readVisTaskCache = (cachePath: string, hash: string): VisTaskConfig | undefined => {
-    if (!isAccessibleSync(cachePath)) {
-        return undefined;
-    }
-
-    try {
-        const cache = readJsonSync(cachePath) as unknown as VisTaskConfigCache;
-
-        if (cache.hash === hash) {
-            return cache.config;
-        }
-    } catch {
-        // Corrupt cache — ignore
-    }
-
-    return undefined;
-};
-
-const writeVisTaskCache = (cachePath: string, hash: string, config: VisTaskConfig): void => {
-    try {
-        ensureDirSync(dirname(cachePath));
-        writeJsonSync(cachePath, { config, hash } satisfies VisTaskConfigCache);
-    } catch {
-        // Non-critical
-    }
-};
-
 /**
  * Load the per-package `vis.task.ts` overlay for a project, if any.
  *
  * Returns `undefined` when no overlay file exists. Otherwise compiles
- * the file via the oxc TS loader and caches the result under
- * `node_modules/.cache/vis/task-configs/&lt;project>.json`, keyed by the
- * file's content hash.
+ * the file via the oxc TS loader on every call. The result is not cached
+ * on disk: a content hash of the overlay file misses edits to the modules it
+ * imports, and a JSON copy cannot hold function values.
  *
  * Errors thrown by the file are wrapped in `VisConfigLoadError` so the
  * source path is reported instead of an opaque workspace.ts failure.
- * @param workspaceRoot Absolute workspace root path (cache scope).
+ * @param _workspaceRoot Absolute workspace root path. Unused, since the overlay is not cached. Kept for a stable public signature.
  * @param projectDirectory Absolute path of the project to probe.
- * @param projectName Project identifier — used to scope the cache file.
+ * @param _projectName Project identifier. Unused, since the overlay is not cached. Kept for a stable public signature.
  */
-const loadVisTaskConfig = async (workspaceRoot: string, projectDirectory: string, projectName: string): Promise<VisTaskConfig | undefined> => {
+const loadVisTaskConfig = async (_workspaceRoot: string, projectDirectory: string, _projectName: string): Promise<VisTaskConfig | undefined> => {
     const taskConfigPath = findVisTaskConfigFile(projectDirectory);
 
     if (!taskConfigPath) {
         return undefined;
-    }
-
-    const hash = hashFileContents(taskConfigPath);
-    const cachePath = getVisTaskCachePath(workspaceRoot, projectName);
-
-    if (cachePath) {
-        const cached = readVisTaskCache(cachePath, hash);
-
-        if (cached) {
-            return cached;
-        }
     }
 
     // loadRawConfig validates against VisConfig-shaped keys; vis.task.ts
@@ -491,13 +425,7 @@ const loadVisTaskConfig = async (workspaceRoot: string, projectDirectory: string
 
     assertNoDeprecatedTaskKeys(taskConfigPath, [], raw);
 
-    const taskConfig = raw as unknown as VisTaskConfig;
-
-    if (cachePath) {
-        writeVisTaskCache(cachePath, hash, taskConfig);
-    }
-
-    return taskConfig;
+    return raw;
 };
 
 /**

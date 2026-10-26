@@ -61,6 +61,11 @@ const STDIO_DRAIN_GRACE_MS = 2000;
  * config.env spread) silently overrode a caller passing `FORCE_COLOR=0` to
  * disable color for tools that misbehave with ANSI / emit JSON. See
  * voidzero-dev/vite-task#379.
+ *
+ * The `"1"` default is only applied when the runner's own stdout is a TTY
+ * and the caller has not set `NO_COLOR`. Otherwise children get no
+ * `FORCE_COLOR` at all: forcing colour into piped, CI or `NO_COLOR` runs
+ * breaks tools that match their output as plain text.
  */
 const mergeEnvWithForceColor = (
     configEnv: NodeJS.ProcessEnv | undefined,
@@ -71,13 +76,30 @@ const mergeEnvWithForceColor = (
     // `inheritEnv: false` means the caller already built the whole child
     // environment (clean mode), so the parent env is not a fallback source.
     const parentEnv: NodeJS.ProcessEnv = inheritEnv ? process.env : {};
-
-    return {
+    const merged: NodeJS.ProcessEnv = {
         ...parentEnv,
         ...configEnv,
         ...extras,
-        FORCE_COLOR: callerForceColor ?? parentEnv["FORCE_COLOR"] ?? "1",
     };
+    const forceColor = callerForceColor ?? parentEnv["FORCE_COLOR"] ?? defaultForceColor(merged);
+
+    if (forceColor !== undefined) {
+        merged["FORCE_COLOR"] = forceColor;
+    }
+
+    return merged;
+};
+
+/**
+ * `"1"` when colour should be forced into children, `undefined` otherwise.
+ * Colour is forced only for an interactive runner whose caller has not
+ * asked for plain output (`NO_COLOR`, non-empty, per no-color.org).
+ */
+const defaultForceColor = (env: NodeJS.ProcessEnv): string | undefined => {
+    const noColor = env["NO_COLOR"];
+    const colorDisabled = noColor !== undefined && noColor !== "";
+
+    return process.stdout.isTTY && !colorDisabled ? "1" : undefined;
 };
 
 interface ActiveProcess {
