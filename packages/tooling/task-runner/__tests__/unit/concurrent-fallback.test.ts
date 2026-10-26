@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { runConcurrentFallback } from "../../src/concurrent-fallback";
 import type { ConcurrentCommandConfig, ProcessEvent } from "../../src/types";
@@ -360,4 +360,94 @@ describe(runConcurrentFallback, () => {
         },
         15_000,
     );
+});
+
+describe("child process FORCE_COLOR policy", () => {
+    const probe = "node -e \"process.stdout.write(String(process.env.FORCE_COLOR))\"";
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const saved: Record<string, string | undefined> = {};
+
+    const setStdoutIsTTY = (value: boolean): void => {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value });
+    };
+
+    const runProbe = async (env?: Record<string, string>): Promise<string> => {
+        const events: ProcessEvent[] = [];
+
+        await runConcurrentFallback([{ command: probe, env }], { onEvent: (event) => events.push(event) });
+
+        return events
+            .filter((event) => event.kind === "stdout")
+            .map((event) => event.text)
+            .join("");
+    };
+
+    beforeEach(() => {
+        for (const name of ["FORCE_COLOR", "NO_COLOR"]) {
+            saved[name] = process.env[name];
+            Reflect.deleteProperty(process.env, name);
+        }
+    });
+
+    afterEach(() => {
+        for (const name of ["FORCE_COLOR", "NO_COLOR"]) {
+            if (saved[name] === undefined) {
+                Reflect.deleteProperty(process.env, name);
+            } else {
+                process.env[name] = saved[name];
+            }
+        }
+
+        if (stdoutDescriptor) {
+            Object.defineProperty(process.stdout, "isTTY", stdoutDescriptor);
+        } else {
+            delete (process.stdout as { isTTY?: boolean }).isTTY;
+        }
+    });
+
+    it.skipIf(process.platform === "win32")("should not force colour when the runner's stdout is not a TTY", async () => {
+        expect.assertions(1);
+
+        setStdoutIsTTY(false);
+
+        await expect(runProbe()).resolves.toBe("undefined");
+    });
+
+    it.skipIf(process.platform === "win32")("should not force colour in CI when stdout is not a TTY", async () => {
+        expect.assertions(1);
+
+        setStdoutIsTTY(false);
+        process.env["CI"] = "true";
+
+        try {
+            await expect(runProbe()).resolves.toBe("undefined");
+        } finally {
+            Reflect.deleteProperty(process.env, "CI");
+        }
+    });
+
+    it.skipIf(process.platform === "win32")("should never force colour when NO_COLOR is set, even on a TTY", async () => {
+        expect.assertions(1);
+
+        setStdoutIsTTY(true);
+        process.env["NO_COLOR"] = "1";
+
+        await expect(runProbe()).resolves.toBe("undefined");
+    });
+
+    it.skipIf(process.platform === "win32")("should force colour when the runner's stdout is a TTY", async () => {
+        expect.assertions(1);
+
+        setStdoutIsTTY(true);
+
+        await expect(runProbe()).resolves.toBe("1");
+    });
+
+    it.skipIf(process.platform === "win32")("should keep a task-level FORCE_COLOR over the TTY default", async () => {
+        expect.assertions(1);
+
+        setStdoutIsTTY(true);
+
+        await expect(runProbe({ FORCE_COLOR: "0" })).resolves.toBe("0");
+    });
 });
