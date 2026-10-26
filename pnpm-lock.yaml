@@ -243,8 +243,8 @@ catalogs:
       specifier: 5.10.0
       version: 5.10.0
     undici:
-      specifier: ^8.12.2
-      version: 8.12.2
+      specifier: ^8.12.3
+      version: 8.12.3
     yaml:
       specifier: 2.9.1
       version: 2.9.1
@@ -1279,7 +1279,7 @@ importers:
         version: 4.1.0
       '@visulima/task-runner':
         specifier: 3.0.1
-        version: link:../task-runner
+        version: 3.0.1(@grpc/grpc-js@1.14.5)(@grpc/proto-loader@0.8.1)
       '@visulima/tui':
         specifier: 5.0.0
         version: link:../../terminal/tui
@@ -1574,7 +1574,7 @@ importers:
         version: 6.0.3
       undici:
         specifier: catalog:prod
-        version: 8.12.2
+        version: 8.12.3
       validate-npm-package-name:
         specifier: ^8.0.0
         version: 8.0.0
@@ -6469,6 +6469,70 @@ packages:
   '@visulima/tabular@4.1.0':
     resolution: {integrity: sha512-fIzyHilmtFwEBfS9Tmc/G/PY77yu7+SrJfXljhFdWOW4K881wFjIuVd1bvydAqPJ3a0kgQ11iP4i50gG4JXtJQ==}
     engines: {node: ^22.14.0 || >=24.10.0}
+
+  '@visulima/task-runner-binding-darwin-arm64@3.0.1':
+    resolution: {integrity: sha512-V21KGyTqIsUP0xGzxa+0wHoZVWPj4u8Hwk/wSVIATJZfSEkWjPUiX7EyoJ65vbJnOpQZKvxKXq1gEQWtPDvLqg==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@visulima/task-runner-binding-darwin-x64@3.0.1':
+    resolution: {integrity: sha512-WjlPAcCZhss5mUypVyKo22crxMcdqr1B3oPnGwGNbo5no/XhapLKWtqXFCmv5EAhjAB4gJNwbMIURVvcEU4iHw==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [x64]
+    os: [darwin]
+
+  '@visulima/task-runner-binding-linux-arm64-gnu@3.0.1':
+    resolution: {integrity: sha512-Nc2lXgoiPU2S2gRGZzZCkMGNIrYSWEopp4+L7RvEEnZiyes08ZXo45CROSgKAqhkGMuurv7uioJEtq7BW5Ttsw==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@visulima/task-runner-binding-linux-arm64-musl@3.0.1':
+    resolution: {integrity: sha512-1PnovI+2NBQ84IzX/Y6SnK/9G/OiRuwBWnVLCQ0LyT5V+ooFZEtgDiSICKbuSIQkfTMYrtE0IOw8mWlwgMu12A==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@visulima/task-runner-binding-linux-x64-gnu@3.0.1':
+    resolution: {integrity: sha512-WzSLMnNQF4+mmfZcMrmXMssY7Ul2qOPKWdg55Jq6afQrbcq4vH7PtEKMPGUs3hnGNRawOHkoRtSytlv26t4Tkg==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@visulima/task-runner-binding-linux-x64-musl@3.0.1':
+    resolution: {integrity: sha512-IiWc5jbMvU4xX8vuQ6VObN0t3KQxCnfBE1glT9Ro5cSk1gthznPe3ATsjq9amuEWji0tMfeilr3N/zn1lMBRdw==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@visulima/task-runner-binding-win32-arm64-msvc@3.0.1':
+    resolution: {integrity: sha512-woRLZnNwt2KQ9Im8EMBamCFqvwtOoiS9uyliwc+s4a0DlFnjE5ycHVA2fM/rbdHpwvl9bPpBrXbxWKfpIyGZDw==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [arm64]
+    os: [win32]
+
+  '@visulima/task-runner-binding-win32-x64-msvc@3.0.1':
+    resolution: {integrity: sha512-PdWid9Qf+Prv7PTBg+UnT3DxdHE1c0I2+E0UhUqMByivj3TQ1gnN+BD8aiKdp4iT4aKdSX9K7+xprAKzMHzxaA==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    cpu: [x64]
+    os: [win32]
+
+  '@visulima/task-runner@3.0.1':
+    resolution: {integrity: sha512-Nfy0tNsGd6QsunJaPgvEhATFi1wWbXLUog5eBe1zUgFc5Gd+qpZyKt5vTDKmP688WJTiyWdJcKgEcNccSizV6g==}
+    engines: {node: ^22.14.0 || >=24.10.0}
+    peerDependencies:
+      '@grpc/grpc-js': '>=1.14.5 <2'
+      '@grpc/proto-loader': '*'
+    peerDependenciesMeta:
+      '@grpc/grpc-js':
+        optional: true
+      '@grpc/proto-loader':
+        optional: true
 
   '@visulima/tsconfig@2.1.3':
     resolution: {integrity: sha512-q53VQIgT67MxxUciKn/3faiYUw4yC8jseA0xaVu00yuQIb6a15SHx/sgEathNropsyaUdDgzwlOH+L3de8Fs8g==}
@@ -11805,6 +11869,10 @@ packages:
 
   undici@8.12.2:
     resolution: {integrity: sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==}
+    engines: {node: '>=22.19.0'}
+
+  undici@8.12.3:
+    resolution: {integrity: sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==}
     engines: {node: '>=22.19.0'}
 
   unicode-emoji-modifier-base@1.0.0:
@@ -17350,6 +17418,48 @@ snapshots:
   '@visulima/string@3.1.1': {}
 
   '@visulima/tabular@4.1.0': {}
+
+  '@visulima/task-runner-binding-darwin-arm64@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-darwin-x64@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-linux-arm64-gnu@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-linux-arm64-musl@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-linux-x64-gnu@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-linux-x64-musl@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-win32-arm64-msvc@3.0.1':
+    optional: true
+
+  '@visulima/task-runner-binding-win32-x64-msvc@3.0.1':
+    optional: true
+
+  '@visulima/task-runner@3.0.1(@grpc/grpc-js@1.14.5)(@grpc/proto-loader@0.8.1)':
+    dependencies:
+      '@lydell/node-pty': 1.2.0-beta.15
+      '@visulima/humanizer': 4.0.0
+      '@visulima/path': 5.0.0
+      nanotar: 0.3.0
+    optionalDependencies:
+      '@grpc/grpc-js': 1.14.5
+      '@grpc/proto-loader': 0.8.1
+      '@visulima/task-runner-binding-darwin-arm64': 3.0.1
+      '@visulima/task-runner-binding-darwin-x64': 3.0.1
+      '@visulima/task-runner-binding-linux-arm64-gnu': 3.0.1
+      '@visulima/task-runner-binding-linux-arm64-musl': 3.0.1
+      '@visulima/task-runner-binding-linux-x64-gnu': 3.0.1
+      '@visulima/task-runner-binding-linux-x64-musl': 3.0.1
+      '@visulima/task-runner-binding-win32-arm64-msvc': 3.0.1
+      '@visulima/task-runner-binding-win32-x64-msvc': 3.0.1
 
   '@visulima/tsconfig@2.1.3(yaml@2.9.1)':
     dependencies:
@@ -23512,6 +23622,8 @@ snapshots:
   undici@7.29.1: {}
 
   undici@8.12.2: {}
+
+  undici@8.12.3: {}
 
   unicode-emoji-modifier-base@1.0.0: {}
 
