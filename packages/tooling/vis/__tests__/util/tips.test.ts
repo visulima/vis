@@ -139,7 +139,7 @@ describe("tip matching", () => {
 
         const tip = tips.find((t) => t.id === "security-check")!;
 
-        expect(tip.matches(makeContext("check", ["--security"]))).toBe(false);
+        expect(tip.matches(makeContext("outdated", ["--security"]))).toBe(false);
     });
 
     it("ai-analysis should not match when --ai already present", () => {

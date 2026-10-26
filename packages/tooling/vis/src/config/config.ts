@@ -456,7 +456,7 @@ const defineTaskConfig = (config: VisTaskConfig): VisTaskConfig => config;
  * editor autocomplete and structural type-checking on the literal you pass
  * in. Secure defaults are applied by `loadVisConfig` at load time, not here,
  * so wrapping vs. using `satisfies VisConfig` produces the exact same
- * runtime behavior. To see the active defaults, run `vis check --security-config`.
+ * runtime behavior. To see the active defaults, run `vis outdated --security-config`.
  * @example
  * ```typescript
  * // vis.config.ts — minimal config, fully secured by defaults

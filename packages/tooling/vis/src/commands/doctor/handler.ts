@@ -691,7 +691,7 @@ const displaySupplyChain = (results: DoctorResults): void => {
     }
 
     if (results.supplyChain.status !== "ok") {
-        pail.log(`  ${dim(SYMBOLS.arrow)} ${dim("Configure with security.* in vis.config.ts. See `vis check --security-config` for details.")}`);
+        pail.log(`  ${dim(SYMBOLS.arrow)} ${dim("Configure with security.* in vis.config.ts. See `vis outdated --security-config` for details.")}`);
     }
 };
 

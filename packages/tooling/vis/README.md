@@ -142,11 +142,14 @@ vis affected test --base=main
 # Visualize the project dependency graph
 vis graph
 
-# Check for outdated catalog dependencies
+# Lint, format, and type-check the workspace
 vis check
 
+# Check for outdated catalog dependencies
+vis outdated
+
 # Check with security vulnerability scanning
-vis check --security
+vis outdated --security
 
 # Update catalog dependencies interactively, plus any
 # GitHub Actions, Dockerfile, docker-compose, or GitLab CI
@@ -222,7 +225,8 @@ When aube is the installer, `vis doctor` surfaces aube's effective hardening pos
 | `vis ci <targets>`      |        | One-shot CI entry point: toolchain, install, then affected runs for each comma-separated target |
 | `vis ignore <project>`  |        | CI build gating for Vercel / Netlify "Ignored Build Step"                              |
 | `vis graph`             |        | Visualize the project dependency graph                                                 |
-| `vis check [packages]`  | `c`    | Check for outdated dependencies in workspace catalogs                                  |
+| `vis check [files]`     |        | Lint, check formatting, and type-check the workspace (`--fix` applies changes)         |
+| `vis outdated [packages]` |        | Check for outdated dependencies in workspace catalogs                                  |
 | `vis update [packages]` | `up`   | Update packages, GitHub Actions, Dockerfiles, and GitLab CI refs                       |
 | `vis install`           | `i`    | Install dependencies via the detected package manager                                  |
 | `vis info <package>`    | `view` | Show npm registry metadata for a package (wraps `npm view` et al.)                     |
@@ -235,6 +239,7 @@ When aube is the installer, `vis doctor` surfaces aube's effective hardening pos
 | `vis toolchain <cmd>`   |        | Inspect / delegate to the version manager (proto, mise, fnm, volta…)                   |
 | `vis lint [files]`      |        | Orchestrate detected source-code linters (oxlint, biome, eslint, stylelint)           |
 | `vis fmt [files]`       |        | Orchestrate detected formatters (oxfmt, biome, dprint, prettier)                       |
+| `vis test [files]`      |        | Run the package test script, or Vitest / Rstest (asks which to install when neither exists) |
 | `vis staged`            |        | Run tasks on staged files (built-in `lint-staged` replacement)                         |
 | `vis migrate <type>`    |        | Migrate from other tools — now including `gitleaks` and `secretlint`                   |
 
