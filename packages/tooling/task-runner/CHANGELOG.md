@@ -1,3 +1,9 @@
+## @visulima/task-runner [3.0.2](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.1...@visulima/task-runner@3.0.2) (2026-10-26)
+
+### Bug Fixes
+
+* **vis:** resolve issues 49-57 across graph, discovery, colour, staged and hook migration ([#58](https://github.com/visulima/vis/issues/58)) ([2d64f0c](https://github.com/visulima/vis/commit/2d64f0cd2a7604ab31f65afb152b222b927f52a5))
+
 ## @visulima/task-runner [3.0.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.0...@visulima/task-runner@3.0.1) (2026-10-21)
 
 ### Bug Fixes
