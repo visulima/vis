@@ -1259,6 +1259,12 @@ importers:
 
   packages/tooling/vis:
     dependencies:
+      '@floating-ui/core':
+        specifier: 1.8.0
+        version: 1.8.0
+      '@floating-ui/dom':
+        specifier: 1.8.0
+        version: 1.8.0
       '@visulima/error':
         specifier: 6.1.0
         version: 6.1.0(ai@7.0.127(zod@4.6.7))
@@ -1283,6 +1289,9 @@ importers:
       fb-watchman:
         specifier: '>=2.0.0'
         version: 2.0.2
+      graphology:
+        specifier: 0.26.0
+        version: 0.26.0(graphology-types@0.24.8)
       module-replacements:
         specifier: ^3.4.0
         version: 3.4.0
@@ -1295,6 +1304,9 @@ importers:
       react-reconciler:
         specifier: '>=0.33.0'
         version: 0.34.0(react@19.2.6)
+      sigma:
+        specifier: 4.0.3
+        version: 4.0.3(graphology-types@0.24.8)
     devDependencies:
       '@anolilab/eslint-config':
         specifier: catalog:lint
@@ -1323,12 +1335,6 @@ importers:
       '@eslint/css':
         specifier: 2.0.1
         version: 2.0.1
-      '@floating-ui/core':
-        specifier: 1.8.0
-        version: 1.8.0
-      '@floating-ui/dom':
-        specifier: 1.8.0
-        version: 1.8.0
       '@gitbeaker/rest':
         specifier: ^43.8.0
         version: 43.8.0
@@ -1500,9 +1506,6 @@ importers:
       giget:
         specifier: ^3.3.1
         version: 3.3.1
-      graphology:
-        specifier: 0.26.0
-        version: 0.26.0(graphology-types@0.24.8)
       graphology-layout-forceatlas2:
         specifier: 0.10.1
         version: 0.10.1(graphology-types@0.24.8)
@@ -1548,9 +1551,6 @@ importers:
       semver:
         specifier: ^7.8.5
         version: 7.8.5
-      sigma:
-        specifier: 4.0.3
-        version: 4.0.3(graphology-types@0.24.8)
       sigstore:
         specifier: ^5.0.0
         version: 5.0.0(supports-color@10.2.2)

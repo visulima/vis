@@ -244,3 +244,37 @@ describe(filterProjectsByTags, () => {
         expect(filterProjectsByTags(all, tagged, ["type"])).toStrictEqual([]);
     });
 });
+
+describe("query values with * match as a glob", () => {
+    const workspace = makeWorkspace({
+        core: { tags: ["type:package"] },
+        examples_basic: { tags: ["type:example"] },
+        examples_tailwind: { tags: ["type:example"] },
+    });
+
+    const allNames = ["core", "examples_basic", "examples_tailwind"];
+
+    it("should exclude every project matching a != glob", () => {
+        expect.assertions(1);
+
+        expect(filterProjectsByQuery(allNames, workspace, "project!=examples_*")).toStrictEqual(["core"]);
+    });
+
+    it("should keep only the projects matching an = glob", () => {
+        expect.assertions(1);
+
+        expect(filterProjectsByQuery(allNames, workspace, "project=examples_*")).toStrictEqual(["examples_basic", "examples_tailwind"]);
+    });
+
+    it("should match a glob against tags", () => {
+        expect.assertions(1);
+
+        expect(filterProjectsByQuery(allNames, workspace, "tag=type:exam*")).toStrictEqual(["examples_basic", "examples_tailwind"]);
+    });
+
+    it("should still treat a value without * as an exact match", () => {
+        expect.assertions(1);
+
+        expect(filterProjectsByQuery(allNames, workspace, "project=examples_basic")).toStrictEqual(["examples_basic"]);
+    });
+});

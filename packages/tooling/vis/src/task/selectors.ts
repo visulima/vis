@@ -234,6 +234,23 @@ export const parseQuery = (input: string): ParsedQuery | undefined => {
     return { clauses, op };
 };
 
+const REGEX_SPECIAL_CHARS_RE = /[$()+.?[\\\]^{|}]/g;
+
+/**
+ * Whether a clause value matches an actual value. `*` matches any run of
+ * characters and everything else is literal, so `project!=examples_*`
+ * excludes every project whose name starts with `examples_`.
+ */
+const valueMatches = (value: string, actual: string): boolean => {
+    if (!value.includes("*")) {
+        return actual === value;
+    }
+
+    const escaped = value.replaceAll(REGEX_SPECIAL_CHARS_RE, String.raw`\$&`).replaceAll("*", ".*");
+
+    return new RegExp(`^${escaped}$`).test(actual);
+};
+
 /**
  * Evaluates a single clause against a project configuration. Supports
  * the following fields (matching moon's where possible):
@@ -249,14 +266,14 @@ const matchClause = (clause: QueryClause, name: string, project: VisProjectConfi
     const { field, op, value } = clause;
 
     const test = (actual: string | undefined): boolean => {
-        const matched = actual === value;
+        const matched = actual !== undefined && valueMatches(value, actual);
 
         return op === "=" ? matched : !matched;
     };
 
     const testList = (actuals: string[] | undefined): boolean => {
         const list = actuals ?? [];
-        const matched = list.includes(value);
+        const matched = list.some((actual) => valueMatches(value, actual));
 
         return op === "=" ? matched : !matched;
     };

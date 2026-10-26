@@ -135,6 +135,13 @@ const resolveDoubleGlob = (workspaceRoot: string, cleanPattern: string, results:
         return;
     }
 
+    // pnpm's `dir/**` matches `dir` itself as well as everything under it;
+    // the recursive scan below only visits descendants, so check the base.
+    // `dir/*/*` does not match `dir`, so this only applies to `/**`.
+    if (DOUBLE_GLOB_SUFFIX_RE.test(cleanPattern) && isProjectDirectory(baseDirectory)) {
+        results.push(base);
+    }
+
     scanDirectoryRecursive(baseDirectory, base, results, isProjectDirectory);
 };
 
@@ -231,9 +238,11 @@ const resolveWorkspacePatterns = (workspaceRoot: string, patterns: string[], isP
         return directories;
     }
 
+    // Overlapping patterns (`tools` and `tools/**`) can resolve the same
+    // directory twice; keep the first occurrence.
     const matcher = buildGitignoreMatcher({ cwd: workspaceRoot, extraPatterns: negatives });
 
-    return matcher.filterDirectories(directories);
+    return matcher.filterDirectories([...new Set(directories)]);
 };
 
 /**
@@ -369,6 +378,15 @@ const NON_JS_ECOSYSTEMS: ReadonlyArray<NonJsEcosystem> = [
 ];
 
 const NON_JS_DETECTORS: ReadonlySet<Detector> = new Set(NON_JS_ECOSYSTEMS.map((ecosystem) => ecosystem.detector));
+
+/**
+ * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
+ * discovery drops those directories exactly as it drops pnpm `!` entries.
+ */
+const withProjectIgnore = (workspacePatterns: string[], config: VisConfig): string[] => [
+    ...workspacePatterns,
+    ...(config.projectIgnore ?? []).map((pattern) => `!${pattern}`),
+];
 
 const resolveProjectDirectories = (
     workspaceRoot: string,
@@ -525,9 +543,7 @@ const validateDependsOnEntries = (entries: ReadonlyArray<unknown>, projectName: 
         const { target } = entry;
 
         if (typeof target !== "string") {
-            throw new VisUserError(
-                `Invalid dependsOn entry on ${where}: \`target\` must be a string (got ${JSON.stringify(target)}).`,
-            );
+            throw new VisUserError(`Invalid dependsOn entry on ${where}: \`target\` must be a string (got ${JSON.stringify(target)}).`);
         }
 
         assertValidTargetName(target, entry);
@@ -1041,8 +1057,7 @@ const resolveProjectName = (
     pkg: PackageJson | undefined,
     projectJson: ProjectJson | undefined,
     ecosystem: NonJsEcosystem | undefined,
-): string | undefined =>
-    projectJson?.name ?? (pkg ? pkg.name : (ecosystem?.readName(join(workspaceRoot, projectDirectory)) ?? basename(projectDirectory)));
+): string | undefined => projectJson?.name ?? (pkg ? pkg.name : (ecosystem?.readName(join(workspaceRoot, projectDirectory)) ?? basename(projectDirectory)));
 
 /**
  * The non-JS discovery flags for a config. Shared by `discoverWorkspace` and
@@ -1105,7 +1120,7 @@ const discoverWorkspace = (
 
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        workspacePatterns,
+        withProjectIgnore(workspacePatterns, config),
         nonJsDiscoverOptions(config),
     );
 
@@ -1397,7 +1412,69 @@ const buildProjectGraph = (workspaceRoot: string, workspace: WorkspaceConfigurat
         }
     }
 
+    applyImplicitDependencies(workspace, dependencies, projectNames, pkgNameToProjectName);
+
     return { dependencies, nodes };
+};
+
+/**
+ * Project names an `implicitDependencies` reference selects. A reference with
+ * `*` is a glob over project names; any other reference is a project name,
+ * or an npm package name when no project has that name.
+ */
+const resolveImplicitReference = (reference: string, projectNames: Set<string>, pkgNameToProjectName: Map<string, string>): string[] => {
+    if (reference.includes("*")) {
+        const matcher = new RegExp(`^${reference.replaceAll(REGEX_SPECIALS_RE, String.raw`\$&`).replaceAll("*", ".*")}$`);
+
+        return [...projectNames].filter((name) => matcher.test(name));
+    }
+
+    const targetName = projectNames.has(reference) ? reference : pkgNameToProjectName.get(reference);
+
+    return targetName ? [targetName] : [];
+};
+
+/**
+ * Applies `project.json#implicitDependencies` on top of the edges read from
+ * package.json, using nx's semantics: a bare `name` adds an `implicit` edge
+ * that the task graph treats as a hard ordering constraint, and `!name`
+ * removes every edge from this project to `name`, whatever its type. A
+ * `name` may be a project name, an npm package name, or a `*` glob over
+ * project names.
+ *
+ * A positive entry that selects no project is an error, since the edge can
+ * never be honoured. A `!` entry that selects nothing is a no-op: there is
+ * no edge to remove.
+ */
+const applyImplicitDependencies = (
+    workspace: WorkspaceConfiguration,
+    dependencies: Record<string, ProjectGraphDependency[]>,
+    projectNames: Set<string>,
+    pkgNameToProjectName: Map<string, string>,
+): void => {
+    for (const [name, config] of Object.entries(workspace.projects)) {
+        for (const entry of config.implicitDependencies ?? []) {
+            const excluded = entry.startsWith("!");
+            const reference = excluded ? entry.slice(1) : entry;
+            const targets = resolveImplicitReference(reference, projectNames, pkgNameToProjectName).filter((target) => target !== name);
+
+            if (excluded) {
+                dependencies[name] = (dependencies[name] ?? []).filter((dep) => !targets.includes(dep.target));
+
+                continue;
+            }
+
+            if (targets.length === 0) {
+                throw new VisUserError(`Project "${name}" lists implicit dependency "${entry}", which matches no project or package in this workspace.`);
+            }
+
+            for (const target of targets) {
+                if (!(dependencies[name] ?? []).some((dep) => dep.target === target)) {
+                    dependencies[name] = [...(dependencies[name] ?? []), { source: name, target, type: "implicit" }];
+                }
+            }
+        }
+    }
 };
 
 /**
@@ -1432,7 +1509,7 @@ const loadVisTaskConfigsForWorkspace = async (workspaceRoot: string, config: Vis
     // that is not discovered could fail to load and reject the whole workspace.
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        workspacePatterns,
+        withProjectIgnore(workspacePatterns, config),
         nonJsDiscoverOptions(config),
     );
     const result: VisTaskConfigIndex = new Map();
