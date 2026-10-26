@@ -659,7 +659,7 @@ catalogs:
     tslog: ^5.1.0
     type-fest: 5.10.0
     type-is: ^3.0.0
-    undici: ^8.12.2
+    undici: ^8.12.3
     unset-value: ^2.0.1
     vinxi: ^0.5.11
     walk: 2.3.15
