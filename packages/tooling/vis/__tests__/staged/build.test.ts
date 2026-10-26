@@ -48,6 +48,30 @@ describe(buildTaskGraph, () => {
         expect(patterns[0]?.commands[0]?.title).toBe("eslint --fix 2");
     });
 
+    it("marks command strings returned by a task function as verbatim", async () => {
+        expect.assertions(2);
+
+        const patterns = await buildTaskGraph({
+            config: {
+                "*.ts": (matched) => `tsc --noEmit --project tsconfig.json # ${matched.length}`,
+            },
+            cwd,
+            files,
+        });
+
+        expect(patterns[0]?.commands[0]?.verbatim).toBe(true);
+        expect(patterns[0]?.commands[0]?.files).toStrictEqual(["/repo/src/index.ts", "/repo/src/lib/util.ts"]);
+    });
+
+    it("keeps appending matched files to commands written as static strings or arrays", async () => {
+        expect.assertions(2);
+
+        const patterns = await buildTaskGraph({ config: { "*.ts": ["eslint --fix", (matched) => `echo ${matched.length}`] }, cwd, files });
+
+        expect(patterns[0]?.commands.map((c) => c.verbatim)).toStrictEqual([undefined, true]);
+        expect(patterns[0]?.commands[0]?.command).toBe("eslint --fix");
+    });
+
     it("accepts { title, task } custom tasks", async () => {
         expect.assertions(2);
 

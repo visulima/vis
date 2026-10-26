@@ -5,15 +5,17 @@ import { ensureDirSync, isAccessibleSync, readFileSync } from "@visulima/fs";
 import { join } from "@visulima/path";
 
 import { resolveIndentForFile } from "../../util/editorconfig";
-import { cleanHuskyFromScript } from "../migrate/constants";
+import { rewriteHuskyScript, VIS_HOOK_INSTALL } from "../migrate/constants";
 import type { PackageManagerType } from "../migrate/types";
 import type { InstallResult } from "./constants";
-import { HOOKS } from "./constants";
+import { DEFAULT_HOOKS_DIRECTORY, HOOKS } from "./constants";
 import { installHooks } from "./install";
 
 const HUSKY_DIRECTORIES = [".husky", ".config/husky"];
 
 const COMMON_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/common\.sh"\s*/m;
+
+const HUSKY_SH_SOURCE_RE = /^\. "\$\(dirname "\$0"\)\/_\/husky\.sh"\s*/m;
 
 /**
  * Detects which husky directory is in use, if any.
@@ -61,9 +63,16 @@ const readHuskyHooks = (root: string, huskyDirectory: string): Map<string, strin
 
 /**
  * Transforms a husky hook script for vis.
- * Removes the common.sh sourcing line since vis handles PATH setup in its dispatcher.
+ * Removes husky's own `_/husky.sh` sourcing, which vis never provides. The
+ * `common.sh` sourcing line stays when `keepCommonSh` is set, because the
+ * migrated copy is written next to the hooks and resolves via `$0`. Otherwise
+ * that line would point at nothing and is removed.
  */
-const transformHookScript = (content: string): string => content.replace(COMMON_SH_SOURCE_RE, "");
+const transformHookScript = (content: string, keepCommonSh = false): string => {
+    const withoutHusky = content.replace(HUSKY_SH_SOURCE_RE, "");
+
+    return keepCommonSh ? withoutHusky : withoutHusky.replace(COMMON_SH_SOURCE_RE, "");
+};
 
 /**
  * Detects the package manager used in the project.
@@ -120,29 +129,31 @@ const uninstallHuskyPackage = (root: string, logger: Console): boolean => {
  * Process a single script entry and apply husky cleanup.
  * Returns a description of the change, or undefined if unchanged.
  */
-const processScript = (scripts: Record<string, string>, scriptName: string, scriptValue: string): string | undefined => {
-    const cleaned = cleanHuskyFromScript(scriptValue);
+const processScript = (scripts: Record<string, string>, scriptName: string, scriptValue: string, installCommand: string): string | undefined => {
+    const rewritten = rewriteHuskyScript(scriptValue, installCommand);
 
-    if (cleaned === scriptValue) {
+    if (rewritten === scriptValue) {
         return undefined;
     }
 
-    if (cleaned) {
-        scripts[scriptName] = cleaned;
+    scripts[scriptName] = rewritten;
 
-        return `updated "${scriptName}" script`;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- mutating scripts object passed by caller
-    delete scripts[scriptName];
-
-    return `removed "${scriptName}" script (was: "${scriptValue}")`;
+    return scriptValue.includes(VIS_HOOK_INSTALL)
+        ? `updated "${scriptName}" script`
+        : `replaced husky with "${installCommand}" in "${scriptName}" script`;
 };
 
 /**
- * Cleans husky references from package.json scripts.
+ * Replaces husky install calls in package.json scripts with `vis hook install`.
  */
-const cleanPackageJsonScripts = (root: string, useEditorconfig?: boolean): { modified: boolean; removedScriptReferences: string[] } => {
+const cleanPackageJsonScripts = (
+    root: string,
+    useEditorconfig?: boolean,
+    hooksDirectory: string = DEFAULT_HOOKS_DIRECTORY,
+): { modified: boolean; removedScriptReferences: string[] } => {
+    // Installs into a custom hooks directory must say so, or the next `vis hook install` moves core.hooksPath back to the default.
+    const installCommand = hooksDirectory === DEFAULT_HOOKS_DIRECTORY ? VIS_HOOK_INSTALL : `${VIS_HOOK_INSTALL} --hooks-dir ${hooksDirectory}`;
+
     const packageJsonPath = join(root, "package.json");
 
     if (!isAccessibleSync(packageJsonPath)) {
@@ -160,7 +171,7 @@ const cleanPackageJsonScripts = (root: string, useEditorconfig?: boolean): { mod
                 continue;
             }
 
-            const change = processScript(scripts, scriptName, scriptValue);
+            const change = processScript(scripts, scriptName, scriptValue, installCommand);
 
             if (change) {
                 removedScriptReferences.push(change);
@@ -247,7 +258,7 @@ const migrateFromHusky = (root: string, hooksDirectory: string, logger: Console,
         if (dryRun) {
             logger.info(`  (would migrate) ${hookName}`);
         } else {
-            const transformed = transformHookScript(content);
+            const transformed = transformHookScript(content, huskyHooks.has("common.sh"));
 
             writeFileSync(join(targetDirectory, hookName), transformed, { mode: 0o755 });
             logger.info(`  Migrated ${hookName}`);
@@ -257,12 +268,13 @@ const migrateFromHusky = (root: string, hooksDirectory: string, logger: Console,
     }
 
     if (dryRun) {
-        logger.info(`  (would remove) husky npm package and clean package.json scripts`);
+        logger.info(`  (would remove) husky npm package`);
+        logger.info(`  (would replace) husky install calls in package.json scripts with "${VIS_HOOK_INSTALL}"`);
         logger.info(`  (would remove) ${huskyDirectory}/ directory`);
     } else {
         uninstallHuskyPackage(root, logger);
 
-        const packageResult = cleanPackageJsonScripts(root, options.useEditorconfig);
+        const packageResult = cleanPackageJsonScripts(root, options.useEditorconfig, hooksDirectory);
 
         if (packageResult.modified) {
             logger.info("Updated package.json scripts:");

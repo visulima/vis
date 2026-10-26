@@ -38,13 +38,22 @@ const readUmd = (packageName: string, filename: string): string => {
     return readFileSync(join(dirname(mainPath), filename), "utf8");
 };
 
-const sigmaUmd = readUmd("sigma", "sigma.min.js");
-const graphologyUmd = readUmd("graphology", "graphology.umd.min.js");
-// Floating UI for tooltip positioning: core has the middleware engine, dom
-// has the DOM-platform adapter. Both UMD bundles set globals onto window so
-// loading them in sequence gives us window.FloatingUIDOM at runtime.
-const floatingUiCoreUmd = readUmd("@floating-ui/core", "floating-ui.core.umd.min.js");
-const floatingUiDomUmd = readUmd("@floating-ui/dom", "floating-ui.dom.umd.min.js");
+/**
+ * Reads the browser runtime from node_modules. Called only when HTML is
+ * emitted, so the other graph formats never touch these packages and do not
+ * fail when they are absent.
+ */
+const loadGraphRuntime = (): { floatingUiCoreUmd: string; floatingUiDomUmd: string; graphologyUmd: string; sigmaUmd: string } => {
+    return {
+        // Floating UI for tooltip positioning: core has the middleware engine, dom
+        // has the DOM-platform adapter. Both UMD bundles set globals onto window so
+        // loading them in sequence gives us window.FloatingUIDOM at runtime.
+        floatingUiCoreUmd: readUmd("@floating-ui/core", "floating-ui.core.umd.min.js"),
+        floatingUiDomUmd: readUmd("@floating-ui/dom", "floating-ui.dom.umd.min.js"),
+        graphologyUmd: readUmd("graphology", "graphology.umd.min.js"),
+        sigmaUmd: readUmd("sigma", "sigma.min.js"),
+    };
+};
 
 const MOON_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
 const SUN_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>`;
@@ -151,6 +160,8 @@ const computeLayout = (nodes: GraphHtmlNode[], edges: GraphHtmlEdge[]): Position
 };
 
 export const emitGraphHtml = (options: GraphHtmlEmitOptions): string => {
+    const { floatingUiCoreUmd, floatingUiDomUmd, graphologyUmd, sigmaUmd } = loadGraphRuntime();
+
     const now = options.now ?? new Date();
     const apps = options.nodes.filter((n) => n.type === "application").length;
     const libs = options.nodes.length - apps;

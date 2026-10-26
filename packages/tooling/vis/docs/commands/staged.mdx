@@ -38,7 +38,7 @@ export default defineConfig({
         // an array runs serially
         "*.ts": ["eslint --fix", "prettier --write"],
 
-        // a function receives the matched paths and returns command(s)
+        // a function receives the matched paths and returns command(s); a returned command string runs as written, with no files appended
         "*.md": (files) => `prettier --write ${files.join(" ")}`,
 
         // a named side-effect task — no argv construction
@@ -100,3 +100,5 @@ ignored when `perPackage` is set — that derives the directory per package inst
 | `--revert`                | `false` | Revert to original state in case of errors                          |
 | `--stash`                 | `true`  | Enable backup stash (`--no-stash` to disable)                       |
 | `--verbose`               | `false` | Show task output even when tasks succeed                            |
+
+The backup stash is removed once the repository is back in its original state: after a successful run, after `--revert`, and after a failed run whose working tree and index match the backup again (for example, tasks that only read files). Otherwise, including when a task changed files, the stash is kept and vis prints how to restore it. A commit that tasks emptied is aborted, and the original changes are put back from the backup first.

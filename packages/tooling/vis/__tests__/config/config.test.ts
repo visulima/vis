@@ -1,10 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
+import { isAccessibleSync } from "@visulima/fs";
 import { join } from "@visulima/path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { applyDefaults, CONFIG_FILES, defineConfig, findVisConfigFile, loadVisConfig, SECURITY_DEFAULTS } from "../../src/config/config";
+import { applyDefaults, CONFIG_FILES, defineConfig, findVisConfigFile, loadVisConfig, loadVisTaskConfig, SECURITY_DEFAULTS } from "../../src/config/config";
 
 describe(defineConfig, () => {
     it("should return the input config unchanged (typed-identity)", () => {
@@ -289,6 +290,33 @@ describe("config loading (no stale cache)", () => {
                 process.env.VIS_TEST_FLAG = originalValue;
             }
         }
+    });
+
+    it("should keep function-valued staged tasks on repeated loads", async () => {
+        expect.assertions(2);
+
+        writeFileSync(join(tmpDir, "vis.config.ts"), "export default { staged: { \"*.txt\": (files) => `echo count=${files.length}` } };");
+
+        await loadVisConfig(tmpDir);
+
+        const second = await loadVisConfig(tmpDir);
+
+        expect(second.staged?.["*.txt"]).toBeTypeOf("function");
+        expect((second.staged?.["*.txt"] as (files: string[]) => string)(["a.txt"])).toBe("echo count=1");
+    });
+
+    it("should not persist vis.task.ts overlays to a disk cache that could go stale", async () => {
+        expect.assertions(2);
+
+        const projectDirectory = join(tmpDir, "packages", "alpha");
+
+        mkdirSync(projectDirectory, { recursive: true });
+        writeFileSync(join(projectDirectory, "vis.task.ts"), "export default { tasks: { build: { command: \"echo build\" } } };");
+
+        const overlay = await loadVisTaskConfig(tmpDir, projectDirectory, "alpha");
+
+        expect(overlay?.tasks?.["build"]?.command).toBe("echo build");
+        expect(isAccessibleSync(join(tmpDir, "node_modules", ".cache", "vis", "task-configs"))).toBe(false);
     });
 
     it("should pick up edits to the config file on reload", async () => {

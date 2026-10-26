@@ -100,7 +100,7 @@ vis hook migrate --dry-run   # preview: prints what would be written without tou
 
 The command auto-detects the source:
 
-- **husky** — reads `.husky/` or `.config/husky/`, copies shell scripts, uninstalls the husky npm package, and cleans `package.json` references.
+- **husky** — reads `.husky/` or `.config/husky/`, copies shell scripts, uninstalls the husky npm package, and replaces husky install calls in `package.json` scripts with `vis hook install` (so `prepare` keeps installing hooks). A `common.sh` that was copied keeps its sourcing line, which resolves next to the migrated hooks.
 - **prek / pre-commit** — reads `.pre-commit-config.yaml`, `.yml`, or `prek.toml`, converts eligible `local` hooks to shell scripts under the hooks directory, backs up the original config as `.bak`, and attempts `prek uninstall` if the binary is on your PATH.
 
 If both a husky directory and a prek config are present, the command errors and asks you to remove one first.

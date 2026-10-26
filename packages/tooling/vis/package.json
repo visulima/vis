@@ -145,6 +145,8 @@
         "test:watch": "vitest"
     },
     "dependencies": {
+        "@floating-ui/core": "1.8.0",
+        "@floating-ui/dom": "1.8.0",
         "@visulima/error": "6.1.0",
         "@visulima/secret-scanner": "2.0.2",
         "@visulima/source-map": "3.0.1",
@@ -152,10 +154,12 @@
         "@visulima/task-runner": "3.0.1",
         "@visulima/tui": "5.0.0",
         "@visulima/tui-kit": "1.0.34",
+        "graphology": "0.26.0",
         "module-replacements": "^3.4.0",
         "module-replacements-codemods": "^2.0.2",
         "react": "catalog:frontend",
-        "react-reconciler": ">=0.33.0"
+        "react-reconciler": ">=0.33.0",
+        "sigma": "4.0.3"
     },
     "devDependencies": {
         "@anolilab/eslint-config": "catalog:lint",
@@ -167,8 +171,6 @@
         "@codspeed/vitest-plugin": "catalog:test",
         "@eslint-react/eslint-plugin": "catalog:lint",
         "@eslint/css": "2.0.1",
-        "@floating-ui/core": "1.8.0",
-        "@floating-ui/dom": "1.8.0",
         "@gitbeaker/rest": "^43.8.0",
         "@hono/node-server": "catalog:backend",
         "@napi-rs/cli": "catalog:dev",
@@ -228,7 +230,6 @@
         "eslint-plugin-validate-jsx-nesting": "0.1.1",
         "fallow": "catalog:lint",
         "giget": "^3.3.1",
-        "graphology": "0.26.0",
         "graphology-layout-forceatlas2": "0.10.1",
         "graphology-types": "0.24.8",
         "happy-dom": "catalog:dev",
@@ -244,7 +245,6 @@
         "secretlint": "catalog:lint",
         "semantic-release": "catalog:cli",
         "semver": "^7.8.5",
-        "sigma": "4.0.3",
         "sigstore": "^5.0.0",
         "smol-toml": "catalog:prod",
         "tailwind-csstree": "catalog:dev",

@@ -405,6 +405,38 @@ describe(installHooks, () => {
         }
     });
 
+    it.skipIf(process.platform === "win32")("should honour a linked worktree's own core.hooksPath over the shared value", () => {
+        expect.assertions(3);
+
+        const { cleanup, root } = createTemporaryGitRepo();
+        const { cleanup: cleanupWorktree, root: worktreeParent } = createTemporaryDirectory();
+        const worktree = join(worktreeParent, "wt");
+
+        try {
+            commitEmpty(root);
+            execSync("git config extensions.worktreeConfig true", { cwd: root, stdio: "ignore" });
+            // The shared config still names a foreign hooks dir; this worktree points at its own vis dispatcher.
+            execSync("git config core.hooksPath .husky/_", { cwd: root, stdio: "ignore" });
+            execFileSync("git", ["worktree", "add", "-q", worktree, "-b", "wt"], { cwd: root, stdio: "ignore" });
+            execSync("git config --worktree core.hooksPath .vis/hooks/_", { cwd: worktree, stdio: "ignore" });
+
+            process.chdir(worktree);
+
+            const result = installHooks(".vis/hooks");
+
+            expect(result.isError).toBe(false);
+            // Reading the shared value would report `.husky/_` as another tool's claim on this checkout.
+            expect(result.isWarning).not.toBe(true);
+            // Accepting the worktree override must not move the shared path that the main checkout runs with.
+            expect(execSync("git config --local core.hooksPath", { cwd: root, encoding: "utf8" }).trim()).toBe(".husky/_");
+        } finally {
+            process.chdir(root);
+            execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: root, stdio: "ignore" });
+            cleanupWorktree();
+            cleanup();
+        }
+    });
+
     it.skipIf(process.platform === "win32")("should not error when core.hooksPath is the git-native /dev/null disable", () => {
         expect.assertions(2);
 
@@ -540,6 +572,33 @@ echo "hello"
         const result = transformHookScript(input);
 
         expect(result).toBe(input);
+    });
+
+    it("should keep the common.sh sourcing line when common.sh is migrated alongside the hook", () => {
+        expect.assertions(2);
+
+        const input = `#!/bin/sh
+
+. "$(dirname "$0")/common.sh"
+
+echo "hello"
+`;
+
+        expect(transformHookScript(input, true)).toBe(input);
+        expect(transformHookScript(input, false)).not.toContain("common.sh");
+    });
+
+    it("should remove husky's own _/husky.sh sourcing line in every case", () => {
+        expect.assertions(2);
+
+        const input = `#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+echo "hello"
+`;
+
+        expect(transformHookScript(input, true)).not.toContain("husky.sh");
+        expect(transformHookScript(input, true)).toContain("echo \"hello\"");
     });
 
     it("should only remove the sourcing line, not other references", () => {
@@ -688,7 +747,7 @@ describe(cleanPackageJsonScripts, () => {
         temporary.cleanup();
     });
 
-    it("should remove standalone husky script", () => {
+    it("should replace a standalone husky script with vis hook install", () => {
         expect.assertions(3);
 
         writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "husky" } }, undefined, 4));
@@ -696,14 +755,14 @@ describe(cleanPackageJsonScripts, () => {
         const result = cleanPackageJsonScripts(temporary.root);
 
         expect(result.modified).toBe(true);
-        expect(result.removedScriptReferences).toContain("removed \"prepare\" script (was: \"husky\")");
+        expect(result.removedScriptReferences).toContain("replaced husky with \"vis hook install\" in \"prepare\" script");
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts.prepare).toBeUndefined();
+        expect(pkg.scripts.prepare).toBe("vis hook install");
     });
 
-    it("should remove standalone husky install script", () => {
+    it("should replace a standalone husky install script with vis hook install", () => {
         expect.assertions(2);
 
         writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "husky install" } }, undefined, 4));
@@ -714,7 +773,91 @@ describe(cleanPackageJsonScripts, () => {
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts.prepare).toBeUndefined();
+        expect(pkg.scripts.prepare).toBe("vis hook install");
+    });
+
+    it("should keep the install step in an is-ci || husky prepare script", () => {
+        expect.assertions(2);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "is-ci || husky || exit 0" } }, undefined, 4));
+
+        const result = cleanPackageJsonScripts(temporary.root);
+
+        expect(result.modified).toBe(true);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("is-ci || vis hook install || exit 0");
+    });
+
+    it("should replace husky install with a directory argument and npx husky", () => {
+        expect.assertions(2);
+
+        writeFileSync(
+            join(temporary.root, "package.json"),
+            JSON.stringify({ scripts: { postinstall: "npx husky", prepare: "husky install .config/husky" } }, undefined, 4),
+        );
+
+        cleanPackageJsonScripts(temporary.root);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("vis hook install");
+        expect(pkg.scripts.postinstall).toBe("vis hook install");
+    });
+
+    it("should leave husky as an argument to another command untouched", () => {
+        expect.assertions(3);
+
+        writeFileSync(
+            join(temporary.root, "package.json"),
+            JSON.stringify({ scripts: { announce: "echo husky", clean: "rm -rf husky && ./node_modules/.bin/husky-lint" } }, undefined, 4),
+        );
+
+        const result = cleanPackageJsonScripts(temporary.root);
+
+        expect(result.modified).toBe(false);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.announce).toBe("echo husky");
+        expect(pkg.scripts.clean).toBe("rm -rf husky && ./node_modules/.bin/husky-lint");
+    });
+
+    it("should keep a husky argument intact in a script that already installs through vis", () => {
+        expect.assertions(1);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "rm -rf husky && vis hook install" } }, undefined, 4));
+
+        cleanPackageJsonScripts(temporary.root);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("rm -rf husky && vis hook install");
+    });
+
+    it("should name a custom hooks directory in the install command", () => {
+        expect.assertions(1);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "is-ci || husky || exit 0" } }, undefined, 4));
+
+        cleanPackageJsonScripts(temporary.root, undefined, ".githooks");
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("is-ci || vis hook install --hooks-dir .githooks || exit 0");
+    });
+
+    it("should not add vis hook install twice when the script already has it", () => {
+        expect.assertions(1);
+
+        writeFileSync(join(temporary.root, "package.json"), JSON.stringify({ scripts: { prepare: "husky && vis hook install" } }, undefined, 4));
+
+        cleanPackageJsonScripts(temporary.root);
+
+        const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
+
+        expect(pkg.scripts.prepare).toBe("vis hook install");
     });
 
     it("should clean husky from compound (is-ci || husky) pattern", () => {
@@ -739,7 +882,7 @@ describe(cleanPackageJsonScripts, () => {
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts.postinstall).toBe("node scripts/setup.js");
+        expect(pkg.scripts.postinstall).toBe("(is-ci || vis hook install || exit 0) && node scripts/setup.js");
     });
 
     it("should clean husky && from compound commands", () => {
@@ -762,7 +905,7 @@ describe(cleanPackageJsonScripts, () => {
 
         const pkg = JSON.parse(readFileSync(join(temporary.root, "package.json"), "utf8"));
 
-        expect(pkg.scripts.prepare).toBe("lint-staged");
+        expect(pkg.scripts.prepare).toBe("vis hook install && lint-staged");
     });
 
     it("should not modify scripts without husky references", () => {

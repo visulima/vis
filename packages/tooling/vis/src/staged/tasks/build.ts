@@ -180,6 +180,7 @@ export const buildTaskGraph = async (options: BuildTaskGraphOptions): Promise<Pa
                     id: nextCommandId(),
                     source: "function",
                     title: generated,
+                    verbatim: true,
                 });
 
                 return;
@@ -194,6 +195,7 @@ export const buildTaskGraph = async (options: BuildTaskGraphOptions): Promise<Pa
                             id: nextCommandId(),
                             source: "function",
                             title: item,
+                            verbatim: true,
                         });
                     } else if (isCommandTask(item)) {
                         expandCommandTask(item, files, absoluteFiles, commands);

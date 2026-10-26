@@ -275,8 +275,17 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     // color for tools that misbehave with ANSI / emit JSON). The
     // previous unconditional override on parent-env absence silently
     // forced color on. See voidzero-dev/vite-task#379.
+    //
+    // Colour is only forced when this process's stdout is a terminal
+    // and `NO_COLOR` is not set (non-empty), matching the JS fallback.
     let caller_has_force_color = config.env.as_ref().map(|env| env.contains_key("FORCE_COLOR")).unwrap_or(false);
-    if !caller_has_force_color && std::env::var("FORCE_COLOR").is_err() {
+    // A task-level NO_COLOR, even an empty one, overrides the parent's, as it does in the JS fallback.
+    let no_color_set = match config.env.as_ref().and_then(|env| env.get("NO_COLOR")) {
+        Some(value) => !value.is_empty(),
+        None => std::env::var("NO_COLOR").map(|v| !v.is_empty()).unwrap_or(false),
+    };
+    let stdout_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if !caller_has_force_color && std::env::var("FORCE_COLOR").is_err() && !no_color_set && stdout_is_tty {
         cmd.env("FORCE_COLOR", "1");
     }
 
