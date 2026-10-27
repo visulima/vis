@@ -393,7 +393,7 @@ catalogs:
     eslint-plugin-vue: 10.10.0
     eslint-plugin-you-dont-need-lodash-underscore: 6.14.0
     eslint-plugin-zod: 5.2.0
-    fallow: 3.33.1
+    fallow: 3.34.0
     husky: ^9.1.7
     lint-staged: ^17.3.0
     prettier: 3.9.10
