@@ -1,7 +1,7 @@
 allowBuilds:
   esbuild: true
 overrides:
-  '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.11
+  '@vitest/mocker@>=2.1.0 <4.1.11': ^4.1.12
   body-parser@<1.20.6: ^1.20.6
   cookie@<0.7.0: ^0.7.0
   esbuild@<=0.24.2: ^0.25.0
