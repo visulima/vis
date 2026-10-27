@@ -1,3 +1,28 @@
+## @visulima/vis [6.1.4](https://github.com/visulima/vis/compare/@visulima/vis@6.1.3...@visulima/vis@6.1.4) (2026-10-27)
+
+### Bug Fixes
+
+* **deps:** bump npm and rust dependencies ([#33](https://github.com/visulima/vis/issues/33)) ([bb0d78e](https://github.com/visulima/vis/commit/bb0d78e0f7d55608761a24c21e445bf9fff707ab))
+* **deps:** update dependency @vitest/mocker@>=2.1.0 <4.1.11 to ^4.1.12 [security] ([#44](https://github.com/visulima/vis/issues/44)) ([7e1f9d2](https://github.com/visulima/vis/commit/7e1f9d2008f89d0bdcf4e46eefcd2f9293929dbe))
+* harden cache resilience and support external task inputs ([#38](https://github.com/visulima/vis/issues/38)) ([92c7907](https://github.com/visulima/vis/commit/92c7907a39b6e70f3b85b4a49d10fcd1fcb2e019))
+* **vis:** keep the CI log alive when the runner stops draining stdout ([#36](https://github.com/visulima/vis/issues/36)) ([957fb70](https://github.com/visulima/vis/commit/957fb70067c8af58f81bad174d978befde461e25))
+* **vis:** resolve issues 49-57 across graph, discovery, colour, staged and hook migration ([#58](https://github.com/visulima/vis/issues/58)) ([2d64f0c](https://github.com/visulima/vis/commit/2d64f0cd2a7604ab31f65afb152b222b927f52a5))
+* **vis:** stop config cache from dropping plugin hooks and going stale ([#37](https://github.com/visulima/vis/issues/37)) ([b59ffc0](https://github.com/visulima/vis/commit/b59ffc09dc4c0537e58da3bb78f74b8e2e952041))
+
+### Tests
+
+* **vis:** fuzz untrusted lockfile parsers ([#32](https://github.com/visulima/vis/issues/32)) ([c71b539](https://github.com/visulima/vis/commit/c71b5393948f24bd3d1607fa99591d8d02100f96))
+
+### Build System
+
+* **deps:** bump follow-redirects from 1.16.0 to 1.16.1 ([#41](https://github.com/visulima/vis/issues/41)) ([ce36a5d](https://github.com/visulima/vis/commit/ce36a5da6dfb7bc1432a9dd40f7820c56ca0dd05))
+
+
+### Dependencies
+
+* **@visulima/tui:** upgraded to 5.0.1
+* **react:** 19.2.8 → 19.2.6
+
 ## @visulima/vis [6.1.3](https://github.com/visulima/vis/compare/@visulima/vis@6.1.2...@visulima/vis@6.1.3) (2026-10-17)
 
 ### Bug Fixes
