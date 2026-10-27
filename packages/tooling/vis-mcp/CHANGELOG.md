@@ -1,3 +1,15 @@
+## @visulima/vis-mcp [3.0.6](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.5...@visulima/vis-mcp@3.0.6) (2026-10-27)
+
+### Bug Fixes
+
+* **deps:** bump npm and rust dependencies ([#33](https://github.com/visulima/vis/issues/33)) ([bb0d78e](https://github.com/visulima/vis/commit/bb0d78e0f7d55608761a24c21e445bf9fff707ab))
+
+
+### Dependencies
+
+* **@visulima/vis:** upgraded to 6.1.4
+* **zod:** 4.6.5 → 4.6.7
+
 ## @visulima/vis-mcp [3.0.5](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.4...@visulima/vis-mcp@3.0.5) (2026-10-17)
 
 
