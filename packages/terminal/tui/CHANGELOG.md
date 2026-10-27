@@ -1,3 +1,17 @@
+## @visulima/tui [5.0.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.0...@visulima/tui@5.0.1) (2026-10-27)
+
+### Bug Fixes
+
+* **deps:** bump npm and rust dependencies ([#33](https://github.com/visulima/vis/issues/33)) ([bb0d78e](https://github.com/visulima/vis/commit/bb0d78e0f7d55608761a24c21e445bf9fff707ab))
+
+### Miscellaneous Chores
+
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
+### Continuous Integration
+
+* **codspeed:** run the bench step in its own job ([d24fcf5](https://github.com/visulima/vis/commit/d24fcf5c61e10b80bbf2cb2f8f6a6e2823353b4f))
+
 ## @visulima/tui [5.0.0](https://github.com/visulima/visulima/compare/@visulima/tui@4.0.30...@visulima/tui@5.0.0) (2026-10-14)
 
 ### ⚠ BREAKING CHANGES
