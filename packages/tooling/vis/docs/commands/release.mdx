@@ -502,11 +502,11 @@ vis release publish --resume
 vis release publish --missing --dry-run
 ```
 
-`--missing` recovers a partly failed wave on a fresh checkout, where `--resume` has no state file to read. Tags only follow a successful publish, so a package that failed is left with its version committed by the release commit but no tag. `--missing` publishes every such version and tags it **on that release commit** (not HEAD, so `generate --since-last-release` still sees the commits made after it). A version the registry already has only gets its tag. A candidate is skipped, with the reason printed, unless every check passes:
+`--missing` recovers a partly failed wave on a fresh checkout, where `--resume` has no state file to read. Tags only follow a successful publish, so a package that failed is left with its version committed by the release commit but no tag. `--missing` publishes each such version that passes the checks below and tags it **on that release commit** (not HEAD, so `generate --since-last-release` still sees the commits made after it). A version the registry already has only gets its tag. A package with no earlier release tag is not considered at all, so a failed **first** release is not recovered: publish and tag it by hand. Any other candidate is skipped, with the reason printed, unless every check passes:
 
 - it is an npm package (not private, not `skipNpmPublish`) that already has a release tag, and its manifest version is higher than that tag;
 - the commit that set the version is a release commit (`chore(release): …`, `release: …`, or the version-PR title);
-- the package directory has not changed since that commit, so the published content is exactly what was versioned;
+- no tracked file in the package directory differs from that commit (`git diff --quiet <commit> -- <dir>`). This does not guarantee identical published content: build output, untracked or ignored files, and anything pulled in from outside the directory (a shared source dir, a catalog version) are not compared;
 - `npm view <name>@<version>` (run from the workspace root like the publish, with the package's `registry`) gives a definite answer.
 
 `vis release ci release` runs this first on auto-publish channels.
@@ -745,7 +745,7 @@ vis release ci release --auto-publish --generate
 | `--no-publish-missing`   | boolean | Skip recovering a partly failed earlier wave (see below)                             |
 | `--print-config[=debug]` | string  | Print the resolved release config and exit                                           |
 
-On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**: if the push is rejected (say the branch moved), the run stops with nothing published, and the push that moved the branch starts its own run. It does not rebase and retry: the release tags would then sit above the incoming commits and `--generate` would skip them. A package that then fails to publish stays committed but untagged, and the next run publishes it.
+On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**: if the push is rejected (say the branch moved), the run stops before publishing the new wave (versions recovered in the first step stay published), and the push that moved the branch starts its own run. It does not rebase and retry: the release tags would then sit above the incoming commits and `--generate` would skip them. A package with an earlier release tag that then fails to publish stays committed but untagged, and the next run's recovery publishes it; a failed first release is not recovered (see above).
 
 ### Commit-driven repos: `--generate`
 
