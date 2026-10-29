@@ -66,6 +66,16 @@ const setupFixture = (branch: string): string => {
 };
 
 const publishOptionsCaptured: { resume?: boolean; tag?: string }[] = [];
+const callOrder: string[] = [];
+const pushBranchMock = vi.fn(async (..._args: unknown[]) => {
+    callOrder.push("pushBranch");
+});
+const missingResult = { failed: [] as { name: string; reason: string }[], missing: [] as unknown[], published: [], skipped: [], tags: [], tagsPushed: false };
+const publishMissingMock = vi.fn(async () => {
+    callOrder.push("publishMissing");
+
+    return missingResult;
+});
 
 // Stub publishContext + applyContext so the handler runs without touching
 // npm / real publishing. We assert on the captured `resume` flag.
@@ -82,10 +92,12 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
             };
         }),
         publishContext: vi.fn(async (_ctx: unknown, options: { resume?: boolean; tag?: string } = {}) => {
+            callOrder.push("publishContext");
             publishOptionsCaptured.push({ ...options });
 
             return { failed: [], published: [], skipped: [], tags: [], tagsPushed: false };
         }),
+        publishMissing: publishMissingMock,
     };
 });
 
@@ -99,7 +111,7 @@ vi.mock(import("../../../src/release/core/git"), async (importOriginal) => {
         // The fixture writes `vis.config.cjs` after the initial commit, so the
         // real probe would report a dirty tree and short-circuit the handler.
         listUncommittedPaths: vi.fn(async () => [] as string[]),
-        pushBranch: vi.fn(async () => undefined),
+        pushBranch: pushBranchMock,
     };
 });
 
@@ -109,6 +121,9 @@ describe("vis release ci release — C7 publish idempotency", () => {
     beforeEach(() => {
         cwd = undefined;
         publishOptionsCaptured.length = 0;
+        callOrder.length = 0;
+        missingResult.failed = [];
+        process.exitCode = undefined;
     });
 
     afterEach(async () => {
@@ -140,6 +155,8 @@ describe("vis release ci release — C7 publish idempotency", () => {
 
         expect(publishOptionsCaptured).toHaveLength(1);
         expect(publishOptionsCaptured[0]).toMatchObject({ resume: false });
+        // Version-PR channels refuse to publish while the release PR is open.
+        expect(callOrder).not.toContain("publishMissing");
     });
 
     it("version-pr mode with no pending files and .state.json present → publish with resume", async () => {
@@ -193,5 +210,62 @@ describe("vis release ci release — C7 publish idempotency", () => {
 
         expect(publishOptionsCaptured).toHaveLength(1);
         expect(publishOptionsCaptured[0]).toMatchObject({ resume: true, tag: "alpha" });
+    });
+
+    const runAutoPublish = async (options: Record<string, unknown> = {}): Promise<void> => {
+        cwd = setupFixture("alpha");
+
+        writeVisConfigCjs(cwd, {
+            channels: { alpha: { mode: "auto-publish", prerelease: "alpha", tag: "alpha" } },
+        });
+
+        await writeFile(join(cwd, ".vis", "release", "change-1.md"), "---\n\"@scope/a\": minor\n---\nFeature\n");
+
+        const { default: execute } = await import("../../../src/commands/release/ci/release/handler");
+
+        await execute({
+            fs: testFs,
+            logger: { error: () => {}, info: () => {}, warn: () => {} },
+            options: { channel: "alpha", publishMissing: true, ...options },
+            workspaceRoot: cwd,
+        });
+    };
+
+    it("auto-publish mode → recovers missing versions, pushes the version commit, then publishes", async () => {
+        expect.hasAssertions();
+
+        await runAutoPublish();
+
+        expect(callOrder).toStrictEqual(["publishMissing", "pushBranch", "publishContext"]);
+    });
+
+    it("auto-publish mode → publishes nothing when the version commit cannot be pushed", async () => {
+        expect.hasAssertions();
+
+        pushBranchMock.mockRejectedValueOnce(new Error("rejected"));
+
+        await runAutoPublish();
+
+        expect(callOrder).toStrictEqual(["publishMissing"]);
+        expect(process.exitCode).toBe(1);
+    });
+
+    it("auto-publish mode → stops before a new wave when recovering a missing version fails", async () => {
+        expect.hasAssertions();
+
+        missingResult.failed = [{ name: "@scope/a", reason: "E403" }];
+
+        await runAutoPublish();
+
+        expect(callOrder).toStrictEqual(["publishMissing"]);
+        expect(process.exitCode).toBe(2);
+    });
+
+    it("--no-publish-missing skips the recovery", async () => {
+        expect.hasAssertions();
+
+        await runAutoPublish({ publishMissing: false });
+
+        expect(callOrder).toStrictEqual(["pushBranch", "publishContext"]);
     });
 });

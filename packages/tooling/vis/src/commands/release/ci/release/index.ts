@@ -1,6 +1,8 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../../../util/negatable-option";
+
 const ciReleaseOptionDefinitions = {
     "allow-full-history": {
         description: "With --generate: walk the whole history when no release tag matches (first release only)",
@@ -31,6 +33,13 @@ const ciReleaseOptionDefinitions = {
         description: "Start ref for --generate (e.g. github.event.before). Overrides the since-last-release default",
         type: String,
     },
+    ...negatable({
+        defaultValue: true,
+        description:
+            "First publish every version a release commit set but no wave finished (a partly failed publish), tagging it on that commit (use --no-publish-missing to disable)",
+        name: "publish-missing",
+        type: Boolean,
+    }),
     "print-config": {
         description: "Print the resolved release config and exit (--print-config=debug for runtime-resolved fields)",
         type: String,

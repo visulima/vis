@@ -1,12 +1,27 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 
-import { buildContext, publishContext } from "../../../release/core/orchestrator";
+import { buildContext, publishContext, publishMissing } from "../../../release/core/orchestrator";
 import { VisReleaseError } from "../../../release/errors";
 import type { ReleasePublishOptions } from "./index";
 
 const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, ReleasePublishOptions>): Promise<void> => {
     const cwd = workspaceRoot ?? process.cwd();
     const dryRun = options.dryRun === true;
+
+    const missing = options.missing === true;
+    const projects = options.filter
+        ? options.filter
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+
+    if (missing && (options.checkOnly === true || options.firstRelease === true)) {
+        logger.error(`--missing cannot be combined with ${options.checkOnly === true ? "--check-only" : "--first-release"}.`);
+        process.exitCode = 1;
+
+        return;
+    }
 
     let ctx;
 
@@ -15,12 +30,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
             channel: options.channel,
             cwd,
             firstRelease: options.firstRelease === true,
-            projects: options.filter
-                ? options.filter
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                : undefined,
+            projects,
         });
     } catch (error) {
         logger.error(`Failed to load release context: ${error instanceof Error ? error.message : String(error)}`);
@@ -49,7 +59,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
         return;
     }
 
-    if (ctx.plan.releases.length === 0) {
+    if (!missing && ctx.plan.releases.length === 0) {
         logger.info("No pending releases — nothing to publish.");
 
         return;
@@ -63,20 +73,36 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
         );
     }
 
-    logger.info(
-        `${dryRun ? "[dry-run] would publish" : "Publishing"} ${ctx.plan.releases.length} package(s) to dist-tag "${tag ?? "latest"}"${dryRun ? "" : "..."}`,
-    );
+    if (missing) {
+        logger.info(`Looking for released versions that never reached dist-tag "${tag ?? "latest"}"...`);
+    } else {
+        logger.info(
+            `${dryRun ? "[dry-run] would publish" : "Publishing"} ${ctx.plan.releases.length} package(s) to dist-tag "${tag ?? "latest"}"${dryRun ? "" : "..."}`,
+        );
+    }
 
     let result;
 
     try {
-        result = await publishContext(ctx, {
-            dryRun,
-            noPush: !options.push,
-            otp: options.otp,
-            resume: options.resume === true,
-            tag,
-        });
+        const publishOptions = { dryRun, noPush: !options.push, otp: options.otp, resume: options.resume === true, tag };
+
+        if (missing) {
+            result = await publishMissing(ctx, { ...publishOptions, projects });
+
+            for (const entry of result.missing) {
+                const action = entry.onRegistry ? "tag" : "publish";
+
+                logger.info(
+                    `  [missing]   ${entry.name}@${entry.version} (${dryRun ? `would ${action}` : action}, release commit ${entry.commit.slice(0, 7)})`,
+                );
+            }
+
+            if (result.missing.length === 0) {
+                logger.info("No released-but-unpublished versions found.");
+            }
+        } else {
+            result = await publishContext(ctx, publishOptions);
+        }
     } catch (error) {
         if (error instanceof VisReleaseError && error.code === "STAGE_PENDING") {
             logger.error(error.message);

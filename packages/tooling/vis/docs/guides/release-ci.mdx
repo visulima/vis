@@ -395,7 +395,8 @@ Typical recovery flow:
 
 1. **Inspect the failed job** — vis prints the offending package and step.
 2. **Re-run with the same revision** — `--resume` is implicit in `vis release ci release` when a state file exists; already-published packages are skipped.
-3. **If the tag exists upstream but the publish failed,** vis surfaces a `TAG_COLLISION` error pointing at the upstream tag. Delete it and re-run, or pin the existing tag's SHA if the work is salvageable.
+3. **A fresh runner has no state file.** On auto-publish channels `vis release ci release` recovers a partly failed wave anyway: the version commit of every package is pushed before publishing, and the next run publishes any committed version that never got its tag (`vis release publish --missing` does the same by hand).
+4. **If the tag exists upstream but the publish failed,** vis surfaces a `TAG_COLLISION` error pointing at the upstream tag. Delete it and re-run, or pin the existing tag's SHA if the work is salvageable.
 
 ## Troubleshooting
 

@@ -138,13 +138,16 @@ export const REGISTRY_LOOKUP_CONCURRENCY = 4;
 const lookupMemo = new Map<string, Promise<ResolveCurrentVersionResult>>();
 
 /**
- * Reset the memoisation cache. Test-only — production code never needs
- * to call this because the process lifetime IS the cache lifetime.
+ * Drop the memoised lookups. Needed after this process creates release tags
+ * that a later `buildContext` must see: the key holds the manifest version,
+ * which a tag does not change.
  */
-// eslint-disable-next-line no-underscore-dangle, @typescript-eslint/naming-convention -- test-only export seam
-export const __resetLookupMemoForTests = (): void => {
+export const clearCurrentVersionMemo = (): void => {
     lookupMemo.clear();
 };
+
+// eslint-disable-next-line no-underscore-dangle, @typescript-eslint/naming-convention -- test-only export seam
+export const __resetLookupMemoForTests = clearCurrentVersionMemo;
 
 /**
  * Discriminated result so callers (release-plan, tests) can surface

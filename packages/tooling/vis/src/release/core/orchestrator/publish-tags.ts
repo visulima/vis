@@ -45,7 +45,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
                     // would simply be re-published this wave. Skip the
                     // remote pre-check so the very first run on a fresh
                     // repo doesn't error.
-                    { signing: context.config.signing, skipRemoteCheck: context.firstRelease },
+                    { signing: context.config.signing, skipRemoteCheck: context.firstRelease, target: options.tagTargets?.get(name) },
                 );
                 result.tags.push(tag);
             } catch (error) {
