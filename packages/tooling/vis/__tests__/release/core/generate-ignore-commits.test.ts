@@ -22,7 +22,9 @@ import {
     buildIgnoreCommitMatchers,
     DEFAULT_RELEASE_COMMIT_PATTERNS,
     isIgnoredCommit,
+    markBreakingSubject,
     normalizeCommitSubject,
+    parseCommit,
 } from "../../../src/release/core/generate/conventional-commits";
 import type { RunGenerateResult } from "../../../src/release/core/generate/run";
 import { runGenerate } from "../../../src/release/core/generate/run";
@@ -87,10 +89,10 @@ const setupFixture = (): { cwd: string; packages: WorkspacePackage[]; rootSha: s
     return { cwd, packages, rootSha };
 };
 
-const commitTouchingPackage = (cwd: string, subject: string, marker: string): void => {
+const commitTouchingPackage = (cwd: string, subject: string, marker: string, body?: string): void => {
     writeFileSync(join(cwd, "packages", "a", "src", "index.ts"), `export const a = "${marker}";\n`);
     git(cwd, "add", ".");
-    git(cwd, "commit", "-q", "-m", subject);
+    git(cwd, "commit", "-q", "-m", subject, ...(body === undefined ? [] : ["-m", body]));
 };
 
 const generate = async (fixture: { cwd: string; packages: WorkspacePackage[]; rootSha: string }, config: VisReleaseConfig = {}) =>
@@ -303,5 +305,91 @@ describe("generate — machine release-commit filtering (#864)", () => {
         // lands in the change file even with the heuristic disabled.
         expect(result.content).toContain("- chore(release): @scope/a@1.0.0-alpha.44 [skip ci]");
         expect(result.content).not.toContain("## @scope/a [1.0.0-alpha.44]");
+    });
+
+    describe("breaking changes", () => {
+        // Lunora's config: only feat / fix / perf / revert (and breaking) release.
+        const typeFilter: VisReleaseConfig = {
+            ignoreCommitPattern: [String.raw`^(build|chore|ci|deps|docs|refactor|security|style|test|translation)(\([^)]*\))?:`],
+        };
+
+        it("parses the ! marker as a breaking change, with or without a scope", () => {
+            expect.hasAssertions();
+
+            expect(parseCommit("refactor!: drop the old api", "")).toStrictEqual({ breaking: true, scope: undefined, type: "refactor" });
+            expect(parseCommit("feat(do)!: drop the old api", "")).toStrictEqual({ breaking: true, scope: "do", type: "feat" });
+            expect(parseCommit("feat(do): add an api", "")).toStrictEqual({ breaking: false, scope: "do", type: "feat" });
+        });
+
+        it("parses both footer spellings as a breaking change", () => {
+            expect.hasAssertions();
+
+            expect(parseCommit("refactor(do): x", "BREAKING CHANGE: gone").breaking).toBe(true);
+            expect(parseCommit("refactor(do): x", "BREAKING-CHANGE: gone").breaking).toBe(true);
+        });
+
+        it("adds the ! marker to a footer-only breaking subject and leaves the rest alone", () => {
+            expect.hasAssertions();
+
+            expect(markBreakingSubject("refactor(do): x")).toBe("refactor(do)!: x");
+            expect(markBreakingSubject("refactor: x")).toBe("refactor!: x");
+            expect(markBreakingSubject("🚀 feat(do): x")).toBe("🚀 feat(do)!: x");
+            expect(markBreakingSubject("feat(do)!: x")).toBe("feat(do)!: x");
+            expect(markBreakingSubject("not conventional")).toBe("not conventional");
+        });
+
+        it.each([
+            ["refactor!: drop the old api", undefined],
+            ["refactor(a)!: drop the old api", undefined],
+            ["chore(a)!: drop the old api", undefined],
+            ["build(a): drop node 18", "BREAKING CHANGE: node 18 is no longer supported"],
+            ["security(a): reject unsigned tokens", "BREAKING-CHANGE: unsigned tokens are rejected"],
+            ["refactor(a): drop the old api", "Some context.\n\nBREAKING CHANGE: the old api is gone"],
+        ])("releases %j as major even though its type is ignored", async (subject, body) => {
+            expect.hasAssertions();
+
+            const fixture = setupFixture();
+
+            cwd = fixture.cwd;
+
+            commitTouchingPackage(cwd, subject, "breaking", body);
+
+            const result = walked(await generate(fixture, typeFilter));
+
+            expect(result.ignoredCommits).toBe(0);
+            expect(result.bumps.get("@scope/a")).toBe("major");
+            // Every changelog formatter reads "breaking" off the subject line.
+            expect(result.content).toMatch(/^- \w+(\([^)]*\))?!: /m);
+        });
+
+        it("still ignores a commit of an ignored type that is not breaking", async () => {
+            expect.hasAssertions();
+
+            const fixture = setupFixture();
+
+            cwd = fixture.cwd;
+
+            commitTouchingPackage(cwd, "refactor(a): tidy internals", "tidy", "No user-visible change.");
+
+            const result = walked(await generate(fixture, typeFilter));
+
+            expect(result.ignoredCommits).toBe(1);
+            expect(result.bumps.size).toBe(0);
+        });
+
+        it("keeps dropping release commits whose body carries a BREAKING CHANGE line", async () => {
+            expect.hasAssertions();
+
+            const fixture = setupFixture();
+
+            cwd = fixture.cwd;
+
+            commitTouchingPackage(cwd, "chore(release): @scope/a@2.0.0 [skip ci]", "rel", "BREAKING CHANGE: transcribed from the changelog");
+
+            const result = walked(await generate(fixture, typeFilter));
+
+            expect(result.ignoredCommits).toBe(1);
+            expect(result.bumps.size).toBe(0);
+        });
     });
 });

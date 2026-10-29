@@ -88,7 +88,20 @@ export interface AnnotatedCommit extends CommitRecord {
     revertTargetSha?: string;
 }
 
-const commitParser = new CommitParser();
+/**
+ * The parser's default `headerPattern` has no `!` slot, so `feat!: …` and
+ * `fix(api)!: …` did not parse at all — no type, no breaking flag — and fell
+ * through to a path-derived patch. These are the
+ * `conventional-changelog-conventionalcommits` patterns (`!` optional in the
+ * header, mandatory in the breaking variant, which the parser turns into a
+ * `BREAKING CHANGE` note). The scope is any run of non-paren characters, so
+ * `feat(do,client): …` parses (the default charset has no comma) — but not the
+ * preset's `(.*)`, which can run across `feat(a): x (b): y`.
+ */
+const commitParser = new CommitParser({
+    breakingHeaderPattern: /^(\w*)(?:\(([^()]*)\))?!: (.*)$/,
+    headerPattern: /^(\w*)(?:\(([^()]*)\))?!?: (.*)$/,
+});
 
 const REVERT_HEADER_RE = /^Revert\s+"(.+)"\s*$/;
 const REVERT_TRAILER_RE = /This reverts commit\s+([0-9a-f]{7,40})/i;
@@ -116,6 +129,23 @@ export const parseCommit = (subject: string, body: string): ParsedCommit => {
         scope: parsed.scope ?? undefined,
         type: parsed.type ?? undefined,
     };
+};
+
+const BREAKING_MARKER_TARGET_RE = /^(\w+(?:\([^()]*\))?): /;
+
+/**
+ * Add the `!` marker to a commit subject whose breaking change is announced
+ * only by a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer.
+ *
+ * A generated change file carries subjects, not bodies, and every changelog
+ * formatter decides "breaking" from that one line — so without the marker a
+ * footer-only breaking change bumps major but is filed as an ordinary entry.
+ * Subjects that already carry `!`, or do not parse, are returned unchanged.
+ */
+export const markBreakingSubject = (subject: string): string => {
+    const prefix = GITMOJI_PREFIX_REGEX.exec(subject)?.[0] ?? "";
+
+    return prefix + subject.slice(prefix.length).replace(BREAKING_MARKER_TARGET_RE, "$1!: ");
 };
 
 /**

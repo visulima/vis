@@ -33,7 +33,15 @@ import { formatChangeFile } from "../change-file";
 import type { CommandRunner } from "../package-managers/interface";
 import { randomAnimalSlug } from "../slug";
 import { resolveLastReleaseRef } from "../version-resolver";
-import { annotateAndResolveReverts, buildIgnoreCommitMatchers, CC_TYPE_TO_BUMP, isIgnoredCommit, normalizeCommitSubject } from "./conventional-commits";
+import {
+    annotateAndResolveReverts,
+    buildIgnoreCommitMatchers,
+    CC_TYPE_TO_BUMP,
+    isIgnoredCommit,
+    markBreakingSubject,
+    normalizeCommitSubject,
+    parseCommit,
+} from "./conventional-commits";
 
 export interface RunGenerateOptions {
     /**
@@ -300,14 +308,26 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
     // a package whose only commits in the range are its own release
     // commits must not get a bump, and the previous changelog header
     // must never be transcribed into the new entry.
-    const matchers = buildIgnoreCommitMatchers({
+    //
+    // A breaking change (`!` or a `BREAKING CHANGE:` footer) is exempt from
+    // the operator's patterns, as it is from type filtering in
+    // conventional-changelog: an ignore list written to keep `refactor:` or
+    // `build:` from releasing must not swallow an incompatible change. The
+    // built-in release-commit heuristic gets no exemption — those commits
+    // can carry a transcribed changelog with `BREAKING CHANGE` text in it.
+    const releaseCommitMatchers = buildIgnoreCommitMatchers({ ignoreReleaseCommits: config.ignoreReleaseCommits });
+    const userMatchers = buildIgnoreCommitMatchers({
         ignoreCommitPattern: config.ignoreCommitPattern,
-        ignoreReleaseCommits: config.ignoreReleaseCommits,
+        ignoreReleaseCommits: false,
         onInvalidPattern: (source, error) => {
             warnings.push(`Ignoring invalid release.ignoreCommitPattern entry ${JSON.stringify(source)}: ${error.message}`);
         },
     });
-    const kept = commits.filter((commit) => !isIgnoredCommit(commit.subject, matchers));
+    const kept = commits.filter(
+        (commit) =>
+            !isIgnoredCommit(commit.subject, releaseCommitMatchers)
+            && !(isIgnoredCommit(commit.subject, userMatchers) && !parseCommit(commit.subject, commit.body).breaking),
+    );
     const ignoredCommits = commits.length - kept.length;
 
     if (ignoredCommits > 0) {
@@ -339,12 +359,19 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
             level = CC_TYPE_TO_BUMP[parsed.type] ?? "patch";
         }
 
-        // Map by scope first, then by file paths from the same commit.
+        // Map by scope first, then by file paths from the same commit. A
+        // comma-separated scope (`feat(client,react): …`) targets every
+        // package one of its parts names; the file fallback applies only
+        // when none does. `/` is not a separator — `@scope/pkg` is one name.
         const targets = new Set<string>();
+        const scopes = (parsed.scope ?? "")
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean);
 
-        if (parsed.scope) {
+        for (const scope of scopes) {
             for (const pkg of packages) {
-                if (pkg.name === parsed.scope || pkg.name.endsWith(`/${parsed.scope}`)) {
+                if (pkg.name === scope || pkg.name.endsWith(`/${scope}`)) {
                     targets.add(pkg.name);
                 }
             }
@@ -367,7 +394,7 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
         }
 
         if (targets.size > 0) {
-            subjects.push(`- ${subject}`);
+            subjects.push(`- ${parsed.breaking ? markBreakingSubject(subject) : subject}`);
         }
     }
 
