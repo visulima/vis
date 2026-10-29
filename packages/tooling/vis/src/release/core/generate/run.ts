@@ -16,6 +16,12 @@
  *
  * Multiple commits affecting the same package max-merge their levels.
  *
+ * One change file per package, each carrying only the commits attributed
+ * to that package (by the same scope → files resolution that picks the
+ * bump). A single shared file would hand every package in it the whole
+ * range's subjects, since a simple change file's body is the changelog
+ * entry for every package it lists.
+ *
  * Pure core: this module never logs. It returns a discriminated
  * {@link RunGenerateResult} plus `notes` / `warnings`, and the command
  * layer decides what to print — so the two entry points can't drift on
@@ -109,10 +115,21 @@ interface RunGenerateWalked extends RunGenerateOutcome {
     fromRef: string;
 }
 
-/** `dryRun` — the content was rendered but nothing was written. */
-export interface RunGenerateDryRun extends RunGenerateWalked {
+/** One rendered change file — one per bumped package. */
+export interface GeneratedChangeFile {
     /** Rendered change-file content. */
     content: string;
+    /** The one package this file bumps. */
+    package: string;
+    /** Absolute path the file is (or, on a dry run, would be) written to. */
+    path: string;
+}
+
+/** `dryRun` — the content was rendered but nothing was written. */
+export interface RunGenerateDryRun extends RunGenerateWalked {
+    /** Every file's content, concatenated — for display. */
+    content: string;
+    files: GeneratedChangeFile[];
     status: "dry-run";
 }
 
@@ -130,12 +147,11 @@ export interface RunGenerateNoChanges extends RunGenerateWalked {
     status: "no-changes";
 }
 
-/** A change file was written to disk. */
+/** Change files were written to disk. */
 export interface RunGenerateWritten extends RunGenerateWalked {
-    /** Rendered change-file content. */
+    /** Every file's content, concatenated — for display. */
     content: string;
-    /** Absolute path of the file written. */
-    createdFile: string;
+    files: GeneratedChangeFile[];
     status: "written";
 }
 
@@ -276,7 +292,7 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
     }
 
     const bumps = new Map<string, BumpLevel>();
-    const subjects: string[] = [];
+    const subjectsByPackage = new Map<string, string[]>();
 
     const commits: CommitRecord[] = [];
     const sections = log.stdout
@@ -387,14 +403,13 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
             }
         }
 
+        const line = `- ${parsed.breaking ? markBreakingSubject(subject) : subject}`;
+
         for (const target of targets) {
             const existing = bumps.get(target);
 
             bumps.set(target, existing ? maxBump(existing, level) : level);
-        }
-
-        if (targets.size > 0) {
-            subjects.push(`- ${parsed.breaking ? markBreakingSubject(subject) : subject}`);
+            subjectsByPackage.set(target, [...(subjectsByPackage.get(target) ?? []), line]);
         }
     }
 
@@ -404,20 +419,52 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
         return { bumps, fromRef, ignoredCommits, notes, status: "no-changes", warnings };
     }
 
-    const payload: ChangeFileSimple = { bumps: Object.fromEntries(bumps) };
-    const body = subjects.length > 0 ? subjects.join("\n") : "Auto-generated change file.";
-    const content = formatChangeFile(payload, body);
-
-    if (options.dryRun) {
-        return { bumps, content, fromRef, ignoredCommits, notes, status: "dry-run", warnings };
-    }
-
     const changesDir = config.changesDir ?? DEFAULT_CHANGES_DIR;
     const slug = (options.name ?? randomAnimalSlug()).replaceAll(/[^a-z0-9-]/gi, "-");
-    const filePath = join(cwd, changesDir, `${slug}.md`);
+    // A lone package keeps the bare `<slug>.md` name generate always wrote.
+    // Otherwise each file is suffixed with its package; two names can
+    // slugify alike (`@a/b-c`, `@a-b/c`), so a clash takes a counter
+    // rather than overwriting the first package's file.
+    const usedNames = new Set<string>();
+    const files: GeneratedChangeFile[] = [...bumps].map(([name, level]) => {
+        let fileName = slug;
+
+        if (bumps.size > 1) {
+            const base = `${slug}-${name
+                .toLowerCase()
+                .replaceAll(/[^a-z0-9]+/g, "-")
+                .replaceAll(/^-|-$/g, "")}`;
+            let counter = 1;
+
+            fileName = base;
+
+            while (usedNames.has(fileName)) {
+                counter += 1;
+                fileName = `${base}-${counter}`;
+            }
+        }
+
+        usedNames.add(fileName);
+
+        const payload: ChangeFileSimple = { bumps: { [name]: level } };
+
+        return {
+            content: formatChangeFile(payload, (subjectsByPackage.get(name) ?? []).join("\n")),
+            package: name,
+            path: join(cwd, changesDir, `${fileName}.md`),
+        };
+    });
+    const content = files.map((file) => file.content).join("\n");
+
+    if (options.dryRun) {
+        return { bumps, content, files, fromRef, ignoredCommits, notes, status: "dry-run", warnings };
+    }
 
     await fs.mkdir(join(cwd, changesDir), { recursive: true });
-    await fs.writeFile(filePath, content);
 
-    return { bumps, content, createdFile: filePath, fromRef, ignoredCommits, notes, status: "written", warnings };
+    for (const file of files) {
+        await fs.writeFile(file.path, file.content);
+    }
+
+    return { bumps, content, files, fromRef, ignoredCommits, notes, status: "written", warnings };
 };

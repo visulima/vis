@@ -76,10 +76,8 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         return;
     }
 
-    logger.info(`Created ${relative(cwd, result.createdFile)}`);
-
-    for (const [name, level] of result.bumps) {
-        logger.info(`  ${name}: ${level}`);
+    for (const file of result.files) {
+        logger.info(`Created ${relative(cwd, file.path)} (${file.package}: ${result.bumps.get(file.package)})`);
     }
 };
 

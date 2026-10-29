@@ -177,11 +177,12 @@ const applyPrMetadata = async (
 
 /**
  * The exact filename shape `--generate` writes: `ci-&lt;short sha>.md`, or
- * `ci-head.md` when the sha probe failed. Anchored and narrow on
- * purpose — it is the only thing the clean-tree guard is allowed to
- * forgive, so it must not match a hand-written change file.
+ * `ci-head.md` when the sha probe failed — suffixed `-&lt;package slug>`
+ * when the run bumps more than one package (one file each). Anchored and
+ * narrow on purpose — it is the only thing the clean-tree guard is
+ * allowed to forgive, so it must not match a hand-written change file.
  */
-const GENERATED_CHANGE_FILE_NAME = /^ci-(?:head|[\da-f]{4,40})\.md$/;
+const GENERATED_CHANGE_FILE_NAME = /^ci-(?:head|[\da-f]{4,40})(?:-[a-z\d-]+)?\.md$/;
 
 /** True for a repo-relative path that is this command's own generated change file. */
 const isGeneratedChangeFile = (path: string, changesDirRelative: string): boolean => {
@@ -237,9 +238,9 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         logger.warn(`Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
     }
 
-    // `--generate` (issue #864): derive the change file in-process so a
+    // `--generate` (issue #864): derive the change files in-process so a
     // commit-driven repo needs ONE CI step instead of
-    // `generate` → `git commit` → `ci release`. The generated file is
+    // `generate` → `git commit` → `ci release`. The generated files are
     // staged (never committed on its own) so `applyContext`'s
     // `git add -- <consumed change file>` can stage the deletion —
     // `git add` refuses a path that was never in the index.
@@ -277,19 +278,24 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         }
 
         if (result.status === "written") {
-            const relativePath = await toRepoRelativePath({ cwd, runner }, result.createdFile);
-            const stage = await runner.run("git", ["add", "--", result.createdFile], { cwd, silent: true });
+            const createdPaths = result.files.map((file) => file.path);
+            const relativePaths = await Promise.all(createdPaths.map(async (path) => await toRepoRelativePath({ cwd, runner }, path)));
+            const stage = await runner.run("git", ["add", "--", ...createdPaths], { cwd, silent: true });
 
             if (stage.exitCode !== 0) {
-                logger.error(`Could not stage the generated change file ${relativePath}: ${stage.stderr.trim() || `exit ${stage.exitCode}`}`);
+                logger.error(`Could not stage the generated change files ${relativePaths.join(", ")}: ${stage.stderr.trim() || `exit ${stage.exitCode}`}`);
 
-                // The guard above passed, so this file is the only thing
-                // this run added to the tree. Drop it again rather than
-                // leaving it for the next run to trip over.
+                // The guard above passed, so these files are the only thing
+                // this run added to the tree. Drop them again rather than
+                // leaving them for the next run to trip over.
                 try {
-                    await fs.rm(result.createdFile, { force: true });
+                    await Promise.all(
+                        createdPaths.map(async (path) => {
+                            await fs.rm(path, { force: true });
+                        }),
+                    );
                 } catch {
-                    logger.warn(`Could not clean up ${relativePath} after the staging failure — remove it before the next run.`);
+                    logger.warn(`Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
                 }
 
                 process.exitCode = 1;
@@ -297,7 +303,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
                 return;
             }
 
-            logger.info(`Generated ${relativePath} from ${result.fromRef}..HEAD (${result.bumps.size} package(s)).`);
+            logger.info(`Generated ${relativePaths.join(", ")} from ${result.fromRef}..HEAD (${result.bumps.size} package(s)).`);
 
             // The plan was assembled before the change file existed —
             // rebuild so the release wave actually sees it.

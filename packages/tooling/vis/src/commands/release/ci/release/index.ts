@@ -24,7 +24,7 @@ const ciReleaseOptionDefinitions = {
         type: Boolean,
     },
     generate: {
-        description: "Derive the change file from commits first (commit-driven repos). Defaults to the range since the last release tag",
+        description: "Derive the change files from commits first (commit-driven repos). Defaults to the range since the last release tag",
         type: Boolean,
     },
     "generate-from": {
@@ -43,7 +43,7 @@ const ciRelease = defineCommand({
     examples: [
         ["vis release ci release", "On push to main: open/update Versioned release PR; on PR merge: publish"],
         ["vis release ci release --auto-publish", "Skip version-PR; version + publish inline (alpha/beta workflow)"],
-        ["vis release ci release --auto-publish --generate", "Commit-driven: derive the change file from commits, then version + publish"],
+        ["vis release ci release --auto-publish --generate", "Commit-driven: derive the change files from commits, then version + publish"],
     ],
     group: "Release",
     loader: () => import("./handler"),

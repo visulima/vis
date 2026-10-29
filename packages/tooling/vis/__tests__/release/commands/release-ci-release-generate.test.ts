@@ -291,6 +291,40 @@ describe.skipIf(process.platform === "win32")("vis release ci release --generate
         expect(publishOptionsCaptured).toHaveLength(1);
     });
 
+    it("stages one change file per package and forgives a per-package leftover", async () => {
+        expect.hasAssertions();
+
+        const fixture = setupFixture();
+
+        cwd = fixture.cwd;
+        mkdirSync(join(cwd, "packages", "b", "src"), { recursive: true });
+        writeFileSync(join(cwd, "packages", "b", "package.json"), `${JSON.stringify({ name: "@scope/b", version: "1.0.0" }, null, 4)}\n`);
+        writeFileSync(join(cwd, "packages", "b", "src", "index.ts"), "export const b = 0;\n");
+        commitFeature(cwd, "feat(a,b): add a thing to both", "one");
+
+        // What an aborted multi-package run leaves behind.
+        await writeFile(join(cwd, ".vis", "release", "ci-deadbee-scope-a.md"), "---\n\"@scope/a\": patch\n---\n\n- fix(a): from the interrupted run\n");
+        git(cwd, "add", "--", ".vis/release/ci-deadbee-scope-a.md");
+
+        const warnings: string[] = [];
+        const { default: execute } = await import("../../../src/commands/release/ci/release/handler");
+
+        await execute({
+            fs: testFs,
+            logger: { error: () => {}, info: () => {}, warn: (message: string) => warnings.push(message) },
+            options: { autoPublish: true, channel: "alpha", generate: true, generateFrom: fixture.rootSha },
+            workspaceRoot: cwd,
+        });
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(warnings.join("\n")).not.toContain("CI mode requires a clean tree");
+
+        const staged = execFileSync("git", ["diff", "--cached", "--name-only"], { cwd, encoding: "utf8" }).trim().split("\n");
+
+        expect(staged.filter((path) => /^\.vis\/release\/ci-[\da-f]+-scope-[ab]\.md$/.test(path) && !path.includes("deadbee"))).toHaveLength(2);
+        expect(publishOptionsCaptured).toHaveLength(1);
+    });
+
     it("still refuses unrelated dirt that merely lives in the change dir", async () => {
         expect.hasAssertions();
 
