@@ -42,6 +42,7 @@ export type {
     DependencyKind,
     DependentInfo,
     GitUserConfig,
+    InternalDependencyRangesMode,
     LockInfo,
     PackageManifest,
     PackManager,
