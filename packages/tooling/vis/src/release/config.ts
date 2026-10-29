@@ -45,6 +45,7 @@ export const DEFAULT_CONFIG: Required<
         | "changelog"
         | "changedFilePatterns"
         | "updateInternalDependencies"
+        | "internalDependencyRanges"
         | "fixed"
         | "linked"
         | "ignore"
@@ -70,6 +71,7 @@ export const DEFAULT_CONFIG: Required<
     fixed: [],
     ignore: [],
     include: [],
+    internalDependencyRanges: "rewrite",
     linked: [],
     postPublishCommand: "",
     postVersionCommand: "",

@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { VisReleaseError } from "../../errors";
-import type { PackageManifest, WorkspacePackage } from "../../types";
-import { rewriteRangeForVersion } from "../apply-release-plan";
+import type { InternalDependencyRangesMode, PackageManifest, WorkspacePackage } from "../../types";
+import { updateRangeForVersion } from "../apply-release-plan";
 import { rewriteCatalogRefs } from "../catalog";
 import { cleanPackageJsonForPublish } from "../clean-package-json";
 import type { PackageManagerAdapter, PackResult, PublishResult } from "../package-managers/interface";
@@ -166,7 +166,7 @@ export class NpmVersionActions extends VersionActions {
         //    c) catalog: refs rewritten in-place
         //    d) cleaned (scripts / devDeps / tool blocks stripped)
         const baseManifest = context.versionedManifestByName.get(context.pkg.name) ?? context.pkg.manifest;
-        const protocolResolved = resolveWorkspaceRefs(baseManifest, context.versionedManifestByName);
+        const protocolResolved = resolveWorkspaceRefs(baseManifest, context.versionedManifestByName, context.workspaceConfig?.internalDependencyRanges);
         const catalogResolved = rewriteCatalogRefs(protocolResolved, context.catalogs);
         const cleaned = cleanPackageJsonForPublish(catalogResolved, context.cleanPackageJsonConfig);
 
@@ -481,7 +481,11 @@ const DEPENDENCY_KINDS = ["dependencies", "devDependencies", "peerDependencies",
  * package manager doesn't natively rewrite (npm-publish-tarball strategy
  * across all PMs handles this defensively).
  */
-const resolveWorkspaceRefs = (manifest: PackageManifest, versionedByName: ReadonlyMap<string, PackageManifest>): PackageManifest => {
+export const resolveWorkspaceRefs = (
+    manifest: PackageManifest,
+    versionedByName: ReadonlyMap<string, PackageManifest>,
+    rangesMode: InternalDependencyRangesMode | undefined,
+): PackageManifest => {
     const out: PackageManifest = { ...manifest };
 
     for (const kind of DEPENDENCY_KINDS) {
@@ -505,7 +509,11 @@ const resolveWorkspaceRefs = (manifest: PackageManifest, versionedByName: Readon
                 continue;
             }
 
-            next[depName] = rewriteRangeForVersion(range.slice("workspace:".length) === "*" ? "*" : range, depManifest.version);
+            next[depName] = updateRangeForVersion(range.slice("workspace:".length) === "*" ? "*" : range, depManifest.version, rangesMode, {
+                dependent: manifest.name,
+                depName,
+                kind,
+            });
 
             // Strip the workspace: prefix in the published tarball — consumers
             // (npm install) don't understand it.

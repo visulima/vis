@@ -291,6 +291,14 @@ export type DependencyBumpRules = Partial<Record<DependencyKind, DependencyBumpR
 
 export type UpdateInternalDependenciesMode = "patch" | "minor" | "out-of-range";
 
+/**
+ * What the version step writes into a released package's specifier for an internal dependency.
+ * `"rewrite"` sets every specifier to `&lt;operator>&lt;newVersion>`; `"preserve-satisfying"` leaves a
+ * range that still admits the new version untouched, raises the floor of an outgrown one (keeping
+ * its ceiling) and fails the release when the new version is past the ceiling.
+ */
+export type InternalDependencyRangesMode = "rewrite" | "preserve-satisfying";
+
 // ── Fixed / linked group config (RFC §6.1 — changesets #1059 parity) ─
 
 /**
@@ -1529,6 +1537,16 @@ export interface VisReleaseConfig {
 
     /** Globs that override `ignore` and `private` exclusion. */
     include?: string[];
+
+    /**
+     * How the version step updates a released package's specifiers for other workspace packages
+     * in the same wave. `updateInternalDependencies` decides which dependents cascade; this decides
+     * what gets written. Default: `"rewrite"`.
+     *
+     * Use `"preserve-satisfying"` for promotion-safe ranges such as `>=1.0.0-alpha.76 &lt;2.0.0-0`,
+     * which `"rewrite"` turns into `>=&lt;newVersion>` (ratcheted floor, no ceiling).
+     */
+    internalDependencyRanges?: InternalDependencyRangesMode;
 
     /**
      * Linked groups: members share bump levels but only changed members

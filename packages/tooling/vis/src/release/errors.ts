@@ -20,7 +20,8 @@ export type VisReleaseErrorCode
         | "PUBLISH_FAILED"
         | "STAGE_PENDING"
         | "TAG_PUSH_FAILED"
-        | "STATE_FILE_CORRUPT";
+        | "STATE_FILE_CORRUPT"
+        | "DEPENDENCY_RANGE_EXCEEDED";
 
 export interface VisReleaseErrorOptions {
     /** Original error for stack-trace continuity. */

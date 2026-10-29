@@ -205,6 +205,7 @@ export const printConfigIfRequested = <O extends PrintConfigOptions & Record<str
         httpProxy: config.httpProxy,
         ignore: config.ignore,
         include: config.include,
+        internalDependencyRanges: config.internalDependencyRanges,
         linked: normaliseGroupsForPrint(config.linked),
         notifications: config.notifications,
         postPublishCommand: config.postPublishCommand,
