@@ -1,3 +1,13 @@
+## @visulima/vis [6.2.0](https://github.com/visulima/vis/compare/@visulima/vis@6.1.5...@visulima/vis@6.2.0) (2026-10-29)
+
+### Features
+
+* **vis:** recover versions a failed publish left behind ([#66](https://github.com/visulima/vis/issues/66)) ([745e2d8](https://github.com/visulima/vis/commit/745e2d885c98ca5999d2120a1d0b3eeff5fc43de))
+
+### Bug Fixes
+
+* **vis:** write one generated change file per package ([#68](https://github.com/visulima/vis/issues/68)) ([16cc461](https://github.com/visulima/vis/commit/16cc4618d2a1788750d913882c7cc348fa244410))
+
 ## @visulima/vis [6.1.5](https://github.com/visulima/vis/compare/@visulima/vis@6.1.4...@visulima/vis@6.1.5) (2026-10-29)
 
 ### Bug Fixes
