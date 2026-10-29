@@ -430,6 +430,8 @@ export interface WalkSuccessfulReleaseResult {
     commented: number[];
     /** Refs the walk successfully labelled. */
     labeled: number[];
+    /** `true` once the walk got past its gates (configured, enabled, not a skipped prerelease, refs found). */
+    ran?: boolean;
     /** Soft-fail warnings — surfaced through plan.warnings by the caller. */
     warnings: string[];
 }
@@ -767,6 +769,8 @@ export const walkSuccessfulRelease = async (
     if (references.length === 0) {
         return out;
     }
+
+    out.ran = true;
 
     const channelTag = context.channel?.tag ?? "";
     const releaseUrlPrefix = resolveReleaseUrlPrefix(context, deps.client.id, deps.repo);

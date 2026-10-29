@@ -97,7 +97,7 @@ describe("npmAdapter — installLockfileOnly", () => {
         const runner = new MockRunner();
         let called = false;
 
-        runner.on("npm", ["install", "--package-lock-only"], () => {
+        runner.on("npm", ["install", "--package-lock-only", "--ignore-scripts"], () => {
             called = true;
 
             return { exitCode: 0, stderr: "", stdout: "" };
@@ -113,7 +113,7 @@ describe("npmAdapter — installLockfileOnly", () => {
 
         const runner = new MockRunner();
 
-        runner.on("npm", ["install", "--package-lock-only"], () => {
+        runner.on("npm", ["install", "--package-lock-only", "--ignore-scripts"], () => {
             return {
                 exitCode: 1,
                 stderr: "lockfile conflict",

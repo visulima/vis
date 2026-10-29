@@ -768,9 +768,21 @@ export default {
 - **Tag contents.** A tag's tree is the source commit, so it still holds the previous manifest versions and changelogs.
 - **Recovery.** [`publish --missing`](#vis-release-publish) tags a recovered version on the commit the trailer names, not on the rebased version commit.
 - **A broken trailer fails.** If the trailer names a commit outside the version commit's history (say after a force-push), the tags are not created and recovery skips the version, rather than tagging some other commit.
-- **Not covered.** The bookkeeping pushes later in the run (`publish.lockInGit`, the staged-publish registry) are not retried.
 
 `pushRetries` without `tagTarget: "source"` is a configuration error.
+
+### Pushes per run
+
+On an auto-publish channel a run pushes the branch **once** (the version commit, retried as above) and the tags **once** (release tags, `syncGitTag` group tags and the force-updated floating major tags together). Every branch push rebuilds a merge queue, so nothing else in the run pushes the branch by itself:
+
+- The bookkeeping the publish step commits — the `publish.lockInGit` lock, the `publish.stage` registry, the `successWalk` / `notifications` dedupe record and the `workspaceChangelog` wave entry — is committed locally and pushed in **one more** branch push at the end of the run, rebased onto the branch if it moved (`pushRetries`, default `3`; no tag points at these commits, so this is safe in either `tagTarget` mode). This push only happens when one of those features wrote something. It cannot ride in the version commit: that is pushed before publishing, and this state only exists after the tags are on the remote (forge releases need them).
+- Under `lockInGit` the lock therefore reaches the branch at the end of the run, not when the wave opens. A runner that dies mid-wave is recovered by the next run's `--publish-missing` step instead.
+- A run that first recovers an earlier failed wave pushes that wave's tags in their own push (its forge releases need them).
+- The version-PR flow and the standalone `version` / `publish` commands still push their bookkeeping as before.
+
+### Lockfile
+
+The version step regenerates the lockfile (`install --lockfile-only` with `--ignore-scripts`, so no lifecycle script runs) after `applyDraft` plugins have edited the manifests, and on pnpm then checks it with `pnpm install --frozen-lockfile --lockfile-only`. A lockfile the branch could not install fails the run before anything is committed, pushed or published. The same happens after every rebase of the version commit. Set `release.verifyLockfile: false` to skip the check. Other package managers have no check that neither installs nor needs the network, so it is skipped for them, and `verifyLockfile: true` is an error. A `.pnpmfile.cjs` still runs during regeneration: it can change resolution, and skipping it would write a lockfile the repo's normal install rejects.
 
 ### Commit-driven repos: `--generate`
 

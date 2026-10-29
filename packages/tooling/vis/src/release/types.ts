@@ -1735,6 +1735,16 @@ export interface VisReleaseConfig {
     /** Dep-propagation mode. Default: `"out-of-range"`. */
     updateInternalDependencies?: UpdateInternalDependenciesMode;
 
+    /**
+     * After the version step regenerates the lockfile, check that a frozen
+     * install accepts it (`pnpm install --frozen-lockfile --lockfile-only`)
+     * and fail the release, before anything is committed or published, when
+     * it does not. pnpm only: `true` with another package manager is an error.
+     *
+     * Default: on for pnpm.
+     */
+    verifyLockfile?: boolean;
+
     /** Version-PR config. */
     versionPr?: VersionPrConfig;
 

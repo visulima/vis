@@ -4620,6 +4620,10 @@
                     "$ref": "#/$defs/UpdateInternalDependenciesMode",
                     "description": "Dep-propagation mode. Default: `\"out-of-range\"`."
                 },
+                "verifyLockfile": {
+                    "type": "boolean",
+                    "description": "After the version step regenerates the lockfile, check that a frozen install accepts it (`pnpm install --frozen-lockfile --lockfile-only`) and fail the release, before anything is committed or published, when it does not. pnpm only: `true` with another package manager is an error.\n\nDefault: on for pnpm."
+                },
                 "versionPr": {
                     "$ref": "#/$defs/VersionPrConfig",
                     "description": "Version-PR config."

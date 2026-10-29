@@ -582,8 +582,9 @@ export const createTag = async (
     }
 };
 
-export const pushTags = async (ctx: GitContext, options: { atomic?: boolean; remote?: string } = {}): Promise<void> => {
-    const args = options.atomic ? ["--atomic", "--tags"] : ["--tags"];
+/** Push every local tag, plus `options.refspecs` (e.g. forced floating tags) in the same push. */
+export const pushTags = async (ctx: GitContext, options: { atomic?: boolean; refspecs?: ReadonlyArray<string>; remote?: string } = {}): Promise<void> => {
+    const args = [...(options.atomic ? ["--atomic", "--tags"] : ["--tags"]), ...(options.refspecs ?? [])];
     const result = await push(ctx, options.remote ?? "origin", args);
 
     if (result.exitCode !== 0) {

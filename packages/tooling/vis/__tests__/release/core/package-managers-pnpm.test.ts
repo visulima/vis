@@ -1,11 +1,12 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PnpmAdapter } from "../../../src/release/core/package-managers/pnpm";
-import { MockRunner } from "../../../src/release/core/shell-runner";
+import { createShellRunner, MockRunner } from "../../../src/release/core/shell-runner";
 
 describe("pnpmAdapter — pack", () => {
     let cwd: string;
@@ -175,7 +176,7 @@ describe("pnpmAdapter — installLockfileOnly", () => {
         const runner = new MockRunner();
         let called = false;
 
-        runner.on("pnpm", ["install", "--lockfile-only"], () => {
+        runner.on("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], () => {
             called = true;
 
             return { exitCode: 0, stderr: "", stdout: "" };
@@ -275,4 +276,39 @@ describe("pnpmAdapter — detectVersion", () => {
 
         await expect(new PnpmAdapter(runner).detectVersion("/r")).resolves.toBeUndefined();
     });
+});
+
+// Real pnpm, offline: a `workspace:` dependency resolves without the registry.
+describe.skipIf(process.platform === "win32")("pnpmAdapter — verifyLockfile", () => {
+    const setup = (): string => {
+        const cwd = mkdtempSync(join(tmpdir(), "vis-pnpm-verify-"));
+
+        writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "root", private: true }));
+        writeFileSync(join(cwd, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+        mkdirSync(join(cwd, "packages", "a"), { recursive: true });
+        mkdirSync(join(cwd, "packages", "b"), { recursive: true });
+        writeFileSync(join(cwd, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }));
+        writeFileSync(join(cwd, "packages", "b", "package.json"), JSON.stringify({ dependencies: { a: "workspace:*" }, name: "b", version: "1.0.0" }));
+
+        return cwd;
+    };
+
+    it("passes for a regenerated lockfile and fails once a manifest drifts from it", async () => {
+        expect.hasAssertions();
+
+        const cwd = setup();
+        const adapter = new PnpmAdapter(createShellRunner());
+
+        try {
+            await adapter.installLockfileOnly({ cwd, silent: true });
+
+            await expect(adapter.verifyLockfile({ cwd })).resolves.toBeUndefined();
+
+            writeFileSync(join(cwd, "packages", "b", "package.json"), JSON.stringify({ dependencies: { a: "workspace:^" }, name: "b", version: "1.0.0" }));
+
+            await expect(adapter.verifyLockfile({ cwd })).rejects.toThrow(/does not satisfy the manifests/);
+        } finally {
+            await rm(cwd, { force: true, recursive: true });
+        }
+    }, 60_000);
 });

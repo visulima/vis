@@ -1023,11 +1023,10 @@ Run it locally before pushing release config changes, or wire it into your pre-m
 <summary>All workspace-level options</summary>
 
 | Option | Default | What it controls |
+| `verifyLockfile` | `true` (pnpm) | Check the regenerated lockfile with `pnpm install --frozen-lockfile --lockfile-only` and fail the release before committing when it does not satisfy the manifests |
 | `tagTarget` | `"release-commit"` | `"source"` tags the commit the release was planned from, so `ci release` can rebase onto a moved branch (see the `ci release` docs) |
 | `pushRetries` | `3` with `tagTarget: "source"` | How often `ci release` rebases the version commit onto a moved branch and pushes again (needs `tagTarget: "source"`) |
 | ----------------------------------------------------------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tagTarget` | `"release-commit"` | `"source"` tags the commit the release was planned from, so `ci release` can rebase onto a moved branch (see the `ci release` docs) |
-| `pushRetries` | `3` with `tagTarget: "source"` | How often `ci release` rebases the version commit onto a moved branch and pushes again (needs `tagTarget: "source"`) |
 | `baseBranch` | `"main"` | Baseline ref for `status` / `generate` / merge-base detection |
 | `ignoreCommitPattern` | — | Extra regex source(s) whose matching commit subjects `generate` skips. Extends the built-in release-commit heuristic |
 | `ignoreReleaseCommits` | `true` | Skip machine-authored release commits (`chore(release): …`, `chore(main): release …`, `release(…): …`) in `generate`. Set `false` to opt out |

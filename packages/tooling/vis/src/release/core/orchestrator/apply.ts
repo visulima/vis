@@ -12,6 +12,42 @@ import { formatChangedFiles } from "./format-changed-files";
 import { runGroupPreVersionCommands, runHook } from "./hooks";
 
 // ── Apply phase ─────────────────────────────────────────────────────
+
+/**
+ * Regenerate the lockfile (no lifecycle scripts), then check that a frozen
+ * install accepts it, so a release never pushes a lockfile the branch cannot
+ * install. Regeneration soft-fails (not every CI environment has the package
+ * manager) and then nothing is checked; a failed check throws.
+ *
+ * The check runs where the adapter has one that neither installs nor needs
+ * the network (pnpm), unless `release.verifyLockfile` is `false`.
+ */
+export const syncLockfile = async (context: OrchestratorContext): Promise<void> => {
+    try {
+        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
+    } catch {
+        return;
+    }
+
+    const verify = context.config.verifyLockfile;
+
+    if (verify === false) {
+        return;
+    }
+
+    if (!context.pm.verifyLockfile) {
+        if (verify === true) {
+            throw new VisReleaseError({
+                code: "CONFIG_INVALID",
+                message: `release.verifyLockfile is not supported for ${context.pm.id} (only pnpm); remove it or set it to false.`,
+            });
+        }
+
+        return;
+    }
+
+    await context.pm.verifyLockfile({ cwd: context.cwd });
+};
 export interface ApplyOptions {
     /** Stage + commit changed files after writing. Default `false`. */
     commit?: boolean;
@@ -258,18 +294,9 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         }),
     ]);
 
-    // Lockfile sync (RFC §19/§14)
-    try {
-        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
-    } catch {
-        // Soft-fail: not all CI environments have the pm available, and we'd
-        // rather ship the version commit than block on lockfile noise.
-    }
-
     // Format changed files (RFC §14 step 7) — opt-in, scoped to the files the
     // version step just wrote (package.json bumps + CHANGELOG entries),
-    // soft-fail. Runs after lockfile sync so a reformatted lockfile (if the
-    // PM emitted one) is included.
+    // soft-fail.
     if (!options.dryRun && context.config.formatChangedFiles) {
         await formatChangedFiles(
             applied.writes.map((w) => w.path),
@@ -287,6 +314,10 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
 
         await runApplyDraftHooks({ config: context.config, cwd: context.cwd }, context.plan);
     }
+
+    // Lockfile sync (RFC §19/§14) — after the plugins, which may still edit
+    // manifests (e.g. dependency ranges), so the lockfile matches what is committed.
+    await syncLockfile(context);
 
     const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage, options.releaseSource) : undefined;
 

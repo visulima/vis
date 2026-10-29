@@ -63,12 +63,27 @@ export class PnpmAdapter extends PackageManagerAdapter {
     }
 
     public async installLockfileOnly(options: InstallLockfileOnlyOptions): Promise<void> {
-        const result = await this.runner.run("pnpm", ["install", "--lockfile-only"], { cwd: options.cwd, silent: options.silent });
+        const result = await this.runner.run("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], { cwd: options.cwd, silent: options.silent });
 
         if (result.exitCode !== 0) {
             throw new VisReleaseError({
                 code: "CONFIG_INVALID",
                 message: `pnpm install --lockfile-only failed: ${result.stderr || result.stdout}`,
+            });
+        }
+    }
+
+    public async verifyLockfile(options: InstallLockfileOnlyOptions): Promise<void> {
+        const result = await this.runner.run("pnpm", ["install", "--frozen-lockfile", "--lockfile-only", "--ignore-scripts"], {
+            cwd: options.cwd,
+            silent: true,
+        });
+
+        if (result.exitCode !== 0) {
+            throw new VisReleaseError({
+                code: "CONFIG_INVALID",
+                hint: "Nothing was published. Fix the lockfile on the branch (or set release.verifyLockfile: false).",
+                message: `pnpm-lock.yaml does not satisfy the manifests after the version step (pnpm install --frozen-lockfile failed): ${result.stderr || result.stdout}`,
             });
         }
     }

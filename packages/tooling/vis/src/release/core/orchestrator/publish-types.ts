@@ -3,6 +3,13 @@ import type { VersionActions } from "../version-actions/interface";
 // ── Publish phase ──────────────────────────────────────────────────
 export interface PublishContextOptions {
     dryRun?: boolean;
+
+    /**
+     * Commit the wave's bookkeeping (publish lock, staged registry, walk /
+     * notify dedupe, workspace changelog) without pushing the branch: the
+     * caller pushes it once. Tags are still pushed.
+     */
+    noBranchPush?: boolean;
     /** Skip `git push --tags` after publish. */
     noPush?: boolean;
     /** Skip local tag creation entirely. */

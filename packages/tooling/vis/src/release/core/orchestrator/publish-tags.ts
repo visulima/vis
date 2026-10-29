@@ -31,6 +31,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
             return;
         }
 
+        const floatingRefspecs: string[] = [];
         const rootTagPattern = context.config.releaseTagPattern;
 
         const channelName = context.channel?.tag;
@@ -106,11 +107,13 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
 
                 if (floatTag !== undefined) {
                     try {
+                        // Pushed (forced) with the release tags below, in one push.
                         await createOrUpdateFloatingTag({ cwd: context.cwd, runner }, floatTag, {
-                            push: !options.noPush,
+                            push: false,
                             signing: context.config.signing,
                             target: sourceTarget,
                         });
+                        floatingRefspecs.push(`+refs/tags/${floatTag}:refs/tags/${floatTag}`);
                         // Recorded in result.tags so the operator
                         // sees it on the summary line.
                         result.tags.push(floatTag);
@@ -145,7 +148,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
 
         if (!options.noPush && result.tags.length > 0) {
             try {
-                await pushTags({ cwd: context.cwd, runner });
+                await pushTags({ cwd: context.cwd, runner }, { refspecs: floatingRefspecs });
                 result.tagsPushed = true;
             } catch (error) {
                 // Soft-fail on the tag push itself (the publish already
@@ -182,7 +185,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
             // sees a clean slate rather than a stale lock that would make
             // it skip the whole already-published plan.
             if (lockInGit) {
-                await commitPublishLock(context, runner, changesDir, "close", { noPush: options.noPush });
+                await commitPublishLock(context, runner, changesDir, "close", { noPush: options.noPush || options.noBranchPush });
             }
         }
     }

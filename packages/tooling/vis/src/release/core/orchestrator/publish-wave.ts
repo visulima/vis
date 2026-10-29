@@ -105,7 +105,7 @@ export const openPublishWave = async (
         await writeState(context.cwd, changesDir, state, lockInGit);
 
         if (lockInGit) {
-            await commitPublishLock(context, runner, changesDir, "progress", { noPush: options.noPush });
+            await commitPublishLock(context, runner, changesDir, "progress", { noPush: options.noPush || options.noBranchPush });
         }
     };
 
@@ -141,7 +141,7 @@ export const openPublishWave = async (
             // Commit + push the tracked lock at the start of the wave so a
             // different (ephemeral) runner can resume if this one dies.
             if (lockInGit) {
-                await commitPublishLock(context, runner, changesDir, "open", { noPush: options.noPush });
+                await commitPublishLock(context, runner, changesDir, "open", { noPush: options.noPush || options.noBranchPush });
             }
         }
     }

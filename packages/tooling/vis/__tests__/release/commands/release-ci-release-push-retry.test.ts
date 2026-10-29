@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,14 +35,34 @@ class StubVersionActions extends VersionActions {
     }
 }
 
+/** Test switches for the orchestrator wrapper below. */
+const hooks: { failLockfileCheck: boolean; recovery?: (cwd: string) => void } = { failLockfileCheck: false };
+
 vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../src/release/core/orchestrator")>();
 
     return {
         ...actual,
+        buildContext: vi.fn(async (options: Parameters<typeof actual.buildContext>[0]) => {
+            const context = await actual.buildContext(options);
+
+            if (hooks.failLockfileCheck) {
+                context.pm.verifyLockfile = async () => {
+                    throw new Error("lockfile does not satisfy the manifests");
+                };
+            }
+
+            return context;
+        }),
         publishContext: vi.fn(async (context: Parameters<typeof actual.publishContext>[0], options: Parameters<typeof actual.publishContext>[1] = {}) =>
             actual.publishContext(context, { ...options, publishActionsOverride: new StubVersionActions() }),
         ),
+        publishMissing: vi.fn(async (context: Parameters<typeof actual.publishMissing>[0]) => {
+            // Stands in for a recovery wave: it leaves a bookkeeping commit behind.
+            hooks.recovery?.(context.cwd);
+
+            return { failed: [], missing: [], published: [], skipped: [], tags: [], tagsPushed: false };
+        }),
     };
 });
 
@@ -116,7 +136,9 @@ const landConcurrentFix = (other: string): string => {
     return sha;
 };
 
-const runRelease = async (cwd: string): Promise<{ errors: string[]; info: string[] }> => {
+const DEFAULT_RUN = { autoPublish: true, generate: true };
+
+const runRelease = async (cwd: string, options: Record<string, unknown> = DEFAULT_RUN): Promise<{ errors: string[]; info: string[] }> => {
     const errors: string[] = [];
     const info: string[] = [];
     const { default: execute } = await import("../../../src/commands/release/ci/release/handler");
@@ -124,7 +146,7 @@ const runRelease = async (cwd: string): Promise<{ errors: string[]; info: string
     await execute({
         fs: testFs,
         logger: { error: (message: string) => errors.push(message), info: (message: string) => info.push(message), warn: () => {} },
-        options: { autoPublish: true, generate: true },
+        options,
         workspaceRoot: cwd,
     } as never);
 
@@ -133,12 +155,40 @@ const runRelease = async (cwd: string): Promise<{ errors: string[]; info: string
 
 const remoteTags = (remote: string): string => git(remote, "tag", "--list");
 
+/** Record the refs of every push `remote` receives from now on, one array per push. */
+const recordPushes = (remote: string): (() => string[][]) => {
+    const log = join(remote, "pushes.log");
+    const hook = join(remote, "hooks", "post-receive");
+
+    writeFileSync(hook, `#!/bin/sh\nwhile read old new ref; do echo "$ref" >> "${log}"; done\necho --- >> "${log}"\n`);
+    chmodSync(hook, 0o755);
+
+    return () => {
+        let raw: string;
+
+        try {
+            raw = readFileSync(log, "utf8");
+        } catch {
+            return [];
+        }
+
+        return raw
+            .split("---\n")
+            .filter((push) => push.trim() !== "")
+            .map((push) => push.trim().split("\n"));
+    };
+};
+
+const branchPushes = (pushes: string[][]): number => pushes.filter((refs) => refs.includes("refs/heads/main")).length;
+
 describe.skipIf(process.platform === "win32")("vis release ci release — the branch moved during the run", () => {
     let root: string;
 
     beforeEach(() => {
         root = mkdtempSync(join(tmpdir(), "vis-ci-push-retry-"));
         published.length = 0;
+        hooks.failLockfileCheck = false;
+        hooks.recovery = undefined;
         process.exitCode = undefined;
         __resetLookupMemoForTests();
     });
@@ -222,5 +272,81 @@ describe.skipIf(process.platform === "win32")("vis release ci release — the br
         expect(errors.join("\n")).toContain(`needs release.tagTarget: "source"`);
         expect(git(work, "rev-parse", "HEAD")).toBe(head);
         expect(published).toStrictEqual([]);
+    });
+
+    it("pushes the branch once and the tags once, and leaves no dedupe state behind without successWalk", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { tagTarget: "source" });
+        const pushes = recordPushes(remote);
+        const before = git(remote, "rev-parse", "main");
+
+        await runRelease(work);
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(published).toStrictEqual(["@scope/a@1.1.0"]);
+        expect(pushes()).toStrictEqual([["refs/heads/main"], ["refs/tags/@scope/a@1.1.0"]]);
+        expect(git(remote, "rev-list", "--count", `${before}..main`)).toBe("1");
+        expect(git(remote, "ls-tree", "-r", "--name-only", "main")).not.toContain("staged.json");
+    });
+
+    it("pushes floating major tags with the release tags, in one push", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { floatingMajorTag: true, tagTarget: "source" });
+        const pushes = recordPushes(remote);
+
+        await runRelease(work);
+
+        const tagPushes = pushes().filter((refs) => refs.some((ref) => ref.startsWith("refs/tags/")));
+
+        expect(tagPushes.map((refs) => refs.toSorted())).toStrictEqual([["refs/tags/@scope/a@1.1.0", "refs/tags/scope-a-v1"]]);
+    });
+
+    it("lockInGit: commits the lock locally and pushes it with one more branch push at the end", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { publish: { lockInGit: true, noRelease: true }, tagTarget: "source" });
+        const pushes = recordPushes(remote);
+
+        await runRelease(work);
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(branchPushes(pushes())).toBe(2);
+        expect(git(remote, "log", "--format=%s", "-3", "main")).toContain("chore(release): close publish lock [skip ci]");
+        expect(git(remote, "rev-parse", "main")).toBe(git(work, "rev-parse", "HEAD"));
+    });
+
+    it("pushes what a recovery wave committed even when there is nothing new to release", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { tagTarget: "source" });
+
+        hooks.recovery = (cwd) => {
+            commitFile(cwd, "recovered.txt", "state\n", "chore(release): record recovered state [skip ci]");
+        };
+
+        const { info } = await runRelease(work, { autoPublish: true, publishMissing: true });
+
+        expect(info.join("\n")).toContain("No pending change files");
+        expect(git(remote, "log", "-1", "--format=%s", "main")).toBe("chore(release): record recovered state [skip ci]");
+    });
+
+    it("aborts with nothing published when the regenerated lockfile fails the frozen check", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { tagTarget: "source" });
+        const before = git(remote, "rev-parse", "main");
+        const tagsBefore = remoteTags(remote);
+
+        hooks.failLockfileCheck = true;
+
+        const { errors } = await runRelease(work);
+
+        expect(process.exitCode).toBe(1);
+        expect(errors.join("\n")).toContain("nothing was published");
+        expect(published).toStrictEqual([]);
+        expect(git(remote, "rev-parse", "main")).toBe(before);
+        expect(remoteTags(remote)).toBe(tagsBefore);
     });
 });
