@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyReleasePlan, prependChangelog, rewriteRangeForVersion } from "../../../src/release/core/apply-release-plan";
+import { applyReleasePlan, prependChangelog, rewriteRangeForVersion, updateRangeForVersion } from "../../../src/release/core/apply-release-plan";
 import { DependencyGraph } from "../../../src/release/core/dep-graph";
 import type { PlannedRelease, ReleasePlan, WorkspacePackage } from "../../../src/release/types";
 
@@ -90,6 +90,59 @@ describe("rewriteRangeForVersion — preserves protocol prefixes (RFC §11.1)", 
     it("preserves * as-is", () => {
         expect.hasAssertions();
         expect(rewriteRangeForVersion("*", "2.0.0")).toBe("*");
+    });
+});
+
+describe("updateRangeForVersion — preserve-satisfying", () => {
+    const keep = (range: string, version: string): string => updateRangeForVersion(range, version, "preserve-satisfying", { depName: "@scope/a" });
+
+    it("leaves a bounded range the new version satisfies untouched", () => {
+        expect.hasAssertions();
+        expect(keep(">=1.0.0-alpha.76 <2.0.0-0", "1.0.0-alpha.253")).toBe(">=1.0.0-alpha.76 <2.0.0-0");
+        expect(keep(">=1.0.0-alpha.76 <2.0.0-0", "1.0.0")).toBe(">=1.0.0-alpha.76 <2.0.0-0");
+    });
+
+    it("raises the floor of an outgrown range and keeps its ceiling", () => {
+        expect.hasAssertions();
+        // npm scopes prerelease matching to the floor's [major, minor, patch] tuple.
+        expect(keep(">=1.0.0-alpha.76 <2.0.0-0", "1.0.1-alpha.0")).toBe(">=1.0.1-alpha.0 <2.0.0-0");
+    });
+
+    it("refuses a version past the ceiling", () => {
+        expect.hasAssertions();
+        expect(() => keep(">=1.0.0-alpha.76 <2.0.0-0", "2.0.0-alpha.0")).toThrow(
+            expect.objectContaining({ code: "DEPENDENCY_RANGE_EXCEEDED", message: expect.stringContaining("@scope/a@2.0.0-alpha.0") }),
+        );
+        expect(() => keep(">=1.0.0 <2.0.0", "2.0.0")).toThrow(/outside ">=1\.0\.0 <2\.0\.0"/);
+    });
+
+    it("bumps exact pins and caret/tilde specs as `rewrite` does", () => {
+        expect.hasAssertions();
+        expect(keep("1.0.0-alpha.3", "1.0.0-alpha.4")).toBe("^1.0.0-alpha.4");
+        expect(keep("^1.0.0", "1.1.0")).toBe("^1.1.0");
+        expect(keep("~1.0.0", "1.0.1")).toBe("~1.0.1");
+        expect(keep("^1.0.0", "2.0.0")).toBe("^2.0.0");
+    });
+
+    it("keeps the workspace: and npm: prefixes", () => {
+        expect.hasAssertions();
+        expect(keep("workspace:>=1.0.0 <2.0.0", "1.5.0")).toBe("workspace:>=1.0.0 <2.0.0");
+        expect(keep("workspace:>=1.0.0-alpha.1 <2.0.0-0", "1.0.1-alpha.0")).toBe("workspace:>=1.0.1-alpha.0 <2.0.0-0");
+        expect(keep("workspace:^1.0.0", "1.1.0")).toBe("workspace:^1.1.0");
+        expect(keep("workspace:*", "1.1.0")).toBe("workspace:*");
+        expect(keep("npm:other@>=1.0.0-alpha.1 <2.0.0-0", "1.0.1-alpha.0")).toBe("npm:other@>=1.0.1-alpha.0 <2.0.0-0");
+    });
+
+    it("handles `||` ranges: keeps a satisfied one, re-floors only the alternative that can admit the version", () => {
+        expect.hasAssertions();
+        expect(keep("^1.0.0 || ^2.0.0", "2.3.0")).toBe("^1.0.0 || ^2.0.0");
+        expect(keep("^1.0.0 || >=2.0.0-alpha.0 <3.0.0-0", "2.0.1-alpha.0")).toBe("^1.0.0 || >=2.0.1-alpha.0 <3.0.0-0");
+        expect(() => keep("^1.0.0 || ^2.0.0", "3.0.0")).toThrow(/outside/);
+    });
+
+    it("rewrites everything under the default mode", () => {
+        expect.hasAssertions();
+        expect(updateRangeForVersion(">=1.0.0-alpha.76 <2.0.0-0", "1.0.0-alpha.253")).toBe(">=1.0.0-alpha.253");
     });
 });
 
@@ -192,6 +245,54 @@ describe("applyReleasePlan — produces structured AppliedPlan", () => {
         const bManifestWrite = applied.writes.find((w) => w.path === b.manifestPath);
 
         expect(bManifestWrite?.content).toContain("\"a\": \"workspace:^1.1.0\"");
+    });
+
+    it("preserve-satisfying keeps satisfied ranges across every dependency field", async () => {
+        expect.hasAssertions();
+
+        const a = mkPkg("a", "1.0.0-alpha.76");
+        const b: WorkspacePackage = {
+            ...mkPkg("b", "1.0.0-alpha.10"),
+            manifest: {
+                dependencies: { a: ">=1.0.0-alpha.51 <2.0.0-0" },
+                devDependencies: { a: "1.0.0-alpha.76" },
+                name: "b",
+                optionalDependencies: { a: "^1.0.0-alpha.76" },
+                peerDependencies: { a: ">=1.0.0-alpha.76 <2.0.0-0" },
+                version: "1.0.0-alpha.10",
+            },
+        };
+        const graph = new DependencyGraph([a, b]);
+        const plan: ReleasePlan = {
+            consumedChangeFiles: [],
+            releases: [mkRelease("a", "1.0.0-alpha.76", "1.0.0-alpha.77"), mkRelease("b", "1.0.0-alpha.10", "1.0.0-alpha.11", "patch")],
+            warnings: [],
+        };
+
+        const applied = await applyReleasePlan(plan, graph, { internalDependencyRanges: "preserve-satisfying" });
+        const manifest = JSON.parse(applied.writes.find((w) => w.path === b.manifestPath)?.content ?? "{}");
+
+        expect(manifest.dependencies).toStrictEqual({ a: ">=1.0.0-alpha.51 <2.0.0-0" });
+        expect(manifest.peerDependencies).toStrictEqual({ a: ">=1.0.0-alpha.76 <2.0.0-0" });
+        expect(manifest.devDependencies).toStrictEqual({ a: "^1.0.0-alpha.77" });
+        expect(manifest.optionalDependencies).toStrictEqual({ a: "^1.0.0-alpha.77" });
+    });
+
+    it("preserve-satisfying fails before producing any write when a ceiling is exceeded", async () => {
+        expect.hasAssertions();
+
+        const a = mkPkg("a", "1.5.0");
+        const b = mkPkg("b", "1.0.0", { a: ">=1.0.0 <2.0.0" });
+        const graph = new DependencyGraph([a, b]);
+        const plan: ReleasePlan = {
+            consumedChangeFiles: [],
+            releases: [mkRelease("a", "1.5.0", "2.0.0", "major"), mkRelease("b", "1.0.0", "1.0.1", "patch")],
+            warnings: [],
+        };
+
+        await expect(applyReleasePlan(plan, graph, { internalDependencyRanges: "preserve-satisfying" })).rejects.toThrow(
+            expect.objectContaining({ code: "DEPENDENCY_RANGE_EXCEEDED", packageName: "b" }),
+        );
     });
 
     it("propagates change-file deletions into the deletions list", async () => {

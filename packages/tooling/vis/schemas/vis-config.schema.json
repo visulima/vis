@@ -4439,6 +4439,10 @@
                     },
                     "description": "Globs that override `ignore` and `private` exclusion."
                 },
+                "internalDependencyRanges": {
+                    "$ref": "#/$defs/InternalDependencyRangesMode",
+                    "description": "How the version step updates a released package's specifiers for other workspace packages in the same wave. `updateInternalDependencies` decides which dependents cascade; this decides what gets written. Default: `\"rewrite\"`.\n\nUse `\"preserve-satisfying\"` for promotion-safe ranges such as `>=1.0.0-alpha.76 <2.0.0-0`, which `\"rewrite\"` turns into `>=<newVersion>` (ratcheted floor, no ceiling)."
+                },
                 "linked": {
                     "type": "array",
                     "items": {
@@ -4841,6 +4845,14 @@
                 "name"
             ],
             "additionalProperties": false
+        },
+        "InternalDependencyRangesMode": {
+            "type": "string",
+            "enum": [
+                "rewrite",
+                "preserve-satisfying"
+            ],
+            "description": "What the version step writes into a released package's specifier for an internal dependency. `\"rewrite\"` sets every specifier to `<operator><newVersion>`; `\"preserve-satisfying\"` leaves a range that still admits the new version untouched, raises the floor of an outgrown one (keeping its ceiling) and fails the release when the new version is past the ceiling."
         },
         "NotificationsConfig": {
             "type": "object",

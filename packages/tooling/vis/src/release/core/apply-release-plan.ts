@@ -7,8 +7,12 @@
  * so the same code paths are testable without a real filesystem.
  */
 
-import type { DependencyKind, PackageManifest, PlannedRelease, ReleasePlan, WorkspacePackage } from "../types";
+import semver from "semver";
+
+import { VisReleaseError } from "../errors";
+import type { DependencyKind, InternalDependencyRangesMode, PackageManifest, PlannedRelease, ReleasePlan, WorkspacePackage } from "../types";
 import type { DependencyGraph } from "./dep-graph";
+import { cleanRange } from "./semver";
 
 const DEPENDENCY_KINDS: ReadonlyArray<DependencyKind> = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
@@ -73,6 +77,62 @@ const extractPrefix = (range: string): string => {
     return "^";
 };
 
+/** An exact version or a bare `^`/`~`/`=` version: specs that move in lockstep with the dependency. */
+const LOCKSTEP_SPEC_RE = /^[\^~=]?\s*v?\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/;
+
+/**
+ * `internalDependencyRanges: "preserve-satisfying"` (multi-semantic-release's `deps.bump: "satisfy"`):
+ * a range that still admits `newVersion` is returned byte-for-byte; an outgrown one has the floor of
+ * the alternative that can admit it raised to `newVersion`, keeping its ceiling and the other `||`
+ * alternatives. Exact pins and `^`/`~` specs keep the `rewrite` behaviour.
+ *
+ * Throws when no alternative's ceiling admits `newVersion`: rewriting would either publish a
+ * dependent whose declared range excludes the version it ships with, or silently widen a
+ * deliberate ceiling — both are decisions for a human.
+ */
+export const updateRangeForVersion = (
+    currentRange: string,
+    newVersion: string,
+    mode: InternalDependencyRangesMode = "rewrite",
+    context: { dependent?: string; depName?: string; kind?: DependencyKind } = {},
+): string => {
+    const spec = mode === "preserve-satisfying" ? cleanRange(currentRange) : null;
+
+    if (spec === null || LOCKSTEP_SPEC_RE.test(spec.trim()) || semver.validRange(spec) === null) {
+        return rewriteRangeForVersion(currentRange, newVersion);
+    }
+
+    // npm semantics (no `includePrerelease`): this is the range installers will evaluate.
+    if (semver.satisfies(newVersion, spec)) {
+        return currentRange;
+    }
+
+    const alternatives = spec.split("||").map((alternative) => alternative.trim());
+    // With `includePrerelease`, the only way an alternative admits `newVersion` that npm rejects
+    // is prerelease tuple scoping (`>=1.0.0-alpha.1 <2.0.0-0` vs `1.0.1-alpha.0`), which raising
+    // the floor onto `newVersion`'s tuple fixes.
+    const index = alternatives.findIndex((alternative) => semver.satisfies(newVersion, alternative, { includePrerelease: true }));
+
+    if (index === -1) {
+        const where = context.dependent ? ` in ${context.dependent}'s ${context.kind ?? "dependencies"}` : "";
+
+        throw new VisReleaseError({
+            code: "DEPENDENCY_RANGE_EXCEEDED",
+            hint: "Widen the range by hand (or set `internalDependencyRanges: \"rewrite\"`), then re-run the release.",
+            message: `${context.depName ?? "dependency"}@${newVersion} is outside "${currentRange}"${where}; refusing to rewrite the range.`,
+            packageName: context.dependent,
+        });
+    }
+
+    const ceiling = (new semver.Range(alternatives[index] as string).set[0] ?? [])
+        .filter((comparator) => comparator.operator.startsWith("<"))
+        .map((comparator) => comparator.value);
+
+    alternatives[index] = [`>=${newVersion}`, ...ceiling].join(" ");
+
+    return `${currentRange.slice(0, currentRange.length - spec.length)}${alternatives.join(" || ")}`;
+};
+
 // ── apply ──────────────────────────────────────────────────────────
 
 export interface AppliedFileChange {
@@ -103,6 +163,7 @@ export const applyReleasePlan = async (
     depGraph: DependencyGraph,
     options: {
         changelogPath?: (pkg: WorkspacePackage) => string;
+        internalDependencyRanges?: InternalDependencyRangesMode;
         readChangelog?: (path: string) => string | undefined;
         readManifest?: (path: string) => string | undefined;
         renderChangelogEntry?: (release: PlannedRelease) => string | Promise<string>;
@@ -126,7 +187,7 @@ export const applyReleasePlan = async (
                 return undefined;
             }
 
-            const updatedManifest = applyVersionToManifest(pkg.manifest, release.newVersion, newVersionByPackage);
+            const updatedManifest = applyVersionToManifest(pkg.manifest, release.newVersion, newVersionByPackage, options.internalDependencyRanges);
             const originalManifest = options.readManifest?.(pkg.manifestPath);
             const cl = changelogPath(pkg);
             const entry = await renderChangelogEntry(release);
@@ -193,7 +254,12 @@ export const applyReleasePlan = async (
     };
 };
 
-const applyVersionToManifest = (manifest: PackageManifest, newVersion: string, newVersionByPackage: ReadonlyMap<string, string>): PackageManifest => {
+const applyVersionToManifest = (
+    manifest: PackageManifest,
+    newVersion: string,
+    newVersionByPackage: ReadonlyMap<string, string>,
+    rangesMode: InternalDependencyRangesMode | undefined,
+): PackageManifest => {
     const out: PackageManifest = { ...manifest, version: newVersion };
 
     for (const kind of DEPENDENCY_KINDS) {
@@ -213,7 +279,7 @@ const applyVersionToManifest = (manifest: PackageManifest, newVersion: string, n
                 continue;
             }
 
-            const newRange = rewriteRangeForVersion(range, newDepVersion);
+            const newRange = updateRangeForVersion(range, newDepVersion, rangesMode, { dependent: manifest.name, depName, kind });
 
             if (newRange !== range) {
                 next[depName] = newRange;

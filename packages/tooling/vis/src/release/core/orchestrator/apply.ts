@@ -204,6 +204,7 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
 
     const applied = await applyReleasePlan(context.plan, context.depGraph, {
         changelogPath: (pkg) => groupRouting.get(pkg.name) ?? `${pkg.dir}/CHANGELOG.md`,
+        internalDependencyRanges: context.config.internalDependencyRanges,
         readChangelog: (path) => {
             try {
                 return readFileSync(path, "utf8");
