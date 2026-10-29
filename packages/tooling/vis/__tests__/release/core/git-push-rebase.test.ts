@@ -33,6 +33,9 @@ const setup = (root: string): { other: string; remote: string; source: string; w
 
     execFileSync("git", ["init", "-q", "--bare", "--initial-branch", "main", remote]);
     execFileSync("git", ["clone", "-q", remote, work], { stdio: "pipe" });
+    // CI runners have no global identity; the rebase needs one.
+    git(work, "config", "user.name", "Test");
+    git(work, "config", "user.email", "test@example.com");
     commitFile(work, "pnpm-lock.yaml", "lockfileVersion: 1\n", "chore: init");
     const source = commitFile(work, "a.txt", "a\n", "feat: a");
 
@@ -157,6 +160,8 @@ describe.skipIf(process.platform === "win32")(pushBranchWithRebase, () => {
         expect.hasAssertions();
 
         moveBranch(repo.other, "b.txt", "b\n");
+        git(repo.work, "config", "--unset", "user.name");
+        git(repo.work, "config", "--unset", "user.email");
 
         const home = join(root, "home");
         const saved = {
