@@ -1,3 +1,10 @@
+## @visulima/vis [6.3.0](https://github.com/visulima/vis/compare/@visulima/vis@6.2.0...@visulima/vis@6.3.0) (2026-10-29)
+
+### Features
+
+* **vis:** keep internal dependency ranges that still satisfy ([#70](https://github.com/visulima/vis/issues/70)) ([7150403](https://github.com/visulima/vis/commit/715040313c28ef806d63b383c64a8ed18fc75296))
+* **vis:** list every released package in success-walk comments ([#69](https://github.com/visulima/vis/issues/69)) ([3405e8c](https://github.com/visulima/vis/commit/3405e8c54688ece21b5fde8a970b6f0f29bd666c))
+
 ## @visulima/vis [6.2.0](https://github.com/visulima/vis/compare/@visulima/vis@6.1.5...@visulima/vis@6.2.0) (2026-10-29)
 
 ### Features
