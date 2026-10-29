@@ -73,7 +73,7 @@ export class PnpmAdapter extends PackageManagerAdapter {
         }
     }
 
-    public async verifyLockfile(options: InstallLockfileOnlyOptions): Promise<void> {
+    public override async verifyLockfile(options: InstallLockfileOnlyOptions): Promise<void> {
         const result = await this.runner.run("pnpm", ["install", "--frozen-lockfile", "--lockfile-only", "--ignore-scripts"], {
             cwd: options.cwd,
             silent: true,
