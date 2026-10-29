@@ -74,15 +74,32 @@ export interface ReleaseAsset {
     type?: "image" | "other" | "package" | "runbook";
 }
 
+/**
+ * Which GitLab object a number names: `#N` is an issue and `!N` a merge request, in separate number
+ * spaces. GitHub issues and pull requests share one number space and one comments/labels endpoint,
+ * so the GitHub adapter ignores it.
+ */
+export type IssueTarget = "issue" | "merge_request";
+
 export interface UpsertStickyCommentOptions {
+    /** Body written when no comment carries `marker` yet. */
     body: string;
     cwd: string;
     /** PR / MR number. */
     issueNumber: number;
     /** Sentinel marker — comments containing this string are updated; otherwise a new one is created. */
     marker: string;
+
+    /**
+     * Derive the new body from the existing marked comment instead of replacing it with `body`, so
+     * a comment can accumulate across runs. When it returns the existing body unchanged, nothing
+     * is written.
+     */
+    merge?: (existingBody: string) => string;
     /** "owner/name" — provider-specific format. */
     repo: string;
+    /** GitLab only. Default `"merge_request"`. */
+    target?: IssueTarget;
 }
 
 export interface UpsertCommentResult {
@@ -152,6 +169,8 @@ export interface AddLabelsOptions {
     issueNumber: number;
     labels: string[];
     repo: string;
+    /** GitLab only. Default `"issue"`. */
+    target?: IssueTarget;
 }
 
 export interface UpsertIssueOptions {

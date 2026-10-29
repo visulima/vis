@@ -32,8 +32,10 @@ import type {
     UpsertPullRequestResult,
     UpsertStickyCommentOptions,
 } from "./interface";
+import { parsePaginatedJson } from "./paginated-json";
 
 interface ExistingNote {
+    author?: string;
     body: string;
     id: number;
 }
@@ -128,6 +130,8 @@ export class GitlabRemoteClient implements RemoteReleaseClient {
 
     private readonly httpProxy: string | undefined;
 
+    private viewer: Promise<string | undefined> | undefined;
+
     public constructor(options: GitlabClientOptions = {}) {
         this.host = options.host;
         this.httpProxy = options.httpProxy;
@@ -159,26 +163,39 @@ export class GitlabRemoteClient implements RemoteReleaseClient {
         return { cwd, env, silent: true };
     }
 
-    private async listMrNotes(runner: CommandRunner, cwd: string, repo: string, mrIid: number): Promise<ExistingNote[]> {
-        const result = await runner.run("glab", ["api", `projects/${encodeProjectPath(repo)}/merge_requests/${mrIid}/notes`, "--paginate"], this.runOpts(cwd));
+    private async listNotes(runner: CommandRunner, cwd: string, notesPath: string): Promise<ExistingNote[] | undefined> {
+        const result = await runner.run("glab", ["api", notesPath, "--paginate"], this.runOpts(cwd));
 
         if (result.exitCode !== 0) {
-            return [];
+            return undefined;
         }
 
-        try {
-            const parsed = JSON.parse(result.stdout) as { body?: string; id: number; system?: boolean }[];
+        // Skip system-generated notes (assignee changes, status updates) —
+        // they aren't comments we want to treat as sticky candidates.
+        return (parsePaginatedJson(result.stdout) as { author?: { username?: string }; body?: string; id: number; system?: boolean }[] | undefined)
+            ?.filter((n) => typeof n.body === "string" && n.system !== true)
+            .map((n) => {
+                return { author: n.author?.username, body: n.body ?? "", id: n.id };
+            });
+    }
 
-            // Skip system-generated notes (assignee changes, status updates) —
-            // they aren't comments we want to treat as sticky candidates.
-            return parsed
-                .filter((n) => typeof n.body === "string" && n.system !== true)
-                .map((n) => {
-                    return { body: n.body ?? "", id: n.id };
-                });
-        } catch {
-            return [];
-        }
+    /** Username of the token's identity; `undefined` for tokens that cannot read `/user` (the CI job token). */
+    private async resolveViewer(runner: CommandRunner, cwd: string): Promise<string | undefined> {
+        this.viewer ??= runner.run("glab", ["api", "user"], this.runOpts(cwd)).then((result) => {
+            if (result.exitCode !== 0) {
+                return undefined;
+            }
+
+            try {
+                const { username } = JSON.parse(result.stdout) as { username?: unknown };
+
+                return typeof username === "string" && username ? username : undefined;
+            } catch {
+                return undefined;
+            }
+        });
+
+        return this.viewer;
     }
 
     /**
@@ -263,26 +280,33 @@ export class GitlabRemoteClient implements RemoteReleaseClient {
     }
 
     public async upsertStickyComment(runner: CommandRunner, options: UpsertStickyCommentOptions): Promise<UpsertCommentResult | undefined> {
-        const notes = await this.listMrNotes(runner, options.cwd, options.repo, options.issueNumber);
-        const existing = notes.find((n) => n.body.includes(options.marker));
-        const fullBody = options.body.includes(options.marker) ? options.body : `${options.marker}\n${options.body}`;
-        const project = encodeProjectPath(options.repo);
+        const notesPath = `projects/${encodeProjectPath(options.repo)}/${options.target === "issue" ? "issues" : "merge_requests"}/${options.issueNumber}/notes`;
+        const notes = await this.listNotes(runner, options.cwd, notesPath);
+
+        // Posting blind would duplicate the sticky note, and drop what a `merge` accumulated.
+        if (!notes) {
+            return undefined;
+        }
+
+        const marked = notes.filter((n) => n.body.includes(options.marker));
+        const viewer = marked.length > 0 ? await this.resolveViewer(runner, options.cwd) : undefined;
+        // Anyone who can comment can post the marker. Only our own note is the sticky one, and
+        // when we cannot tell who we are, a marked note is replaced but never merged from.
+        const existing = viewer === undefined ? marked[0] : marked.find((n) => n.author === viewer);
+        const nextBody = existing && options.merge && viewer !== undefined ? options.merge(existing.body) : options.body;
+        const fullBody = nextBody.includes(options.marker) ? nextBody : `${options.marker}\n${nextBody}`;
 
         if (existing) {
-            const result = await runner.run(
-                "glab",
-                ["api", "-X", "PUT", `projects/${project}/merge_requests/${options.issueNumber}/notes/${existing.id}`, "-f", `body=${fullBody}`],
-                this.runOpts(options.cwd),
-            );
+            if (fullBody === existing.body) {
+                return { created: false, id: existing.id };
+            }
+
+            const result = await runner.run("glab", ["api", "-X", "PUT", `${notesPath}/${existing.id}`, "-f", `body=${fullBody}`], this.runOpts(options.cwd));
 
             return result.exitCode === 0 ? { created: false, id: existing.id } : undefined;
         }
 
-        const result = await runner.run(
-            "glab",
-            ["api", "-X", "POST", `projects/${project}/merge_requests/${options.issueNumber}/notes`, "-f", `body=${fullBody}`],
-            this.runOpts(options.cwd),
-        );
+        const result = await runner.run("glab", ["api", "-X", "POST", notesPath, "-f", `body=${fullBody}`], this.runOpts(options.cwd));
 
         if (result.exitCode !== 0) {
             return undefined;
@@ -373,14 +397,13 @@ export class GitlabRemoteClient implements RemoteReleaseClient {
             return true;
         }
 
-        // GitLab's add-labels endpoint sets the full label list, so first read
-        // the existing labels and append. The PUT projects/.../issues/:iid
-        // endpoint accepts `add_labels` as a comma-separated string which is
-        // additive — preferred when available.
+        // `add_labels` on the issue / MR edit endpoint is additive, so the
+        // labels already on the object stay.
         const project = encodeProjectPath(options.repo);
+        const resource = options.target === "merge_request" ? "merge_requests" : "issues";
         const result = await runner.run(
             "glab",
-            ["api", "-X", "PUT", `projects/${project}/issues/${options.issueNumber}`, "-f", `add_labels=${options.labels.join(",")}`],
+            ["api", "-X", "PUT", `projects/${project}/${resource}/${options.issueNumber}`, "-f", `add_labels=${options.labels.join(",")}`],
             this.runOpts(options.cwd),
         );
 

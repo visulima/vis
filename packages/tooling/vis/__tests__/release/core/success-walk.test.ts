@@ -14,12 +14,14 @@ import {
     DEFAULT_SUCCESS_WALK_COMMENT,
     DEFAULT_SUCCESS_WALK_LABELS,
     extractReferences,
+    extractTypedReferences,
     pLimit,
+    renderSuccessComment,
     SUCCESS_WALK_MARKER,
     walkSuccessfulRelease,
     withRateLimitRetry,
 } from "../../../src/release/core/success-walk";
-import type { ChangeFile, PlannedRelease } from "../../../src/release/types";
+import type { ChangeFile, PlannedRelease, WorkspacePackage } from "../../../src/release/types";
 
 const noopRunner: CommandRunner = {
     run: async () => {
@@ -30,11 +32,13 @@ const noopRunner: CommandRunner = {
 interface CommentCall {
     body: string;
     issueNumber: number;
+    target?: string;
 }
 
 interface LabelCall {
     issueNumber: number;
     labels: string[];
+    target?: string;
 }
 
 interface MockClient {
@@ -46,6 +50,10 @@ interface MockClient {
 interface MockClientOptions {
     addLabelsFail?: (issueNumber: number) => boolean;
     addLabelsResult?: boolean;
+    id?: string;
+
+    /** Forge-side comment bodies by issue number; when set, `merge` is applied like the real clients do. */
+    store?: Map<number, string>;
     upsertCommentFail?: (issueNumber: number) => boolean;
     upsertCommentResult?: { created: boolean; id: number };
 }
@@ -56,7 +64,7 @@ const buildMockClient = (options: MockClientOptions = {}): MockClient => {
 
     const client: RemoteReleaseClient = {
         addLabels: async (_runner, args) => {
-            addLabelsCalls.push({ issueNumber: args.issueNumber, labels: args.labels });
+            addLabelsCalls.push({ issueNumber: args.issueNumber, labels: args.labels, target: args.target });
 
             if (options.addLabelsFail?.(args.issueNumber)) {
                 throw new Error(`addLabels boom for #${args.issueNumber}`);
@@ -70,7 +78,7 @@ const buildMockClient = (options: MockClientOptions = {}): MockClient => {
         },
         detectPullRequestNumber: () => undefined,
         detectRepoSlug: async () => "owner/repo",
-        id: "test",
+        id: options.id ?? "test",
         listRecentReleases: async () => [],
         upsertIssue: async () => {
             return { created: false, number: 0 };
@@ -79,7 +87,11 @@ const buildMockClient = (options: MockClientOptions = {}): MockClient => {
             return { existing: false, number: 0 };
         },
         upsertStickyComment: async (_runner, args) => {
-            commentCalls.push({ body: args.body, issueNumber: args.issueNumber });
+            const existing = options.store?.get(args.issueNumber);
+            const body = existing !== undefined && args.merge ? args.merge(existing) : args.body;
+
+            options.store?.set(args.issueNumber, body);
+            commentCalls.push({ body, issueNumber: args.issueNumber, target: args.target });
 
             if (options.upsertCommentFail?.(args.issueNumber)) {
                 throw new Error(`upsertStickyComment boom for #${args.issueNumber}`);
@@ -302,7 +314,7 @@ describe(walkSuccessfulRelease, () => {
             repo: "owner/repo",
         });
 
-        expect(addLabelsCalls).toStrictEqual([{ issueNumber: 1, labels: ["released", "shipped"] }]);
+        expect(addLabelsCalls).toStrictEqual([{ issueNumber: 1, labels: ["released", "shipped"], target: "issue" }]);
     });
 
     it("uses default `[\"released\"]` labels when not configured", async () => {
@@ -901,5 +913,282 @@ describe(withRateLimitRetry, () => {
 
         // 1 initial + 1 retry = 2 attempts.
         expect(attempts).toBe(2);
+    });
+});
+
+const mkPackage = (name: string, extra: Partial<WorkspacePackage> = {}): WorkspacePackage => {
+    return {
+        dir: `/r/${name}`,
+        manifest: { name, version: "0.0.1" },
+        manifestPath: `/r/${name}/package.json`,
+        name,
+        private: false,
+        version: "0.0.1",
+        ...extra,
+    };
+};
+
+describe("successWalk — one comment per ref lists every package it shipped in", () => {
+    it("lists all packages of the wave that mention the ref, with release and npm links", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        const releases = [
+            mkRelease("@lunora/a", "1.0.0", ["feat(a): x (#42)"]),
+            mkRelease("@lunora/b", "2.0.0", ["feat(b): x (#42)"]),
+            mkRelease("lunora-crate", "0.3.0", ["feat(crate): x (#42)"]),
+        ];
+        const context = mkContext({ packages: [mkPackage("@lunora/a"), mkPackage("@lunora/b"), mkPackage("lunora-crate", { ecosystem: "cargo" })] }, releases);
+        const result = mkResult([
+            { name: "@lunora/a", url: "https://github.com/o/r/releases/tag/a", version: "1.0.0" },
+            { name: "@lunora/b", version: "2.0.0" },
+            { name: "lunora-crate", version: "0.3.0" },
+        ]);
+
+        await walkSuccessfulRelease(context, result, noopRunner, { client, formatter: noopFormatter, repo: "o/r" });
+
+        expect(commentCalls).toHaveLength(1);
+
+        const { body } = commentCalls[0]!;
+
+        expect(body).toContain("- [`@lunora/a@1.0.0`](https://github.com/o/r/releases/tag/a) · [npm](https://www.npmjs.com/package/@lunora/a/v/1.0.0)");
+        expect(body).toContain("- `@lunora/b@2.0.0` · [npm](https://www.npmjs.com/package/@lunora/b/v/2.0.0)");
+        // Not an npm package — no npm link.
+        expect(body).toContain("- `lunora-crate@0.3.0`\n");
+        expect(body).toContain("**latest**");
+    });
+
+    it("renders `{releases}` and keeps `{name}` / `{version}` / `{url}` on the first package", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        const releases = [mkRelease("@s/a", "1.0.0", ["#1"]), mkRelease("@s/b", "1.1.0", ["#1"])];
+        const context = mkContext({ config: { successWalk: { commentBody: "first={name}@{version} url={url}\n{releases}" } } }, releases);
+        const result = mkResult([
+            { name: "@s/a", url: "https://rel/a", version: "1.0.0" },
+            { name: "@s/b", version: "1.1.0" },
+        ]);
+
+        await walkSuccessfulRelease(context, result, noopRunner, { client, formatter: noopFormatter, repo: "o/r" });
+
+        const { body } = commentCalls[0]!;
+
+        expect(body).toContain("first=@s/a@1.0.0 url=https://rel/a");
+        expect(body).toContain("**latest**\n\n- [`@s/a@1.0.0`](https://rel/a)\n- `@s/b@1.1.0`");
+    });
+
+    it("collapses a channel listing more than 10 packages into a <details> block", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        const releases = Array.from({ length: 11 }, (_, index) => mkRelease(`@s/p${String(index).padStart(2, "0")}`, "1.0.0", ["#9"]));
+        const context = mkContext({}, releases);
+        const result = mkResult(releases.map((r) => { return { name: r.name, version: r.newVersion }; }));
+
+        await walkSuccessfulRelease(context, result, noopRunner, { client, formatter: noopFormatter, repo: "o/r" });
+
+        expect(commentCalls[0]!.body).toContain("<details>\n<summary>11 packages</summary>\n\n- `@s/p00@1.0.0`");
+    });
+});
+
+describe("successWalk — comment accumulates per channel", () => {
+    it("keeps the alpha section when the PR later ships on latest", async () => {
+        expect.hasAssertions();
+
+        const store = new Map<number, string>();
+        const { client } = buildMockClient({ store });
+
+        await walkSuccessfulRelease(
+            mkContext({ channel: { mode: "auto-publish", prerelease: "alpha", tag: "alpha" }, config: { successWalk: { skipPrerelease: false } } }, [
+                mkRelease("@s/a", "1.0.0-alpha.3", ["fix: y (#7)"]),
+            ]),
+            mkResult([{ name: "@s/a", version: "1.0.0-alpha.3" }]),
+            noopRunner,
+            { client, formatter: noopFormatter, repo: "o/r" },
+        );
+        await walkSuccessfulRelease(
+            mkContext({ channel: { mode: "auto-publish", tag: "latest" } }, [mkRelease("@s/a", "1.0.0", ["fix: y (#7)"])]),
+            mkResult([{ name: "@s/a", version: "1.0.0" }]),
+            noopRunner,
+            { client, formatter: noopFormatter, repo: "o/r" },
+        );
+
+        const body = store.get(7)!;
+
+        expect(body).toContain("**alpha**\n\n- `@s/a@1.0.0-alpha.3`\n\n**latest**\n\n- `@s/a@1.0.0`");
+        expect(body.split(SUCCESS_WALK_MARKER)).toHaveLength(2);
+    });
+
+    it("is byte-identical when the same wave is walked again", async () => {
+        expect.hasAssertions();
+
+        const store = new Map<number, string>();
+        const { client, commentCalls } = buildMockClient({ store });
+        const walk = async (): Promise<void> => {
+            await walkSuccessfulRelease(
+                mkContext({}, [mkRelease("@s/a", "1.0.0", ["#7"]), mkRelease("@s/b", "1.0.0", ["#7"])]),
+                mkResult([
+                    { name: "@s/a", version: "1.0.0" },
+                    { name: "@s/b", version: "1.0.0" },
+                ]),
+                noopRunner,
+                { client, formatter: noopFormatter, repo: "o/r" },
+            );
+        };
+
+        await walk();
+        await walk();
+
+        expect(commentCalls[1]!.body).toBe(commentCalls[0]!.body);
+    });
+});
+
+describe(renderSuccessComment, () => {
+    const vars = { name: "@s/a", tag: "latest", url: "", version: "1.0.0" };
+
+    it("adds a resumed wave's packages to the channel instead of replacing it", () => {
+        expect.hasAssertions();
+
+        const first = renderSuccessComment(undefined, DEFAULT_SUCCESS_WALK_COMMENT, { channel: "alpha", releases: [{ name: "@s/a", version: "1.0.0-alpha.1" }] }, vars);
+        const second = renderSuccessComment(first, DEFAULT_SUCCESS_WALK_COMMENT, { channel: "alpha", releases: [{ name: "@s/b", version: "1.0.0-alpha.1" }] }, vars);
+
+        expect(second).toContain("- `@s/a@1.0.0-alpha.1`\n- `@s/b@1.0.0-alpha.1`");
+    });
+
+    it("keeps the first version a package shipped the ref in, per channel", () => {
+        expect.hasAssertions();
+
+        const first = renderSuccessComment(undefined, DEFAULT_SUCCESS_WALK_COMMENT, { channel: "alpha", releases: [{ name: "@s/a", version: "1.0.0-alpha.1" }] }, vars);
+        const second = renderSuccessComment(first, DEFAULT_SUCCESS_WALK_COMMENT, { channel: "alpha", releases: [{ name: "@s/a", version: "1.0.0-alpha.2" }] }, vars);
+
+        expect(second).toBe(first);
+    });
+
+    it("replaces a comment written before the history block existed", () => {
+        expect.hasAssertions();
+
+        const legacy = `${SUCCESS_WALK_MARKER}\n:tada: This issue has been resolved in version 0.9.0 :tada:`;
+        const body = renderSuccessComment(legacy, DEFAULT_SUCCESS_WALK_COMMENT, { channel: "latest", releases: [{ name: "@s/a", version: "1.0.0" }] }, vars);
+
+        expect(body).not.toContain("0.9.0");
+        expect(body).toContain("- `@s/a@1.0.0`");
+    });
+
+    it("drops malformed entries from an edited history block", () => {
+        expect.hasAssertions();
+
+        const edited = `${SUCCESS_WALK_MARKER}\n\n<!-- vis-release-success-data {"alpha":[null,{"name":"x"}],"beta":"nope"} -->`;
+        const body = renderSuccessComment(edited, "{releases}", { channel: "latest", releases: [{ name: "@s/a", version: "1.0.0" }] }, vars);
+
+        expect(body).toContain("**latest**\n\n- `@s/a@1.0.0`");
+        expect(body).not.toContain("undefined");
+    });
+
+    it("round-trips `--` in a package name without closing the hidden HTML comment", () => {
+        expect.hasAssertions();
+
+        const first = renderSuccessComment(undefined, "{releases}", { channel: "latest", releases: [{ name: "a--b", url: "https://x/--/y", version: "1.0.0" }] }, vars, "https://x/");
+
+        expect(first.match(/-->/g)).toHaveLength(2);
+
+        const second = renderSuccessComment(first, "{releases}", { channel: "next", releases: [{ name: "c", version: "2.0.0" }] }, vars, "https://x/");
+
+        expect(second).toContain("- [`a--b@1.0.0`](https://x/--/y)");
+        expect(second).toContain("- `c@2.0.0`");
+    });
+});
+
+describe("renderSuccessComment — stored history is untrusted", () => {
+    const vars = { name: "@s/a", tag: "latest", url: "", version: "1.0.0" };
+    const prefix = "https://github.com/o/r/releases/";
+    const withHistory = (data: unknown): string => `${SUCCESS_WALK_MARKER}\n\n<!-- vis-release-success-data ${JSON.stringify(data)} -->`;
+    const render = (data: unknown): string =>
+        renderSuccessComment(withHistory(data), "{releases}", { channel: "latest", releases: [{ name: "@s/a", version: "1.0.0" }] }, vars, prefix);
+
+    it("drops stored links that are not this repo's release pages", () => {
+        expect.hasAssertions();
+
+        // Assembled so the lint rule against script URLs doesn't read the fixture as code.
+        const scriptUrl = ["javascript", "alert(1)"].join(":");
+
+        const body = render({
+            alpha: [
+                { name: "@s/x", url: scriptUrl, version: "1.0.0" },
+                { name: "@s/y", url: "https://evil.example/o/r/releases/tag/y", version: "1.0.0" },
+                { name: "@s/z", url: "https://github.com/o/r/releases/tag/z)](https://evil.example", version: "1.0.0" },
+                { name: "@s/ok", url: "https://github.com/o/r/releases/tag/ok", version: "1.0.0" },
+            ],
+        });
+
+        expect(body).not.toContain(scriptUrl);
+        expect(body).not.toContain("evil.example)");
+        expect(body).toContain("- `@s/x@1.0.0`\n- `@s/y@1.0.0`\n- `@s/z@1.0.0`\n- [`@s/ok@1.0.0`](https://github.com/o/r/releases/tag/ok)");
+    });
+
+    it("drops entries and channels carrying Markdown or HTML, and rebuilds npm links instead of trusting stored ones", () => {
+        expect.hasAssertions();
+
+        const body = render({
+            "**x**": [{ name: "@s/c", version: "1.0.0" }],
+            alpha: [
+                { name: "x` [click](https://evil.example) `", version: "1.0.0" },
+                { name: "@s/b", version: "<img src=x>" },
+                { name: "@s/d", npm: true, npmUrl: "https://evil.example", version: "2.0.0" },
+                { name: "@s/e", npm: true, version: "not-semver" },
+            ],
+        });
+
+        expect(body).not.toContain("evil.example");
+        expect(body).not.toContain("<img");
+        expect(body).not.toContain("**x**");
+        expect(body).toContain("**alpha**\n\n- `@s/d@2.0.0` · [npm](https://www.npmjs.com/package/@s/d/v/2.0.0)\n- `@s/e@not-semver`\n\n**latest**");
+    });
+});
+
+describe("successWalk — GitLab issue vs merge request refs", () => {
+    it("routes `#N` to the issue and `!N` to the merge request, for the note and the labels", async () => {
+        expect.hasAssertions();
+
+        const { addLabelsCalls, client, commentCalls } = buildMockClient({ id: "gitlab" });
+        const context = mkContext({}, [mkRelease("@s/a", "1.0.0", ["fix: y (!12), closes #12 and #3"])]);
+
+        await walkSuccessfulRelease(context, mkResult([{ name: "@s/a", version: "1.0.0" }]), noopRunner, { client, formatter: noopFormatter, repo: "g/p" });
+
+        const seen = (calls: { issueNumber: number; target?: string }[]): string[] => calls.map((c) => `${c.target}:${c.issueNumber}`).sort();
+
+        expect(seen(commentCalls)).toStrictEqual(["issue:12", "issue:3", "merge_request:12"]);
+        expect(seen(addLabelsCalls)).toStrictEqual(["issue:12", "issue:3", "merge_request:12"]);
+    });
+
+    it("types GitLab URLs by resource and ignores `!N` off GitLab", () => {
+        expect.hasAssertions();
+
+        const body = "see https://gitlab.com/g/p/-/merge_requests/4 and https://gitlab.com/g/p/-/issues/5 and !6";
+
+        expect(extractTypedReferences(body, "g/p", true)).toStrictEqual([
+            { number: 4, target: "merge_request" },
+            { number: 5, target: "issue" },
+            { number: 6, target: "merge_request" },
+        ]);
+        expect(extractTypedReferences(body, "g/p", false).map((r) => r.number)).toStrictEqual([4, 5]);
+    });
+});
+
+describe("successWalk — refs from a custom changelog formatter", () => {
+    it("finds refs that only the formatter output carries (lunora's linked `([#N](…/issues/N))` form)", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        // Change-file body carries no ref; only the formatter's rendered output does.
+        const context = mkContext({ config: { successWalk: { skipPrerelease: false } } }, [mkRelease("@lunora/runtime", "1.0.0-alpha.77", ["fix(runtime): drop stale shard"])]);
+        const formatter = async (): Promise<string> => "### Bug Fixes\n\n* **runtime:** drop stale shard ([#1234](https://github.com/anolilab/lunora/issues/1234))\n";
+
+        await walkSuccessfulRelease(context, mkResult([{ name: "@lunora/runtime", version: "1.0.0-alpha.77" }]), noopRunner, {
+            client,
+            formatter,
+            repo: "anolilab/lunora",
+        });
+
+        expect(commentCalls.map((c) => c.issueNumber)).toStrictEqual([1234]);
     });
 });

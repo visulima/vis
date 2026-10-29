@@ -1104,8 +1104,15 @@ export interface GitUserConfig {
  *
  * When opted in, after a successful publish wave vis walks every PR /
  * issue referenced in the rendered changelog entries and:
- *   1. Posts (or upserts) a sticky comment announcing the release version.
+ *   1. Posts (or upserts) one sticky comment listing every package +
+ *      version the ref shipped in. The list accumulates per channel
+ *      (dist-tag): a PR shipped on `alpha` and later on `latest` shows
+ *      both, and re-running a wave changes nothing.
  *   2. Adds the configured labels (default `["released"]`).
+ *
+ * On GitLab, `#N` is an issue and `!N` a merge request; each gets the note
+ * and labels on its own object. On GitHub the token needs
+ * `issues: write` and `pull-requests: write`.
  *
  * Failure to walk a single ref is non-fatal — the publish itself already
  * succeeded; we don't want a forge API blip rolling that back.
@@ -1113,12 +1120,16 @@ export interface GitUserConfig {
 export interface SuccessWalkConfig {
     /**
      * Comment body template posted on every referenced PR / issue. Tokens:
-     *   - `{version}` — the published version (e.g. `1.2.0`)
-     *   - `{name}`    — the published package name
-     *   - `{tag}`     — the git tag created for this release
-     *   - `{url}`     — the forge release URL when available
+     *   - `{releases}` — every package + version the ref shipped in, with
+     *                    release and npm links, grouped per channel and
+     *                    accumulated across waves. A channel listing more
+     *                    than 10 packages collapses into a `&lt;details>` block.
+     *   - `{version}`  — the version of the first package in this wave
+     *   - `{name}`     — the name of the first package in this wave
+     *   - `{tag}`      — this wave's channel tag (dist-tag), e.g. `latest`
+     *   - `{url}`      — the first package's forge release URL when available
      *
-     * Default mirrors semantic-release's `successComment`.
+     * Default: `":tada: This has been released :tada:\n\n{releases}"`.
      */
     commentBody?: string;
 
@@ -1139,6 +1150,8 @@ export interface SuccessWalkConfig {
     /**
      * Skip the walk entirely on prerelease channels — the typical "don't
      * notify users their PR shipped in a beta" guardrail. Default `true`.
+     * A monorepo that releases from a prerelease line (`1.0.0-alpha.*`)
+     * must set `false`, or no comment is ever posted.
      */
     skipPrerelease?: boolean;
 }
