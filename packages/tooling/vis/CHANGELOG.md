@@ -1,3 +1,10 @@
+## @visulima/vis [6.1.5](https://github.com/visulima/vis/compare/@visulima/vis@6.1.4...@visulima/vis@6.1.5) (2026-10-29)
+
+### Bug Fixes
+
+* **vis:** graduate prerelease versions to their base on channel promotion ([#64](https://github.com/visulima/vis/issues/64)) ([51dd022](https://github.com/visulima/vis/commit/51dd022e0a475588796403517b8bae5f4b902690))
+* **vis:** release breaking changes under ignored types and parse comma scopes ([#65](https://github.com/visulima/vis/issues/65)) ([3beed52](https://github.com/visulima/vis/commit/3beed52851a5197558226a6a57682c64dac82aba))
+
 ## @visulima/vis [6.1.4](https://github.com/visulima/vis/compare/@visulima/vis@6.1.3...@visulima/vis@6.1.4) (2026-10-27)
 
 ### Bug Fixes
