@@ -2,6 +2,12 @@ import type { VersionActions } from "../version-actions/interface";
 
 // ── Publish phase ──────────────────────────────────────────────────
 export interface PublishContextOptions {
+    /**
+     * Commit every release tag goes on (after `tagTargets`). Default: under
+     * `tagTarget: "source"` the commit HEAD's `Release-Source` trailer names,
+     * otherwise HEAD.
+     */
+    defaultTagTarget?: string;
     dryRun?: boolean;
 
     /**

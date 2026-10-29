@@ -464,7 +464,14 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         // committed but untagged; the next run's publish-missing step
         // publishes it.
         const versionCommit = await getCurrentSha({ cwd, runner });
-        const publishResult = await publishContext(ctx, { noBranchPush: true, resume: true, tag: ctx.channel?.tag });
+        // Named explicitly: the publish step commits bookkeeping (the
+        // lockInGit lock) on top before tagging, and the flush below rebases it.
+        const publishResult = await publishContext(ctx, {
+            defaultTagTarget: sourceTags ? source : versionCommit,
+            noBranchPush: true,
+            resume: true,
+            tag: ctx.channel?.tag,
+        });
 
         logger.info(`Published: ${publishResult.published.length} | Skipped: ${publishResult.skipped.length} | Failed: ${publishResult.failed.length}`);
 

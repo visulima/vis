@@ -306,13 +306,15 @@ describe.skipIf(process.platform === "win32")("vis release ci release — the br
     it("lockInGit: commits the lock locally and pushes it with one more branch push at the end", async () => {
         expect.hasAssertions();
 
-        const { remote, work } = setupFixture(root, { publish: { lockInGit: true, noRelease: true }, tagTarget: "source" });
+        const { remote, source, work } = setupFixture(root, { publish: { lockInGit: true, noRelease: true }, tagTarget: "source" });
         const pushes = recordPushes(remote);
 
         await runRelease(work);
 
         expect(process.exitCode ?? 0).toBe(0);
         expect(branchPushes(pushes())).toBe(2);
+        // Not the lock commit that was HEAD while tagging.
+        expect(git(remote, "rev-list", "-n1", "@scope/a@1.1.0")).toBe(source);
         expect(git(remote, "log", "--format=%s", "-3", "main")).toContain("chore(release): close publish lock [skip ci]");
         expect(git(remote, "rev-parse", "main")).toBe(git(work, "rev-parse", "HEAD"));
     });
@@ -348,5 +350,42 @@ describe.skipIf(process.platform === "win32")("vis release ci release — the br
         expect(published).toStrictEqual([]);
         expect(git(remote, "rev-parse", "main")).toBe(before);
         expect(remoteTags(remote)).toBe(tagsBefore);
+    });
+
+    it("lockInGit with release-commit tags: tags the version commit, which lands on the branch", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { publish: { lockInGit: true, noRelease: true } });
+
+        await runRelease(work);
+
+        const tagged = git(remote, "rev-list", "-n1", "@scope/a@1.1.0");
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(git(remote, "log", "-1", "--format=%s", tagged)).toMatch(/^release\(/u);
+        expect(() => git(remote, "merge-base", "--is-ancestor", tagged, "main")).not.toThrow();
+    });
+
+    it("moves an existing floating major tag in the single tag push", async () => {
+        expect.hasAssertions();
+
+        const { remote, work } = setupFixture(root, { floatingMajorTag: true, tagTarget: "source" });
+
+        await runRelease(work);
+
+        expect(git(remote, "rev-list", "-n1", "scope-a-v1")).toBe(git(remote, "rev-list", "-n1", "@scope/a@1.1.0"));
+
+        const second = commitFile(work, "packages/a/index.js", "export const a = 2;\n", "feat(a): add more");
+
+        git(work, "push", "-q", "origin", "HEAD:refs/heads/main");
+        published.length = 0;
+        __resetLookupMemoForTests();
+
+        const { errors } = await runRelease(work);
+
+        expect(errors).toStrictEqual([]);
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(published).toStrictEqual(["@scope/a@1.2.0"]);
+        expect(git(remote, "rev-list", "-n1", "scope-a-v1")).toBe(second);
     });
 });

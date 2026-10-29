@@ -23,7 +23,8 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
         let sourceTarget: string | undefined;
 
         try {
-            sourceTarget = context.config.tagTarget === "source" ? await resolveReleaseSource({ cwd: context.cwd, runner }) : undefined;
+            sourceTarget
+                = options.defaultTagTarget ?? (context.config.tagTarget === "source" ? await resolveReleaseSource({ cwd: context.cwd, runner }) : undefined);
         } catch (error) {
             result.failed.push({ name: "_tagTarget", reason: (error as Error).message });
             await persistState();
