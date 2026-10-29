@@ -499,6 +499,9 @@ Bumpy has no per-package channel concept. We port semantic-release's channel mod
     | `beta`       | `1.3.0-beta.5`  | `next` (no new bump)       | `1.3.0-rc.0`    | next channel's preid is `rc` (configurable per channel) |
     | `next`       | `1.3.0-rc.5`    | `main` (no new bump)       | `1.3.0`         | preid stripped — final release                          |
     | `alpha`      | `1.3.0-alpha.5` | `main` (no new bump)       | `1.3.0`         | direct merge — preid stripped                           |
+    | `alpha`      | `1.3.0-alpha.5` | `main` (minor bump)        | `1.3.0`         | base already covers a minor — graduates, no extra bump  |
+    | `alpha`      | `1.3.0-alpha.5` | `beta` (minor bump)        | `1.3.0-beta.0`  | base kept, re-counter against new preid                 |
+    | `next`       | `1.3.0-rc.5`    | `main` (major bump)        | `2.0.0`         | bump exceeds what the base covers (`semver.inc`)        |
     | `main`       | `1.2.3`         | `1.x` (maintenance, patch) | `1.2.4`         | maintenance branch range-bound                          |
 
     Pending change files at the merge point are **consumed at the next `vis release version`** (i.e. they accumulate; they don't auto-merge with the channel-transition step). The channel-transition logic only re-computes the preid; bump levels still come from change files.

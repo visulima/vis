@@ -9,6 +9,9 @@
  *   on beta, last 1.3.0-alpha.5 + (no bump) → 1.3.0-beta.0   (re-counter on new preid)
  *   on next, last 1.3.0-beta.5 + (no bump) → 1.3.0-rc.0       (next channel preid)
  *   on main, last 1.3.0-rc.5 + (no bump) → 1.3.0              (preid stripped — final)
+ *   on main, last 1.0.0-alpha.76 + patch → 1.0.0               (graduates to its base)
+ *   on beta, last 1.0.0-alpha.76 + minor → 1.0.0-beta.0        (base already covers minor)
+ *   on main, last 1.3.0-rc.5 + major → 2.0.0                   (bump exceeds the base)
  *
  * Pure functions; no I/O. Re-exports `satisfies`/`coerce`/etc. from `semver`
  * so callers don't need to import both.
@@ -141,39 +144,12 @@ export const bumpVersion = (input: BumpInput): string => {
         return `${escalated}-${prerelease}.0`;
     }
 
-    if (prerelease) {
-        // Either current is stable, or current is on a different preid line.
-        // Treat as: strip preid (if any), bump, append preid.0.
-        const stable = `${currentParsed.major}.${currentParsed.minor}.${currentParsed.patch}`;
-        const escalated = semver.inc(stable, bump);
-
-        if (!escalated) {
-            throw new VisReleaseError({
-                code: "CONFIG_INVALID",
-                message: `semver.inc returned null for ${bump} bump on ${stable}`,
-            });
-        }
-
-        return `${escalated}-${prerelease}.0`;
-    }
-
-    // No prerelease — straight semver bump.
-    if (currentIsPrerelease) {
-        // From prerelease to stable: bump operates on the underlying base.
-        // Example: 1.3.0-rc.5 + (none) collapses to 1.3.0; 1.3.0-rc.5 + minor → 1.4.0.
-        const stable = `${currentParsed.major}.${currentParsed.minor}.${currentParsed.patch}`;
-        const next = semver.inc(stable, bump);
-
-        if (!next) {
-            throw new VisReleaseError({
-                code: "CONFIG_INVALID",
-                message: `semver.inc returned null for ${bump} bump on ${stable}`,
-            });
-        }
-
-        return next;
-    }
-
+    // Everything else — stable → stable, stable → prerelease, and a
+    // prerelease graduating to stable or switching preid — bumps `current`
+    // itself, not its stripped base. semver.inc on a prerelease only moves
+    // past the base when the bump exceeds what the base already covers
+    // (`1.0.0-alpha.76` + minor → `1.0.0`, + patch on `1.2.1-rc.0` → `1.2.1`,
+    // + major on `1.3.0-rc.0` → `2.0.0`), which is semantic-release's rule.
     const next = semver.inc(current, bump);
 
     if (!next) {
@@ -183,7 +159,7 @@ export const bumpVersion = (input: BumpInput): string => {
         });
     }
 
-    return next;
+    return prerelease ? `${next}-${prerelease}.0` : next;
 };
 
 /**
