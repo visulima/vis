@@ -179,6 +179,18 @@ vis release generate --dry-run
 | `--dry-run`              | boolean | Print the would-be content without writing                                            |
 | `--print-config[=debug]` | string  | Print the resolved release config and exit                                            |
 
+### How commits map to bumps
+
+| Commit                                                                        | Bump    |
+| ----------------------------------------------------------------------------- | ------- |
+| `feat!:`, `fix(scope)!:`, or a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer | `major` |
+| `feat:`                                                                       | `minor` |
+| any other type, or no conventional header                                     | `patch` |
+
+A commit announced as breaking only by its footer is written to the change file with the
+`!` marker added (`refactor(api)!: …`), because changelog formatters read "breaking" off
+that one line — the commit body is not carried over.
+
 ### Range resolution
 
 Precedence: `--from` → `--since-last-release` → merge-base with `release.baseBranch`.
@@ -233,6 +245,11 @@ the trim that header would be transcribed verbatim into the new changelog entry.
 
 Extend the list with [`release.ignoreCommitPattern`](../guides/release.mdx#full-reference),
 or turn the built-ins off with `release.ignoreReleaseCommits: false`.
+
+A breaking change is never dropped by `ignoreCommitPattern`: a commit carrying `!` or a
+`BREAKING CHANGE:` footer releases as `major` even when its subject matches one of your
+patterns, so a type filter like `^(chore|refactor|build)(\\([^)]*\\))?:` cannot swallow
+an incompatible change. The built-in release-commit heuristic has no such exemption.
 
 ---
 

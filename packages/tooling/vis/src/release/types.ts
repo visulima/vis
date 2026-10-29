@@ -1492,6 +1492,12 @@ export interface VisReleaseConfig {
      * "don't run CI", not "don't release", so matching it would swallow a
      * real `fix: … [skip ci]` and its bump. Opt in with
      * `ignoreCommitPattern: ["\\[skip ci\\]"]` if you want that.
+     *
+     * A breaking change (`!` in the header or a `BREAKING CHANGE:` /
+     * `BREAKING-CHANGE:` footer) is exempt: it still releases as major
+     * even when its subject matches one of these patterns, so a type
+     * filter cannot swallow an incompatible change. The built-in
+     * release-commit heuristic has no such exemption.
      */
     ignoreCommitPattern?: string | string[];
 
