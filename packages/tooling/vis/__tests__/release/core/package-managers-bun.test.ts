@@ -143,7 +143,7 @@ describe("bunAdapter — installLockfileOnly", () => {
         const runner = new MockRunner();
         let called = false;
 
-        runner.on("bun", ["install", "--lockfile-only"], () => {
+        runner.on("bun", ["install", "--lockfile-only", "--ignore-scripts"], () => {
             called = true;
 
             return { exitCode: 0, stderr: "", stdout: "" };

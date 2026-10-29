@@ -14,7 +14,7 @@
  */
 
 export type { ApplyOptions, ApplyResult, AssertNoConflictingPendingStagesOptions } from "./orchestrator/apply";
-export { applyContext, assertNoConflictingPendingStages } from "./orchestrator/apply";
+export { applyContext, assertNoConflictingPendingStages, syncLockfile } from "./orchestrator/apply";
 export type { BuildContextOptions, OrchestratorContext } from "./orchestrator/context";
 export { buildContext } from "./orchestrator/context";
 export { applyReleaseNoteTemplate, composeRelatedReleasesBlock, extractInternalAuthors } from "./orchestrator/notes";

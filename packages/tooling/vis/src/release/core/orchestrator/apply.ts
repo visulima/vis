@@ -12,12 +12,61 @@ import { formatChangedFiles } from "./format-changed-files";
 import { runGroupPreVersionCommands, runHook } from "./hooks";
 
 // ── Apply phase ─────────────────────────────────────────────────────
+
+/**
+ * Regenerate the lockfile (no lifecycle scripts), then check that a frozen
+ * install accepts it, so a release never pushes a lockfile the branch cannot
+ * install. The check runs where the adapter has one that neither installs nor
+ * needs the network (pnpm), unless `release.verifyLockfile` is `false`.
+ *
+ * A failed regeneration only soft-fails when nothing is checked, or when the
+ * package manager is not installed here at all; otherwise it throws, so the
+ * version commit never carries a lockfile that was never regenerated.
+ */
+export const syncLockfile = async (context: OrchestratorContext): Promise<void> => {
+    const verify = context.config.verifyLockfile;
+
+    if (verify === true && !context.pm.verifyLockfile) {
+        throw new VisReleaseError({
+            code: "CONFIG_INVALID",
+            message: `release.verifyLockfile is not supported for ${context.pm.id} (only pnpm); remove it or set it to false.`,
+        });
+    }
+
+    const verifying = verify !== false && context.pm.verifyLockfile !== undefined;
+
+    try {
+        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
+    } catch (error) {
+        if (!verifying) {
+            return;
+        }
+
+        const probe = await context.pm.runner.run(context.pm.id, ["--version"], { cwd: context.cwd, silent: true });
+
+        if (probe.exitCode !== 0) {
+            return;
+        }
+
+        throw error;
+    }
+
+    if (verifying) {
+        await context.pm.verifyLockfile?.({ cwd: context.cwd });
+    }
+};
 export interface ApplyOptions {
     /** Stage + commit changed files after writing. Default `false`. */
     commit?: boolean;
     /** Override commit message template (defaults from RFC §19.5). */
     commitMessage?: string;
     dryRun?: boolean;
+
+    /**
+     * Under `tagTarget: "source"`, the commit the commit's `Release-Source`
+     * trailer names. Default: HEAD before committing.
+     */
+    releaseSource?: string;
 }
 
 export interface ApplyResult {
@@ -252,18 +301,9 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         }),
     ]);
 
-    // Lockfile sync (RFC §19/§14)
-    try {
-        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
-    } catch {
-        // Soft-fail: not all CI environments have the pm available, and we'd
-        // rather ship the version commit than block on lockfile noise.
-    }
-
     // Format changed files (RFC §14 step 7) — opt-in, scoped to the files the
     // version step just wrote (package.json bumps + CHANGELOG entries),
-    // soft-fail. Runs after lockfile sync so a reformatted lockfile (if the
-    // PM emitted one) is included.
+    // soft-fail.
     if (!options.dryRun && context.config.formatChangedFiles) {
         await formatChangedFiles(
             applied.writes.map((w) => w.path),
@@ -282,7 +322,11 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         await runApplyDraftHooks({ config: context.config, cwd: context.cwd }, context.plan);
     }
 
-    const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage) : undefined;
+    // Lockfile sync (RFC §19/§14) — after the plugins, which may still edit
+    // manifests (e.g. dependency ranges), so the lockfile matches what is committed.
+    await syncLockfile(context);
+
+    const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage, options.releaseSource) : undefined;
 
     // Workspace-level changelog is intentionally NOT written here — the
     // wave entry is appended from `publishContext` against the actually-

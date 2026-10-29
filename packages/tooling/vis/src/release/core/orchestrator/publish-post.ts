@@ -67,13 +67,11 @@ export const runPostPublish = async (context: OrchestratorContext, wave: Publish
                 published: result.published.filter((p) => !alreadyWalked.has(`${p.name}@${p.version}`)),
             };
 
-            if (walkable.published.length > 0) {
-                const walkResult = await walkSuccessfulRelease(context, walkable, runner, {
-                    client,
-                    formatter,
-                    repo,
-                });
+            const walkResult = walkable.published.length > 0 ? await walkSuccessfulRelease(context, walkable, runner, { client, formatter, repo }) : undefined;
 
+            // Only a walk that ran is recorded: recording a disabled one put a
+            // dedupe commit (and branch push) on every wave.
+            if (walkResult?.ran === true) {
                 // Record successful walks so a later --resume doesn't repeat
                 // them. We optimistically mark the WHOLE walkable set as
                 // walked even if individual refs failed — the soft-fail
@@ -251,7 +249,7 @@ export const runPostPublish = async (context: OrchestratorContext, wave: Publish
                             "chore(release): record cross-runner notify/walk dedupe [skip ci]",
                             {
                                 author: context.config.gitUser,
-                                push: !options.noPush,
+                                push: !options.noPush && !options.noBranchPush,
                                 sign: context.config.gitSignCommits === true,
                             },
                         );

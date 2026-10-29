@@ -22,17 +22,17 @@ export const commitVersionChanges = async (
     context: OrchestratorContext,
     applied: Awaited<ReturnType<typeof applyReleasePlan>>,
     commitMessage: string | undefined,
+    releaseSource?: string,
 ): Promise<string | undefined> => {
     const fs = await import("node:fs/promises");
-    const { stageAndCommit } = await import("../git");
+    const { getCurrentSha, LOCKFILE_NAMES, RELEASE_SOURCE_TRAILER, stageAndCommit } = await import("../git");
     const runner = createShellRunner();
 
     // Lockfile paths to also stage (best-effort; some PMs don't have one yet).
-    const lockfileCandidates = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb"];
     const path = await import("node:path");
     const lockfilesPresent: string[] = [];
 
-    for (const name of lockfileCandidates) {
+    for (const name of LOCKFILE_NAMES) {
         try {
             await fs.access(path.join(context.cwd, name));
             lockfilesPresent.push(path.join(context.cwd, name));
@@ -41,6 +41,10 @@ export const commitVersionChanges = async (
         }
     }
 
+    // Tags go on the commit the wave was planned from; record it so they still
+    // find it after `ci release` rebases these commits onto a moved branch.
+    const source = context.config.tagTarget === "source" ? (releaseSource ?? (await getCurrentSha({ cwd: context.cwd, runner }))) : undefined;
+    const trailer = source === undefined ? "" : `\n\n${RELEASE_SOURCE_TRAILER}: ${source}`;
     const aggregateEnabled
         = context.config.aggregateRelease === true || (typeof context.config.aggregateRelease === "object" && context.config.aggregateRelease.enabled);
     let commitSha: string | undefined;
@@ -77,16 +81,21 @@ export const commitVersionChanges = async (
                 continue;
             }
 
-            commitSha = await stageAndCommit({ cwd: context.cwd, runner }, files, `release(${channel}): ${release.name}@${release.newVersion} [skip ci]`, {
-                author: context.config.gitUser,
-            });
+            commitSha = await stageAndCommit(
+                { cwd: context.cwd, runner },
+                files,
+                `release(${channel}): ${release.name}@${release.newVersion} [skip ci]${trailer}`,
+                {
+                    author: context.config.gitUser,
+                },
+            );
         }
     } else {
         // Single aggregate commit for the whole wave (default).
         const message = commitMessage ?? buildDefaultCommitMessage(context);
         const allFiles = [...applied.writes.map((w) => w.path), ...applied.deletions, ...lockfilesPresent];
 
-        commitSha = await stageAndCommit({ cwd: context.cwd, runner }, allFiles, message, { author: context.config.gitUser });
+        commitSha = await stageAndCommit({ cwd: context.cwd, runner }, allFiles, `${message}${trailer}`, { author: context.config.gitUser });
     }
 
     return commitSha;

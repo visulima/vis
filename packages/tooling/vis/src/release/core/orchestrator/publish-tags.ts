@@ -15,7 +15,24 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
 
     // Create + push tags for successfully-published releases (RFC §14 / §19.1).
     if (!options.dryRun && !options.noTag && result.published.length > 0) {
-        const { createOrUpdateFloatingTag, createTag, defaultTagFor, floatingMajorTagFor, pushTags, renderTagPattern } = await import("../git");
+        const { createOrUpdateFloatingTag, createTag, defaultTagFor, floatingMajorTagFor, pushTags, renderTagPattern, resolveReleaseSource }
+            = await import("../git");
+        // `tagTarget: "source"`: the release commit names the commit it was
+        // planned from. Without the trailer (versions applied but not
+        // committed) HEAD is that commit.
+        let sourceTarget: string | undefined;
+
+        try {
+            sourceTarget
+                = options.defaultTagTarget ?? (context.config.tagTarget === "source" ? await resolveReleaseSource({ cwd: context.cwd, runner }) : undefined);
+        } catch (error) {
+            result.failed.push({ name: "_tagTarget", reason: (error as Error).message });
+            await persistState();
+
+            return;
+        }
+
+        const floatingRefspecs: string[] = [];
         const rootTagPattern = context.config.releaseTagPattern;
 
         const channelName = context.channel?.tag;
@@ -45,7 +62,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
                     // would simply be re-published this wave. Skip the
                     // remote pre-check so the very first run on a fresh
                     // repo doesn't error.
-                    { signing: context.config.signing, skipRemoteCheck: context.firstRelease, target: options.tagTargets?.get(name) },
+                    { signing: context.config.signing, skipRemoteCheck: context.firstRelease, target: options.tagTargets?.get(name) ?? sourceTarget },
                 );
                 result.tags.push(tag);
             } catch (error) {
@@ -91,10 +108,13 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
 
                 if (floatTag !== undefined) {
                     try {
+                        // Pushed (forced) with the release tags below, in one push.
                         await createOrUpdateFloatingTag({ cwd: context.cwd, runner }, floatTag, {
-                            push: !options.noPush,
+                            push: false,
                             signing: context.config.signing,
+                            target: sourceTarget,
                         });
+                        floatingRefspecs.push(`+refs/tags/${floatTag}:refs/tags/${floatTag}`);
                         // Recorded in result.tags so the operator
                         // sees it on the summary line.
                         result.tags.push(floatTag);
@@ -115,6 +135,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
                 await createTag({ cwd: context.cwd, runner }, group.tag, `Release ${group.name} ${group.version}`, {
                     signing: context.config.signing,
                     skipRemoteCheck: context.firstRelease,
+                    target: sourceTarget,
                 });
                 result.tags.push(group.tag);
             } catch (error) {
@@ -128,7 +149,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
 
         if (!options.noPush && result.tags.length > 0) {
             try {
-                await pushTags({ cwd: context.cwd, runner });
+                await pushTags({ cwd: context.cwd, runner }, { refspecs: floatingRefspecs });
                 result.tagsPushed = true;
             } catch (error) {
                 // Soft-fail on the tag push itself (the publish already
@@ -165,7 +186,7 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
             // sees a clean slate rather than a stale lock that would make
             // it skip the whole already-published plan.
             if (lockInGit) {
-                await commitPublishLock(context, runner, changesDir, "close", { noPush: options.noPush });
+                await commitPublishLock(context, runner, changesDir, "close", { noPush: options.noPush || options.noBranchPush });
             }
         }
     }

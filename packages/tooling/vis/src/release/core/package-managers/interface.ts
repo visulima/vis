@@ -133,7 +133,15 @@ export abstract class PackageManagerAdapter {
     public constructor(public readonly runner: CommandRunner) {}
 
     public abstract pack(options: PackOptions): Promise<PackResult>;
+    /** Regenerate the lockfile without installing or running lifecycle scripts. */
     public abstract installLockfileOnly(options: InstallLockfileOnlyOptions): Promise<void>;
+
+    /**
+     * Fail when the lockfile does not satisfy the manifests (a frozen /
+     * immutable install would reject it). Only adapters with a check that
+     * neither installs nor needs the network implement it.
+     */
+    public verifyLockfile?(options: InstallLockfileOnlyOptions): Promise<void>;
     public abstract listWorkspacePackages(cwd: string): Promise<WorkspaceListEntry[]>;
 
     /**

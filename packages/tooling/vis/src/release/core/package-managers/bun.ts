@@ -82,7 +82,7 @@ export class BunAdapter extends PackageManagerAdapter {
     }
 
     public async installLockfileOnly(options: InstallLockfileOnlyOptions): Promise<void> {
-        const result = await this.runner.run("bun", ["install", "--lockfile-only"], { cwd: options.cwd, silent: options.silent });
+        const result = await this.runner.run("bun", ["install", "--lockfile-only", "--ignore-scripts"], { cwd: options.cwd, silent: options.silent });
 
         if (result.exitCode !== 0) {
             throw new VisReleaseError({

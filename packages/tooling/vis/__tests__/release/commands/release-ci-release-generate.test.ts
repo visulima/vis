@@ -45,7 +45,7 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
 vi.mock(import("../../../src/release/core/git"), async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../src/release/core/git")>();
 
-    return { ...actual, pushBranch: vi.fn(async () => undefined) };
+    return { ...actual, pushBranchWithRebase: vi.fn(async () => 0) };
 });
 
 const git = (cwd: string, ...args: string[]): void => {

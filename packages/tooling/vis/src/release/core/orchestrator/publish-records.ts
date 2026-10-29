@@ -43,7 +43,7 @@ export const commitStagedRegistry = async (context: OrchestratorContext, wave: P
             try {
                 await stageAndCommitFile({ cwd: context.cwd, runner }, write.path, message, {
                     author: context.config.gitUser,
-                    push: !options.noPush,
+                    push: !options.noPush && !options.noBranchPush,
                     sign: context.config.gitSignCommits === true,
                 });
             } catch (error) {
@@ -99,7 +99,7 @@ export const writeWorkspaceChangelogEntry = async (context: OrchestratorContext,
 
                         await stageAndCommitFile({ cwd: context.cwd, runner }, waveEntryPath, "chore(release): record wave [skip ci]", {
                             author: context.config.gitUser,
-                            push: !options.noPush,
+                            push: !options.noPush && !options.noBranchPush,
                             sign: context.config.gitSignCommits === true,
                         });
                     } catch (error) {

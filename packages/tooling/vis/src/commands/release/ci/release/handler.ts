@@ -33,8 +33,17 @@ import type { CerebroFs, CommandExecute, Toolbox } from "@visulima/cerebro";
 import { DEFAULT_CHANGES_DIR } from "../../../../release/config";
 import { readChangeFiles } from "../../../../release/core/change-file-reader";
 import { runGenerate } from "../../../../release/core/generate/run";
-import { getCurrentBranch, getShortSha, listUncommittedPaths, pushBranch, stageAndCommit, toRepoRelativePath } from "../../../../release/core/git";
-import { applyContext, buildContext, publishContext, publishMissing } from "../../../../release/core/orchestrator";
+import {
+    getCurrentBranch,
+    getCurrentSha,
+    getShortSha,
+    listUncommittedPaths,
+    pushBranch,
+    pushBranchWithRebase,
+    stageAndCommit,
+    toRepoRelativePath,
+} from "../../../../release/core/git";
+import { applyContext, buildContext, publishContext, publishMissing, syncLockfile } from "../../../../release/core/orchestrator";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
@@ -239,6 +248,40 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     }
 
     const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
+    const sourceTags = ctx.config.tagTarget === "source";
+    const { pushRetries } = ctx.config;
+
+    if (pushRetries !== undefined && (!sourceTags || !Number.isInteger(pushRetries) || pushRetries < 0)) {
+        logger.error(
+            sourceTags
+                ? `release.pushRetries must be a non-negative integer, got ${String(pushRetries)}.`
+                : `release.pushRetries needs release.tagTarget: "source": a rebased release commit would put the commits that moved the branch below its tags.`,
+        );
+        process.exitCode = 1;
+
+        return;
+    }
+
+    // The commit this wave is planned from; the version commit goes on top of it.
+    const source = await getCurrentSha({ cwd, runner });
+    const currentBranch = await getCurrentBranch({ cwd, runner });
+
+    // Auto-publish keeps the branch to ONE push (each one rebuilds a merge
+    // queue): the publish steps commit their bookkeeping (publish lock, staged
+    // registry, walk / notify dedupe, workspace changelog) without pushing,
+    // and this pushes whatever they left above `base` in one go.
+    const flushBookkeeping = async (base: string | undefined): Promise<void> => {
+        if (!currentBranch || base === undefined || (await getCurrentSha({ cwd, runner })) === base) {
+            return;
+        }
+
+        try {
+            // Always safe to rebase: no tag points at these commits.
+            await pushBranchWithRebase({ cwd, runner }, currentBranch, { author: ctx.config.gitUser, retries: pushRetries ?? 3, source: base });
+        } catch (error) {
+            logger.warn(`Could not push the release bookkeeping commits (cross-runner state): ${(error as Error).message}`);
+        }
+    };
 
     // A wave that failed part-way left versions committed but never published
     // (tags only follow a successful publish), and its change file is gone, so
@@ -248,7 +291,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     // Auto-publish only: on a version-PR channel publishing is refused while
     // the release PR is open, which would block maintaining that PR.
     if (mode === "auto-publish" && options.publishMissing) {
-        const recovered = await publishMissing(ctx, { tag: ctx.channel?.tag });
+        const recovered = await publishMissing(ctx, { noBranchPush: true, tag: ctx.channel?.tag });
 
         for (const entry of recovered.missing) {
             logger.info(
@@ -267,6 +310,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         if (recovered.failed.length > 0) {
             logger.error("Fix the failed recovery above before a new wave is released (or pass --no-publish-missing).");
             process.exitCode = 2;
+            await flushBookkeeping(source);
 
             return;
         }
@@ -356,30 +400,59 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     if (mode === "auto-publish") {
         if (pendingFiles.length === 0) {
             logger.info("No pending change files. Nothing to release.");
+            await flushBookkeeping(source);
 
             return;
         }
 
         logger.info(`Auto-publish mode — versioning + publishing ${ctx.plan.releases.length} package(s).`);
 
-        await applyContext(ctx, { commit: true });
+        // A recovery publish above may have left a bookkeeping commit on HEAD
+        // that never reached the remote; the trailer must name the commit the
+        // rebase below replays onto, which is on the branch.
+        try {
+            await applyContext(ctx, { commit: true, releaseSource: source });
+        } catch (error) {
+            const { hint } = error as { hint?: string };
 
-        // Land the version commit BEFORE publishing. The tags are created on
-        // HEAD after the publish, so pushing the branch afterwards (as this
-        // used to, once, logging a failure and exiting 0) stranded them on a
+            logger.error(`The version step failed, nothing was published: ${(error as Error).message}${hint ? ` ${hint}` : ""}`);
+            process.exitCode = 1;
+
+            return;
+        }
+
+        // Land the version commit BEFORE publishing. The tags are created
+        // after the publish, so pushing the branch afterwards (as this used
+        // to, once, logging a failure and exiting 0) stranded them on a
         // commit that never landed whenever the branch had moved: the git-tag
         // resolver then recomputed the same versions on every later run and
         // failed on the tag collision. A rejected push stops here with nothing
-        // published; the push that moved the branch starts its own run.
-        // Rebasing and retrying instead would put the incoming commits below
-        // the release tags, out of the next `--generate` range.
-        const branch = await getCurrentBranch({ cwd, runner });
-
-        if (branch) {
+        // published.
+        //
+        // When the branch moved, rebasing the version commit onto it is only
+        // safe with `tagTarget: "source"`: tags on the (rebased) version commit
+        // would put the commits that moved the branch below them, out of the
+        // next `--generate` range. Tags on the source commit leave them in it.
+        if (currentBranch) {
             try {
-                await pushBranch({ cwd, runner }, branch);
+                const rebases = await pushBranchWithRebase({ cwd, runner }, currentBranch, {
+                    author: ctx.config.gitUser,
+                    retries: sourceTags && source !== undefined ? (pushRetries ?? 3) : 0,
+                    source: source ?? "HEAD",
+                    // Same as the version step: regenerate, then verify (throws,
+                    // so a lockfile the branch cannot install is never pushed).
+                    syncLockfile: async () => {
+                        await syncLockfile(ctx);
+                    },
+                });
+
+                if (rebases > 0) {
+                    logger.info(`${currentBranch} moved during the release; pushed the version commit after ${rebases} rebase(s).`);
+                }
             } catch (error) {
-                logger.error(`Failed to push the version commit, nothing was published: ${(error as Error).message}`);
+                const { hint } = error as { hint?: string };
+
+                logger.error(`Failed to push the version commit, nothing was published: ${(error as Error).message}${hint ? ` ${hint}` : ""}`);
                 process.exitCode = 1;
 
                 return;
@@ -390,11 +463,20 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         // up where the prior wave left off. A package that fails here stays
         // committed but untagged; the next run's publish-missing step
         // publishes it.
-        const publishResult = await publishContext(ctx, { resume: true, tag: ctx.channel?.tag });
+        const versionCommit = await getCurrentSha({ cwd, runner });
+        // Named explicitly: the publish step commits bookkeeping (the
+        // lockInGit lock) on top before tagging, and the flush below rebases it.
+        const publishResult = await publishContext(ctx, {
+            defaultTagTarget: sourceTags ? source : versionCommit,
+            noBranchPush: true,
+            resume: true,
+            tag: ctx.channel?.tag,
+        });
 
         logger.info(`Published: ${publishResult.published.length} | Skipped: ${publishResult.skipped.length} | Failed: ${publishResult.failed.length}`);
 
         process.exitCode = publishResult.failed.length > 0 ? 2 : 0;
+        await flushBookkeeping(versionCommit);
 
         return;
     }

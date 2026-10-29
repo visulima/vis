@@ -4538,6 +4538,10 @@
                     "$ref": "#/$defs/PublishConfig",
                     "description": "Publish-related config."
                 },
+                "pushRetries": {
+                    "type": "number",
+                    "description": "How many times `vis release ci release` (auto-publish) rebases its version commit onto the release branch and pushes again when the branch moved during the run. Requires `tagTarget: \"source\"`: rebasing puts the commits that moved the branch below the release commit, where tags on that commit would hide them from the next release.\n\nDefault: `3` with `tagTarget: \"source\"`, otherwise no retry."
+                },
                 "python": {
                     "type": "object",
                     "properties": {
@@ -4604,9 +4608,21 @@
                     "additionalProperties": false,
                     "description": "Swift packages as release packages. Off by default. Every directory under the root with a `Package.swift` is a release package named by its `Package(name: \"…\")` literal. The version comes from Git tags, and the release creates the tag."
                 },
+                "tagTarget": {
+                    "type": "string",
+                    "enum": [
+                        "release-commit",
+                        "source"
+                    ],
+                    "description": "Which commit the release tags point at.\n\n- `\"release-commit\"` (default): the version commit the release creates.\n- `\"source\"`: the commit the release was planned from, already on the   branch. The version commit records it in a `Release-Source:` trailer,   so it survives the rebase `vis release ci release` does when the   branch moved during the run (see `pushRetries`): commits landing   mid-run stay in the next release's range. A tag's tree then still   holds the previous manifest versions."
+                },
                 "updateInternalDependencies": {
                     "$ref": "#/$defs/UpdateInternalDependenciesMode",
                     "description": "Dep-propagation mode. Default: `\"out-of-range\"`."
+                },
+                "verifyLockfile": {
+                    "type": "boolean",
+                    "description": "After the version step regenerates the lockfile, check that a frozen install accepts it (`pnpm install --frozen-lockfile --lockfile-only`) and fail the release, before anything is committed or published, when it does not. pnpm only: `true` with another package manager is an error.\n\nDefault: on for pnpm."
                 },
                 "versionPr": {
                     "$ref": "#/$defs/VersionPrConfig",

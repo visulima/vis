@@ -502,7 +502,7 @@ vis release publish --resume
 vis release publish --missing --dry-run
 ```
 
-`--missing` recovers a partly failed wave on a fresh checkout, where `--resume` has no state file to read. Tags only follow a successful publish, so a package that failed is left with its version committed by the release commit but no tag. `--missing` publishes each such version that passes the checks below and tags it **on that release commit** (not HEAD, so `generate --since-last-release` still sees the commits made after it). A version the registry already has only gets its tag. A package with no earlier release tag is not considered at all, so a failed **first** release is not recovered: publish and tag it by hand. Any other candidate is skipped, with the reason printed, unless every check passes:
+`--missing` recovers a partly failed wave on a fresh checkout, where `--resume` has no state file to read. Tags only follow a successful publish, so a package that failed is left with its version committed by the release commit but no tag. `--missing` publishes each such version that passes the checks below and tags it **on that release commit** (not HEAD, so `generate --since-last-release` still sees the commits made after it), or on the commit its `Release-Source` trailer names when it was released with [`tagTarget: "source"`](#when-the-branch-moves-during-the-run-tagtarget-source). A version the registry already has only gets its tag. A package with no earlier release tag is not considered at all, so a failed **first** release is not recovered: publish and tag it by hand. Any other candidate is skipped, with the reason printed, unless every check passes:
 
 - it is an npm package (not private, not `skipNpmPublish`) that already has a release tag, and its manifest version is higher than that tag;
 - the commit that set the version is a release commit (`chore(release): …`, `release: …`, or the version-PR title);
@@ -745,7 +745,44 @@ vis release ci release --auto-publish --generate
 | `--no-publish-missing`   | boolean | Skip recovering a partly failed earlier wave (see below)                             |
 | `--print-config[=debug]` | string  | Print the resolved release config and exit                                           |
 
-On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**: if the push is rejected (say the branch moved), the run stops before publishing the new wave (versions recovered in the first step stay published), and the push that moved the branch starts its own run. It does not rebase and retry: the release tags would then sit above the incoming commits and `--generate` would skip them. A package with an earlier release tag that then fails to publish stays committed but untagged, and the next run's recovery publishes it; a failed first release is not recovered (see above).
+On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**, and only pushes the tags once the publish is done. If the push is rejected, the run stops before publishing the new wave (versions recovered in the first step stay published). A package with an earlier release tag that then fails to publish stays committed but untagged, and the next run's recovery publishes it; a failed first release is not recovered (see above).
+
+### When the branch moves during the run: `tagTarget: "source"`
+
+By default the release tags point at the version commit, so a rejected push is final: rebasing that commit onto the moved branch would put the commits that moved it below the tags, and the next `--generate` range (which starts at the newest tag) would skip them for good. The push that moved the branch has to start its own run, which a busy branch may never let finish.
+
+With `tagTarget: "source"` the tags point at the commit the release was **planned from** instead, which is already on the branch. The version commit names it in a `Release-Source: <sha>` trailer. A push rejected because the branch moved (non-fast-forward only; an auth or branch-protection rejection fails at once) then fetches the branch, rebases the version commit(s) onto it and pushes again, up to `pushRetries` times (default `3`). Nothing has been published or tagged at that point, and the commits that landed meanwhile stay in the next release's range.
+
+```typescript
+export default {
+    release: {
+        tagTarget: "source",
+        pushRetries: 5,
+    },
+};
+```
+
+- **Lockfiles.** After each rebase the package manager regenerates the lockfile (`install --lockfile-only`) and a changed lockfile is amended into the version commit. A rebase conflict confined to the lockfile takes the branch's side before regenerating; any other conflict aborts the rebase and the run fails with nothing published.
+- **Identity.** The rebase commits as `release.gitUser` when set; otherwise git needs a configured identity.
+- **Next range.** The version commit is inside the next `--since-last-release` range. The default release commit subjects (`release(<channel>): …`) are skipped by `generate`, so it does not release anything by itself.
+- **Tag contents.** A tag's tree is the source commit, so it still holds the previous manifest versions and changelogs.
+- **Recovery.** [`publish --missing`](#vis-release-publish) tags a recovered version on the commit the trailer names, not on the rebased version commit.
+- **A broken trailer fails.** If the trailer names a commit outside the version commit's history (say after a force-push), the tags are not created and recovery skips the version, rather than tagging some other commit.
+
+`pushRetries` without `tagTarget: "source"` is a configuration error.
+
+### Pushes per run
+
+On an auto-publish channel a run pushes the branch **once** (the version commit, retried as above) and the tags **once** (release tags, `syncGitTag` group tags and the force-updated floating major tags together). Every branch push rebuilds a merge queue, so nothing else in the run pushes the branch by itself:
+
+- The bookkeeping the publish step commits — the `publish.lockInGit` lock, the `publish.stage` registry, the `successWalk` / `notifications` dedupe record and the `workspaceChangelog` wave entry — is committed locally and pushed in **one more** branch push at the end of the run, rebased onto the branch if it moved (`pushRetries`, default `3`; no tag points at these commits, so this is safe in either `tagTarget` mode). This push only happens when one of those features wrote something. It cannot ride in the version commit: that is pushed before publishing, and this state only exists after the tags are on the remote (forge releases need them).
+- Under `lockInGit` the lock therefore reaches the branch at the end of the run, not when the wave opens. A runner that dies mid-wave is recovered by the next run's `--publish-missing` step instead.
+- A run that first recovers an earlier failed wave pushes that wave's tags in their own push (its forge releases need them).
+- The version-PR flow and the standalone `version` / `publish` commands still push their bookkeeping as before.
+
+### Lockfile
+
+The version step regenerates the lockfile (`install --lockfile-only` with `--ignore-scripts`, so no lifecycle script runs) after `applyDraft` plugins have edited the manifests, and on pnpm then checks it with `pnpm install --frozen-lockfile --lockfile-only`. A lockfile the branch could not install fails the run before anything is committed, pushed or published. The same happens after every rebase of the version commit. While the check is on, a failed regeneration fails the run too; it is only skipped when the package manager is not installed at all. Set `release.verifyLockfile: false` to skip the check. Other package managers have no check that neither installs nor needs the network, so it is skipped for them, and `verifyLockfile: true` is an error. A `.pnpmfile.cjs` still runs during regeneration: it can change resolution, and skipping it would write a lockfile the repo's normal install rejects.
 
 ### Commit-driven repos: `--generate`
 

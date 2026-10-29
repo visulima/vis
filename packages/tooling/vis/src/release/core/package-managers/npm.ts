@@ -92,7 +92,7 @@ export class NpmAdapter extends PackageManagerAdapter {
     }
 
     public async installLockfileOnly(options: InstallLockfileOnlyOptions): Promise<void> {
-        const result = await this.runner.run("npm", ["install", "--package-lock-only"], { cwd: options.cwd, silent: options.silent });
+        const result = await this.runner.run("npm", ["install", "--package-lock-only", "--ignore-scripts"], { cwd: options.cwd, silent: options.silent });
 
         if (result.exitCode !== 0) {
             throw new VisReleaseError({

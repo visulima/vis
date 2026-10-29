@@ -2,7 +2,7 @@ import semver from "semver";
 
 import type { PlannedRelease, WorkspacePackage } from "../../types";
 import { DEFAULT_RELEASE_COMMIT_PATTERNS } from "../generate/conventional-commits";
-import { createTag, defaultTagFor, pushTags, renderTagPattern } from "../git";
+import { createTag, defaultTagFor, pushTags, renderTagPattern, resolveReleaseSource } from "../git";
 import type { CommandRunner } from "../package-managers/interface";
 import { createShellRunner } from "../shell-runner";
 import { clearCurrentVersionMemo, resolveCurrentVersion } from "../version-resolver";
@@ -16,13 +16,15 @@ import type { PublishContextOptions, PublishContextResult } from "./publish-type
  * (tags are only created after a successful publish).
  */
 export interface MissingRelease {
-    /** The release commit that set `version`; the tag is created on it. */
+    /** The release commit that set `version`. */
     commit: string;
     name: string;
     /** `true` when the registry already has `version` (published, never tagged): tag only. */
     onRegistry: boolean;
     /** Highest version already tagged for the package. */
     previousVersion: string;
+    /** Where the tag goes: the commit the release commit's `Release-Source` trailer names, else the release commit. */
+    target: string;
     version: string;
 }
 
@@ -152,7 +154,19 @@ export const findMissingReleases = async (
             continue;
         }
 
-        result.missing.push({ commit: commit.sha, name: pkg.name, onRegistry, previousVersion: tagged.version, version: pkg.version });
+        // A wave released with `tagTarget: "source"` tagged the commit it was
+        // planned from; once its release commit was rebased, the commits under
+        // it are not in that wave and must stay in the next range.
+        let target: string;
+
+        try {
+            target = (await resolveReleaseSource({ cwd: context.cwd, runner }, commit.sha)) ?? commit.sha;
+        } catch (error) {
+            skip((error as Error).message);
+            continue;
+        }
+
+        result.missing.push({ commit: commit.sha, name: pkg.name, onRegistry, previousVersion: tagged.version, target, version: pkg.version });
     }
 
     return result;
@@ -191,7 +205,8 @@ export interface PublishMissingResult extends PublishContextResult {
 /**
  * Publish every version a release commit wrote but no wave finished — the
  * self-heal for a partly failed publish. Versions already on the registry
- * only get their tag. Tags go on the release commit, not HEAD, so the
+ * only get their tag. Tags go on the release commit (or the commit its
+ * `Release-Source` trailer names), not HEAD, so the
  * "last release tag" boundary `generate --since-last-release` walks from
  * does not jump over commits made after it.
  *
@@ -229,7 +244,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
         });
         const published = await publishContext(
             { ...context, plan: { consumedChangeFiles: [], releases, warnings: [] } },
-            { ...options, tagTargets: new Map(toPublish.map((entry) => [entry.name, entry.commit])) },
+            { ...options, tagTargets: new Map(toPublish.map((entry) => [entry.name, entry.target])) },
         );
 
         result.failed.push(...published.failed);
@@ -251,7 +266,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
         try {
             await createTag({ cwd: context.cwd, runner }, tag, `Release ${entry.name}@${entry.version}`, {
                 signing: context.config.signing,
-                target: entry.commit,
+                target: entry.target,
             });
             tagged.push(tag);
             result.skipped.push({ name: entry.name, reason: `already-published: tagged ${tag}` });
