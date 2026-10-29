@@ -991,6 +991,34 @@ describe("successWalk — one comment per ref lists every package it shipped in"
     });
 });
 
+describe("successWalk — npm links only for the public registry", () => {
+    it("matches the publishConfig registry host exactly", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        const registries: Record<string, string> = {
+            "@s/a": "https://registry.npmjs.org/",
+            "@s/b": "https://registry.npmjs.org.evil.example/",
+            "@s/c": "https://evil.example/registry.npmjs.org",
+            "@s/d": "http://registry.npmjs.org/",
+        };
+        const names = Object.keys(registries);
+        const packages = names.map((name) => mkPackage(name, { manifest: { name, publishConfig: { registry: registries[name] }, version: "0.0.1" } }));
+        const releases = names.map((name) => mkRelease(name, "1.0.0", ["#5"]));
+
+        await walkSuccessfulRelease(mkContext({ packages }, releases), mkResult(names.map((name) => { return { name, version: "1.0.0" }; })), noopRunner, {
+            client,
+            formatter: noopFormatter,
+            repo: "o/r",
+        });
+
+        const { body } = commentCalls[0]!;
+
+        expect(body).toContain("- `@s/a@1.0.0` · [npm]");
+        expect(body).toContain("- `@s/b@1.0.0`\n- `@s/c@1.0.0`\n- `@s/d@1.0.0`\n");
+    });
+});
+
 describe("successWalk — comment accumulates per channel", () => {
     it("keeps the alpha section when the PR later ships on latest", async () => {
         expect.hasAssertions();
@@ -1089,7 +1117,8 @@ describe(renderSuccessComment, () => {
 
         const first = renderSuccessComment(undefined, "{releases}", { channel: "latest", releases: [{ name: "a--b", url: "https://x/--/y", version: "1.0.0" }] }, vars, "https://x/");
 
-        expect(first.match(/-->/g)).toHaveLength(2);
+        // Only the marker's and the data block's own closers.
+        expect(first.split("-->")).toHaveLength(3);
 
         const second = renderSuccessComment(first, "{releases}", { channel: "next", releases: [{ name: "c", version: "2.0.0" }] }, vars, "https://x/");
 
@@ -1116,13 +1145,17 @@ describe("renderSuccessComment — stored history is untrusted", () => {
                 { name: "@s/x", url: scriptUrl, version: "1.0.0" },
                 { name: "@s/y", url: "https://evil.example/o/r/releases/tag/y", version: "1.0.0" },
                 { name: "@s/z", url: "https://github.com/o/r/releases/tag/z)](https://evil.example", version: "1.0.0" },
+                { name: "@s/v", url: "https://github.com.evil.example/o/r/releases/tag/v", version: "1.0.0" },
+                { name: "@s/w", url: "https://github.com/o/r/releases/../../../evil/w", version: "1.0.0" },
                 { name: "@s/ok", url: "https://github.com/o/r/releases/tag/ok", version: "1.0.0" },
             ],
         });
 
         expect(body).not.toContain(scriptUrl);
         expect(body).not.toContain("evil.example)");
-        expect(body).toContain("- `@s/x@1.0.0`\n- `@s/y@1.0.0`\n- `@s/z@1.0.0`\n- [`@s/ok@1.0.0`](https://github.com/o/r/releases/tag/ok)");
+        expect(body).not.toContain("evil.example/");
+        expect(body).not.toContain("/evil/w");
+        expect(body).toContain("- `@s/x@1.0.0`\n- `@s/y@1.0.0`\n- `@s/z@1.0.0`\n- `@s/v@1.0.0`\n- `@s/w@1.0.0`\n- [`@s/ok@1.0.0`](https://github.com/o/r/releases/tag/ok)");
     });
 
     it("drops entries and channels carrying Markdown or HTML, and rebuilds npm links instead of trusting stored ones", () => {

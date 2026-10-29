@@ -58,7 +58,40 @@ export const DEFAULT_SUCCESS_WALK_COMMENT = `${SUCCESS_WALK_MARKER}\n:tada: This
  * visible body is re-rendered from it on each wave, so history survives a
  * custom template and nothing has to be parsed back out of Markdown.
  */
-const DATA_PATTERN = /<!-- vis-release-success-data (.*?) -->/s;
+const DATA_OPEN = "<!-- vis-release-success-data ";
+const DATA_CLOSE = " -->";
+
+/** The JSON between our exact opening token and the ` -->` we write after it; the JSON never contains `--`. */
+const extractCommentData = (body: string): string | undefined => {
+    const start = body.indexOf(DATA_OPEN);
+
+    if (start === -1) {
+        return undefined;
+    }
+
+    const end = body.indexOf(DATA_CLOSE, start + DATA_OPEN.length);
+
+    return end === -1 ? undefined : body.slice(start + DATA_OPEN.length, end);
+};
+
+/** Parse `value` as an `https:` URL, or `undefined`. */
+const parseHttpsUrl = (value: string): URL | undefined => {
+    try {
+        const url = new URL(value);
+
+        return url.protocol === "https:" ? url : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
+/** Same origin as `prefix` (exact host) and a path under its path, compared after URL normalisation. */
+const isUnderPrefix = (url: string, prefix: string): boolean => {
+    const parsed = parseHttpsUrl(url);
+    const base = parseHttpsUrl(prefix);
+
+    return parsed !== undefined && parsed.host === base?.host && parsed.pathname.startsWith(base.pathname);
+};
 
 /** A channel list longer than this collapses into a `&lt;details>` block. */
 const COLLAPSE_ABOVE = 10;
@@ -96,7 +129,10 @@ const sanitizeRelease = (entry: unknown, urlPrefix: string | false | undefined):
         return undefined;
     }
 
-    const safeUrl = typeof url === "string" && SAFE_URL.test(url) && (urlPrefix === undefined || (urlPrefix !== false && url.startsWith(urlPrefix))) ? url : undefined;
+    const safeUrl
+        = typeof url === "string" && SAFE_URL.test(url) && parseHttpsUrl(url) !== undefined && (urlPrefix === undefined || (urlPrefix !== false && isUnderPrefix(url, urlPrefix)))
+            ? url
+            : undefined;
 
     return {
         name,
@@ -107,7 +143,7 @@ const sanitizeRelease = (entry: unknown, urlPrefix: string | false | undefined):
 };
 
 const readCommentData = (body: string | undefined, urlPrefix: string | false): SuccessCommentData => {
-    const json = body === undefined ? undefined : DATA_PATTERN.exec(body)?.[1];
+    const json = body === undefined ? undefined : extractCommentData(body);
 
     if (json === undefined) {
         return {};
@@ -377,7 +413,7 @@ export const renderSuccessComment = (
     // `--` would end the HTML comment early; `\u002d` is the same character to JSON.parse.
     const json = JSON.stringify(data).replaceAll("--", String.raw`-\u002d`);
 
-    return `${withMarker}\n\n<!-- vis-release-success-data ${json} -->`;
+    return `${withMarker}\n\n${DATA_OPEN}${json}${DATA_CLOSE}`;
 };
 
 export interface WalkSuccessfulReleaseDeps {
@@ -485,7 +521,7 @@ const toCommentRelease = (release: PlannedRelease, context: OrchestratorContext,
     const url = result.published.find((p) => p.name === release.name)?.url;
     const pkg = context.packages.find((p) => p.name === release.name);
     const registry = pkg?.manifest.publishConfig?.["registry"];
-    const onNpm = pkg !== undefined && pkg.ecosystem === undefined && !pkg.private && (typeof registry !== "string" || registry.includes("registry.npmjs.org"));
+    const onNpm = pkg !== undefined && pkg.ecosystem === undefined && !pkg.private && (typeof registry !== "string" || parseHttpsUrl(registry)?.hostname === "registry.npmjs.org");
 
     return {
         name: release.name,
