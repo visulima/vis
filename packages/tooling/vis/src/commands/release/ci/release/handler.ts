@@ -34,7 +34,7 @@ import { DEFAULT_CHANGES_DIR } from "../../../../release/config";
 import { readChangeFiles } from "../../../../release/core/change-file-reader";
 import { runGenerate } from "../../../../release/core/generate/run";
 import { getCurrentBranch, getShortSha, listUncommittedPaths, pushBranch, stageAndCommit, toRepoRelativePath } from "../../../../release/core/git";
-import { applyContext, buildContext, publishContext } from "../../../../release/core/orchestrator";
+import { applyContext, buildContext, publishContext, publishMissing } from "../../../../release/core/orchestrator";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
@@ -177,11 +177,12 @@ const applyPrMetadata = async (
 
 /**
  * The exact filename shape `--generate` writes: `ci-&lt;short sha>.md`, or
- * `ci-head.md` when the sha probe failed. Anchored and narrow on
- * purpose — it is the only thing the clean-tree guard is allowed to
- * forgive, so it must not match a hand-written change file.
+ * `ci-head.md` when the sha probe failed — suffixed `-&lt;package slug>`
+ * when the run bumps more than one package (one file each). Anchored and
+ * narrow on purpose — it is the only thing the clean-tree guard is
+ * allowed to forgive, so it must not match a hand-written change file.
  */
-const GENERATED_CHANGE_FILE_NAME = /^ci-(?:head|[\da-f]{4,40})\.md$/;
+const GENERATED_CHANGE_FILE_NAME = /^ci-(?:head|[\da-f]{4,40})(?:-[a-z\d-]+)?\.md$/;
 
 /** True for a repo-relative path that is this command's own generated change file. */
 const isGeneratedChangeFile = (path: string, changesDirRelative: string): boolean => {
@@ -237,9 +238,47 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         logger.warn(`Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
     }
 
-    // `--generate` (issue #864): derive the change file in-process so a
+    const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
+
+    // A wave that failed part-way left versions committed but never published
+    // (tags only follow a successful publish), and its change file is gone, so
+    // nothing else would ever retry them. Publish those first: the plan below
+    // reads current versions from the tags this creates, and a dependent must
+    // not be released against a dependency version missing from the registry.
+    // Auto-publish only: on a version-PR channel publishing is refused while
+    // the release PR is open, which would block maintaining that PR.
+    if (mode === "auto-publish" && options.publishMissing) {
+        const recovered = await publishMissing(ctx, { tag: ctx.channel?.tag });
+
+        for (const entry of recovered.missing) {
+            logger.info(
+                `Recovered ${entry.name}@${entry.version} from release commit ${entry.commit.slice(0, 7)} (${entry.onRegistry ? "tagged" : "published"}).`,
+            );
+        }
+
+        for (const entry of recovered.skipped.filter((item) => item.reason.includes("untagged"))) {
+            logger.warn(`Not recovering ${entry.name}: ${entry.reason}.`);
+        }
+
+        for (const entry of recovered.failed) {
+            logger.error(`Recovering ${entry.name} failed: ${entry.reason}`);
+        }
+
+        if (recovered.failed.length > 0) {
+            logger.error("Fix the failed recovery above before a new wave is released (or pass --no-publish-missing).");
+            process.exitCode = 2;
+
+            return;
+        }
+
+        if (recovered.missing.length > 0) {
+            ctx = await buildContext({ channel: options.channel, cwd });
+        }
+    }
+
+    // `--generate` (issue #864): derive the change files in-process so a
     // commit-driven repo needs ONE CI step instead of
-    // `generate` → `git commit` → `ci release`. The generated file is
+    // `generate` → `git commit` → `ci release`. The generated files are
     // staged (never committed on its own) so `applyContext`'s
     // `git add -- <consumed change file>` can stage the deletion —
     // `git add` refuses a path that was never in the index.
@@ -277,19 +316,24 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         }
 
         if (result.status === "written") {
-            const relativePath = await toRepoRelativePath({ cwd, runner }, result.createdFile);
-            const stage = await runner.run("git", ["add", "--", result.createdFile], { cwd, silent: true });
+            const createdPaths = result.files.map((file) => file.path);
+            const relativePaths = await Promise.all(createdPaths.map(async (path) => await toRepoRelativePath({ cwd, runner }, path)));
+            const stage = await runner.run("git", ["add", "--", ...createdPaths], { cwd, silent: true });
 
             if (stage.exitCode !== 0) {
-                logger.error(`Could not stage the generated change file ${relativePath}: ${stage.stderr.trim() || `exit ${stage.exitCode}`}`);
+                logger.error(`Could not stage the generated change files ${relativePaths.join(", ")}: ${stage.stderr.trim() || `exit ${stage.exitCode}`}`);
 
-                // The guard above passed, so this file is the only thing
-                // this run added to the tree. Drop it again rather than
-                // leaving it for the next run to trip over.
+                // The guard above passed, so these files are the only thing
+                // this run added to the tree. Drop them again rather than
+                // leaving them for the next run to trip over.
                 try {
-                    await fs.rm(result.createdFile, { force: true });
+                    await Promise.all(
+                        createdPaths.map(async (path) => {
+                            await fs.rm(path, { force: true });
+                        }),
+                    );
                 } catch {
-                    logger.warn(`Could not clean up ${relativePath} after the staging failure — remove it before the next run.`);
+                    logger.warn(`Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
                 }
 
                 process.exitCode = 1;
@@ -297,7 +341,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
                 return;
             }
 
-            logger.info(`Generated ${relativePath} from ${result.fromRef}..HEAD (${result.bumps.size} package(s)).`);
+            logger.info(`Generated ${relativePaths.join(", ")} from ${result.fromRef}..HEAD (${result.bumps.size} package(s)).`);
 
             // The plan was assembled before the change file existed —
             // rebuild so the release wave actually sees it.
@@ -306,8 +350,6 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
             logger.info(`--generate derived no bumps from ${result.fromRef}..HEAD.`);
         }
     }
-
-    const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
 
     const { files: pendingFiles } = await readChangeFiles({ changesDir: ctx.config.changesDir, cwd });
 
@@ -322,25 +364,33 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
         await applyContext(ctx, { commit: true });
 
-        // C7 fix: pass `resume: true` so a partial-failure re-run picks
-        // up where the prior wave left off. The version commit is
-        // durable (it landed in the previous attempt's `applyContext`
-        // and was pushed to the remote, or it just landed now); on
-        // retry the publish should converge by skipping already-
-        // published packages from `.state.json` rather than replaying
-        // every package from scratch.
-        const publishResult = await publishContext(ctx, { resume: true, tag: ctx.channel?.tag });
-
-        // Push the version commit + tags
+        // Land the version commit BEFORE publishing. The tags are created on
+        // HEAD after the publish, so pushing the branch afterwards (as this
+        // used to, once, logging a failure and exiting 0) stranded them on a
+        // commit that never landed whenever the branch had moved: the git-tag
+        // resolver then recomputed the same versions on every later run and
+        // failed on the tag collision. A rejected push stops here with nothing
+        // published; the push that moved the branch starts its own run.
+        // Rebasing and retrying instead would put the incoming commits below
+        // the release tags, out of the next `--generate` range.
         const branch = await getCurrentBranch({ cwd, runner });
 
         if (branch) {
             try {
                 await pushBranch({ cwd, runner }, branch);
             } catch (error) {
-                logger.error(`Failed to push branch: ${(error as Error).message}`);
+                logger.error(`Failed to push the version commit, nothing was published: ${(error as Error).message}`);
+                process.exitCode = 1;
+
+                return;
             }
         }
+
+        // C7 fix: pass `resume: true` so a partial-failure re-run picks
+        // up where the prior wave left off. A package that fails here stays
+        // committed but untagged; the next run's publish-missing step
+        // publishes it.
+        const publishResult = await publishContext(ctx, { resume: true, tag: ctx.channel?.tag });
 
         logger.info(`Published: ${publishResult.published.length} | Skipped: ${publishResult.skipped.length} | Failed: ${publishResult.failed.length}`);
 

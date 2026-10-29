@@ -30,7 +30,7 @@ const generateOptionDefinitions = {
 
 const generate = defineCommand({
     commandPath: ["release"],
-    description: "Auto-derive a change file from branch commits (conventional-commits + path heuristics)",
+    description: "Auto-derive change files (one per bumped package) from branch commits (conventional-commits + path heuristics)",
     examples: [
         ["vis release generate", "Walk commits since the merge-base with baseBranch"],
         ["vis release generate --from origin/main", "Walk commits since the given ref"],

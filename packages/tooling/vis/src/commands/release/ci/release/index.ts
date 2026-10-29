@@ -1,6 +1,8 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../../../util/negatable-option";
+
 const ciReleaseOptionDefinitions = {
     "allow-full-history": {
         description: "With --generate: walk the whole history when no release tag matches (first release only)",
@@ -24,13 +26,20 @@ const ciReleaseOptionDefinitions = {
         type: Boolean,
     },
     generate: {
-        description: "Derive the change file from commits first (commit-driven repos). Defaults to the range since the last release tag",
+        description: "Derive the change files from commits first (commit-driven repos). Defaults to the range since the last release tag",
         type: Boolean,
     },
     "generate-from": {
         description: "Start ref for --generate (e.g. github.event.before). Overrides the since-last-release default",
         type: String,
     },
+    ...negatable({
+        defaultValue: true,
+        description:
+            "First publish every version a release commit set but no wave finished (a partly failed publish), tagging it on that commit (use --no-publish-missing to disable)",
+        name: "publish-missing",
+        type: Boolean,
+    }),
     "print-config": {
         description: "Print the resolved release config and exit (--print-config=debug for runtime-resolved fields)",
         type: String,
@@ -43,7 +52,7 @@ const ciRelease = defineCommand({
     examples: [
         ["vis release ci release", "On push to main: open/update Versioned release PR; on PR merge: publish"],
         ["vis release ci release --auto-publish", "Skip version-PR; version + publish inline (alpha/beta workflow)"],
-        ["vis release ci release --auto-publish --generate", "Commit-driven: derive the change file from commits, then version + publish"],
+        ["vis release ci release --auto-publish --generate", "Commit-driven: derive the change files from commits, then version + publish"],
     ],
     group: "Release",
     loader: () => import("./handler"),

@@ -20,7 +20,12 @@ const publishOptionDefinitions = {
     },
     "first-release": {
         description:
-                "Bootstrap mode for greenfield monorepos: force currentVersionResolver=disk and skip remote tag-collision checks. Use on the very first release before any git tags exist.",
+            "Bootstrap mode for greenfield monorepos: force currentVersionResolver=disk and skip remote tag-collision checks. Use on the very first release before any git tags exist.",
+        type: Boolean,
+    },
+    missing: {
+        description:
+            "Instead of the pending plan, publish every version a release commit set but no wave finished (untagged, not on the registry) and tag it on that commit",
         type: Boolean,
     },
     "no-push": {
@@ -53,6 +58,7 @@ const publish = defineCommand({
         ["vis release publish --dry-run", "Print what would publish without uploading"],
         ["vis release publish --tag alpha", "Override dist-tag"],
         ["vis release publish --filter '@scope/*'", "Limit to packages matching the glob"],
+        ["vis release publish --missing", "Recover a partly failed wave: publish released-but-unpublished versions"],
     ],
     group: "Release",
     loader: () => import("./handler"),

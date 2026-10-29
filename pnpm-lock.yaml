@@ -12306,7 +12306,7 @@ snapshots:
   '@actions/http-client@4.0.1':
     dependencies:
       tunnel: 0.0.6
-      undici: 8.12.2
+      undici: 8.12.3
 
   '@actions/io@3.0.2': {}
 
@@ -23393,7 +23393,8 @@ snapshots:
 
   undici@7.29.1: {}
 
-  undici@8.12.2: {}
+  undici@8.12.2:
+    optional: true
 
   undici@8.12.3: {}
 

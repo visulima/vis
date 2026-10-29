@@ -5,7 +5,8 @@
  * workspace discovery, plan assembly, apply, and publish.
  */
 
-import { applyContext, buildContext, publishContext } from "./core/orchestrator";
+import { applyContext, buildContext, publishContext, publishMissing } from "./core/orchestrator";
+import { VisReleaseError } from "./errors";
 import type { PlannedRelease, ReleasePlan, VisReleaseConfig } from "./types";
 
 // `await using` resolves `obj[Symbol.asyncDispose]` against the engine's
@@ -55,6 +56,12 @@ export interface ChangelogOptions extends ReleaseOptionsBase {
 }
 
 export interface PublishOptions extends ReleaseOptionsBase {
+    /**
+     * Instead of the pending plan, publish every version a release commit set
+     * but no wave finished (untagged, not on the registry), tagging it on that
+     * commit. Same as `vis release publish --missing`.
+     */
+    missing?: boolean;
     /** Skip `git push --tags` after publish. */
     noPush?: boolean;
     /** 2FA token. */
@@ -70,6 +77,13 @@ export interface SnapshotOptions extends ReleaseOptionsBase {
 }
 
 export interface ReleaseOptions extends VersionOptions {
+    /**
+     * Before planning, publish the versions an earlier, partly failed wave
+     * committed but never published (see {@link PublishOptions.missing}).
+     * Throws `PUBLISH_FAILED` when that recovery fails, before anything new
+     * is versioned. Ignored with `skipPublish`.
+     */
+    publishMissing?: boolean;
     skipPublish?: boolean;
     yes?: boolean;
 }
@@ -162,11 +176,8 @@ export const releaseChangelog = async (options: ChangelogOptions = {}): Promise<
 
 export const releasePublish = async (options: PublishOptions = {}): Promise<PublishResult> => {
     const ctx = await buildContext(options);
-    const result = await publishContext(ctx, {
-        dryRun: options.dryRun,
-        otp: options.otp,
-        tag: options.tag,
-    });
+    const publishOptions = { dryRun: options.dryRun, otp: options.otp, tag: options.tag };
+    const result = options.missing ? await publishMissing(ctx, { ...publishOptions, projects: options.projects }) : await publishContext(ctx, publishOptions);
 
     return result;
 };
@@ -267,6 +278,21 @@ export const release = async (
     publish: PublishResult;
     version: VersionResult;
 }> => {
+    // Recover first, on its own context: the plan's current versions must see
+    // the tags the recovery creates, or a cascade recomputes a recovered
+    // version and collides with it.
+    const recovered
+        = options.publishMissing && !options.skipPublish
+            ? await publishMissing(await buildContext(options), { dryRun: options.dryRun, projects: options.projects })
+            : undefined;
+
+    if (recovered && recovered.failed.length > 0) {
+        throw new VisReleaseError({
+            code: "PUBLISH_FAILED",
+            message: `Recovering unpublished versions failed, nothing new was versioned: ${recovered.failed.map((f) => `${f.name}: ${f.reason}`).join("; ")}`,
+        });
+    }
+
     // Build the context exactly once. Each downstream phase used to call
     // `buildContext()` again, but `applyContext()` deletes consumed change
     // files, so a re-build at changelog/publish time saw an empty plan and
@@ -323,6 +349,11 @@ export const release = async (
         otp: undefined,
         tag: undefined,
     });
+
+    if (recovered) {
+        publish.published.unshift(...recovered.published);
+        publish.skipped.unshift(...recovered.skipped);
+    }
 
     return { changelog, publish, version };
 };

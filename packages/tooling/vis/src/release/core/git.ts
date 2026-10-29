@@ -499,8 +499,11 @@ export const createTag = async (
     ctx: GitContext,
     tag: string,
     message?: string,
-    options: { remote?: string; signing?: TagSigningOptions; skipRemoteCheck?: boolean } = {},
+    options: { remote?: string; signing?: TagSigningOptions; skipRemoteCheck?: boolean; target?: string } = {},
 ): Promise<void> => {
+    // `git tag` takes the commit last; without one it tags HEAD.
+    const target = options.target === undefined ? [] : [options.target];
+
     if (await tagExists(ctx, tag)) {
         throw new VisReleaseError({
             code: "TAG_COLLISION",
@@ -526,6 +529,8 @@ export const createTag = async (
             if (message) {
                 gitsignArgs.push("-m", message);
             }
+
+            gitsignArgs.push(...target);
 
             const result = await ctx.runner.run("gitsign", gitsignArgs, { cwd: ctx.cwd, silent: true });
 
@@ -564,6 +569,8 @@ export const createTag = async (
     } else {
         args.push(tag);
     }
+
+    args.push(...target);
 
     const result = await run(ctx, args);
 

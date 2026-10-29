@@ -18,6 +18,8 @@ export interface PublishContextOptions {
     /** Resume from previous run's state file. */
     resume?: boolean;
     tag?: string;
+    /** Commit to put a package's release tag on, by package name. Default: HEAD. */
+    tagTargets?: ReadonlyMap<string, string>;
 }
 
 export interface PublishContextResult {
