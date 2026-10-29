@@ -520,8 +520,16 @@ const collectReferences = async (
 const toCommentRelease = (release: PlannedRelease, context: OrchestratorContext, result: PublishContextResult): SuccessCommentRelease => {
     const url = result.published.find((p) => p.name === release.name)?.url;
     const pkg = context.packages.find((p) => p.name === release.name);
-    const registry = pkg?.manifest.publishConfig?.["registry"];
-    const onNpm = pkg !== undefined && pkg.ecosystem === undefined && !pkg.private && (typeof registry !== "string" || parseHttpsUrl(registry)?.hostname === "registry.npmjs.org");
+    // Same precedence as the publish: the per-package `registry` is passed as `--registry`, which
+    // beats `publishConfig.registry`; `publish.registry` is the workspace default doctor checks.
+    // ponytail: an `.npmrc` registry is not read, so a package published only through one still links npmjs.com.
+    const publishConfigRegistry = pkg?.manifest.publishConfig?.["registry"];
+    const registry
+        = context.perPackageConfig.get(release.name)?.registry
+            ?? (typeof publishConfigRegistry === "string" ? publishConfigRegistry : undefined)
+            ?? context.config.publish?.registry
+            ?? "https://registry.npmjs.org/";
+    const onNpm = pkg !== undefined && pkg.ecosystem === undefined && !pkg.private && parseHttpsUrl(registry)?.hostname === "registry.npmjs.org";
 
     return {
         name: release.name,

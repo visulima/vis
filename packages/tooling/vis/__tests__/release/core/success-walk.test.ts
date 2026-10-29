@@ -1019,6 +1019,44 @@ describe("successWalk — npm links only for the public registry", () => {
     });
 });
 
+describe("successWalk — npm links follow the effective publish registry", () => {
+    it("uses the per-package registry over publishConfig, and publish.registry as the default", async () => {
+        expect.hasAssertions();
+
+        const { client, commentCalls } = buildMockClient();
+        const names = ["@s/override", "@s/override-public", "@s/workspace-default"];
+        const packages = [
+            mkPackage("@s/override", { manifest: { name: "@s/override", publishConfig: { registry: "https://registry.npmjs.org/" }, version: "0.0.1" } }),
+            mkPackage("@s/override-public", { manifest: { name: "@s/override-public", publishConfig: { registry: "https://npm.acme.dev/" }, version: "0.0.1" } }),
+            mkPackage("@s/workspace-default"),
+        ];
+        const context = mkContext(
+            {
+                config: { publish: { registry: "https://npm.acme.dev/" }, successWalk: {} },
+                packages,
+                perPackageConfig: new Map([
+                    ["@s/override", { registry: "https://npm.acme.dev/" }],
+                    ["@s/override-public", { registry: "https://registry.npmjs.org/" }],
+                ]),
+            },
+            names.map((name) => mkRelease(name, "1.0.0", ["#5"])),
+        );
+
+        await walkSuccessfulRelease(context, mkResult(names.map((name) => { return { name, version: "1.0.0" }; })), noopRunner, {
+            client,
+            formatter: noopFormatter,
+            repo: "o/r",
+        });
+
+        const { body } = commentCalls[0]!;
+
+        expect(body).toContain("- `@s/override@1.0.0`\n");
+        expect(body).toContain("- `@s/override-public@1.0.0` · [npm]");
+        expect(body).toContain("- `@s/workspace-default@1.0.0`");
+        expect(body).not.toContain("workspace-default/v/1.0.0");
+    });
+});
+
 describe("successWalk — comment accumulates per channel", () => {
     it("keeps the alpha section when the PR later ships on latest", async () => {
         expect.hasAssertions();
