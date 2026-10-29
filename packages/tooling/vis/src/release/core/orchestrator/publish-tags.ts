@@ -20,7 +20,17 @@ export const createReleaseTags = async (context: OrchestratorContext, wave: Publ
         // `tagTarget: "source"`: the release commit names the commit it was
         // planned from. Without the trailer (versions applied but not
         // committed) HEAD is that commit.
-        const sourceTarget = context.config.tagTarget === "source" ? await resolveReleaseSource({ cwd: context.cwd, runner }) : undefined;
+        let sourceTarget: string | undefined;
+
+        try {
+            sourceTarget = context.config.tagTarget === "source" ? await resolveReleaseSource({ cwd: context.cwd, runner }) : undefined;
+        } catch (error) {
+            result.failed.push({ name: "_tagTarget", reason: (error as Error).message });
+            await persistState();
+
+            return;
+        }
+
         const rootTagPattern = context.config.releaseTagPattern;
 
         const channelName = context.channel?.tag;

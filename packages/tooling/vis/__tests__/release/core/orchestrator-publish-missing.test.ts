@@ -249,16 +249,16 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         expect(git(cwd, "rev-list", `${(ref as { ref: string }).ref}..HEAD`)).toContain(concurrent);
     });
 
-    it("ignores a Release-Source trailer that is not an ancestor of the release commit", async () => {
+    it("skips a version whose Release-Source trailer is not an ancestor of the release commit", async () => {
         expect.hasAssertions();
 
         git(cwd, "commit", "-q", "--amend", "-m", "chore(release): publish [skip ci]", "-m", "Release-Source: 0123456789abcdef0123456789abcdef01234567");
-        const amended = git(cwd, "rev-parse", "HEAD");
 
         const ctx = await buildContext({ cwd });
         const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
 
-        expect(found.missing.map((entry) => entry.target)).toStrictEqual([amended]);
+        expect(found.missing).toStrictEqual([]);
+        expect(found.skipped[0]?.reason).toMatch(/not an ancestor/);
     });
 
     it("ignores a manifest version that is not ahead of the tags", async () => {

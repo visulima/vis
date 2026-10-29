@@ -767,6 +767,7 @@ export default {
 - **Next range.** The version commit is inside the next `--since-last-release` range. The default release commit subjects (`release(<channel>): …`) are skipped by `generate`, so it does not release anything by itself.
 - **Tag contents.** A tag's tree is the source commit, so it still holds the previous manifest versions and changelogs.
 - **Recovery.** [`publish --missing`](#vis-release-publish) tags a recovered version on the commit the trailer names, not on the rebased version commit.
+- **A broken trailer fails.** If the trailer names a commit outside the version commit's history (say after a force-push), the tags are not created and recovery skips the version, rather than tagging some other commit.
 - **Not covered.** The bookkeeping pushes later in the run (`publish.lockInGit`, the staged-publish registry) are not retried.
 
 `pushRetries` without `tagTarget: "source"` is a configuration error.

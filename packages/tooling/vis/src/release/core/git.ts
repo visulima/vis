@@ -803,20 +803,29 @@ export const RELEASE_SOURCE_TRAILER = "Release-Source";
 
 /**
  * The commit `commit`'s {@link RELEASE_SOURCE_TRAILER} names, or `undefined`
- * when it has none or it is not an ancestor of `commit` (a squash or a
- * cherry-pick carried the message somewhere else).
+ * when it has none. Throws when the trailer names something that is not an
+ * ancestor of `commit` (a force-push, a squash or a cherry-pick carried the
+ * message elsewhere): tagging anything else instead could hide commits from
+ * the next release range.
  */
 export const resolveReleaseSource = async (ctx: GitContext, commit = "HEAD"): Promise<string | undefined> => {
     const log = await run(ctx, ["log", "-1", `--format=%(trailers:key=${RELEASE_SOURCE_TRAILER},valueonly)`, commit]);
     const source = log.exitCode === 0 ? log.stdout.trim().split("\n")[0]?.trim() : undefined;
 
-    if (!source || !/^[\da-f]{7,64}$/iu.test(source)) {
+    if (!source) {
         return undefined;
     }
 
-    const ancestor = await run(ctx, ["merge-base", "--is-ancestor", source, commit]);
+    const ancestor = /^[\da-f]{7,64}$/iu.test(source) ? await run(ctx, ["merge-base", "--is-ancestor", source, commit]) : undefined;
 
-    return ancestor.exitCode === 0 ? source : undefined;
+    if (ancestor?.exitCode !== 0) {
+        throw new VisReleaseError({
+            code: "GIT_OPERATION_FAILED",
+            message: `the ${RELEASE_SOURCE_TRAILER} trailer of ${commit} names "${source}", which is not an ancestor of it; tag the release by hand.`,
+        });
+    }
+
+    return source;
 };
 
 /** A `git push --porcelain` line saying `refspec` was rejected because the remote moved. */

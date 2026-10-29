@@ -18,6 +18,12 @@ export interface ApplyOptions {
     /** Override commit message template (defaults from RFC §19.5). */
     commitMessage?: string;
     dryRun?: boolean;
+
+    /**
+     * Under `tagTarget: "source"`, the commit the commit's `Release-Source`
+     * trailer names. Default: HEAD before committing.
+     */
+    releaseSource?: string;
 }
 
 export interface ApplyResult {
@@ -282,7 +288,7 @@ export const applyContext = async (context: OrchestratorContext, options: ApplyO
         await runApplyDraftHooks({ config: context.config, cwd: context.cwd }, context.plan);
     }
 
-    const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage) : undefined;
+    const commitSha = options.commit ? await commitVersionChanges(context, applied, options.commitMessage, options.releaseSource) : undefined;
 
     // Workspace-level changelog is intentionally NOT written here — the
     // wave entry is appended from `publishContext` against the actually-

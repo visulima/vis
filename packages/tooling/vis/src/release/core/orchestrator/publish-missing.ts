@@ -157,7 +157,14 @@ export const findMissingReleases = async (
         // A wave released with `tagTarget: "source"` tagged the commit it was
         // planned from; once its release commit was rebased, the commits under
         // it are not in that wave and must stay in the next range.
-        const target = (await resolveReleaseSource({ cwd: context.cwd, runner }, commit.sha)) ?? commit.sha;
+        let target: string;
+
+        try {
+            target = (await resolveReleaseSource({ cwd: context.cwd, runner }, commit.sha)) ?? commit.sha;
+        } catch (error) {
+            skip((error as Error).message);
+            continue;
+        }
 
         result.missing.push({ commit: commit.sha, name: pkg.name, onRegistry, previousVersion: tagged.version, target, version: pkg.version });
     }

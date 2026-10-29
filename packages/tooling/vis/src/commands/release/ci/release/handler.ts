@@ -387,7 +387,10 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
         logger.info(`Auto-publish mode — versioning + publishing ${ctx.plan.releases.length} package(s).`);
 
-        await applyContext(ctx, { commit: true });
+        // A recovery publish above may have left a bookkeeping commit on HEAD
+        // that never reached the remote; the trailer must name the commit the
+        // rebase below replays onto, which is on the branch.
+        await applyContext(ctx, { commit: true, releaseSource: source });
 
         // Land the version commit BEFORE publishing. The tags are created
         // after the publish, so pushing the branch afterwards (as this used
