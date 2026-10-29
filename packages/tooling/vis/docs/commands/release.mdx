@@ -157,7 +157,7 @@ vis release add --from-bot-pr
 vis release generate [flags]
 ```
 
-Auto-derive a change file from branch commits.
+Auto-derive change files from branch commits — one per bumped package.
 
 **When to use.** If you'd rather not hand-write change files. Uses the [conventional-commits](https://www.conventionalcommits.org) parser with a path-based fallback for repos that don't enforce them.
 
@@ -175,7 +175,7 @@ vis release generate --dry-run
 | `--from <ref>`           | string  | Git ref to compare against (default: merge-base with `release.baseBranch`)            |
 | `--since-last-release`   | boolean | Start the range at the most recent release tag reachable from `HEAD` (see below)      |
 | `--allow-full-history`   | boolean | With `--since-last-release`: walk everything when no tag matches (first release only) |
-| `--name <slug>`          | string  | Filename slug (default: random animal name)                                           |
+| `--name <slug>`          | string  | Filename slug (default: random animal name); see [Output](#output)                    |
 | `--dry-run`              | boolean | Print the would-be content without writing                                            |
 | `--print-config[=debug]` | string  | Print the resolved release config and exit                                            |
 
@@ -198,6 +198,20 @@ package are ignored. When no part names a package — or there is no scope — t
 targets the packages whose files it changes. `/` is not a separator, so `fix(@acme/cli):`
 is one name.
 
+### Output
+
+`generate` writes **one change file per bumped package**, and each file's body lists only
+the commits attributed to that package by the rules above. A commit that targets several
+packages (`fix(do,client):`, or an unscoped commit touching two package directories) is
+listed in each of their files and in no other. So every package's changelog entry carries
+its own commits, not the whole range's — a package released only because a dependency
+left its range still gets the usual "Updated dependency" line and nothing else.
+
+When the range bumps a single package the file is `<slug>.md`, as before. With several,
+each is `<slug>-<package>.md` (`brave-otter-acme-cli.md`), with a numeric suffix if two
+package names slugify alike. Change files written by older versions — one file listing
+several packages — still parse and render for every package they list.
+
 ### Range resolution
 
 Precedence: `--from` → `--since-last-release` → merge-base with `release.baseBranch`.
@@ -206,8 +220,8 @@ The merge-base default is right on a feature branch and useless on the release b
 itself — there the merge-base with `baseBranch` _is_ `HEAD`, so the range is empty.
 `--since-last-release` is the flag for that case.
 
-**What "last release" means.** `generate` emits **one** change file for **one** commit
-range, so the boundary is workspace-wide, not per-package: the most recent tag matching
+**What "last release" means.** `generate` walks **one** commit range for the whole
+workspace, so the boundary is workspace-wide, not per-package: the most recent tag matching
 `release.releaseTagPattern` that is reachable from `HEAD`, whichever package it belongs
 to. In the wave-based flow this flag exists for, every package that released did so at
 that wave's commit, so everything after it is genuinely unreleased. It resolves through
@@ -738,14 +752,14 @@ If no tag matches `releaseTagPattern`, the command **fails** rather than walking
 history and publishing everything in it — see [Range resolution](#range-resolution).
 `--allow-full-history` is the opt-in for a genuine first release.
 
-The generated file is **staged, never committed on its own** — no throwaway
+The generated files are **staged, never committed on their own** — no throwaway
 `chore(release): record pending vis change file` commit. Staging is what lets the version
 commit later record its deletion (`git add` refuses a path that was never in the index).
 
 The clean-tree guard runs **before** anything is generated, so an aborted run cannot leave
 a file behind that blocks the next one. Under `--generate` it forgives exactly one thing:
-a leftover `ci-<sha>.md` in the change dir from an interrupted earlier run, which is a
-real pending change file and gets released with the rest. Everything else — including a
+a leftover `ci-<sha>.md` (or per-package `ci-<sha>-<package>.md`) in the change dir from
+an interrupted earlier run, which is a real pending change file and gets released with the rest. Everything else — including a
 hand-written change file that was never committed — still fails, by name.
 
 When the range derives no bumps, the command reports it and falls through to the normal

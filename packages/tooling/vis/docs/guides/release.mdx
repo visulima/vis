@@ -334,7 +334,7 @@ Explicit `managed: false` always wins. Private packages (`"private": true`) are 
 | -------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `vis release init`               | Scaffold the subsystem; auto-detect migration source. `--apply` writes, `--cutover` for Phase 6 |
 | `vis release add`                | Author a change file (interactive or `--packages '@a:minor,@b:patch'`)                          |
-| `vis release generate`           | Derive a change file from branch commits                                                        |
+| `vis release generate`           | Derive change files from branch commits                                                         |
 | `vis release status`             | Human-readable pending plan (table)                                                             |
 | `vis release plan`               | JSON plan; `--interactive` walks you through overrides                                          |
 | `vis release next-version`       | Print `<pkg> <old> -> <new>` for every package in the plan                                      |
@@ -865,13 +865,13 @@ whole release into one CI step:
 - run: pnpm exec vis release ci release --auto-publish --generate
 ```
 
-`--generate` derives the change file in-process (defaulting to the range since the last
+`--generate` derives the change files (one per bumped package) in-process (defaulting to the range since the last
 release tag), stages it without an extra commit, and publishes. Two behaviours make it
 safe to run over any range:
 
 - **`--since-last-release`** resolves the start ref to the most recent
   `releaseTagPattern` tag reachable from `HEAD` — workspace-wide, because `generate`
-  produces one change file for one range. If **no** tag matches, the command fails
+  walks one range for the whole workspace. If **no** tag matches, the command fails
   instead of quietly walking the entire history: "no release tag found" is not the same
   statement as "nothing has ever been released", and treating it as such would bump every
   package that has ever been touched — `major` for any historical `!` commit — and, on
