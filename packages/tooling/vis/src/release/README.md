@@ -88,6 +88,9 @@ Versions collapse / re-counter as you move across channels:
 | `alpha` (1.3.0-alpha.5) | + patch   | `alpha` | `1.3.0-alpha.6` (counter increments)     |
 | `alpha` (1.3.0-alpha.5) | (no bump) | `beta`  | `1.3.0-beta.0` (re-counter on new preid) |
 | `beta` (1.3.0-beta.5)   | (no bump) | `main`  | `1.3.0` (preid stripped — final)         |
+| `alpha` (1.3.0-alpha.5) | + minor   | `main`  | `1.3.0` (base already covers the minor)  |
+| `alpha` (1.3.0-alpha.5) | + minor   | `beta`  | `1.3.0-beta.0` (base kept, new preid)    |
+| `next` (1.3.0-rc.5)     | + major   | `main`  | `2.0.0` (bump exceeds the base)          |
 
 ## Cross-PM publishing
 
