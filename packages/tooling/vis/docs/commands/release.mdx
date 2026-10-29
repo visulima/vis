@@ -15,7 +15,7 @@ The release subsystem ships package versions, changelogs, git tags, and registry
 | ------------------------------------------------------ | --------------------------------------------------------- |
 | Set up vis release for the first time                  | [`vis release init`](#vis-release-init)                   |
 | Record a version bump for a change you just made       | [`vis release add`](#vis-release-add)                     |
-| Auto-generate the change file from your commit history | [`vis release generate`](#vis-release-generate)           |
+| Auto-generate change files from your commit history    | [`vis release generate`](#vis-release-generate)           |
 | See what's about to release                            | [`vis release status`](#vis-release-status)               |
 | See just the next version of each package              | [`vis release next-version`](#vis-release-next-version)   |
 | Override individual bumps before shipping              | [`vis release plan -i`](#vis-release-plan)                |
@@ -725,7 +725,7 @@ vis release ci release --auto-publish --generate
 | Option                   | Type    | Description                                                                          |
 | ------------------------ | ------- | ------------------------------------------------------------------------------------ |
 | `--auto-publish`         | boolean | Skip the version-PR; version + publish inline                                        |
-| `--generate`             | boolean | Derive the change file from commits first (commit-driven repos)                      |
+| `--generate`             | boolean | Derive the change files from commits first (commit-driven repos)                     |
 | `--generate-from <ref>`  | string  | Start ref for `--generate` (e.g. `github.event.before`); default: since last release |
 | `--allow-full-history`   | boolean | With `--generate`: walk everything when no release tag matches (first release only)  |
 | `--branch <name>`        | string  | Override the version-PR branch (default: `vis-release/version-packages`)             |

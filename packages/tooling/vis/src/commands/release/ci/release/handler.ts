@@ -238,9 +238,9 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         logger.warn(`Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
     }
 
-    // `--generate` (issue #864): derive the change file in-process so a
+    // `--generate` (issue #864): derive the change files in-process so a
     // commit-driven repo needs ONE CI step instead of
-    // `generate` → `git commit` → `ci release`. The generated file is
+    // `generate` → `git commit` → `ci release`. The generated files are
     // staged (never committed on its own) so `applyContext`'s
     // `git add -- <consumed change file>` can stage the deletion —
     // `git add` refuses a path that was never in the index.
