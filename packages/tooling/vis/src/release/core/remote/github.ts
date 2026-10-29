@@ -19,6 +19,7 @@ import type {
     UpsertPullRequestResult,
     UpsertStickyCommentOptions,
 } from "./interface";
+import { parsePaginatedJson } from "./paginated-json";
 
 const normalizeAssets = (assets: CreateReleaseOptions["assets"]): { linkAppendix: string; paths: string[] } => {
     const paths: string[] = [];
@@ -52,30 +53,26 @@ const normalizeAssets = (assets: CreateReleaseOptions["assets"]): { linkAppendix
 };
 
 interface ExistingComment {
+    author?: string;
+    authorIsBot: boolean;
     body: string;
     id: number;
 }
 
 /**
- * Parse `gh api repos/.../issues/&lt;n>/comments` stdout into a typed list.
- * Returns `[]` on non-zero exit or parse failure.
+ * Parse `gh api repos/.../issues/&lt;n>/comments --paginate` stdout into a typed list.
+ * Returns `undefined` on non-zero exit or unparseable output.
  */
-const parseListedComments = (exitCode: number, stdout: string): ExistingComment[] => {
+const parseListedComments = (exitCode: number, stdout: string): ExistingComment[] | undefined => {
     if (exitCode !== 0) {
-        return [];
+        return undefined;
     }
 
-    try {
-        const parsed = JSON.parse(stdout) as { body?: string; id: number }[];
-
-        return parsed
-            .filter((c) => typeof c.body === "string")
-            .map((c) => {
-                return { body: c.body ?? "", id: c.id };
-            });
-    } catch {
-        return [];
-    }
+    return (parsePaginatedJson(stdout) as { body?: string; id: number; user?: { login?: string; type?: string } }[] | undefined)
+        ?.filter((c) => typeof c.body === "string")
+        .map((c) => {
+            return { author: c.user?.login, authorIsBot: c.user?.type === "Bot", body: c.body ?? "", id: c.id };
+        });
 };
 
 export interface GithubClientOptions {
@@ -100,6 +97,8 @@ export class GithubRemoteClient implements RemoteReleaseClient {
     private readonly host: string | undefined;
 
     private readonly httpProxy: string | undefined;
+
+    private viewer: Promise<string | undefined> | undefined;
 
     public constructor(options: GithubClientOptions = {}) {
         this.host = options.host;
@@ -227,6 +226,19 @@ export class GithubRemoteClient implements RemoteReleaseClient {
         return undefined;
     }
 
+    /**
+     * Login of the token's identity. GraphQL `viewer` also answers for a GitHub App installation
+     * token (the Actions `GITHUB_TOKEN`), where REST `/user` is refused; its REST comments then
+     * show the login with a `[bot]` suffix.
+     */
+    private async resolveViewer(runner: CommandRunner, cwd: string): Promise<string | undefined> {
+        this.viewer ??= runner
+            .run("gh", ["api", "graphql", "-f", "query=query{viewer{login}}", "--jq", ".data.viewer.login"], this.runOpts(cwd))
+            .then((result) => (result.exitCode === 0 && result.stdout.trim() ? result.stdout.trim() : undefined));
+
+        return this.viewer;
+    }
+
     // fallow-ignore-next-line unused-class-member -- RemoteReleaseClient contract member (accessed polymorphically via the remote interface)
     public async upsertStickyComment(runner: CommandRunner, options: UpsertStickyCommentOptions): Promise<UpsertCommentResult | undefined> {
         const listResult = await runner.run(
@@ -235,10 +247,25 @@ export class GithubRemoteClient implements RemoteReleaseClient {
             this.runOpts(options.cwd),
         );
         const comments = parseListedComments(listResult.exitCode, listResult.stdout);
-        const existing = comments.find((c) => c.body.includes(options.marker));
-        const fullBody = options.body.includes(options.marker) ? options.body : `${options.marker}\n${options.body}`;
+
+        // Posting blind would duplicate the sticky comment, and drop what a `merge` accumulated.
+        if (!comments) {
+            return undefined;
+        }
+
+        const marked = comments.filter((c) => c.body.includes(options.marker));
+        const viewer = marked.length > 0 ? await this.resolveViewer(runner, options.cwd) : undefined;
+        // Anyone who can comment can post the marker, and our token may edit other users' comments.
+        // Only our own comment is the sticky one; when we cannot tell who we are, none is.
+        const existing = viewer === undefined ? undefined : marked.find((c) => c.author === viewer || (c.authorIsBot && c.author === `${viewer}[bot]`));
+        const nextBody = existing && options.merge ? options.merge(existing.body) : options.body;
+        const fullBody = nextBody.includes(options.marker) ? nextBody : `${options.marker}\n${nextBody}`;
 
         if (existing) {
+            if (fullBody === existing.body) {
+                return { created: false, id: existing.id };
+            }
+
             const result = await runner.run(
                 "gh",
                 ["api", "-X", "PATCH", `repos/${options.repo}/issues/comments/${existing.id}`, "-f", `body=${fullBody}`],

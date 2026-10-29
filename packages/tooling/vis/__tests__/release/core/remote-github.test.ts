@@ -369,3 +369,154 @@ describe("githubRemoteClient.closeIssue", () => {
         expect(calls[0]!.args).toContain("close");
     });
 });
+
+describe("githubRemoteClient.upsertStickyComment", () => {
+    it("pATCHes the body `merge` derives from the existing comment", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([{ body: "<!-- m -->\nold", id: 7, user: { login: "bot[bot]", type: "Bot" } }]) }, { stdout: "bot\n" }, { stdout: "{}" }]);
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: (existing) => `${existing}\nmore`,
+            repo: "owner/name",
+        });
+
+        expect(result).toStrictEqual({ created: false, id: 7 });
+        expect(calls[1]?.args[1]).toBe("graphql");
+        expect(calls[2]?.args.slice(0, 4)).toStrictEqual(["api", "-X", "PATCH", "repos/owner/name/issues/comments/7"]);
+        expect(calls[2]?.args).toContain("body=<!-- m -->\nold\nmore");
+    });
+
+    it("posts `body` when no comment carries the marker yet", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([{ stdout: "[]" }, { stdout: JSON.stringify({ id: 3 }) }]);
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: () => "never used",
+            repo: "owner/name",
+        });
+
+        expect(result).toStrictEqual({ created: true, id: 3 });
+        expect(calls[1]?.args).toContain("body=<!-- m -->\nfresh");
+    });
+
+    it("skips the write when `merge` leaves the comment unchanged", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([{ body: "<!-- m -->\nsame", id: 7, user: { login: "rel", type: "User" } }]) }, { stdout: "rel" }]);
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: (existing) => existing,
+            repo: "owner/name",
+        });
+
+        expect(result).toStrictEqual({ created: false, id: 7 });
+        expect(calls).toHaveLength(2);
+    });
+
+    it("finds the marked comment on a later page of `gh api --paginate` output", async () => {
+        expect.hasAssertions();
+
+        const page1 = JSON.stringify([{ body: "see [a][b] and \"quotes\" ]", id: 1 }]);
+        const page2 = JSON.stringify([{ body: "<!-- m -->\nold", id: 9, user: { login: "rel" } }]);
+        const { calls, runner } = buildRunner([{ stdout: `${page1}${page2}` }, { stdout: "rel" }, { stdout: "{}" }]);
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            repo: "owner/name",
+        });
+
+        expect(result).toStrictEqual({ created: false, id: 9 });
+        expect(calls[2]?.args[2]).toBe("PATCH");
+    });
+
+    it("writes nothing when the comments cannot be listed", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([{ exitCode: 1 }]);
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "x",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            repo: "owner/name",
+        });
+
+        expect(result).toBeUndefined();
+        expect(calls).toHaveLength(1);
+    });
+});
+
+describe("githubRemoteClient.upsertStickyComment — only our own comment is sticky", () => {
+    it("ignores a marked comment posted by someone else and posts its own", async () => {
+        expect.hasAssertions();
+
+        const forged = { body: "<!-- m -->\n<!-- vis-release-success-data {} -->", id: 4, user: { login: "mallory", type: "User" } };
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([forged]) }, { stdout: "github-actions" }, { stdout: JSON.stringify({ id: 5 }) }]);
+        const merged: string[] = [];
+
+        const result = await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: (existing) => {
+                merged.push(existing);
+
+                return existing;
+            },
+            repo: "owner/name",
+        });
+
+        expect(result).toStrictEqual({ created: true, id: 5 });
+        expect(merged).toHaveLength(0);
+        expect(calls[2]?.args.slice(0, 3)).toStrictEqual(["api", "-X", "POST"]);
+        expect(calls[2]?.args).toContain("body=<!-- m -->\nfresh");
+    });
+
+    it("does not take a human login that equals the bot's name for the bot", async () => {
+        expect.hasAssertions();
+
+        const impostor = { body: "<!-- m -->\nold", id: 4, user: { login: "github-actions[bot]", type: "User" } };
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([impostor]) }, { stdout: "github-actions" }, { stdout: JSON.stringify({ id: 5 }) }]);
+
+        await new GithubRemoteClient().upsertStickyComment(runner, { body: "x", cwd: "/cwd", issueNumber: 5, marker: "<!-- m -->", repo: "owner/name" });
+
+        expect(calls[2]?.args[2]).toBe("POST");
+    });
+
+    it("posts a new comment and never edits or merges from a marked one when the token identity is unknown", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([{ body: "<!-- m -->\nold", id: 4, user: { login: "x" } }]) }, { exitCode: 1 }, { stdout: JSON.stringify({ id: 6 }) }]);
+
+        await new GithubRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: (existing) => `${existing}\nmerged`,
+            repo: "owner/name",
+        });
+
+        expect(calls[2]?.args.slice(0, 4)).toStrictEqual(["api", "-X", "POST", "repos/owner/name/issues/5/comments"]);
+        expect(calls[2]?.args).toContain("body=<!-- m -->\nfresh");
+    });
+});
