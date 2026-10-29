@@ -546,3 +546,28 @@ describe("gitlabRemoteClient.upsertStickyComment — only our own note is sticky
         expect(calls[2]?.args).toContain("body=<!-- m -->\nfresh");
     });
 });
+
+describe("gitlabRemoteClient.upsertStickyComment — unknown token identity", () => {
+    it("posts a new note and never edits or merges from a marked one", async () => {
+        expect.hasAssertions();
+
+        const { calls, runner } = buildRunner([
+            { stdout: JSON.stringify([{ author: { username: "someone" }, body: "<!-- m -->\nold", id: 4 }]) },
+            { exitCode: 1 },
+            { stdout: JSON.stringify({ id: 6 }) },
+        ]);
+
+        const result = await new GitlabRemoteClient().upsertStickyComment(runner, {
+            body: "<!-- m -->\nfresh",
+            cwd: "/cwd",
+            issueNumber: 5,
+            marker: "<!-- m -->",
+            merge: (existing) => `${existing}\nmerged`,
+            repo: "g/p",
+        });
+
+        expect(result).toStrictEqual({ created: true, id: 6 });
+        expect(calls[2]?.args.slice(0, 4)).toStrictEqual(["api", "-X", "POST", "projects/g%2Fp/merge_requests/5/notes"]);
+        expect(calls[2]?.args).toContain("body=<!-- m -->\nfresh");
+    });
+});

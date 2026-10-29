@@ -502,10 +502,10 @@ describe("githubRemoteClient.upsertStickyComment — only our own comment is sti
         expect(calls[2]?.args[2]).toBe("POST");
     });
 
-    it("replaces but never merges from a marked comment when the token identity is unknown", async () => {
+    it("posts a new comment and never edits or merges from a marked one when the token identity is unknown", async () => {
         expect.hasAssertions();
 
-        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([{ body: "<!-- m -->\nold", id: 4, user: { login: "x" } }]) }, { exitCode: 1 }, { stdout: "{}" }]);
+        const { calls, runner } = buildRunner([{ stdout: JSON.stringify([{ body: "<!-- m -->\nold", id: 4, user: { login: "x" } }]) }, { exitCode: 1 }, { stdout: JSON.stringify({ id: 6 }) }]);
 
         await new GithubRemoteClient().upsertStickyComment(runner, {
             body: "<!-- m -->\nfresh",
@@ -516,6 +516,7 @@ describe("githubRemoteClient.upsertStickyComment — only our own comment is sti
             repo: "owner/name",
         });
 
+        expect(calls[2]?.args.slice(0, 4)).toStrictEqual(["api", "-X", "POST", "repos/owner/name/issues/5/comments"]);
         expect(calls[2]?.args).toContain("body=<!-- m -->\nfresh");
     });
 });

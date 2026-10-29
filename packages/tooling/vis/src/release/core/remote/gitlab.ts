@@ -290,10 +290,10 @@ export class GitlabRemoteClient implements RemoteReleaseClient {
 
         const marked = notes.filter((n) => n.body.includes(options.marker));
         const viewer = marked.length > 0 ? await this.resolveViewer(runner, options.cwd) : undefined;
-        // Anyone who can comment can post the marker. Only our own note is the sticky one, and
-        // when we cannot tell who we are, a marked note is replaced but never merged from.
-        const existing = viewer === undefined ? marked[0] : marked.find((n) => n.author === viewer);
-        const nextBody = existing && options.merge && viewer !== undefined ? options.merge(existing.body) : options.body;
+        // Anyone who can comment can post the marker, and our token may edit other users' notes.
+        // Only our own note is the sticky one; when we cannot tell who we are, none is.
+        const existing = viewer === undefined ? undefined : marked.find((n) => n.author === viewer);
+        const nextBody = existing && options.merge ? options.merge(existing.body) : options.body;
         const fullBody = nextBody.includes(options.marker) ? nextBody : `${options.marker}\n${nextBody}`;
 
         if (existing) {

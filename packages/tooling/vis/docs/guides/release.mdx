@@ -856,7 +856,7 @@ Forge permissions:
 - **GitHub**: the token `gh` uses needs `issues: write` and `pull-requests: write` (PR comments go through the issues API).
 - **GitLab**: `#N` gets an issue note and issue labels, `!N` a merge-request note and MR labels, through `glab` (self-hosted via `gitlabHost`). The token needs the `api` scope.
 
-The history lives in a hidden block inside the comment, so vis only builds on a marked comment written by its own token identity (GitHub GraphQL `viewer`, GitLab `/user`); anyone else's comment carrying the marker is ignored. When the identity can't be read (GitLab's `CI_JOB_TOKEN`), the comment is rewritten each wave instead of accumulating. Stored entries are re-validated on every read, npm links are rebuilt from name + version, and a stored release link is kept only when it points at this repository's releases page.
+The history lives in a hidden block inside the comment, so vis only builds on a marked comment written by its own token identity (GitHub GraphQL `viewer`, GitLab `/user`); anyone else's comment carrying the marker is ignored. When the identity can't be read (GitLab's `CI_JOB_TOKEN`), no existing comment is edited or read: each wave posts a new comment instead of accumulating. Stored entries are re-validated on every read, npm links are rebuilt from name + version, and a stored release link is kept only when it points at this repository's releases page.
 
 Refs are read from both the raw change-file bodies and the output of your changelog formatter, so a custom formatter that rewrites `(#123)` into `([#123](https://github.com/<owner>/<repo>/issues/123))` still reports it.
 
