@@ -67,12 +67,15 @@ class StubVersionActions extends VersionActions {
 
     public readonly calls: string[] = [];
 
+    public readonly types: string[] = [];
+
     public async readPublishedVersion(): Promise<string | undefined> {
         return undefined;
     }
 
     public async publish(context: PublishContext): Promise<PublishResult> {
         this.calls.push(`${context.pkg.name}@${context.release.newVersion}@${context.tag ?? "latest"}`);
+        this.types.push(context.release.type);
 
         return { alreadyPublished: false, output: "ok", published: true };
     }
@@ -113,6 +116,8 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         const result = await publishMissing(ctx, { noPush: true, publishActionsOverride: actions, registryProbe: notOnRegistry, tag: "alpha" });
 
         expect(actions.calls).toStrictEqual(["@scope/b@1.1.0@alpha"]);
+        // 1.0.0 → 1.1.0 is a minor release, not a patch.
+        expect(actions.types).toStrictEqual(["minor"]);
         expect(result.failed).toStrictEqual([]);
         expect(result.tags).toStrictEqual(["@scope/b@1.1.0"]);
         expect(git(cwd, "rev-list", "-n1", "@scope/b@1.1.0")).toBe(releaseCommit);

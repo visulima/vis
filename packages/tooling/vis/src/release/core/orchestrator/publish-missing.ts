@@ -165,6 +165,17 @@ export const releaseTagFor = (context: OrchestratorContext, name: string, versio
     return pattern ? renderTagPattern(pattern, { channel: context.channel?.tag, name, version }) : defaultTagFor(name, version);
 };
 
+/** The bump a recovered version represents, as the plan would have labelled it. */
+const bumpLevelOf = (from: string, to: string): PlannedRelease["type"] => {
+    const diff = semver.diff(from, to);
+
+    if (diff === "major" || diff === "premajor") {
+        return "major";
+    }
+
+    return diff === "minor" || diff === "preminor" ? "minor" : "patch";
+};
+
 export interface PublishMissingOptions extends PublishContextOptions {
     /** Limit to packages matching these globs. */
     projects?: string[];
@@ -213,7 +224,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
                 oldVersion: entry.previousVersion,
                 reasons: [],
                 sources: [],
-                type: semver.diff(entry.previousVersion, entry.version) === "major" ? "major" : "patch",
+                type: bumpLevelOf(entry.previousVersion, entry.version),
             };
         });
         const published = await publishContext(
