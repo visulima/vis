@@ -16,37 +16,44 @@ import { runGroupPreVersionCommands, runHook } from "./hooks";
 /**
  * Regenerate the lockfile (no lifecycle scripts), then check that a frozen
  * install accepts it, so a release never pushes a lockfile the branch cannot
- * install. Regeneration soft-fails (not every CI environment has the package
- * manager) and then nothing is checked; a failed check throws.
+ * install. The check runs where the adapter has one that neither installs nor
+ * needs the network (pnpm), unless `release.verifyLockfile` is `false`.
  *
- * The check runs where the adapter has one that neither installs nor needs
- * the network (pnpm), unless `release.verifyLockfile` is `false`.
+ * A failed regeneration only soft-fails when nothing is checked, or when the
+ * package manager is not installed here at all; otherwise it throws, so the
+ * version commit never carries a lockfile that was never regenerated.
  */
 export const syncLockfile = async (context: OrchestratorContext): Promise<void> => {
-    try {
-        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
-    } catch {
-        return;
-    }
-
     const verify = context.config.verifyLockfile;
 
-    if (verify === false) {
-        return;
+    if (verify === true && !context.pm.verifyLockfile) {
+        throw new VisReleaseError({
+            code: "CONFIG_INVALID",
+            message: `release.verifyLockfile is not supported for ${context.pm.id} (only pnpm); remove it or set it to false.`,
+        });
     }
 
-    if (!context.pm.verifyLockfile) {
-        if (verify === true) {
-            throw new VisReleaseError({
-                code: "CONFIG_INVALID",
-                message: `release.verifyLockfile is not supported for ${context.pm.id} (only pnpm); remove it or set it to false.`,
-            });
+    const verifying = verify !== false && context.pm.verifyLockfile !== undefined;
+
+    try {
+        await context.pm.installLockfileOnly({ cwd: context.cwd, silent: true });
+    } catch (error) {
+        if (!verifying) {
+            return;
         }
 
-        return;
+        const probe = await context.pm.runner.run(context.pm.id, ["--version"], { cwd: context.cwd, silent: true });
+
+        if (probe.exitCode !== 0) {
+            return;
+        }
+
+        throw error;
     }
 
-    await context.pm.verifyLockfile({ cwd: context.cwd });
+    if (verifying) {
+        await context.pm.verifyLockfile?.({ cwd: context.cwd });
+    }
 };
 export interface ApplyOptions {
     /** Stage + commit changed files after writing. Default `false`. */

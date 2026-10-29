@@ -21,7 +21,12 @@ describe.skipIf(process.platform === "win32")("orchestrator: internalDependencyR
     };
 
     const setup = (mode: string): void => {
-        write("vis.config.cjs", `module.exports = { release: { acknowledgeUnstable: true, defaultManaged: true, internalDependencyRanges: "${mode}" } };\n`);
+        // The fixture's `a@^1.1.0` resolves from the registry (no workspace
+        // linking), so its lockfile cannot be regenerated; ranges are what is tested.
+        write(
+            "vis.config.cjs",
+            `module.exports = { release: { acknowledgeUnstable: true, defaultManaged: true, internalDependencyRanges: "${mode}", verifyLockfile: false } };\n`,
+        );
     };
 
     beforeEach(() => {

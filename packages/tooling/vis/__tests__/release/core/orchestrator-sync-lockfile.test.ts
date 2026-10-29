@@ -10,18 +10,49 @@ import type { OrchestratorContext } from "../../../src/release/core/orchestrator
 import { applyContext, buildContext, syncLockfile } from "../../../src/release/core/orchestrator";
 import { __resetLookupMemoForTests } from "../../../src/release/core/version-resolver";
 
-const fakeContext = (pm: Partial<OrchestratorContext["pm"]>, verifyLockfile?: boolean): OrchestratorContext =>
-    ({ config: { verifyLockfile }, cwd: "/r", pm: { id: "npm", ...pm } }) as unknown as OrchestratorContext;
+const versionProbe = (installed: boolean) => {
+    return {
+        run: async () => {
+            return { exitCode: installed ? 0 : -1, stderr: "", stdout: "" };
+        },
+    };
+};
+
+/** `pmInstalled` answers the `&lt;pm> --version` probe. */
+const fakeContext = (pm: Partial<OrchestratorContext["pm"]>, verifyLockfile?: boolean, pmInstalled = true): OrchestratorContext =>
+    ({ config: { verifyLockfile }, cwd: "/r", pm: { id: "npm", runner: versionProbe(pmInstalled), ...pm } }) as unknown as OrchestratorContext;
+
+const rejectWith = (message: string) =>
+    vi.fn(async () => {
+        throw new Error(message);
+    });
 
 describe(syncLockfile, () => {
-    it("does not check a lockfile it could not regenerate", async () => {
+    it("soft-fails a regeneration when the package manager is not installed", async () => {
         expect.hasAssertions();
 
         const verifyLockfile = vi.fn(async () => undefined);
 
-        await syncLockfile(fakeContext({ installLockfileOnly: vi.fn(async () => { throw new Error("pnpm: not found"); }), verifyLockfile }));
+        await syncLockfile(fakeContext({ installLockfileOnly: rejectWith("spawn pnpm ENOENT"), verifyLockfile }, undefined, false));
 
         expect(verifyLockfile).not.toHaveBeenCalled();
+    });
+
+    it("fails a regeneration the package manager rejected when the lockfile is checked", async () => {
+        expect.hasAssertions();
+
+        const verifyLockfile = vi.fn(async () => undefined);
+
+        await expect(syncLockfile(fakeContext({ installLockfileOnly: rejectWith("ERR_PNPM_OUTDATED"), verifyLockfile }))).rejects.toThrow("ERR_PNPM_OUTDATED");
+        expect(verifyLockfile).not.toHaveBeenCalled();
+    });
+
+    it("soft-fails a regeneration when the lockfile is not checked", async () => {
+        expect.hasAssertions();
+
+        await expect(
+            syncLockfile(fakeContext({ installLockfileOnly: rejectWith("ERR_PNPM_OUTDATED"), verifyLockfile: vi.fn() }, false)),
+        ).resolves.toBeUndefined();
     });
 
     it("propagates a failed check", async () => {
@@ -29,7 +60,9 @@ describe(syncLockfile, () => {
 
         const context = fakeContext({
             installLockfileOnly: vi.fn(async () => undefined),
-            verifyLockfile: vi.fn(async () => { throw new Error("stale"); }),
+            verifyLockfile: vi.fn(async () => {
+                throw new Error("stale");
+            }),
         });
 
         await expect(syncLockfile(context)).rejects.toThrow("stale");
