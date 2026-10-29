@@ -191,6 +191,13 @@ A commit announced as breaking only by its footer is written to the change file 
 `!` marker added (`refactor(api)!: …`), because changelog formatters read "breaking" off
 that one line — the commit body is not carried over.
 
+The scope picks the packages: a scope matching a package name, or the last segment of a
+scoped name (`fix(cli):` → `@acme/cli`), targets that package. A comma-separated scope
+(`feat(cli,core):`) targets every package one of its parts names, and parts that name no
+package are ignored. When no part names a package — or there is no scope — the commit
+targets the packages whose files it changes. `/` is not a separator, so `fix(@acme/cli):`
+is one name.
+
 ### Range resolution
 
 Precedence: `--from` → `--since-last-release` → merge-base with `release.baseBranch`.

@@ -359,12 +359,19 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
             level = CC_TYPE_TO_BUMP[parsed.type] ?? "patch";
         }
 
-        // Map by scope first, then by file paths from the same commit.
+        // Map by scope first, then by file paths from the same commit. A
+        // comma-separated scope (`feat(client,react): …`) targets every
+        // package one of its parts names; the file fallback applies only
+        // when none does. `/` is not a separator — `@scope/pkg` is one name.
         const targets = new Set<string>();
+        const scopes = (parsed.scope ?? "")
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean);
 
-        if (parsed.scope) {
+        for (const scope of scopes) {
             for (const pkg of packages) {
-                if (pkg.name === parsed.scope || pkg.name.endsWith(`/${parsed.scope}`)) {
+                if (pkg.name === scope || pkg.name.endsWith(`/${scope}`)) {
                     targets.add(pkg.name);
                 }
             }

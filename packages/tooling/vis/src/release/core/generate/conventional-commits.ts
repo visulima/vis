@@ -94,12 +94,13 @@ export interface AnnotatedCommit extends CommitRecord {
  * through to a path-derived patch. These are the
  * `conventional-changelog-conventionalcommits` patterns (`!` optional in the
  * header, mandatory in the breaking variant, which the parser turns into a
- * `BREAKING CHANGE` note), with the scope kept to the default charset rather
- * than the preset's `(.*)`, which can run across `feat(a): x (b): y`.
+ * `BREAKING CHANGE` note). The scope is any run of non-paren characters, so
+ * `feat(do,client): …` parses (the default charset has no comma) — but not the
+ * preset's `(.*)`, which can run across `feat(a): x (b): y`.
  */
 const commitParser = new CommitParser({
-    breakingHeaderPattern: /^(\w*)(?:\(([\w$@.\-*/ ]*)\))?!: (.*)$/,
-    headerPattern: /^(\w*)(?:\(([\w$@.\-*/ ]*)\))?!?: (.*)$/,
+    breakingHeaderPattern: /^(\w*)(?:\(([^()]*)\))?!: (.*)$/,
+    headerPattern: /^(\w*)(?:\(([^()]*)\))?!?: (.*)$/,
 });
 
 const REVERT_HEADER_RE = /^Revert\s+"(.+)"\s*$/;
