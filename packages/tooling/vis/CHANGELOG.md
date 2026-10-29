@@ -1,3 +1,9 @@
+## @visulima/vis [6.4.0](https://github.com/visulima/vis/compare/@visulima/vis@6.3.0...@visulima/vis@6.4.0) (2026-10-29)
+
+### Features
+
+* **vis:** source tags, rebase-retry push, one branch push per run, lockfile check ([#71](https://github.com/visulima/vis/issues/71)) ([b8431b1](https://github.com/visulima/vis/commit/b8431b17e5ca3def62347ad1358adcae639530f7))
+
 ## @visulima/vis [6.3.0](https://github.com/visulima/vis/compare/@visulima/vis@6.2.0...@visulima/vis@6.3.0) (2026-10-29)
 
 ### Features
