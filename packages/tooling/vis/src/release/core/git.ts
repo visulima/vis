@@ -609,9 +609,10 @@ export const pushTags = async (ctx: GitContext, options: { atomic?: boolean; rem
 export const createOrUpdateFloatingTag = async (
     ctx: GitContext,
     tag: string,
-    options: { push?: boolean; remote?: string; signing?: TagSigningOptions } = {},
+    options: { push?: boolean; remote?: string; signing?: TagSigningOptions; target?: string } = {},
 ): Promise<void> => {
     const { signing } = options;
+    const target = options.target === undefined ? [] : [options.target];
 
     // Audit fix: mirror the sigstore branch from `createTag` so an
     // operator who configured `signing.mode === "sigstore"` gets the
@@ -622,7 +623,7 @@ export const createOrUpdateFloatingTag = async (
     if (signing?.mode === "sigstore") {
         if (await gitsignAvailable(ctx)) {
             const msg = `Floating tag ${tag}`;
-            const gitsignArgs = ["tag", "-f", "-a", "-m", msg, tag];
+            const gitsignArgs = ["tag", "-f", "-a", "-m", msg, tag, ...target];
             const result = await ctx.runner.run("gitsign", gitsignArgs, { cwd: ctx.cwd, silent: true });
 
             if (result.exitCode !== 0) {
@@ -667,7 +668,7 @@ export const createOrUpdateFloatingTag = async (
         }
     }
 
-    tagArgs.push(tag);
+    tagArgs.push(tag, ...target);
 
     const tagResult = await run(ctx, tagArgs);
 
@@ -790,6 +791,170 @@ export const pushBranch = async (ctx: GitContext, branch: string, options: { for
     }
 };
 
+/** Lockfiles the version step regenerates and commits, at the workspace root. */
+export const LOCKFILE_NAMES: ReadonlyArray<string> = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb"];
+
+/**
+ * Trailer naming the commit a release was planned from, written on the release
+ * commit under `release.tagTarget: "source"`. It survives the rebase a retried
+ * push does, so the tags (and a later `publish --missing`) can still find it.
+ */
+export const RELEASE_SOURCE_TRAILER = "Release-Source";
+
+/**
+ * The commit `commit`'s {@link RELEASE_SOURCE_TRAILER} names, or `undefined`
+ * when it has none or it is not an ancestor of `commit` (a squash or a
+ * cherry-pick carried the message somewhere else).
+ */
+export const resolveReleaseSource = async (ctx: GitContext, commit = "HEAD"): Promise<string | undefined> => {
+    const log = await run(ctx, ["log", "-1", `--format=%(trailers:key=${RELEASE_SOURCE_TRAILER},valueonly)`, commit]);
+    const source = log.exitCode === 0 ? log.stdout.trim().split("\n")[0]?.trim() : undefined;
+
+    if (!source || !/^[\da-f]{7,64}$/iu.test(source)) {
+        return undefined;
+    }
+
+    const ancestor = await run(ctx, ["merge-base", "--is-ancestor", source, commit]);
+
+    return ancestor.exitCode === 0 ? source : undefined;
+};
+
+/** A `git push --porcelain` line saying `refspec` was rejected because the remote moved. */
+const isNonFastForward = (stdout: string, refspec: string): boolean =>
+    stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/u, ""))
+        .some((line) => line === `!\t${refspec}\t[rejected] (fetch first)` || line === `!\t${refspec}\t[rejected] (non-fast-forward)`);
+
+export interface PushBranchWithRebaseOptions {
+    /** Committer identity for the rebased commits (CI runners have none configured). */
+    author?: { email: string; name: string };
+    remote?: string;
+    /** How many times to rebase onto the moved branch and push again. */
+    retries: number;
+    /** The commit the release was planned from; the commits above it are replayed. */
+    source: string;
+    /** Regenerate the lockfile after a rebase; a changed lockfile is amended into the last commit. */
+    syncLockfile?: () => Promise<void>;
+}
+
+/**
+ * Rebase the commits above `source` onto the freshly fetched `branch`. A
+ * conflict confined to lockfiles takes the branch's side (the caller
+ * regenerates them); any other conflict aborts the rebase and throws.
+ */
+const rebaseOntoRemote = async (ctx: GitContext, branch: string, options: PushBranchWithRebaseOptions, env: NodeJS.ProcessEnv): Promise<void> => {
+    const remote = options.remote ?? "origin";
+    const tracking = `refs/remotes/${remote}/${branch}`;
+    const fetch = await ctx.runner.run("git", ["fetch", "--no-tags", remote, `+refs/heads/${branch}:${tracking}`], {
+        cwd: ctx.cwd,
+        env: await resolvePushAuthEnv(ctx, remote),
+        silent: true,
+    });
+
+    if (fetch.exitCode !== 0) {
+        throw new VisReleaseError({ code: "GIT_OPERATION_FAILED", message: `git fetch ${remote} ${branch} failed: ${fetch.stderr || fetch.stdout}` });
+    }
+
+    let step = await ctx.runner.run("git", ["rebase", "--onto", tracking, options.source], { cwd: ctx.cwd, env, silent: true });
+
+    while (step.exitCode !== 0) {
+        const unmerged = await run(ctx, ["diff", "--name-only", "--diff-filter=U"]);
+        const conflicted = unmerged.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+
+        if (conflicted.length === 0 || !conflicted.every((path) => LOCKFILE_NAMES.includes(basename(path)))) {
+            await run(ctx, ["rebase", "--abort"]);
+
+            throw new VisReleaseError({
+                code: "GIT_OPERATION_FAILED",
+                hint: "Nothing was published. Re-run the release once the conflicting change is on the branch.",
+                message: `Could not rebase the release commit onto ${remote}/${branch}: ${conflicted.length > 0 ? `conflicts in ${conflicted.join(", ")}` : step.stderr || step.stdout}`,
+            });
+        }
+
+        // During a rebase "ours" is the branch being rebased onto. Paths from
+        // `git diff` are toplevel-relative, the cwd may be a nested workspace.
+        const paths = conflicted.map((path) => `:(top)${path}`);
+
+        await run(ctx, ["checkout", "--ours", "--", ...paths]);
+        await run(ctx, ["add", "--", ...paths]);
+        step = await ctx.runner.run("git", ["-c", "core.editor=true", "rebase", "--continue"], { cwd: ctx.cwd, env, silent: true });
+    }
+
+    if (!options.syncLockfile) {
+        return;
+    }
+
+    await options.syncLockfile();
+
+    const changed = await run(ctx, ["diff", "--name-only", "--relative", "--", ...LOCKFILE_NAMES]);
+    const lockfiles = changed.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    if (lockfiles.length === 0) {
+        return;
+    }
+
+    await run(ctx, ["add", "--", ...lockfiles]);
+
+    const amend = await ctx.runner.run("git", ["commit", "--amend", "--no-edit"], { cwd: ctx.cwd, env, silent: true });
+
+    if (amend.exitCode !== 0) {
+        throw new VisReleaseError({ code: "GIT_OPERATION_FAILED", message: `git commit --amend (lockfile) failed: ${amend.stderr || amend.stdout}` });
+    }
+};
+
+/**
+ * Push `HEAD` to `branch`. When the branch moved meanwhile (a non-fast-forward
+ * rejection), fetch it, rebase the commits above `options.source` onto it and
+ * push again, up to `options.retries` times. Any other rejection throws at
+ * once. Returns how many rebases it took.
+ *
+ * Only safe while no release tag points at those commits: rebasing puts the
+ * commits that moved the branch below them.
+ */
+export const pushBranchWithRebase = async (ctx: GitContext, branch: string, options: PushBranchWithRebaseOptions): Promise<number> => {
+    const remote = options.remote ?? "origin";
+    const refspec = `HEAD:refs/heads/${branch}`;
+    const env = { ...process.env };
+
+    if (options.author) {
+        env["GIT_COMMITTER_NAME"] = options.author.name;
+        env["GIT_COMMITTER_EMAIL"] = options.author.email;
+    }
+
+    for (let attempt = 0; ; attempt += 1) {
+        // Captured, not streamed: the porcelain status lines are how a moved branch is told apart.
+        const result = await push(ctx, remote, ["--porcelain", refspec], true);
+
+        if (result.exitCode === 0) {
+            return attempt;
+        }
+
+        if (!isNonFastForward(result.stdout, refspec)) {
+            throw new VisReleaseError({ code: "TAG_PUSH_FAILED", message: `git push ${branch} failed: ${result.stderr || result.stdout}` });
+        }
+
+        if (attempt >= options.retries) {
+            throw new VisReleaseError({
+                code: "TAG_PUSH_FAILED",
+                hint:
+                    options.retries === 0
+                        ? `Set release.tagTarget: "source" to let vis rebase onto the moved branch and retry.`
+                        : "Raise release.pushRetries, or re-run the release.",
+                message: `git push ${branch} was rejected: ${remote}/${branch} moved${options.retries > 0 ? ` and kept moving through ${options.retries} rebase(s)` : ""}.`,
+            });
+        }
+
+        await rebaseOntoRemote(ctx, branch, options, env);
+    }
+};
+
 // ── Tag-pattern computation ────────────────────────────────────────
 
 /**
@@ -873,12 +1038,7 @@ export const verifyPushAccess = async (ctx: GitContext, options: { branch?: stri
 
     // Only a non-fast-forward rejection of this exact refspec proves the
     // credentials authenticated; any other failure means no push access.
-    const nonFastForward = result.stdout
-        .split("\n")
-        .map((line) => line.replace(/\r$/u, ""))
-        .some((line) => line === `!\t${refspec}\t[rejected] (fetch first)` || line === `!\t${refspec}\t[rejected] (non-fast-forward)`);
-
-    if (result.exitCode === 0 || nonFastForward) {
+    if (result.exitCode === 0 || isNonFastForward(result.stdout, refspec)) {
         return undefined;
     }
 

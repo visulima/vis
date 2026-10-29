@@ -1613,6 +1613,17 @@ export interface VisReleaseConfig {
     publish?: PublishConfig;
 
     /**
+     * How many times `vis release ci release` (auto-publish) rebases its
+     * version commit onto the release branch and pushes again when the
+     * branch moved during the run. Requires `tagTarget: "source"`: rebasing
+     * puts the commits that moved the branch below the release commit, where
+     * tags on that commit would hide them from the next release.
+     *
+     * Default: `3` with `tagTarget: "source"`, otherwise no retry.
+     */
+    pushRetries?: number;
+
+    /**
      * Python projects as release packages. Off by default. When on, the root
      * `pyproject.toml` (with `[project]`) and every `[tool.uv.workspace].members`
      * entry (minus `exclude`) is a release package. A dynamic or missing version
@@ -1707,6 +1718,20 @@ export interface VisReleaseConfig {
      * comes from Git tags, and the release creates the tag.
      */
     swift?: { discover?: boolean };
+
+    /**
+     * Which commit the release tags point at.
+     *
+     * - `"release-commit"` (default): the version commit the release creates.
+     * - `"source"`: the commit the release was planned from, already on the
+     *   branch. The version commit records it in a `Release-Source:` trailer,
+     *   so it survives the rebase `vis release ci release` does when the
+     *   branch moved during the run (see `pushRetries`): commits landing
+     *   mid-run stay in the next release's range. A tag's tree then still
+     *   holds the previous manifest versions.
+     */
+    tagTarget?: "release-commit" | "source";
+
     /** Dep-propagation mode. Default: `"out-of-range"`. */
     updateInternalDependencies?: UpdateInternalDependenciesMode;
 

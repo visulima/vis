@@ -36,7 +36,10 @@ const setupFixture = (): { cwd: string; releaseCommit: string } => {
 
     writeJson(join(cwd, "package.json"), { name: "fixture-root", packageManager: "pnpm@10.0.0", private: true, version: "0.0.0", workspaces: ["packages/*"] });
     writeFileSync(join(cwd, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
-    writeFileSync(join(cwd, "vis.config.cjs"), `module.exports = ${JSON.stringify({ release: { acknowledgeUnstable: true, currentVersionResolver: "git-tag", defaultManaged: true } })};\n`);
+    writeFileSync(
+        join(cwd, "vis.config.cjs"),
+        `module.exports = ${JSON.stringify({ release: { acknowledgeUnstable: true, currentVersionResolver: "git-tag", defaultManaged: true } })};\n`,
+    );
 
     for (const name of ["a", "b"]) {
         mkdirSync(join(cwd, "packages", name), { recursive: true });
@@ -102,7 +105,9 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         const ctx = await buildContext({ cwd });
         const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
 
-        expect(found.missing).toStrictEqual([{ commit: releaseCommit, name: "@scope/b", onRegistry: false, previousVersion: "1.0.0", version: "1.1.0" }]);
+        expect(found.missing).toStrictEqual([
+            { commit: releaseCommit, name: "@scope/b", onRegistry: false, previousVersion: "1.0.0", target: releaseCommit, version: "1.1.0" },
+        ]);
     });
 
     it("publishes it and tags the release commit, so a later commit stays in the next release range", async () => {
@@ -143,9 +148,11 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
 
         const next = await buildContext({ cwd });
 
-        expect(next.plan.releases.map(({ name, newVersion, oldVersion }) => { return { name, newVersion, oldVersion }; })).toStrictEqual([
-            { name: "@scope/b", newVersion: "1.1.1", oldVersion: "1.1.0" },
-        ]);
+        expect(
+            next.plan.releases.map(({ name, newVersion, oldVersion }) => {
+                return { name, newVersion, oldVersion };
+            }),
+        ).toStrictEqual([{ name: "@scope/b", newVersion: "1.1.1", oldVersion: "1.1.0" }]);
     });
 
     it("only tags a version the registry already has", async () => {
@@ -209,6 +216,49 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
 
         expect(found.missing).toStrictEqual([]);
         expect(found.skipped[0]?.reason).toMatch(/not a release commit/);
+    });
+
+    it("tags the commit a rebased release commit's Release-Source trailer names, keeping the commits under it in range", async () => {
+        expect.hasAssertions();
+
+        // `tagTarget: "source"` after a retried push: the wave was planned from
+        // `source`, `concurrent` moved the branch, the release commit was rebased onto it.
+        const source = git(cwd, "rev-parse", "HEAD~1");
+
+        git(cwd, "reset", "-q", "--hard", source);
+        git(cwd, "tag", "-d", "@scope/a@1.1.0");
+        writeFileSync(join(cwd, "README.md"), "concurrent\n");
+        const concurrent = commitAll(cwd, "feat: landed during the release");
+
+        for (const name of ["a", "b"]) {
+            writeJson(join(cwd, "packages", name, "package.json"), { name: `@scope/${name}`, version: "1.1.0" });
+        }
+
+        git(cwd, "add", "-A");
+        git(cwd, "commit", "-qm", "release(main): version 2 packages [skip ci]", "-m", `Release-Source: ${source}`);
+        git(cwd, "tag", "@scope/a@1.1.0", source);
+
+        const ctx = await buildContext({ cwd });
+        const result = await publishMissing(ctx, { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
+
+        expect(result.tags).toStrictEqual(["@scope/b@1.1.0"]);
+        expect(git(cwd, "rev-list", "-n1", "@scope/b@1.1.0")).toBe(source);
+
+        const ref = await resolveLastReleaseRef({ cwd, packages: ctx.packages, runner: createShellRunner(), workspaceConfig: ctx.config });
+
+        expect(git(cwd, "rev-list", `${(ref as { ref: string }).ref}..HEAD`)).toContain(concurrent);
+    });
+
+    it("ignores a Release-Source trailer that is not an ancestor of the release commit", async () => {
+        expect.hasAssertions();
+
+        git(cwd, "commit", "-q", "--amend", "-m", "chore(release): publish [skip ci]", "-m", "Release-Source: 0123456789abcdef0123456789abcdef01234567");
+        const amended = git(cwd, "rev-parse", "HEAD");
+
+        const ctx = await buildContext({ cwd });
+        const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
+
+        expect(found.missing.map((entry) => entry.target)).toStrictEqual([amended]);
     });
 
     it("ignores a manifest version that is not ahead of the tags", async () => {

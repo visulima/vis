@@ -69,6 +69,8 @@ const publishOptionsCaptured: { resume?: boolean; tag?: string }[] = [];
 const callOrder: string[] = [];
 const pushBranchMock = vi.fn(async (..._args: unknown[]) => {
     callOrder.push("pushBranch");
+
+    return 0;
 });
 const missingResult = { failed: [] as { name: string; reason: string }[], missing: [] as unknown[], published: [], skipped: [], tags: [], tagsPushed: false };
 const publishMissingMock = vi.fn(async () => {
@@ -111,7 +113,7 @@ vi.mock(import("../../../src/release/core/git"), async (importOriginal) => {
         // The fixture writes `vis.config.cjs` after the initial commit, so the
         // real probe would report a dirty tree and short-circuit the handler.
         listUncommittedPaths: vi.fn(async () => [] as string[]),
-        pushBranch: pushBranchMock,
+        pushBranchWithRebase: pushBranchMock,
     };
 });
 

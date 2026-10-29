@@ -33,7 +33,16 @@ import type { CerebroFs, CommandExecute, Toolbox } from "@visulima/cerebro";
 import { DEFAULT_CHANGES_DIR } from "../../../../release/config";
 import { readChangeFiles } from "../../../../release/core/change-file-reader";
 import { runGenerate } from "../../../../release/core/generate/run";
-import { getCurrentBranch, getShortSha, listUncommittedPaths, pushBranch, stageAndCommit, toRepoRelativePath } from "../../../../release/core/git";
+import {
+    getCurrentBranch,
+    getCurrentSha,
+    getShortSha,
+    listUncommittedPaths,
+    pushBranch,
+    pushBranchWithRebase,
+    stageAndCommit,
+    toRepoRelativePath,
+} from "../../../../release/core/git";
 import { applyContext, buildContext, publishContext, publishMissing } from "../../../../release/core/orchestrator";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
@@ -239,6 +248,22 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     }
 
     const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
+    const sourceTags = ctx.config.tagTarget === "source";
+    const { pushRetries } = ctx.config;
+
+    if (pushRetries !== undefined && (!sourceTags || !Number.isInteger(pushRetries) || pushRetries < 0)) {
+        logger.error(
+            sourceTags
+                ? `release.pushRetries must be a non-negative integer, got ${String(pushRetries)}.`
+                : `release.pushRetries needs release.tagTarget: "source": a rebased release commit would put the commits that moved the branch below its tags.`,
+        );
+        process.exitCode = 1;
+
+        return;
+    }
+
+    // The commit this wave is planned from; the version commit goes on top of it.
+    const source = await getCurrentSha({ cwd, runner });
 
     // A wave that failed part-way left versions committed but never published
     // (tags only follow a successful publish), and its change file is gone, so
@@ -364,22 +389,43 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
         await applyContext(ctx, { commit: true });
 
-        // Land the version commit BEFORE publishing. The tags are created on
-        // HEAD after the publish, so pushing the branch afterwards (as this
-        // used to, once, logging a failure and exiting 0) stranded them on a
+        // Land the version commit BEFORE publishing. The tags are created
+        // after the publish, so pushing the branch afterwards (as this used
+        // to, once, logging a failure and exiting 0) stranded them on a
         // commit that never landed whenever the branch had moved: the git-tag
         // resolver then recomputed the same versions on every later run and
         // failed on the tag collision. A rejected push stops here with nothing
-        // published; the push that moved the branch starts its own run.
-        // Rebasing and retrying instead would put the incoming commits below
-        // the release tags, out of the next `--generate` range.
+        // published.
+        //
+        // When the branch moved, rebasing the version commit onto it is only
+        // safe with `tagTarget: "source"`: tags on the (rebased) version commit
+        // would put the commits that moved the branch below them, out of the
+        // next `--generate` range. Tags on the source commit leave them in it.
         const branch = await getCurrentBranch({ cwd, runner });
 
         if (branch) {
             try {
-                await pushBranch({ cwd, runner }, branch);
+                const rebases = await pushBranchWithRebase({ cwd, runner }, branch, {
+                    author: ctx.config.gitUser,
+                    retries: sourceTags && source !== undefined ? (pushRetries ?? 3) : 0,
+                    source: source ?? "HEAD",
+                    syncLockfile: async () => {
+                        // Soft-fail, like the version step's own lockfile sync.
+                        try {
+                            await ctx.pm.installLockfileOnly({ cwd, silent: true });
+                        } catch {
+                            logger.warn("Could not regenerate the lockfile after rebasing the version commit.");
+                        }
+                    },
+                });
+
+                if (rebases > 0) {
+                    logger.info(`${branch} moved during the release; pushed the version commit after ${rebases} rebase(s).`);
+                }
             } catch (error) {
-                logger.error(`Failed to push the version commit, nothing was published: ${(error as Error).message}`);
+                const { hint } = error as { hint?: string };
+
+                logger.error(`Failed to push the version commit, nothing was published: ${(error as Error).message}${hint ? ` ${hint}` : ""}`);
                 process.exitCode = 1;
 
                 return;
