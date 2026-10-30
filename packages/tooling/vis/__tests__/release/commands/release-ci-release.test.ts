@@ -341,6 +341,56 @@ describe("vis release ci release — C7 publish idempotency", () => {
         expect(log.warn).toContain("  - successWalk: could not comment on #7: HTTP 502");
     });
 
+    it("prints the recovery's and the wave's warnings as one block", async () => {
+        expect.hasAssertions();
+
+        missingResult.warnings = ["successWalk: could not comment on #7: HTTP 502"];
+        publishWarnings.push("successWalk: could not comment on #42: HTTP 403");
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        // The fixture's plan carries a warning of its own, so count the headers, not the warnings.
+        expect(log.warn.filter((line) => line.endsWith("warning(s):"))).toHaveLength(1);
+        expect(log.warn).toContain("  - successWalk: could not comment on #7: HTTP 502");
+        expect(log.warn).toContain("  - successWalk: could not comment on #42: HTTP 403");
+    });
+
+    it("prints the recovery's warnings when the recovery fails", async () => {
+        expect.hasAssertions();
+
+        missingResult.failed = [{ name: "@scope/a", reason: "E403" }];
+        missingResult.warnings = ["successWalk: could not comment on #7: HTTP 502"];
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        expect(process.exitCode).toBe(2);
+        expect(log.warn).toContain("  - successWalk: could not comment on #7: HTTP 502");
+    });
+
+    it("annotates a recovery skip that needs action on GitHub Actions", async () => {
+        expect.hasAssertions();
+
+        vi.stubEnv("GITHUB_ACTIONS", "true");
+        missingResult.skipped = [{ name: "@scope/a", reason: "1.1.0 is untagged but the commit that set it could not be found" }];
+
+        const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        let written: string[];
+
+        try {
+            await runAutoPublish();
+        } finally {
+            // Read before restoring: mockRestore() clears the recorded calls.
+            written = write.mock.calls.map(([chunk]) => String(chunk));
+            write.mockRestore();
+        }
+
+        expect(written).toContain("::warning::Not recovering @scope/a: 1.1.0 is untagged but the commit that set it could not be found.\n");
+    });
+
     it("auto-publish mode → annotates failures and warnings on GitHub Actions", async () => {
         expect.hasAssertions();
 

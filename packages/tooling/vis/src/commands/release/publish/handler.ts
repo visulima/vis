@@ -90,7 +90,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
 
         if (missing) {
             result = await publishMissing(ctx, { ...publishOptions, projects });
-            ({ warnings } = result);
+            warnings = [...warnings, ...result.warnings];
 
             for (const entry of result.missing) {
                 const action = entry.onRegistry ? "tag" : "publish";

@@ -181,7 +181,9 @@ export const releasePublish = async (options: PublishOptions = {}): Promise<Publ
     const publishOptions = { dryRun: options.dryRun, otp: options.otp, tag: options.tag };
 
     if (options.missing) {
-        return await publishMissing(ctx, { ...publishOptions, projects: options.projects });
+        const result = await publishMissing(ctx, { ...publishOptions, projects: options.projects });
+
+        return { ...result, warnings: [...ctx.plan.warnings, ...result.warnings] };
     }
 
     return { ...(await publishContext(ctx, publishOptions)), warnings: ctx.plan.warnings };
