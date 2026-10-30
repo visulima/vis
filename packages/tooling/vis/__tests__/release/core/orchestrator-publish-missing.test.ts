@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RegistryProbe } from "../../../src/release/core/orchestrator";
 import { buildContext, findMissingReleases, publishMissing } from "../../../src/release/core/orchestrator";
@@ -13,6 +13,25 @@ import { createShellRunner } from "../../../src/release/core/shell-runner";
 import type { PublishContext } from "../../../src/release/core/version-actions/interface";
 import { VersionActions } from "../../../src/release/core/version-actions/interface";
 import { __resetLookupMemoForTests, resolveLastReleaseRef } from "../../../src/release/core/version-resolver";
+
+// What the post-publish steps (success walk, notifications, forge releases)
+// would report: they push onto the plan the publish was handed.
+const postPublishWarnings: string[] = [];
+
+vi.mock(import("../../../src/release/core/orchestrator/publish"), async (importOriginal) => {
+    const actual = await importOriginal();
+
+    return {
+        ...actual,
+        publishContext: async (...args: Parameters<typeof actual.publishContext>) => {
+            const result = await actual.publishContext(...args);
+
+            args[0].plan.warnings.push(...postPublishWarnings);
+
+            return result;
+        },
+    };
+});
 
 const writeJson = (path: string, value: unknown): void => {
     writeFileSync(path, `${JSON.stringify(value, null, 4)}\n`);
@@ -96,6 +115,7 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
     });
 
     afterEach(async () => {
+        postPublishWarnings.length = 0;
         await rm(cwd, { force: true, recursive: true });
     });
 
@@ -153,6 +173,17 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
                 return { name, newVersion, oldVersion };
             }),
         ).toStrictEqual([{ name: "@scope/b", newVersion: "1.1.1", oldVersion: "1.1.0" }]);
+    });
+
+    it("returns the post-publish warnings of the recovered versions", async () => {
+        expect.hasAssertions();
+
+        postPublishWarnings.push("successWalk: could not comment on #42: HTTP 403");
+
+        const ctx = await buildContext({ cwd });
+        const result = await publishMissing(ctx, { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
+
+        expect(result.warnings).toStrictEqual(["successWalk: could not comment on #42: HTTP 403"]);
     });
 
     it("only tags a version the registry already has", async () => {

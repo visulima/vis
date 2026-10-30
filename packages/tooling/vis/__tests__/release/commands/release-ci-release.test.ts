@@ -72,7 +72,27 @@ const pushBranchMock = vi.fn(async (..._args: unknown[]) => {
 
     return 0;
 });
-const missingResult = { failed: [] as { name: string; reason: string }[], missing: [] as unknown[], published: [], skipped: [], tags: [], tagsPushed: false };
+
+type Entry = { name: string; reason: string };
+
+const missingResult = {
+    failed: [] as Entry[],
+    missing: [] as unknown[],
+    published: [],
+    skipped: [] as Entry[],
+    tags: [],
+    tagsPushed: false,
+    warnings: [] as string[],
+};
+const publishResult = {
+    failed: [] as Entry[],
+    published: [] as { name: string; version: string }[],
+    skipped: [] as Entry[],
+    tags: [] as string[],
+    tagsPushed: false,
+};
+// Pushed onto the context's plan by the stubbed publish, the way the post-publish steps report.
+const publishWarnings: string[] = [];
 const publishMissingMock = vi.fn(async () => {
     callOrder.push("publishMissing");
 
@@ -93,11 +113,12 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
                 plan: { consumedChangeFiles: [], releases: [], warnings: [] },
             };
         }),
-        publishContext: vi.fn(async (_ctx: unknown, options: { resume?: boolean; tag?: string } = {}) => {
+        publishContext: vi.fn(async (ctx: { plan: { warnings: string[] } }, options: { resume?: boolean; tag?: string } = {}) => {
             callOrder.push("publishContext");
             publishOptionsCaptured.push({ ...options });
+            ctx.plan.warnings.push(...publishWarnings);
 
-            return { failed: [], published: [], skipped: [], tags: [], tagsPushed: false };
+            return publishResult;
         }),
         publishMissing: publishMissingMock,
     };
@@ -125,7 +146,15 @@ describe("vis release ci release — C7 publish idempotency", () => {
         publishOptionsCaptured.length = 0;
         callOrder.length = 0;
         missingResult.failed = [];
+        missingResult.skipped = [];
+        missingResult.warnings = [];
+        publishResult.failed = [];
+        publishResult.published = [];
+        publishResult.skipped = [];
+        publishWarnings.length = 0;
         process.exitCode = undefined;
+        // Off by default: vis's own CI runs on GitHub Actions, and the fixtures' failures are not its annotations.
+        vi.stubEnv("GITHUB_ACTIONS", "");
     });
 
     afterEach(async () => {
@@ -134,6 +163,7 @@ describe("vis release ci release — C7 publish idempotency", () => {
         }
 
         vi.clearAllMocks();
+        vi.unstubAllEnvs();
     });
 
     it("version-pr mode with no pending files and no .state.json → publish without resume", async () => {
@@ -214,7 +244,9 @@ describe("vis release ci release — C7 publish idempotency", () => {
         expect(publishOptionsCaptured[0]).toMatchObject({ resume: true, tag: "alpha" });
     });
 
-    const runAutoPublish = async (options: Record<string, unknown> = {}): Promise<void> => {
+    const silentLogger = { error: () => {}, info: () => {}, warn: () => {} };
+
+    const runAutoPublish = async (options: Record<string, unknown> = {}, logger: typeof silentLogger = silentLogger): Promise<void> => {
         cwd = setupFixture("alpha");
 
         writeVisConfigCjs(cwd, {
@@ -227,7 +259,7 @@ describe("vis release ci release — C7 publish idempotency", () => {
 
         await execute({
             fs: testFs,
-            logger: { error: () => {}, info: () => {}, warn: () => {} },
+            logger,
             options: { channel: "alpha", publishMissing: true, ...options },
             workspaceRoot: cwd,
         });
@@ -261,6 +293,74 @@ describe("vis release ci release — C7 publish idempotency", () => {
 
         expect(callOrder).toStrictEqual(["publishMissing"]);
         expect(process.exitCode).toBe(2);
+    });
+
+    const captureLogger = (): { error: string[]; info: string[]; logger: { error: (m: string) => void; info: (m: string) => void; warn: (m: string) => void }; warn: string[] } => {
+        const lines = { error: [] as string[], info: [] as string[], warn: [] as string[] };
+
+        return {
+            ...lines,
+            logger: {
+                error: (message: string) => lines.error.push(message),
+                info: (message: string) => lines.info.push(message),
+                warn: (message: string) => lines.warn.push(message),
+            },
+        };
+    };
+
+    it("auto-publish mode → logs every package with its reason and every post-publish warning", async () => {
+        expect.hasAssertions();
+
+        publishResult.published = [{ name: "@scope/a", version: "1.1.0-alpha.0" }];
+        publishResult.skipped = [{ name: "@scope/b", reason: "already-published" }];
+        publishResult.failed = [{ name: "@scope/c", reason: "npm publish exited 1: E403 Forbidden" }];
+        publishWarnings.push("successWalk: could not comment on #42: HTTP 403");
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        expect(log.info).toContain("  [published] @scope/a@1.1.0-alpha.0 (dist-tag alpha)");
+        expect(log.info).toContain("  [skipped]   @scope/b (already-published)");
+        expect(log.error).toContain("  [failed]    @scope/c: npm publish exited 1: E403 Forbidden");
+        expect(log.warn).toContain("  - successWalk: could not comment on #42: HTTP 403");
+        expect(process.exitCode).toBe(2);
+    });
+
+    it("auto-publish mode → logs every recovery skip and the recovery's warnings", async () => {
+        expect.hasAssertions();
+
+        missingResult.skipped = [{ name: "@scope/a", reason: "already-published: tagged @scope/a@1.1.0" }];
+        missingResult.warnings = ["successWalk: could not comment on #7: HTTP 502"];
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        expect(log.info).toContain("Recovery skipped @scope/a: already-published: tagged @scope/a@1.1.0.");
+        expect(log.warn).toContain("  - successWalk: could not comment on #7: HTTP 502");
+    });
+
+    it("auto-publish mode → annotates failures and warnings on GitHub Actions", async () => {
+        expect.hasAssertions();
+
+        vi.stubEnv("GITHUB_ACTIONS", "true");
+        publishResult.failed = [{ name: "@scope/c", reason: "npm publish exited 1:\nE403 100% Forbidden" }];
+        publishWarnings.push("successWalk: could not comment on #42: HTTP 403");
+
+        const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        let written: string[];
+
+        try {
+            await runAutoPublish();
+        } finally {
+            // Read before restoring: mockRestore() clears the recorded calls.
+            written = write.mock.calls.map(([chunk]) => String(chunk));
+            write.mockRestore();
+        }
+
+        expect(written).toContain("::error::@scope/c: npm publish exited 1:%0AE403 100%25 Forbidden\n");
+        expect(written).toContain("::warning::successWalk: could not comment on #42: HTTP 403\n");
     });
 
     it("--no-publish-missing skips the recovery", async () => {

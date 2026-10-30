@@ -106,6 +106,8 @@ export interface PublishResult {
     failed: { name: string; reason: string }[];
     published: { name: string; version: string }[];
     skipped: { name: string; reason: string }[];
+    /** Non-fatal problems: plan warnings plus post-publish ones (forge releases, success-walk comments, notifications). */
+    warnings?: string[];
 }
 
 export interface SnapshotResult {
@@ -177,9 +179,12 @@ export const releaseChangelog = async (options: ChangelogOptions = {}): Promise<
 export const releasePublish = async (options: PublishOptions = {}): Promise<PublishResult> => {
     const ctx = await buildContext(options);
     const publishOptions = { dryRun: options.dryRun, otp: options.otp, tag: options.tag };
-    const result = options.missing ? await publishMissing(ctx, { ...publishOptions, projects: options.projects }) : await publishContext(ctx, publishOptions);
 
-    return result;
+    if (options.missing) {
+        return await publishMissing(ctx, { ...publishOptions, projects: options.projects });
+    }
+
+    return { ...(await publishContext(ctx, publishOptions)), warnings: ctx.plan.warnings };
 };
 
 // ── Draft (Explicit Resource Management) ─────────────────────────────
@@ -355,7 +360,7 @@ export const release = async (
         publish.skipped.unshift(...recovered.skipped);
     }
 
-    return { changelog, publish, version };
+    return { changelog, publish: { ...publish, warnings: [...(recovered?.warnings ?? []), ...ctx.plan.warnings] }, version };
 };
 
 // ── Class form (matches nx's ReleaseClient) ────────────────────────

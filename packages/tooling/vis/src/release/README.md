@@ -348,6 +348,8 @@ const changelogResult = await releaseChangelog({ cwd: "/path/to/repo" });
 const publishResult = await releasePublish({ cwd: "/path/to/repo", tag: "alpha" });
 ```
 
+`publishResult.warnings` (and `release().publish.warnings`) carries the non-fatal problems a CLI run prints: plan warnings plus forge-release, `successWalk` and `notifications` failures, including those of a `missing` recovery.
+
 > `releaseSnapshot` is exposed via the CLI (`vis release ci snapshot`); the
 > programmatic API export is not implemented yet (lands in M8).
 

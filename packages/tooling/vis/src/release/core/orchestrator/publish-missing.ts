@@ -200,6 +200,8 @@ export interface PublishMissingOptions extends PublishContextOptions {
 export interface PublishMissingResult extends PublishContextResult {
     /** Versions found missing (published, or tagged when already on the registry). */
     missing: MissingRelease[];
+    /** Post-publish warnings (forge releases, success walk, notifications) for the recovered versions. */
+    warnings: string[];
 }
 
 /**
@@ -217,7 +219,15 @@ export interface PublishMissingResult extends PublishContextResult {
 export const publishMissing = async (context: OrchestratorContext, options: PublishMissingOptions = {}): Promise<PublishMissingResult> => {
     const runner = createShellRunner();
     const found = await findMissingReleases(context, { projects: options.projects, registryProbe: options.registryProbe, runner });
-    const result: PublishMissingResult = { failed: [], missing: found.missing, published: [], skipped: [...found.skipped], tags: [], tagsPushed: false };
+    const result: PublishMissingResult = {
+        failed: [],
+        missing: found.missing,
+        published: [],
+        skipped: [...found.skipped],
+        tags: [],
+        tagsPushed: false,
+        warnings: [],
+    };
 
     // The next `buildContext` in this process must read the tags created below.
     if (found.missing.length > 0) {
@@ -243,7 +253,9 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
             };
         });
         const published = await publishContext(
-            { ...context, plan: { consumedChangeFiles: [], releases, warnings: [] } },
+            // The post-publish steps report through `plan.warnings`; this plan is
+            // thrown away, so they are handed back on the result.
+            { ...context, plan: { consumedChangeFiles: [], releases, warnings: result.warnings } },
             { ...options, tagTargets: new Map(toPublish.map((entry) => [entry.name, entry.target])) },
         );
 
