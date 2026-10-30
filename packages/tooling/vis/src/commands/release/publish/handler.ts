@@ -2,6 +2,7 @@ import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 
 import { buildContext, publishContext, publishMissing } from "../../../release/core/orchestrator";
 import { VisReleaseError } from "../../../release/errors";
+import { reportPublishResult, reportWarnings } from "../publish-report";
 import type { ReleasePublishOptions } from "./index";
 
 const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, ReleasePublishOptions>): Promise<void> => {
@@ -82,12 +83,14 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
     }
 
     let result;
+    let { warnings } = ctx.plan;
 
     try {
         const publishOptions = { dryRun, noPush: !options.push, otp: options.otp, resume: options.resume === true, tag };
 
         if (missing) {
             result = await publishMissing(ctx, { ...publishOptions, projects });
+            ({ warnings } = result);
 
             for (const entry of result.missing) {
                 const action = entry.onRegistry ? "tag" : "publish";
@@ -104,6 +107,9 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
             result = await publishContext(ctx, publishOptions);
         }
     } catch (error) {
+        // Whatever the publish reported before it threw is often the cause.
+        reportWarnings(logger, warnings);
+
         if (error instanceof VisReleaseError && error.code === "STAGE_PENDING") {
             logger.error(error.message);
 
@@ -124,32 +130,8 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
     }
 
     logger.info("");
-
-    for (const item of result.published) {
-        logger.info(`  [published] ${item.name}@${item.version}`);
-    }
-
-    for (const item of result.skipped) {
-        // stage-rejected / stage-timeout are surfaced as warnings (not info)
-        // so reviewers spot them in CI tails. They're still skipped, not
-        // failed — the release pipeline exits 0.
-        if (item.reason.startsWith("stage-")) {
-            logger.warn(`  [stage]     ${item.name} (${item.reason} — re-run \`vis release publish\` once approved)`);
-        } else {
-            logger.info(`  [skipped]   ${item.name} (${item.reason})`);
-        }
-    }
-
-    for (const item of result.failed) {
-        logger.error(`  [failed]    ${item.name}: ${item.reason}`);
-    }
-
-    logger.info("");
-    logger.info(`Published: ${result.published.length} | Skipped: ${result.skipped.length} | Failed: ${result.failed.length}`);
-
-    if (result.tags.length > 0) {
-        logger.info(`Tags created: ${result.tags.length}${result.tagsPushed ? " (pushed)" : " (NOT pushed — re-run with --resume to retry)"}`);
-    }
+    reportPublishResult(logger, result, tag ?? "latest");
+    reportWarnings(logger, warnings);
 
     // Exit-code semantics per RFC §19.1:
     //   0 — every package published

@@ -198,8 +198,12 @@ export interface PublishMissingOptions extends PublishContextOptions {
 }
 
 export interface PublishMissingResult extends PublishContextResult {
+    /** The `missing` entries that were published, or tagged and (unless `noPush`) pushed; a failed one is in `failed` instead. */
+    completed: MissingRelease[];
     /** Versions found missing (published, or tagged when already on the registry). */
     missing: MissingRelease[];
+    /** The context's plan warnings, then the post-publish ones (forge releases, success walk, notifications) for the recovered versions. */
+    warnings: string[];
 }
 
 /**
@@ -217,7 +221,16 @@ export interface PublishMissingResult extends PublishContextResult {
 export const publishMissing = async (context: OrchestratorContext, options: PublishMissingOptions = {}): Promise<PublishMissingResult> => {
     const runner = createShellRunner();
     const found = await findMissingReleases(context, { projects: options.projects, registryProbe: options.registryProbe, runner });
-    const result: PublishMissingResult = { failed: [], missing: found.missing, published: [], skipped: [...found.skipped], tags: [], tagsPushed: false };
+    const result: PublishMissingResult = {
+        completed: [],
+        failed: [],
+        missing: found.missing,
+        published: [],
+        skipped: [...found.skipped],
+        tags: [],
+        tagsPushed: false,
+        warnings: [...context.plan.warnings],
+    };
 
     // The next `buildContext` in this process must read the tags created below.
     if (found.missing.length > 0) {
@@ -243,12 +256,15 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
             };
         });
         const published = await publishContext(
-            { ...context, plan: { consumedChangeFiles: [], releases, warnings: [] } },
+            // The post-publish steps report through `plan.warnings`; this plan is
+            // thrown away, so they are handed back on the result.
+            { ...context, plan: { consumedChangeFiles: [], releases, warnings: result.warnings } },
             { ...options, tagTargets: new Map(toPublish.map((entry) => [entry.name, entry.target])) },
         );
 
         result.failed.push(...published.failed);
         result.published.push(...published.published);
+        result.completed.push(...toPublish.filter((entry) => published.published.some((item) => item.name === entry.name && item.version === entry.version)));
         result.skipped.push(...published.skipped);
         result.tags.push(...published.tags);
         result.tagsPushed = published.tagsPushed;
@@ -259,6 +275,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
     }
 
     const tagged: string[] = [];
+    const taggedEntries: MissingRelease[] = [];
 
     for (const entry of tagOnly) {
         const tag = releaseTagFor(context, entry.name, entry.version);
@@ -269,6 +286,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
                 target: entry.target,
             });
             tagged.push(tag);
+            taggedEntries.push(entry);
             result.skipped.push({ name: entry.name, reason: `already-published: tagged ${tag}` });
         } catch (error) {
             result.failed.push({ name: tag, reason: `tag-creation: ${(error as Error).message}` });
@@ -285,6 +303,10 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
             result.tagsPushed = false;
             result.failed.push({ name: "_pushTags", reason: `git push --tags failed: ${(error as Error).message}. Retry with: git push --tags` });
         }
+    }
+
+    if (options.noPush || result.tagsPushed) {
+        result.completed.push(...taggedEntries);
     }
 
     return result;

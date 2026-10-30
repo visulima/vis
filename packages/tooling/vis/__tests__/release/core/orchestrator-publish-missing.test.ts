@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RegistryProbe } from "../../../src/release/core/orchestrator";
 import { buildContext, findMissingReleases, publishMissing } from "../../../src/release/core/orchestrator";
@@ -13,6 +13,25 @@ import { createShellRunner } from "../../../src/release/core/shell-runner";
 import type { PublishContext } from "../../../src/release/core/version-actions/interface";
 import { VersionActions } from "../../../src/release/core/version-actions/interface";
 import { __resetLookupMemoForTests, resolveLastReleaseRef } from "../../../src/release/core/version-resolver";
+
+// What the post-publish steps (success walk, notifications, forge releases)
+// would report: they push onto the plan the publish was handed.
+const postPublishWarnings: string[] = [];
+
+vi.mock(import("../../../src/release/core/orchestrator/publish"), async (importOriginal) => {
+    const actual = await importOriginal();
+
+    return {
+        ...actual,
+        publishContext: async (...args: Parameters<typeof actual.publishContext>) => {
+            const result = await actual.publishContext(...args);
+
+            args[0].plan.warnings.push(...postPublishWarnings);
+
+            return result;
+        },
+    };
+});
 
 const writeJson = (path: string, value: unknown): void => {
     writeFileSync(path, `${JSON.stringify(value, null, 4)}\n`);
@@ -72,11 +91,19 @@ class StubVersionActions extends VersionActions {
 
     public readonly types: string[] = [];
 
+    public constructor(private readonly failWith?: string) {
+        super();
+    }
+
     public async readPublishedVersion(): Promise<string | undefined> {
         return undefined;
     }
 
     public async publish(context: PublishContext): Promise<PublishResult> {
+        if (this.failWith !== undefined) {
+            throw new Error(this.failWith);
+        }
+
         this.calls.push(`${context.pkg.name}@${context.release.newVersion}@${context.tag ?? "latest"}`);
         this.types.push(context.release.type);
 
@@ -96,6 +123,7 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
     });
 
     afterEach(async () => {
+        postPublishWarnings.length = 0;
         await rm(cwd, { force: true, recursive: true });
     });
 
@@ -153,6 +181,53 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
                 return { name, newVersion, oldVersion };
             }),
         ).toStrictEqual([{ name: "@scope/b", newVersion: "1.1.1", oldVersion: "1.1.0" }]);
+    });
+
+    it("returns the plan warnings, then the post-publish warnings of the recovered versions", async () => {
+        expect.hasAssertions();
+
+        postPublishWarnings.push("successWalk: could not comment on #42: HTTP 403");
+
+        const ctx = await buildContext({ cwd });
+
+        ctx.plan.warnings.push("catalog: planning warning");
+
+        const result = await publishMissing(ctx, { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
+
+        expect(result.warnings).toStrictEqual([...ctx.plan.warnings, "successWalk: could not comment on #42: HTTP 403"]);
+        expect(result.warnings).toContain("catalog: planning warning");
+        // A copy: the recovery's post-publish warnings stay out of the caller's plan.
+        expect(ctx.plan.warnings).not.toContain("successWalk: could not comment on #42: HTTP 403");
+    });
+
+    it("lists a published version as completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
+
+        expect(result.completed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+    });
+
+    it("lists a version that failed to publish as failed, not completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), {
+            noPush: true,
+            publishActionsOverride: new StubVersionActions("E403 Forbidden"),
+            registryProbe: notOnRegistry,
+        });
+
+        expect(result.missing.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+        expect(result.completed).toStrictEqual([]);
+        expect(result.failed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+    });
+
+    it("lists a tagged version as completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), { noPush: true, registryProbe: async () => true });
+
+        expect(result.completed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
     });
 
     it("only tags a version the registry already has", async () => {

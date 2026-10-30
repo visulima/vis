@@ -48,6 +48,7 @@ import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
 import { mergeProtectedContent } from "../../../../release/core/version-pr-merge";
+import { logError, logWarning, reportPublishResult, reportWarnings } from "../../publish-report";
 import type { ReleaseCiReleaseOptions } from "./index";
 
 /**
@@ -113,13 +114,15 @@ const findOrCreateVersionPr = async (
                             mergedBody = mergeProtectedContent(viewResult.stdout.replace(/\n$/, ""), body);
                         } catch (error) {
                             skipBodyUpdate = true;
-                            logger.warn(
+                            logWarning(
+                                logger,
                                 `Skipping PR body update for #${parsed[0].number} — protected-content blocks are unbalanced, refusing to overwrite operator content. Please clean up markers manually. Cause: ${(error as Error).message}`,
                             );
                         }
                     }
                 } catch (error) {
-                    logger.warn(
+                    logWarning(
+                        logger,
                         `Could not read existing body of PR #${parsed[0].number} for protected-edit merge: ${(error as Error).message}. Proceeding with the unmerged body.`,
                     );
                 }
@@ -200,7 +203,15 @@ const isGeneratedChangeFile = (path: string, changesDirRelative: string): boolea
     return path.startsWith(prefix) && GENERATED_CHANGE_FILE_NAME.test(path.slice(prefix.length));
 };
 
-const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, ReleaseCiReleaseOptions>): Promise<void> => {
+/** What the run has to report on exit, whichever way it exits. */
+interface RunWarnings {
+    /** The current wave's plan warnings; set once the run is past `--print-config`. */
+    plan?: () => string[];
+    /** Post-publish warnings of the `--publish-missing` recovery, whose plan is not the wave's. */
+    recovery: string[];
+}
+
+const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, ReleaseCiReleaseOptions>, warnings: RunWarnings): Promise<void> => {
     const cwd = workspaceRoot ?? process.cwd();
     const runner = createShellRunner();
 
@@ -211,6 +222,9 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     if (printConfigIfRequested(options, ctx, logger)) {
         return;
     }
+
+    // A getter, not the array: `ctx` is rebuilt after recovery and `--generate`.
+    warnings.plan = () => ctx.plan.warnings;
 
     const changesDirectory = ctx.config.changesDir ?? DEFAULT_CHANGES_DIR;
     const generating = options.generate === true;
@@ -237,14 +251,14 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         const preview = unexpectedPaths.slice(0, 5).join(", ");
         const more = unexpectedPaths.length > 5 ? ` (+${unexpectedPaths.length - 5} more)` : "";
 
-        logger.warn(`Working tree has uncommitted changes. CI mode requires a clean tree. Offending paths: ${preview}${more}`);
+        logWarning(logger, `Working tree has uncommitted changes. CI mode requires a clean tree. Offending paths: ${preview}${more}`);
         process.exitCode = 1;
 
         return;
     }
 
     if (leftoverGenerated.length > 0) {
-        logger.warn(`Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
+        logWarning(logger, `Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
     }
 
     const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
@@ -277,9 +291,17 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
         try {
             // Always safe to rebase: no tag points at these commits.
-            await pushBranchWithRebase({ cwd, runner }, currentBranch, { author: ctx.config.gitUser, retries: pushRetries ?? 3, source: base });
+            const rebases = await pushBranchWithRebase({ cwd, runner }, currentBranch, {
+                author: ctx.config.gitUser,
+                retries: pushRetries ?? 3,
+                source: base,
+            });
+
+            if (rebases > 0) {
+                logger.info(`${currentBranch} moved during the release; pushed the bookkeeping commits after ${rebases} rebase(s).`);
+            }
         } catch (error) {
-            logger.warn(`Could not push the release bookkeeping commits (cross-runner state): ${(error as Error).message}`);
+            logWarning(logger, `Could not push the release bookkeeping commits (cross-runner state): ${(error as Error).message}`);
         }
     };
 
@@ -293,19 +315,26 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     if (mode === "auto-publish" && options.publishMissing) {
         const recovered = await publishMissing(ctx, { noBranchPush: true, tag: ctx.channel?.tag });
 
-        for (const entry of recovered.missing) {
+        // Only what actually landed: a failed entry is reported with the failures below.
+        for (const entry of recovered.completed) {
             logger.info(
-                `Recovered ${entry.name}@${entry.version} from release commit ${entry.commit.slice(0, 7)} (${entry.onRegistry ? "tagged" : "published"}).`,
+                `Recovered ${entry.name}@${entry.version} from release commit ${entry.commit.slice(0, 7)} (${entry.onRegistry ? "tagged" : `published to dist-tag ${ctx.channel?.tag ?? "latest"}`}).`,
             );
         }
 
-        for (const entry of recovered.skipped.filter((item) => item.reason.includes("untagged"))) {
-            logger.warn(`Not recovering ${entry.name}: ${entry.reason}.`);
+        for (const entry of recovered.skipped) {
+            if (entry.reason.includes("untagged")) {
+                logWarning(logger, `Not recovering ${entry.name}: ${entry.reason}.`);
+            } else {
+                logger.info(`Recovery skipped ${entry.name}: ${entry.reason}.`);
+            }
         }
 
         for (const entry of recovered.failed) {
-            logger.error(`Recovering ${entry.name} failed: ${entry.reason}`);
+            logError(logger, `Recovering ${entry.name} failed: ${entry.reason}`);
         }
+
+        warnings.recovery.push(...recovered.warnings);
 
         if (recovered.failed.length > 0) {
             logger.error("Fix the failed recovery above before a new wave is released (or pass --no-publish-missing).");
@@ -349,7 +378,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
         }
 
         for (const warning of result.warnings) {
-            logger.warn(warning);
+            logWarning(logger, warning);
         }
 
         if (result.status === "failed") {
@@ -377,7 +406,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
                         }),
                     );
                 } catch {
-                    logger.warn(`Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
+                    logWarning(logger, `Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
                 }
 
                 process.exitCode = 1;
@@ -473,7 +502,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
             tag: ctx.channel?.tag,
         });
 
-        logger.info(`Published: ${publishResult.published.length} | Skipped: ${publishResult.skipped.length} | Failed: ${publishResult.failed.length}`);
+        reportPublishResult(logger, publishResult, ctx.channel?.tag ?? "latest");
 
         process.exitCode = publishResult.failed.length > 0 ? 2 : 0;
         await flushBookkeeping(versionCommit);
@@ -499,7 +528,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
         const publishResult = await publishContext(ctx, { resume: resumeWave, tag: ctx.channel?.tag });
 
-        logger.info(`Published: ${publishResult.published.length} | Skipped: ${publishResult.skipped.length} | Failed: ${publishResult.failed.length}`);
+        reportPublishResult(logger, publishResult, ctx.channel?.tag ?? "latest");
 
         process.exitCode = publishResult.failed.length > 0 ? 2 : 0;
 
@@ -534,7 +563,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     const stageList = [...applied.changedFiles, ...applied.deletedFiles];
 
     if (stageList.length === 0) {
-        logger.warn("Apply produced no file changes. Aborting version PR.");
+        logWarning(logger, "Apply produced no file changes. Aborting version PR.");
 
         return;
     }
@@ -585,7 +614,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
             if (enable.exitCode === 0) {
                 logger.info(`Auto-merge enabled (${method}).`);
             } else {
-                logger.warn(`Could not enable auto-merge on PR #${pr.number}: ${enable.stderr.trim() || `exit ${enable.exitCode}`}`);
+                logWarning(logger, `Could not enable auto-merge on PR #${pr.number}: ${enable.stderr.trim() || `exit ${enable.exitCode}`}`);
             }
         }
     } else {
@@ -601,6 +630,18 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
     // NB: this path is unreachable here — the publish-then-tag-then-label
     // transition happens in publishContext (orchestrator) since that's
     // where tagging completes. Labels for the merge PR are handled there.
+};
+
+const execute = async (toolbox: Toolbox<Console, ReleaseCiReleaseOptions>): Promise<void> => {
+    const warnings: RunWarnings = { recovery: [] };
+
+    // Every exit path, failures included: the warnings (success-walk comments,
+    // notifications, forge releases, extra files) are often why the run failed.
+    try {
+        await runRelease(toolbox, warnings);
+    } finally {
+        reportWarnings(toolbox.logger, [...warnings.recovery, ...(warnings.plan?.() ?? [])]);
+    }
 };
 
 export default execute as CommandExecute<Toolbox>;

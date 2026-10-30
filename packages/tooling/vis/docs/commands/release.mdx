@@ -747,6 +747,25 @@ vis release ci release --auto-publish --generate
 
 On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**, and only pushes the tags once the publish is done. If the push is rejected, the run stops before publishing the new wave (versions recovered in the first step stay published). A package with an earlier release tag that then fails to publish stays committed but untagged, and the next run's recovery publishes it; a failed first release is not recovered (see above).
 
+### Output
+
+The run names every package it touched, not only the counts, so a failed publish or PR comment is visible in the CI log without `--verbose`:
+
+```text
+Recovered @acme/b@1.1.0 from release commit 3f2a9c1 (published to dist-tag alpha).
+Recovery skipped @acme/c: already-published: tagged @acme/c@1.1.0.
+  [published] @acme/a@1.2.0-alpha.0 (dist-tag alpha)
+  [skipped]   @acme/d (already-published)
+  [failed]    @acme/e: npm publish exited 1: E403 Forbidden
+
+Published: 1 | Skipped: 1 | Failed: 1
+Tags created: 1 (pushed)
+1 warning(s):
+  - successWalk: could not comment on #42: HTTP 403
+```
+
+Failures go to stderr as errors, and recovery skips that need action (an untagged version vis will not touch) as warnings. The warnings list collects everything that did not fail the run: forge releases, `successWalk` comments and labels, `notifications`, extra version files, resolver fallbacks. It is printed on every exit path, so it is also there when the run fails. On GitHub Actions each failure and warning is also written as an `::error::` / `::warning::` annotation, so it shows on the run summary even when the run passes (a failed `successWalk` comment does not fail it). The exit code is unchanged: `2` when a package failed. `vis release publish` prints the same lines.
+
 ### When the branch moves during the run: `tagTarget: "source"`
 
 By default the release tags point at the version commit, so a rejected push is final: rebasing that commit onto the moved branch would put the commits that moved it below the tags, and the next `--generate` range (which starts at the newest tag) would skip them for good. The push that moved the branch has to start its own run, which a busy branch may never let finish.
