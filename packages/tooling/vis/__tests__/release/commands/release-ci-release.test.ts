@@ -76,6 +76,7 @@ const pushBranchMock = vi.fn(async (..._args: unknown[]) => {
 type Entry = { name: string; reason: string };
 
 const missingResult = {
+    completed: [] as unknown[],
     failed: [] as Entry[],
     missing: [] as unknown[],
     published: [],
@@ -145,7 +146,9 @@ describe("vis release ci release — C7 publish idempotency", () => {
         cwd = undefined;
         publishOptionsCaptured.length = 0;
         callOrder.length = 0;
+        missingResult.completed = [];
         missingResult.failed = [];
+        missingResult.missing = [];
         missingResult.skipped = [];
         missingResult.warnings = [];
         publishResult.failed = [];
@@ -355,6 +358,26 @@ describe("vis release ci release — C7 publish idempotency", () => {
         expect(log.warn.filter((line) => line.endsWith("warning(s):"))).toHaveLength(1);
         expect(log.warn).toContain("  - successWalk: could not comment on #7: HTTP 502");
         expect(log.warn).toContain("  - successWalk: could not comment on #42: HTTP 403");
+    });
+
+    it("reports only the completed recoveries as recovered", async () => {
+        expect.hasAssertions();
+
+        const entry = (name: string) => {
+            return { commit: "abc1234def", name, onRegistry: false, previousVersion: "1.0.0", target: "abc1234def", version: "1.1.0" };
+        };
+
+        missingResult.missing = [entry("@scope/a"), entry("@scope/b")];
+        missingResult.completed = [entry("@scope/a")];
+        missingResult.failed = [{ name: "@scope/b", reason: "E403" }];
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        expect(log.info).toContain("Recovered @scope/a@1.1.0 from release commit abc1234 (published to dist-tag alpha).");
+        expect(log.info.some((line) => line.startsWith("Recovered @scope/b"))).toBe(false);
+        expect(log.error).toContain("Recovering @scope/b failed: E403");
     });
 
     it("prints the recovery's warnings when the recovery fails", async () => {

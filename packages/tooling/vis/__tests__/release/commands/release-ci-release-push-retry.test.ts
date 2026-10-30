@@ -61,7 +61,7 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
             // Stands in for a recovery wave: it leaves a bookkeeping commit behind.
             hooks.recovery?.(context.cwd);
 
-            return { failed: [], missing: [], published: [], skipped: [], tags: [], tagsPushed: false, warnings: [] };
+            return { completed: [], failed: [], missing: [], published: [], skipped: [], tags: [], tagsPushed: false, warnings: [] };
         }),
     };
 });

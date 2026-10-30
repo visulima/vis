@@ -91,11 +91,19 @@ class StubVersionActions extends VersionActions {
 
     public readonly types: string[] = [];
 
+    public constructor(private readonly failWith?: string) {
+        super();
+    }
+
     public async readPublishedVersion(): Promise<string | undefined> {
         return undefined;
     }
 
     public async publish(context: PublishContext): Promise<PublishResult> {
+        if (this.failWith !== undefined) {
+            throw new Error(this.failWith);
+        }
+
         this.calls.push(`${context.pkg.name}@${context.release.newVersion}@${context.tag ?? "latest"}`);
         this.types.push(context.release.type);
 
@@ -190,6 +198,36 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         expect(result.warnings).toContain("catalog: planning warning");
         // A copy: the recovery's post-publish warnings stay out of the caller's plan.
         expect(ctx.plan.warnings).not.toContain("successWalk: could not comment on #42: HTTP 403");
+    });
+
+    it("lists a published version as completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
+
+        expect(result.completed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+    });
+
+    it("lists a version that failed to publish as failed, not completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), {
+            noPush: true,
+            publishActionsOverride: new StubVersionActions("E403 Forbidden"),
+            registryProbe: notOnRegistry,
+        });
+
+        expect(result.missing.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+        expect(result.completed).toStrictEqual([]);
+        expect(result.failed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
+    });
+
+    it("lists a tagged version as completed", async () => {
+        expect.hasAssertions();
+
+        const result = await publishMissing(await buildContext({ cwd }), { noPush: true, registryProbe: async () => true });
+
+        expect(result.completed.map((entry) => entry.name)).toStrictEqual(["@scope/b"]);
     });
 
     it("only tags a version the registry already has", async () => {

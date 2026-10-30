@@ -315,7 +315,8 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
     if (mode === "auto-publish" && options.publishMissing) {
         const recovered = await publishMissing(ctx, { noBranchPush: true, tag: ctx.channel?.tag });
 
-        for (const entry of recovered.missing) {
+        // Only what actually landed: a failed entry is reported with the failures below.
+        for (const entry of recovered.completed) {
             logger.info(
                 `Recovered ${entry.name}@${entry.version} from release commit ${entry.commit.slice(0, 7)} (${entry.onRegistry ? "tagged" : `published to dist-tag ${ctx.channel?.tag ?? "latest"}`}).`,
             );

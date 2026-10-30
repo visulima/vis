@@ -15,6 +15,7 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
         }),
         publishMissing: vi.fn(async () => {
             return {
+                completed: [],
                 failed: [],
                 missing: [],
                 published: [],
