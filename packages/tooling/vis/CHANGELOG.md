@@ -1,3 +1,9 @@
+## @visulima/vis [6.4.1](https://github.com/visulima/vis/compare/@visulima/vis@6.4.0...@visulima/vis@6.4.1) (2026-10-30)
+
+### Bug Fixes
+
+* **vis:** print per-package results and warnings in release ci ([#72](https://github.com/visulima/vis/issues/72)) ([7e017f7](https://github.com/visulima/vis/commit/7e017f72be56f4ceb7dfc9d3e35460f5d2b3ce5c))
+
 ## @visulima/vis [6.4.0](https://github.com/visulima/vis/compare/@visulima/vis@6.3.0...@visulima/vis@6.4.0) (2026-10-29)
 
 ### Features
