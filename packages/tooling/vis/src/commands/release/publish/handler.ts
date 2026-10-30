@@ -90,7 +90,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
 
         if (missing) {
             result = await publishMissing(ctx, { ...publishOptions, projects });
-            warnings = [...warnings, ...result.warnings];
+            ({ warnings } = result);
 
             for (const entry of result.missing) {
                 const action = entry.onRegistry ? "tag" : "publish";
@@ -107,6 +107,9 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
             result = await publishContext(ctx, publishOptions);
         }
     } catch (error) {
+        // Whatever the publish reported before it threw is often the cause.
+        reportWarnings(logger, warnings);
+
         if (error instanceof VisReleaseError && error.code === "STAGE_PENDING") {
             logger.error(error.message);
 

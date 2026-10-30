@@ -12,6 +12,18 @@ export const annotate = (level: "error" | "warning", message: string): void => {
     }
 };
 
+/** `logger.warn`, annotated on GitHub Actions. */
+export const logWarning = (logger: Console, message: string): void => {
+    logger.warn(message);
+    annotate("warning", message);
+};
+
+/** `logger.error`, annotated on GitHub Actions. */
+export const logError = (logger: Console, message: string): void => {
+    logger.error(message);
+    annotate("error", message);
+};
+
 /**
  * One line per package of a publish wave, then the counts. Shared by
  * `vis release publish` and `vis release ci release` so a CI log names what
@@ -27,6 +39,7 @@ export const reportPublishResult = (logger: Console, result: PublishContextResul
         // spot them in CI tails. They're still skipped, not failed.
         if (item.reason.startsWith("stage-")) {
             logger.warn(`  [stage]     ${item.name} (${item.reason} — re-run \`vis release publish\` once approved)`);
+            annotate("warning", `${item.name}: ${item.reason} — re-run \`vis release publish\` once approved`);
         } else {
             logger.info(`  [skipped]   ${item.name} (${item.reason})`);
         }
@@ -46,7 +59,10 @@ export const reportPublishResult = (logger: Console, result: PublishContextResul
     }
 };
 
-export const reportWarnings = (logger: Console, warnings: ReadonlyArray<string>): void => {
+/** Deduplicated: a recovery's warnings start with the plan warnings its caller also reports. */
+export const reportWarnings = (logger: Console, all: ReadonlyArray<string>): void => {
+    const warnings = [...new Set(all)];
+
     if (warnings.length === 0) {
         return;
     }

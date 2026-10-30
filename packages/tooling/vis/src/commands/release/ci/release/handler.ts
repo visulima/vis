@@ -48,7 +48,7 @@ import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
 import { mergeProtectedContent } from "../../../../release/core/version-pr-merge";
-import { annotate, reportPublishResult, reportWarnings } from "../../publish-report";
+import { logError, logWarning, reportPublishResult, reportWarnings } from "../../publish-report";
 import type { ReleaseCiReleaseOptions } from "./index";
 
 /**
@@ -114,13 +114,15 @@ const findOrCreateVersionPr = async (
                             mergedBody = mergeProtectedContent(viewResult.stdout.replace(/\n$/, ""), body);
                         } catch (error) {
                             skipBodyUpdate = true;
-                            logger.warn(
+                            logWarning(
+                                logger,
                                 `Skipping PR body update for #${parsed[0].number} — protected-content blocks are unbalanced, refusing to overwrite operator content. Please clean up markers manually. Cause: ${(error as Error).message}`,
                             );
                         }
                     }
                 } catch (error) {
-                    logger.warn(
+                    logWarning(
+                        logger,
                         `Could not read existing body of PR #${parsed[0].number} for protected-edit merge: ${(error as Error).message}. Proceeding with the unmerged body.`,
                     );
                 }
@@ -249,14 +251,14 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
         const preview = unexpectedPaths.slice(0, 5).join(", ");
         const more = unexpectedPaths.length > 5 ? ` (+${unexpectedPaths.length - 5} more)` : "";
 
-        logger.warn(`Working tree has uncommitted changes. CI mode requires a clean tree. Offending paths: ${preview}${more}`);
+        logWarning(logger, `Working tree has uncommitted changes. CI mode requires a clean tree. Offending paths: ${preview}${more}`);
         process.exitCode = 1;
 
         return;
     }
 
     if (leftoverGenerated.length > 0) {
-        logger.warn(`Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
+        logWarning(logger, `Keeping ${leftoverGenerated.length} change file(s) left behind by an interrupted --generate run: ${leftoverGenerated.join(", ")}.`);
     }
 
     const mode: "version-pr" | "auto-publish" = options.autoPublish === true ? "auto-publish" : (ctx.channel?.mode ?? "auto-publish");
@@ -299,7 +301,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
                 logger.info(`${currentBranch} moved during the release; pushed the bookkeeping commits after ${rebases} rebase(s).`);
             }
         } catch (error) {
-            logger.warn(`Could not push the release bookkeeping commits (cross-runner state): ${(error as Error).message}`);
+            logWarning(logger, `Could not push the release bookkeeping commits (cross-runner state): ${(error as Error).message}`);
         }
     };
 
@@ -321,16 +323,14 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
 
         for (const entry of recovered.skipped) {
             if (entry.reason.includes("untagged")) {
-                logger.warn(`Not recovering ${entry.name}: ${entry.reason}.`);
-                annotate("warning", `Not recovering ${entry.name}: ${entry.reason}.`);
+                logWarning(logger, `Not recovering ${entry.name}: ${entry.reason}.`);
             } else {
                 logger.info(`Recovery skipped ${entry.name}: ${entry.reason}.`);
             }
         }
 
         for (const entry of recovered.failed) {
-            logger.error(`Recovering ${entry.name} failed: ${entry.reason}`);
-            annotate("error", `Recovering ${entry.name} failed: ${entry.reason}`);
+            logError(logger, `Recovering ${entry.name} failed: ${entry.reason}`);
         }
 
         warnings.recovery.push(...recovered.warnings);
@@ -377,7 +377,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
         }
 
         for (const warning of result.warnings) {
-            logger.warn(warning);
+            logWarning(logger, warning);
         }
 
         if (result.status === "failed") {
@@ -405,7 +405,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
                         }),
                     );
                 } catch {
-                    logger.warn(`Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
+                    logWarning(logger, `Could not clean up ${relativePaths.join(", ")} after the staging failure — remove them before the next run.`);
                 }
 
                 process.exitCode = 1;
@@ -562,7 +562,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
     const stageList = [...applied.changedFiles, ...applied.deletedFiles];
 
     if (stageList.length === 0) {
-        logger.warn("Apply produced no file changes. Aborting version PR.");
+        logWarning(logger, "Apply produced no file changes. Aborting version PR.");
 
         return;
     }
@@ -613,7 +613,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
             if (enable.exitCode === 0) {
                 logger.info(`Auto-merge enabled (${method}).`);
             } else {
-                logger.warn(`Could not enable auto-merge on PR #${pr.number}: ${enable.stderr.trim() || `exit ${enable.exitCode}`}`);
+                logWarning(logger, `Could not enable auto-merge on PR #${pr.number}: ${enable.stderr.trim() || `exit ${enable.exitCode}`}`);
             }
         }
     } else {

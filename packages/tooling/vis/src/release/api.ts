@@ -181,9 +181,7 @@ export const releasePublish = async (options: PublishOptions = {}): Promise<Publ
     const publishOptions = { dryRun: options.dryRun, otp: options.otp, tag: options.tag };
 
     if (options.missing) {
-        const result = await publishMissing(ctx, { ...publishOptions, projects: options.projects });
-
-        return { ...result, warnings: [...ctx.plan.warnings, ...result.warnings] };
+        return await publishMissing(ctx, { ...publishOptions, projects: options.projects });
     }
 
     return { ...(await publishContext(ctx, publishOptions)), warnings: ctx.plan.warnings };
@@ -362,7 +360,7 @@ export const release = async (
         publish.skipped.unshift(...recovered.skipped);
     }
 
-    return { changelog, publish: { ...publish, warnings: [...(recovered?.warnings ?? []), ...ctx.plan.warnings] }, version };
+    return { changelog, publish: { ...publish, warnings: [...new Set([...(recovered?.warnings ?? []), ...ctx.plan.warnings])] }, version };
 };
 
 // ── Class form (matches nx's ReleaseClient) ────────────────────────

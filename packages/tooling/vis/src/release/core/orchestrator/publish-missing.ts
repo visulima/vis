@@ -200,7 +200,7 @@ export interface PublishMissingOptions extends PublishContextOptions {
 export interface PublishMissingResult extends PublishContextResult {
     /** Versions found missing (published, or tagged when already on the registry). */
     missing: MissingRelease[];
-    /** Post-publish warnings (forge releases, success walk, notifications) for the recovered versions. */
+    /** The context's plan warnings, then the post-publish ones (forge releases, success walk, notifications) for the recovered versions. */
     warnings: string[];
 }
 
@@ -226,7 +226,7 @@ export const publishMissing = async (context: OrchestratorContext, options: Publ
         skipped: [...found.skipped],
         tags: [],
         tagsPushed: false,
-        warnings: [],
+        warnings: [...context.plan.warnings],
     };
 
     // The next `buildContext` in this process must read the tags created below.

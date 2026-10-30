@@ -391,6 +391,39 @@ describe("vis release ci release — C7 publish idempotency", () => {
         expect(written).toContain("::warning::Not recovering @scope/a: 1.1.0 is untagged but the commit that set it could not be found.\n");
     });
 
+    it("annotates a stage skip on GitHub Actions", async () => {
+        expect.hasAssertions();
+
+        vi.stubEnv("GITHUB_ACTIONS", "true");
+        publishResult.skipped = [{ name: "@scope/b", reason: "stage-timeout" }];
+
+        const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        let written: string[];
+
+        try {
+            await runAutoPublish();
+        } finally {
+            // Read before restoring: mockRestore() clears the recorded calls.
+            written = write.mock.calls.map(([chunk]) => String(chunk));
+            write.mockRestore();
+        }
+
+        expect(written).toContain("::warning::@scope/b: stage-timeout — re-run `vis release publish` once approved\n");
+    });
+
+    it("prints a warning the recovery shares with the wave's plan once", async () => {
+        expect.hasAssertions();
+
+        missingResult.warnings = ["catalog: shared planning warning"];
+        publishWarnings.push("catalog: shared planning warning");
+
+        const log = captureLogger();
+
+        await runAutoPublish({}, log.logger);
+
+        expect(log.warn.filter((line) => line === "  - catalog: shared planning warning")).toHaveLength(1);
+    });
+
     it("auto-publish mode → annotates failures and warnings on GitHub Actions", async () => {
         expect.hasAssertions();
 

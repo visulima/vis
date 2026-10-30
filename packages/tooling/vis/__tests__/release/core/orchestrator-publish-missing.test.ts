@@ -175,15 +175,21 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         ).toStrictEqual([{ name: "@scope/b", newVersion: "1.1.1", oldVersion: "1.1.0" }]);
     });
 
-    it("returns the post-publish warnings of the recovered versions", async () => {
+    it("returns the plan warnings, then the post-publish warnings of the recovered versions", async () => {
         expect.hasAssertions();
 
         postPublishWarnings.push("successWalk: could not comment on #42: HTTP 403");
 
         const ctx = await buildContext({ cwd });
+
+        ctx.plan.warnings.push("catalog: planning warning");
+
         const result = await publishMissing(ctx, { noPush: true, publishActionsOverride: new StubVersionActions(), registryProbe: notOnRegistry });
 
-        expect(result.warnings).toStrictEqual(["successWalk: could not comment on #42: HTTP 403"]);
+        expect(result.warnings).toStrictEqual([...ctx.plan.warnings, "successWalk: could not comment on #42: HTTP 403"]);
+        expect(result.warnings).toContain("catalog: planning warning");
+        // A copy: the recovery's post-publish warnings stay out of the caller's plan.
+        expect(ctx.plan.warnings).not.toContain("successWalk: could not comment on #42: HTTP 403");
     });
 
     it("only tags a version the registry already has", async () => {
