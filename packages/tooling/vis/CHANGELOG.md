@@ -1,3 +1,9 @@
+## @visulima/vis [6.4.2](https://github.com/visulima/vis/compare/@visulima/vis@6.4.1...@visulima/vis@6.4.2) (2026-11-01)
+
+### Bug Fixes
+
+* **deps:** update dependency body-parser@<1.20.6 to ^1.20.9 [security] ([#73](https://github.com/visulima/vis/issues/73)) ([ace09b5](https://github.com/visulima/vis/commit/ace09b538e396c4f6c499751cd8160b327fe68ef))
+
 ## @visulima/vis [6.4.1](https://github.com/visulima/vis/compare/@visulima/vis@6.4.0...@visulima/vis@6.4.1) (2026-10-30)
 
 ### Bug Fixes
