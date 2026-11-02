@@ -364,18 +364,47 @@ export const resolveCurrentVersion = async (
     return { resolvedFrom: "git-tag", version: candidates[0]! };
 };
 
+// Promotion order of the prerelease channels (RFC §10.1, see semver.ts): a
+// release moves alpha → beta → rc, so a later channel's tags are never a base
+// for an earlier one.
+const PRERELEASE_LADDER = ["alpha", "beta", "rc"];
+
 /**
- * A stable version is on every channel. A prerelease is on the channel whose
- * identifier it carries; with no channel set, every version is a candidate.
+ * The channel identifier a prerelease version carries: its prerelease
+ * components without the trailing counter, so `1.0.0-alpha.canary.4` is
+ * `alpha.canary` and `1.0.0-42.3` is `42`. Stable versions have none.
+ */
+const channelOf = (version: string): string | undefined => {
+    const parts = [...(semver.prerelease(version) ?? [])];
+
+    if (parts.length > 0 && typeof parts.at(-1) === "number") {
+        parts.pop();
+    }
+
+    return parts.length > 0 ? parts.join(".") : undefined;
+};
+
+/**
+ * A stable version is on every channel. A prerelease is on its own channel,
+ * and on a later one only if that channel comes earlier on the ladder, so
+ * the beta line may start from an alpha base but alpha never starts from beta.
+ * Channels off the ladder match only their own tags.
  */
 const isOnChannel = (version: string, channel: string | undefined): boolean => {
     if (channel === undefined) {
         return true;
     }
 
-    const identifier = semver.prerelease(version)?.[0];
+    const identifier = channelOf(version);
 
-    return identifier === undefined || identifier === channel;
+    if (identifier === undefined || identifier === channel) {
+        return true;
+    }
+
+    const channelRank = PRERELEASE_LADDER.indexOf(channel);
+    const identifierRank = PRERELEASE_LADDER.indexOf(identifier);
+
+    return channelRank !== -1 && identifierRank !== -1 && identifierRank < channelRank;
 };
 
 /**
@@ -570,12 +599,12 @@ export const resolveLastReleaseRef = async (options: ResolveLastReleaseRefOption
 
     const rootFallback = async (reason: string): Promise<ResolveLastReleaseRefResult> => {
         const roots = await runner.run("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd, silent: true });
-        const lines
-            = roots.exitCode === 0
+        const lines =
+            roots.exitCode === 0
                 ? roots.stdout
-                    .split("\n")
-                    .map((line) => line.trim())
-                    .filter(Boolean)
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter(Boolean)
                 : [];
         // `rev-list` is newest-first, so the LAST entry is the oldest
         // root commit. Multi-root histories (grafted / subtree merges)

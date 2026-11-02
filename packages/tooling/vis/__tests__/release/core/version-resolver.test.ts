@@ -175,6 +175,69 @@ describe("resolveCurrentVersion — git-tag mode", () => {
         expect(result.version).toBe("1.0.0-alpha.5");
     });
 
+    it("a beta channel starts from an alpha base, so promotion does not publish below the alpha line", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "1.2.3");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.2.3", "@scope/a@1.3.0-alpha.5"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "beta",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.3.0-alpha.5");
+    });
+
+    it("matches a numeric channel identifier, which semver parses as a number", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "0.9.0");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.0.0-42.3", "@scope/a@0.9.0"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "42",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0-42.3");
+    });
+
+    it("matches a multi-part channel identifier and excludes a laddered channel that shares its first component", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "0.9.0");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.0.0-alpha.9", "@scope/a@1.0.0-alpha.canary.4", "@scope/a@0.9.0"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "alpha.canary",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0-alpha.canary.4");
+    });
+
     it("a channel still counts stable tags, which are on every channel", async () => {
         expect.hasAssertions();
 
