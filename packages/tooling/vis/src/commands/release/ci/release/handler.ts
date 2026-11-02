@@ -359,6 +359,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
         const shortSha = await getShortSha({ cwd, runner });
         const result = await runGenerate({
             allowFullHistory: options.allowFullHistory === true,
+            channelPrerelease: ctx.channelPrerelease,
             config: ctx.config,
             cwd,
             from: options.generateFrom,

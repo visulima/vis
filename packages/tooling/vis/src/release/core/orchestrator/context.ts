@@ -16,6 +16,8 @@ import { discoverReleasePackages } from "./context-packages";
 export interface OrchestratorContext {
     branch?: string;
     channel?: { mode: "auto-publish" | "version-pr"; prerelease?: string; tag: string };
+    /** Prerelease identifier the plan versions against, after pre-mode. */
+    channelPrerelease?: string;
     config: VisReleaseConfig;
     cwd: string;
     depGraph: DependencyGraph;
@@ -251,6 +253,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     return {
         branch,
         channel: resolved ? { mode: resolved.mode, prerelease: resolved.prerelease, tag: resolved.tag } : undefined,
+        channelPrerelease: effectivePrerelease,
         config,
         cwd,
         depGraph,

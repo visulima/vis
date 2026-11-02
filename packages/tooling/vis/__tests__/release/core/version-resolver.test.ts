@@ -238,6 +238,27 @@ describe("resolveCurrentVersion — git-tag mode", () => {
         expect(result.version).toBe("1.0.0-alpha.canary.4");
     });
 
+    it("a numeric-only prerelease is a channel of its own, so an alpha run does not take it as a base", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "1.0.0-alpha.5");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@2.0.0-42", "@scope/a@1.0.0-alpha.5"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "alpha",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0-alpha.5");
+    });
+
     it("a channel still counts stable tags, which are on every channel", async () => {
         expect.hasAssertions();
 

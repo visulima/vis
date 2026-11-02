@@ -35,6 +35,7 @@ const execute = async ({ fs, logger, options, workspaceRoot }: Toolbox<Console, 
 
     const result = await runGenerate({
         allowFullHistory: options.allowFullHistory === true,
+        channelPrerelease: ctx.channelPrerelease,
         config: ctx.config,
         cwd,
         dryRun: options.dryRun === true,

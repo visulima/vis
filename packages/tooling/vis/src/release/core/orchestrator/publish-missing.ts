@@ -111,6 +111,7 @@ export const findMissingReleases = async (
         }
 
         const tagged = await resolveCurrentVersion(pkg, "git-tag", context.depGraph, {
+            channelPrerelease: context.channelPrerelease,
             cwd: context.cwd,
             perPackageConfig: perPkg,
             pm: context.pm,

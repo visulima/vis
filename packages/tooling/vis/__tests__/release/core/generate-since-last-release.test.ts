@@ -280,3 +280,59 @@ describe("generate --since-last-release (#864)", () => {
         expect([...result.bumps.keys()]).toStrictEqual([]);
     });
 });
+
+describe("resolveLastReleaseRef — channel boundary", () => {
+    let cwd: string | undefined;
+
+    afterEach(async () => {
+        if (cwd) {
+            await rm(cwd, { force: true, recursive: true });
+            cwd = undefined;
+        }
+    });
+
+    it("an alpha run is not bounded by a beta tag between its commits", async () => {
+        expect.hasAssertions();
+
+        const fixture = setupFixture();
+
+        cwd = fixture.cwd;
+
+        commit(cwd, "a", "feat(a): first alpha", "one");
+        git(cwd, "tag", "@scope/a@1.1.0-alpha.1");
+        commit(cwd, "a", "fix(a): landed before the beta", "two");
+        git(cwd, "tag", "@scope/a@1.1.0-beta.0");
+        commit(cwd, "a", "fix(a): landed after the beta", "three");
+
+        const resolved = await resolveLastReleaseRef({
+            channelPrerelease: "alpha",
+            cwd: fixture.cwd,
+            packages: fixture.packages,
+            runner: createShellRunner(),
+        });
+
+        expect(resolved.tag).toBe("@scope/a@1.1.0-alpha.1");
+    });
+
+    it("without a channel the nearest tag wins, beta included", async () => {
+        expect.hasAssertions();
+
+        const fixture = setupFixture();
+
+        cwd = fixture.cwd;
+
+        commit(cwd, "a", "feat(a): first alpha", "one");
+        git(cwd, "tag", "@scope/a@1.1.0-alpha.1");
+        commit(cwd, "a", "fix(a): landed before the beta", "two");
+        git(cwd, "tag", "@scope/a@1.1.0-beta.0");
+        commit(cwd, "a", "fix(a): landed after the beta", "three");
+
+        const resolved = await resolveLastReleaseRef({
+            cwd: fixture.cwd,
+            packages: fixture.packages,
+            runner: createShellRunner(),
+        });
+
+        expect(resolved.tag).toBe("@scope/a@1.1.0-beta.0");
+    });
+});
