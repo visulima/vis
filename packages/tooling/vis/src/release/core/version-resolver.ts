@@ -38,12 +38,21 @@ import { resolveVersionActionsId } from "./workspace";
 export type CurrentVersionResolverMode = "disk" | "git-tag" | "registry";
 
 export interface ResolveCurrentVersionOptions {
+    /**
+     * The active release channel's prerelease identifier (`alpha`, `beta`, …).
+     * The git-tag resolver ignores prerelease tags of any other identifier,
+     * so a `1.0.0-beta.0` tag does not become the base an alpha release plans
+     * from. Stable tags and tags of this identifier still count. Unset for a
+     * stable channel, which keeps every tag as a candidate.
+     */
+    channelPrerelease?: string;
     /** Workspace cwd — used by the git-tag resolver. */
     cwd: string;
     /** Per-package config (used by the git-tag resolver for releaseTagPattern overrides). */
     perPackageConfig?: PerPackageReleaseConfig;
     /** Package-manager adapter — passed through to `versionActions.readPublishedVersion()`. */
     pm: PackageManagerAdapter;
+
     /** Runner used for registry queries and `git tag --list`. */
     runner: CommandRunner;
 
@@ -336,7 +345,7 @@ export const resolveCurrentVersion = async (
     for (const tag of tags) {
         const match = tagRe.exec(tag);
 
-        if (match?.[1] && semver.valid(match[1])) {
+        if (match?.[1] && semver.valid(match[1]) && isOnChannel(match[1], options.channelPrerelease)) {
             candidates.push(match[1]);
         }
     }
@@ -353,6 +362,20 @@ export const resolveCurrentVersion = async (
     candidates.sort(semver.rcompare);
 
     return { resolvedFrom: "git-tag", version: candidates[0]! };
+};
+
+/**
+ * A stable version is on every channel. A prerelease is on the channel whose
+ * identifier it carries; with no channel set, every version is a candidate.
+ */
+const isOnChannel = (version: string, channel: string | undefined): boolean => {
+    if (channel === undefined) {
+        return true;
+    }
+
+    const identifier = semver.prerelease(version)?.[0];
+
+    return identifier === undefined || identifier === channel;
 };
 
 /**
@@ -424,7 +447,7 @@ export const resolveCurrentVersionsForWorkspace = async (
                 // version is in the key so a `version`-apply that mutates
                 // `pkg.json` mid-process invalidates the entry for the
                 // follow-up `publish`.
-                const memoKey = `${pkg.name}@${mode}@${pkg.version}`;
+                const memoKey = `${pkg.name}@${mode}@${pkg.version}@${options.channelPrerelease ?? ""}`;
                 const cached = lookupMemo.get(memoKey);
 
                 if (cached) {

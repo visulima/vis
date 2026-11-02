@@ -156,6 +156,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     const firstRelease = options.firstRelease === true;
     const { resolveCurrentVersionsForWorkspace } = await import("../version-resolver");
     const { versions: currentVersions, warnings: resolverWarnings } = await resolveCurrentVersionsForWorkspace(packages, depGraph, config, perPackageConfig, {
+        channelPrerelease: effectivePrerelease,
         cwd,
         firstRelease,
         pm,

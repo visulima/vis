@@ -154,6 +154,68 @@ describe("resolveCurrentVersion — git-tag mode", () => {
         expect(result.resolvedFrom).toBe("git-tag");
     });
 
+    it("a channel ignores prerelease tags of another channel, so a beta tag does not base an alpha release", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "1.0.0-alpha.5");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.0.0-beta.0", "@scope/a@1.0.0-alpha.5"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "alpha",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0-alpha.5");
+    });
+
+    it("a channel still counts stable tags, which are on every channel", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "1.0.0");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.0.0", "@scope/a@1.0.0-beta.0"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            channelPrerelease: "alpha",
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0");
+    });
+
+    it("without a channel every tag is a candidate, as before", async () => {
+        expect.hasAssertions();
+
+        const runner = mkRunner();
+        const pkg = mkPkg("@scope/a", "1.0.0-alpha.5");
+
+        runner.on("git", ["tag", "--list"], () => {
+            return { exitCode: 0, stderr: "", stdout: ["@scope/a@1.0.0-beta.0", "@scope/a@1.0.0-alpha.5"].join("\n") };
+        });
+
+        const result = await resolveCurrentVersion(pkg, "git-tag", mkDepGraph([pkg]), {
+            cwd: "/r",
+            pm: mkPm(runner),
+            runner,
+            workspaceConfig: { releaseTagPattern: "{name}@{version}" },
+        });
+
+        expect(result.version).toBe("1.0.0-beta.0");
+    });
+
     it("no matching tag → falls back to manifest, with a warning nudging toward --first-release", async () => {
         expect.hasAssertions();
 
