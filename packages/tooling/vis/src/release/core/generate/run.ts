@@ -64,6 +64,8 @@ export interface RunGenerateOptions {
      * genuine first release.
      */
     allowFullHistory?: boolean;
+    /** Active channel's prerelease identifier; the since-last-release boundary is a tag on this channel or a stable one. */
+    channelPrerelease?: string;
     /** Resolved `release` config block. */
     config: VisReleaseConfig;
     /** Workspace root. */
@@ -189,7 +191,14 @@ const resolveFromRef = async (options: RunGenerateOptions): Promise<ResolveFromR
     }
 
     if (options.sinceLastRelease) {
-        const resolved = await resolveLastReleaseRef({ cwd, packages, perPackageConfig, runner, workspaceConfig: config });
+        const resolved = await resolveLastReleaseRef({
+            channelPrerelease: options.channelPrerelease,
+            cwd,
+            packages,
+            perPackageConfig,
+            runner,
+            workspaceConfig: config,
+        });
 
         if (resolved.kind === "tag" && resolved.ref) {
             notes.push(`--since-last-release: ${resolved.reason}.`);

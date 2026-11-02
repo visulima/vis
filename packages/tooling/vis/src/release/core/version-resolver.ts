@@ -32,18 +32,28 @@ import type { PerPackageReleaseConfig, VisReleaseConfig, WorkspacePackage } from
 import type { DependencyGraph } from "./dep-graph";
 import { tagSafeName } from "./git";
 import type { CommandRunner, PackageManagerAdapter } from "./package-managers/interface";
+import { isOnChannel } from "./semver";
 import { createVersionActions } from "./version-actions/registry";
 import { resolveVersionActionsId } from "./workspace";
 
 export type CurrentVersionResolverMode = "disk" | "git-tag" | "registry";
 
 export interface ResolveCurrentVersionOptions {
+    /**
+     * The active release channel's prerelease identifier (`alpha`, `beta`, …).
+     * The git-tag resolver ignores prerelease tags of any other identifier,
+     * so a `1.0.0-beta.0` tag does not become the base an alpha release plans
+     * from. Stable tags and tags of this identifier still count. Unset for a
+     * stable channel, which keeps every tag as a candidate.
+     */
+    channelPrerelease?: string;
     /** Workspace cwd — used by the git-tag resolver. */
     cwd: string;
     /** Per-package config (used by the git-tag resolver for releaseTagPattern overrides). */
     perPackageConfig?: PerPackageReleaseConfig;
     /** Package-manager adapter — passed through to `versionActions.readPublishedVersion()`. */
     pm: PackageManagerAdapter;
+
     /** Runner used for registry queries and `git tag --list`. */
     runner: CommandRunner;
 
@@ -336,7 +346,7 @@ export const resolveCurrentVersion = async (
     for (const tag of tags) {
         const match = tagRe.exec(tag);
 
-        if (match?.[1] && semver.valid(match[1])) {
+        if (match?.[1] && semver.valid(match[1]) && isOnChannel(match[1], options.channelPrerelease)) {
             candidates.push(match[1]);
         }
     }
@@ -424,7 +434,7 @@ export const resolveCurrentVersionsForWorkspace = async (
                 // version is in the key so a `version`-apply that mutates
                 // `pkg.json` mid-process invalidates the entry for the
                 // follow-up `publish`.
-                const memoKey = `${pkg.name}@${mode}@${pkg.version}`;
+                const memoKey = `${pkg.name}@${mode}@${pkg.version}@${options.channelPrerelease ?? ""}`;
                 const cached = lookupMemo.get(memoKey);
 
                 if (cached) {
@@ -466,6 +476,8 @@ export const resolveCurrentVersionsForWorkspace = async (
 // ── "Since last release" range resolution (issue #864) ─────────────
 
 export interface ResolveLastReleaseRefOptions {
+    /** Active channel's prerelease identifier; the boundary is a tag on this channel or a stable one. */
+    channelPrerelease?: string;
     /** Workspace root. */
     cwd: string;
     /** Packages whose `releaseTagPattern`s form the candidate tag set. */
@@ -530,7 +542,7 @@ export interface ResolveLastReleaseRefResult {
  * which case fired so the decision is visible in CI logs.
  */
 export const resolveLastReleaseRef = async (options: ResolveLastReleaseRefOptions): Promise<ResolveLastReleaseRefResult> => {
-    const { cwd, packages, perPackageConfig, runner, workspaceConfig } = options;
+    const { channelPrerelease, cwd, packages, perPackageConfig, runner, workspaceConfig } = options;
 
     // Build the candidate glob set — deduped, because a workspace-wide
     // `v{version}` collapses 50 packages into a single `v*` glob while
@@ -574,34 +586,57 @@ export const resolveLastReleaseRef = async (options: ResolveLastReleaseRefOption
         return rootFallback("no workspace packages to derive a release tag pattern from");
     }
 
-    // `git describe --abbrev=0` returns the most recent tag *reachable
-    // from HEAD* by ancestry distance — precisely the boundary we want,
-    // and stronger than sorting by creatordate (which a rebase or an
-    // out-of-order tag push can scramble).
-    const describe = await runner.run("git", ["describe", "--tags", "--abbrev=0", ...[...globs].flatMap((glob) => ["--match", glob]), "HEAD"], {
-        cwd,
-        silent: true,
-    });
-
-    const tag = describe.exitCode === 0 ? describe.stdout.trim() : "";
-
-    if (!tag) {
-        return rootFallback(`no git tag matching the configured releaseTagPattern is reachable from HEAD`);
-    }
-
     // Re-validate against the strict matcher. `--match` is an fnmatch
     // glob, so `{version}` degraded to `*` can accept a tag the real
     // pattern would reject (e.g. `@scope/a@nightly`). Only tags that
     // parse into a real semver count as a release boundary.
-    const matched = packages.some((pkg) => {
-        const match = compileReleaseTagRegex(patterns.get(pkg.name) ?? DEFAULT_RELEASE_TAG_PATTERN, pkg).exec(tag);
+    const versionOf = (tag: string): string | undefined => {
+        for (const pkg of packages) {
+            const match = compileReleaseTagRegex(patterns.get(pkg.name) ?? DEFAULT_RELEASE_TAG_PATTERN, pkg).exec(tag);
 
-        return match?.[1] !== undefined && semver.valid(match[1]) !== null;
-    });
+            if (match?.[1] !== undefined && semver.valid(match[1]) !== null) {
+                return match[1];
+            }
+        }
 
-    if (!matched) {
-        return rootFallback(`the nearest matching tag "${tag}" did not parse as a release tag`);
+        return undefined;
+    };
+
+    // `git describe --abbrev=0` returns the most recent tag *reachable
+    // from HEAD* by ancestry distance — precisely the boundary we want,
+    // and stronger than sorting by creatordate (which a rebase or an
+    // out-of-order tag push can scramble). A tag from a later channel on
+    // the ladder is excluded and the search repeats, so an alpha run is not
+    // bounded by a beta tag that sits between its commits.
+    const excluded: string[] = [];
+
+    for (;;) {
+        const describe = await runner.run(
+            "git",
+            ["describe", "--tags", "--abbrev=0", ...[...globs].flatMap((glob) => ["--match", glob]), ...excluded.flatMap((tag) => ["--exclude", tag]), "HEAD"],
+            { cwd, silent: true },
+        );
+
+        const tag = describe.exitCode === 0 ? describe.stdout.trim() : "";
+
+        if (!tag) {
+            return rootFallback(
+                excluded.length === 0
+                    ? `no git tag matching the configured releaseTagPattern is reachable from HEAD`
+                    : `no git tag on channel "${channelPrerelease}" matching the configured releaseTagPattern is reachable from HEAD`,
+            );
+        }
+
+        const version = versionOf(tag);
+
+        if (version === undefined) {
+            return rootFallback(`the nearest matching tag "${tag}" did not parse as a release tag`);
+        }
+
+        if (isOnChannel(version, channelPrerelease)) {
+            return { kind: "tag", reason: `resolved the last release boundary to tag "${tag}"`, ref: tag, tag };
+        }
+
+        excluded.push(tag);
     }
-
-    return { kind: "tag", reason: `resolved the last release boundary to tag "${tag}"`, ref: tag, tag };
 };

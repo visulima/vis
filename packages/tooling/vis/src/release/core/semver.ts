@@ -55,6 +55,51 @@ export interface BumpInput {
  * Encapsulates the channel-transition rules (re-counter on preid change,
  * collapse to stable when preid is dropped, etc.).
  */
+// Promotion order of the prerelease channels (RFC §10.1, see semver.ts): a
+// release moves alpha → beta → rc, so a later channel's tags are never a base
+// for an earlier one.
+const PRERELEASE_LADDER = ["alpha", "beta", "rc"];
+
+/**
+ * The channel identifier a prerelease version carries: its prerelease
+ * components without the trailing counter, so `1.0.0-alpha.canary.4` is
+ * `alpha.canary` and `1.0.0-42.3` is `42`. Stable versions have none.
+ */
+const channelOf = (version: string): string | undefined => {
+    const parts = [...(semver.prerelease(version) ?? [])];
+
+    if (parts.length > 1 && typeof parts.at(-1) === "number") {
+        parts.pop();
+    }
+
+    return parts.length > 0 ? parts.join(".") : undefined;
+};
+
+/**
+ * A stable version is on every channel. A prerelease is on its own channel,
+ * and on a later one only if that channel comes earlier on the ladder, so
+ * the beta line may start from an alpha base but alpha never starts from beta.
+ * Channels off the ladder match only their own tags.
+ */
+export const isOnChannel = (version: string, channel: string | undefined): boolean => {
+    if (channel === undefined) {
+        return true;
+    }
+
+    const identifier = channelOf(version);
+
+    if (identifier === undefined || identifier === channel) {
+        return true;
+    }
+
+    const channelRank = PRERELEASE_LADDER.indexOf(channel);
+    const identifierRank = PRERELEASE_LADDER.indexOf(identifier);
+
+    return channelRank !== -1 && identifierRank !== -1 && identifierRank < channelRank;
+};
+
+export { channelOf, PRERELEASE_LADDER };
+
 export const bumpVersion = (input: BumpInput): string => {
     const { current, prerelease } = input;
     let { bump } = input;
@@ -67,7 +112,7 @@ export const bumpVersion = (input: BumpInput): string => {
     }
 
     const currentParsed = semver.parse(current)!;
-    const currentPreid = currentParsed.prerelease[0];
+    const currentChannel = channelOf(current);
     const currentIsPrerelease = currentParsed.prerelease.length > 0;
 
     // Pre-1.0 demotion. Apply before the rest of the logic so escalation
@@ -86,7 +131,7 @@ export const bumpVersion = (input: BumpInput): string => {
     // Case 1: no bump requested + channel transition.
     if (bump === "none") {
         // Same channel, same version — just return.
-        if ((currentPreid ?? undefined) === (prerelease ?? undefined)) {
+        if (currentChannel === prerelease) {
             return current;
         }
 
@@ -109,7 +154,7 @@ export const bumpVersion = (input: BumpInput): string => {
     }
 
     // Case 2: explicit bump.
-    if (currentIsPrerelease && prerelease && currentPreid === prerelease) {
+    if (currentIsPrerelease && prerelease && currentChannel === prerelease) {
         // Bumping within the same prerelease line.
         // - If the requested bump is <= the level that opened the line (e.g. a
         //   `patch` on a `minor`-opened line), just increment the counter.
@@ -118,7 +163,7 @@ export const bumpVersion = (input: BumpInput): string => {
         const baseType = inferBaseTypeFromPrerelease(currentParsed);
 
         if (RELEASE_TYPE_RANK[bump] <= RELEASE_TYPE_RANK[baseType]) {
-            const next = semver.inc(current, "prerelease", prerelease);
+            const next = bumpCounter(current, prerelease);
 
             if (!next) {
                 throw new VisReleaseError({
@@ -160,6 +205,22 @@ export const bumpVersion = (input: BumpInput): string => {
     }
 
     return prerelease ? `${next}-${prerelease}.0` : next;
+};
+
+/**
+ * Increments the trailing counter of a same-channel prerelease. `semver.inc`
+ * only recognises a single-word identifier, so `1.0.0-42.3` or
+ * `1.0.0-alpha.canary.4` would otherwise restart at `.0`.
+ */
+const bumpCounter = (current: string, channel: string): string | null => {
+    const parsed = semver.parse(current)!;
+    const counter = parsed.prerelease.at(-1);
+
+    if (typeof counter !== "number") {
+        return semver.inc(current, "prerelease", channel);
+    }
+
+    return `${parsed.major}.${parsed.minor}.${parsed.patch}-${channel}.${counter + 1}`;
 };
 
 /**

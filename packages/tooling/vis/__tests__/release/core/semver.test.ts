@@ -181,3 +181,17 @@ describe("semver: satisfiesRange", () => {
         expect(satisfiesRange("1.3.0-alpha.0", "^1.2.0")).toBe(true);
     });
 });
+
+describe("bumpVersion — same-channel counter with numeric or multi-part identifiers", () => {
+    it("increments a numeric channel counter instead of restarting at .0", () => {
+        expect.hasAssertions();
+
+        expect(bumpVersion({ bump: "patch", current: "1.0.0-42.3", prerelease: "42" })).toBe("1.0.0-42.4");
+    });
+
+    it("increments a multi-part channel counter instead of restarting at .0", () => {
+        expect.hasAssertions();
+
+        expect(bumpVersion({ bump: "patch", current: "1.1.0-alpha.canary.4", prerelease: "alpha.canary" })).toBe("1.1.0-alpha.canary.5");
+    });
+});
