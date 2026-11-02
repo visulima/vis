@@ -599,12 +599,12 @@ export const resolveLastReleaseRef = async (options: ResolveLastReleaseRefOption
 
     const rootFallback = async (reason: string): Promise<ResolveLastReleaseRefResult> => {
         const roots = await runner.run("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd, silent: true });
-        const lines =
-            roots.exitCode === 0
+        const lines
+            = roots.exitCode === 0
                 ? roots.stdout
-                      .split("\n")
-                      .map((line) => line.trim())
-                      .filter(Boolean)
+                    .split("\n")
+                    .map((line) => line.trim())
+                    .filter(Boolean)
                 : [];
         // `rev-list` is newest-first, so the LAST entry is the oldest
         // root commit. Multi-root histories (grafted / subtree merges)
