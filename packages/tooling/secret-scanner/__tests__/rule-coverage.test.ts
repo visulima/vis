@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { scanString } from "../src";
+import { inspectRuleset, scanString } from "../src";
 
 // Rule-level regression tests: one true positive and one false positive per
 // rule we touch at build time (converter fixes, gitleaks patches, Visulima
@@ -195,5 +195,106 @@ describe("gitleaks rule fixes from data/gitleaks.patches.json", () => {
         expect.assertions(1);
 
         await expect(ruleIdsFor(content, file)).resolves.not.toContain(ruleId);
+    });
+});
+
+const GENERIC_TRUE_POSITIVES: RuleCase[] = [
+    {
+        content: 'cookie_key = "+qoQB7xoFcSvTAxRzmaZsV2GenFmtX0moDoqW4sg8NFNl5oFA6Qd8Mj7zdn"\n',
+        name: "base64 value starting with + (gitleaks#2331)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: 'cookie_key = "/qoQB7xoFcSvTAxRzmaZsV2GenFmtX0moDoqW4sg8NFNl5oFA6Qd8Mj7zdn"\n',
+        name: "base64 value starting with / (gitleaks#2331)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: '{ "service": "svc", "operation": "AuthService.register", "auth_token": "bMjAdTdlzC5T4uUhf7kvmlP7HVDctQUy1xvC" }\n',
+        file: "log.json",
+        name: "secret after an unrelated comma-separated field (gitleaks#2229)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: 'callback = "https://example.com/hook?auth=kgafrfwA94hJ9WnywX0t0ZBfdTEmxI6C&format=json"\n',
+        name: "query parameter terminated by & (gitleaks#1954)",
+        ruleId: "generic-api-key",
+    },
+];
+
+const GENERIC_FALSE_POSITIVES: RuleCase[] = [
+    {
+        content: '{ "service": "svc", "operation": "AuthService.register", "duration_p50_ms": 45 }\n',
+        file: "log.json",
+        name: "key name after an unrelated field (gitleaks#2229)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: '[{ "key": "ctrl+shift+alt+down", "command": "editor.action.copyLinesDownAction" }]\n',
+        file: "keybindings.json",
+        name: "VS Code keybinding chord (gitleaks#2195)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: "function x(e){return e.unk_token=e.unk_token,this.vocab=new Array(this.tokens)}\n",
+        file: "bundle.min.js",
+        name: "JS property copied from another identifier (gitleaks#2136)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: "    let privateKey: P256.Signing.PrivateKey\n",
+        file: "Signer.swift",
+        name: "Swift type-only declaration (gitleaks#2183)",
+        ruleId: "generic-api-key",
+    },
+    {
+        content: `spec:
+  encryptedData:
+    password: AgBPtYgjmUhBel31iEl2hpChYgCfrL1spNxnyVmihA/2O76UMFxFkM/R5Kjp1vRt+1fjORS/6ilI8ihN5KXSc7Tvo/hBKqFYY/kv5ZJr3J1TWDtkwtDDb+xHKas1VOqg6YYZYn9ZhyiA4uoRgnatmUdjAWtGSU8po+799NksnRH9ucAUsdMlHUvTCQCyEZDz/TddJ8HyS5SUkCnD8zRA9a9SkpXz9w3QlY7Zkuvqdt7s8Stqcbnr3yBdGBLEPH1qhT61qtc4xatws8phP9nhFyJfm5di4PzJ59FHz5r1pY4OjE2jBMptUsGr7CmY+uCu3ZR1zTOlUcR64cXQLioDnkHIfxIq2HZt/PlJhx2jIclHkCiHp6bR1IqfEouHgxzNNAL5wIScGebcy8F5n3/YNBDRzrZSgqbjG3uhkWKFLf6xuI5aHUQPFeNBTxaQWk8JzFalHlsZfYcMMDktXP/tKsf2rcDkdfrUnW5gcF+Ha6ili8GjHEAD6/Wj9KfzjsQGMrb9h+ImB+LK777pzNk8cL6j5IXAAjlsHUqJoUD/+Ydua+5ZMs1SWOpQaPRYpzbLGViYXjU2JgJngKtFI3OyV2dZAkg05rK+gqv81RKMGHZEM9YpvujA/C5Q52ryFlwRlOEVHzc0X0AWIRh/JUqBlIFXZ53Ncqe28+ajY75FnCttn6kfaqDeMqG3omjMyXHCabM6JOF8EFd0Nhcy/1k==
+`,
+        file: "sealed.yaml",
+        name: "sealed-secrets encryptedData value (gitleaks#1728)",
+        ruleId: "generic-api-key",
+    },
+    { content: 'token = "ghp_muxV5EbOApZOXzcy' + 'cDeZ6dqmVe5Mvxrv99Nc"\n', name: "token already reported by github-pat", ruleId: "generic-api-key" },
+    { content: "const apiBaseUrl = env.CI_API_V4_URL;\n", file: "ci.ts", name: "env var reference", ruleId: "generic-api-key" },
+];
+
+describe("generic-api-key (compiles again; regex fixes and allowlists)", () => {
+    it.each(GENERIC_TRUE_POSITIVES)("$ruleId detects $name", async ({ content, file, ruleId }) => {
+        expect.assertions(1);
+
+        await expect(ruleIdsFor(content, file)).resolves.toContain(ruleId);
+    });
+
+    it.each(GENERIC_FALSE_POSITIVES)("$ruleId ignores $name", async ({ content, file, ruleId }) => {
+        expect.assertions(1);
+
+        await expect(ruleIdsFor(content, file)).resolves.not.toContain(ruleId);
+    });
+});
+
+describe("generic-api-key yields to overlapping findings", () => {
+    it("still yields when redact masks the secrets", async () => {
+        expect.assertions(2);
+
+        const findings = await scanString('token = "ghp_muxV5EbOApZOXzcy' + 'cDeZ6dqmVe5Mvxrv99Nc"\n', "sample.txt", { redact: true });
+        const ids = findings.map((finding) => finding.ruleId);
+
+        expect(ids).toContain("github-pat");
+        expect(ids).not.toContain("generic-api-key");
+    });
+});
+
+describe("bundled ruleset compiles", () => {
+    it("skips no rule except the two with known Unicode-size regexes", async () => {
+        expect.assertions(1);
+
+        const skipped = await inspectRuleset();
+
+        // pypi-upload-token and vault-batch-token exceed the native regex size
+        // limit under Unicode `\w`; tracked separately. generic-api-key used
+        // to be in this list and silently never ran.
+        expect(skipped.map((rule) => rule.ruleId).toSorted((a, b) => a.localeCompare(b))).toStrictEqual(["pypi-upload-token", "vault-batch-token"]);
     });
 });
