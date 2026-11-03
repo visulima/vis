@@ -1,3 +1,4 @@
+/* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

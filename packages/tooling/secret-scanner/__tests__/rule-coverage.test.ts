@@ -1,4 +1,5 @@
 /* eslint-disable no-template-curly-in-string -- fixtures quote literal `${VAR}` references from config files */
+/* eslint-disable no-useless-concat, @stylistic/indent-binary-ops -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { inspectRuleset, scanString } from "../src";
@@ -393,6 +394,7 @@ Private-MAC: 0aa6c8f5501419bf4149b87a7178d32506afcb476de8d6e7916ae6315168d022
         ruleId: "nuget-cli-password",
     },
     {
+        // eslint-disable-next-line unicorn/prefer-string-raw -- the concatenation splits the fake token for GitHub push protection
         content: 'qlogin -u "contoso\\username"  -ps "2s044v1212a73bbc348d25e514c728d5' + '96a3e50ae69fca9a78a10ddc5f32b0289"\n',
         file: "backup.sh",
         name: "qlogin -ps",
@@ -544,8 +546,7 @@ describe("bundled ruleset compiles", () => {
 
         // pypi-upload-token and vault-batch-token exceed the native regex size
         // limit under Unicode `\w` (tracked separately; they may start compiling
-        // once that is fixed). generic-api-key used to be in this list and
-        // silently never ran; any other id here means a rule went dead.
+        // once that is fixed). Any other id here means a rule went dead.
         const known = new Set(["pypi-upload-token", "vault-batch-token"]);
 
         expect(skipped.map((rule) => rule.ruleId).filter((id) => !known.has(id))).toStrictEqual([]);

@@ -1,3 +1,4 @@
+/* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { resolveConfig } from "../src/config-loader";

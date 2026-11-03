@@ -1,9 +1,10 @@
+/* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { fingerprint, scanString } from "../src/index";
+import { scanString } from "../src/index";
 
 // Warm the Rust regex JIT (full bundled ruleset) once so tests don't timeout.
 beforeAll(async () => {
@@ -107,14 +108,13 @@ describe("decode layer (maxDecodeDepth)", () => {
         expect(findings.filter((finding) => finding.decoded !== undefined)).toStrictEqual([]);
     });
 
-    it("leaves plain findings and their fingerprints untouched", async () => {
-        expect.assertions(2);
+    it("leaves plain findings untouched", async () => {
+        expect.assertions(1);
 
         const content = `token = "${GITHUB_PAT}"\n`;
         const withDecode = await scanString(content, "a.env");
         const without = await scanString(content, "a.env", { maxDecodeDepth: 0 });
 
         expect(withDecode).toStrictEqual(without);
-        expect(withDecode.map((finding) => fingerprint(finding))).toStrictEqual(without.map((finding) => fingerprint(finding)));
     });
 });
