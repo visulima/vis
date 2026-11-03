@@ -15,8 +15,12 @@ import type { SecretsOptions } from "./index";
 
 export const GITLEAKS_IGNORE = ".gitleaksignore";
 
-/** Status lines for a scan (summary, "wrote report", hints). */
-export const status: typeof pail = pail;
+/**
+ * Status lines for a scan (summary, "wrote report", hints). pail sends info,
+ * notice and success to stdout, which carries the `--format` report, so they
+ * would corrupt json / sarif / csv output; route every level to stderr.
+ */
+export const status: typeof pail = pail.child({ stdout: process.stderr });
 
 /** Everything a scan produced, whichever mode ran it. */
 export interface ScanOutcome {
