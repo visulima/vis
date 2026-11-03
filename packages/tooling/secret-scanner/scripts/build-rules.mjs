@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 
 import { analyzeOverlap } from "./analyze-overlap.mjs";
 import { convertKingfisherRule } from "./kingfisher-converter.mjs";
+import { readRefFile } from "./ref-file.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(here, "..");
@@ -185,35 +186,6 @@ const tagRuleSource = (config, source) => {
 // ---------------------------------------------------------------------------
 // Shared: pinned upstream checkouts
 // ---------------------------------------------------------------------------
-
-const LINE_SPLIT_PATTERN = /\r?\n/;
-
-const readRefFile = (path) => {
-    const raw = readText(path);
-    const entries = {};
-
-    for (const line of raw.split(LINE_SPLIT_PATTERN)) {
-        const trimmed = line.trim();
-
-        if (!trimmed || trimmed.startsWith("#")) {
-            continue;
-        }
-
-        const eq = trimmed.indexOf("=");
-
-        if (eq === -1) {
-            continue;
-        }
-
-        entries[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-    }
-
-    if (!entries.ref || !entries.sha) {
-        throw new Error(`invalid ref file (${path}): expected ref=... and sha=... lines`);
-    }
-
-    return entries;
-};
 
 const ensureCheckout = ({ cacheDir, expectedSha, label, ref, repo }) => {
     const headFile = resolve(cacheDir, ".git", "HEAD");
