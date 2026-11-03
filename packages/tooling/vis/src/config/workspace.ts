@@ -379,6 +379,48 @@ const NON_JS_ECOSYSTEMS: ReadonlyArray<NonJsEcosystem> = [
 const NON_JS_DETECTORS: ReadonlySet<Detector> = new Set(NON_JS_ECOSYSTEMS.map((ecosystem) => ecosystem.detector));
 
 /**
+ * The workspace patterns plus the workspace root itself when the root has a
+ * `project.json` next to its `package.json`. Package managers never list the
+ * root as a package, so without this a root `project.json` (and the root's
+ * scripts) would be ignored. Applied only to vis project discovery, never to
+ * the patterns the package-manager-facing commands read.
+ */
+const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): string[] => {
+    if (!isAccessibleSync(join(workspaceRoot, "project.json")) || !hasPackageJson(workspaceRoot)) {
+        return workspacePatterns;
+    }
+
+    return [".", ...workspacePatterns];
+};
+
+const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
+
+/**
+ * Drops the root scripts that run their own target through `vis run`, such as
+ * `"build": "vis run build"`. As targets of the root project they would select
+ * the root project again and spawn `vis run build` without end.
+ */
+const withoutSelfRunScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
+    if (scripts === undefined) {
+        return undefined;
+    }
+
+    return Object.fromEntries(
+        Object.entries(scripts).filter(([name, command]) => {
+            for (const match of command.matchAll(VIS_RUN_RE)) {
+                const target = match[1]!.split(/\s+/).find((token) => token.length > 0 && !token.startsWith("-"));
+
+                if (target === name) {
+                    return false;
+                }
+            }
+
+            return true;
+        }),
+    );
+};
+
+/**
  * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
  * discovery drops those directories exactly as it drops pnpm `!` entries.
  */
@@ -1122,7 +1164,7 @@ const discoverWorkspace = (
 
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        withProjectIgnore(workspacePatterns, config),
+        withProjectIgnore(withRootProject(workspaceRoot, workspacePatterns), config),
         nonJsDiscoverOptions(config),
     );
 
@@ -1167,7 +1209,8 @@ const discoverWorkspace = (
         const defaults = collectTargetDefaults(config, projectJson, projectType);
 
         const overlayTargets = mergeProjectTargets(projectJson?.targets, taskConfigs?.get(projectDirectory)?.tasks);
-        const visTargets = createTargetsFromScripts(pkg?.scripts, overlayTargets, defaults, config.fileGroups);
+        const scripts = projectDirectory === "." ? withoutSelfRunScripts(pkg?.scripts) : pkg?.scripts;
+        const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
         // pipeline so the command from a package.json script,
@@ -1451,7 +1494,7 @@ const loadVisTaskConfigsForWorkspace = async (workspaceRoot: string, config: Vis
     // that is not discovered could fail to load and reject the whole workspace.
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        withProjectIgnore(workspacePatterns, config),
+        withProjectIgnore(withRootProject(workspaceRoot, workspacePatterns), config),
         nonJsDiscoverOptions(config),
     );
     const result: VisTaskConfigIndex = new Map();

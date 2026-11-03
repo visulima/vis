@@ -187,3 +187,70 @@ describe("projectIgnore", () => {
         expect(Object.keys(workspace.projects)).toStrictEqual(["a"]);
     });
 });
+
+describe("workspace root project", () => {
+    let scratch: string;
+
+    beforeEach(() => {
+        scratch = mkdtempSync(join(realpathSync(tmpdir()), "vis-root-project-"));
+        writeWorkspaceYaml(scratch, ["packages/*"]);
+        writePackage(scratch, "packages/a", { name: "a" });
+    });
+
+    afterEach(() => {
+        rmSync(scratch, { force: true, recursive: true });
+    });
+
+    it("should not treat the root as a project without a root project.json", () => {
+        expect.assertions(1);
+
+        const { workspace } = discoverWorkspace(scratch, {});
+
+        expect(Object.keys(workspace.projects)).toStrictEqual(["a"]);
+    });
+
+    it("should discover the root as a project when it has a project.json, with the root's scripts as targets", () => {
+        expect.assertions(3);
+
+        writePackage(scratch, ".", { name: "fixture-root", private: true, scripts: { "lint:oxlint": "oxlint" } }, { name: "workspace-root", tags: ["type:tooling"] });
+
+        const { workspace } = discoverWorkspace(scratch, {});
+
+        expect(Object.keys(workspace.projects).toSorted()).toStrictEqual(["a", "workspace-root"]);
+        expect(workspace.projects["workspace-root"]?.root).toBe(".");
+        expect(workspace.projects["workspace-root"]?.targets?.["lint:oxlint"]).toBeDefined();
+    });
+
+    it("should drop root scripts that run their own target through vis run, so the root does not re-run itself", () => {
+        expect.assertions(4);
+
+        writePackage(
+            scratch,
+            ".",
+            {
+                name: "fixture-root",
+                private: true,
+                scripts: { build: "vis run build", lint: "pnpm exec vis run --affected lint", "lint:oxlint": "oxlint", test: "vis run test:unit" },
+            },
+            { name: "workspace-root" },
+        );
+
+        const targets = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets ?? {};
+
+        expect(targets["build"]).toBeUndefined();
+        expect(targets["lint"]).toBeUndefined();
+        expect(targets["lint:oxlint"]).toBeDefined();
+        expect(targets["test"]).toBeDefined();
+    });
+
+    it("should list the root once when the workspace patterns already include it", () => {
+        expect.assertions(1);
+
+        writeWorkspaceYaml(scratch, [".", "packages/*"]);
+        writePackage(scratch, ".", { name: "fixture-root", private: true }, { name: "workspace-root" });
+
+        const { workspace } = discoverWorkspace(scratch, {});
+
+        expect(Object.keys(workspace.projects).toSorted()).toStrictEqual(["a", "workspace-root"]);
+    });
+});

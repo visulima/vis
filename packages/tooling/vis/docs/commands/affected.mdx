@@ -130,6 +130,9 @@ export default defineConfig({
 - Skipped files are reported as a note (`ignoring N changed path(s) outside any
 project matching affectedIgnore`) and are still forwarded in
   `VIS_AFFECTED_FILES`.
+- With a workspace-root project (a root `project.json`), files outside every
+  other project still count as global changes. A file matching `affectedIgnore`
+  then marks only the root project affected.
 - Do **not** list paths whose changes really do affect projects, such as
   bundler-inlined shared source or the root `tsconfig.json`: an edit there would
   then run nothing.
