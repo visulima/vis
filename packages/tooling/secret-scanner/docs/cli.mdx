@@ -21,8 +21,11 @@ pnpm add -D @visulima/vis
 # Scan the workspace (grouped, colourised output)
 vis secrets
 
-# Pre-commit mode — scan only staged files
+# Pre-commit mode — scan the staged (index) content
 vis secrets --staged
+
+# Scan git history, including unmerged branches
+vis secrets --history --all
 
 # Scan files changed since a ref
 vis secrets --since main
@@ -74,7 +77,11 @@ vis secrets --format sarif > report.sarif
 
 | Flag                    | Type       | Default | Description                                                      |
 | ----------------------- | ---------- | ------- | ---------------------------------------------------------------- |
-| `--staged`              | boolean    | `false` | Scan only files staged for commit. Requires git.                 |
+| `--staged`              | boolean    | `false` | Scan the staged (index) content, not working-tree files.         |
+| `--history`             | boolean    | `false` | Scan git history (see `scanGitHistory`).                         |
+| `--all`                 | boolean    | `false` | With `--history`, walk every branch, tag and remote ref.         |
+| `--history-range <rev>` | string     | —       | With `--history`, limit the walk to a rev-list range.            |
+| `--max-commits <n>`     | number     | —       | With `--history`, cap the number of commits walked.              |
 | `--since <ref>`         | string     | —       | Scan only files changed since a git ref (e.g. `main`).           |
 | `--affected`            | boolean    | `false` | Scan only projects affected by the current branch (`$VIS_BASE`). |
 | `--exclude <pattern>`   | `string[]` | —       | Gitignore-syntax pattern to exclude from the walk. Repeatable.   |

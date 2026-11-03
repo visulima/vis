@@ -294,7 +294,9 @@ See the [`vis cache`](./docs/commands/cache.mdx) and [`vis run`](./docs/commands
 
 ```sh
 vis secrets                         # scan the workspace (grouped, colourised output)
-vis secrets --staged                # pre-commit mode: scan staged files only
+vis secrets --staged                # pre-commit mode: scan the staged (index) content only
+vis secrets --history               # scan git history; each secret reported once
+vis secrets --history --all         # ...across every branch and tag
 vis secrets --since main            # scan files changed since the `main` branch
 vis secrets --affected              # scan only files affected by the current branch
 vis secrets --init                  # scaffold an initial .secrets-baseline.json
