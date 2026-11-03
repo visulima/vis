@@ -157,4 +157,31 @@ describe("extractKeywords", () => {
 
         expect(keywords).toContain("client_token");
     });
+
+    it("never turns named-group names into keywords", () => {
+        expect.assertions(3);
+
+        // `kingfisher.modal.1`: the only literal is the group name `TOKEN_ID`.
+        expect(extractKeywords("(?x)\n(?P<TOKEN_ID>\n  (?:ak|as)-[A-Za-z0-9]{22}\n)\n\\b")).toEqual([]);
+        // `kingfisher.generic.9`: `USER` / `PASS` are group names, not text.
+        expect(extractKeywords("(?xi)\n(\n  (?P<USER> [a-z0-9._-]+ \\+ [a-z0-9._-]+ )\n  :\n  (?P<PASS> [A-Z0-9]{32,80} )\n)")).toEqual([]);
+        // JS/PCRE `(?<name>` syntax; the real literal after the group still counts.
+        expect(extractKeywords("(?<body>zpka_[a-z0-9]{32})_(?<checksum>[0-9a-f]{8})")).toEqual(["zpka_"]);
+    });
+
+    it("leaves lookbehinds and escaped parens alone", () => {
+        expect.assertions(2);
+
+        expect(extractKeywords("(?<=secret_)[a-z]{8}")).toEqual(["secret_"]);
+        expect(extractKeywords("\\(?P<literal>abc")).toContain("literal");
+    });
+
+    it("drops a trailing char made optional by `?`, `*` or `{0,n}`", () => {
+        expect.assertions(3);
+
+        // `ftps?://` matches `ftp://`, so the keyword must be `ftp`, not `ftps`.
+        expect(extractKeywords("\\b(?P<SCHEME>ftps?)://[^@]+@")).toEqual(["ftp"]);
+        expect(extractKeywords("https?://example")).toEqual(["http", "example"]);
+        expect(extractKeywords("tokens{0,1}_value")).toEqual(["token", "_value"]);
+    });
 });
