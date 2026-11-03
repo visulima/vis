@@ -382,6 +382,29 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
     }, 60_000);
 
+    it("never prints or writes a raw secret with --redact", async () => {
+        expect.assertions(5);
+
+        // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens
+        const [patC, unused] = ["ghp_Qw1Er2Ty3Ui4Op5A" + "s6Df7Gh8Jk9Lz0Xc1Vb2", "ghp_Mn3Bv4Cx5Zl6Kj7H" + "g8Fd9Sa0Po1Iu2Yt3Re4"];
+        const root = workspace();
+        const reports = ["json=r.json", "csv=r.csv", "junit=r.xml", "sarif=r.sarif", "gitlab-code-quality=r.gl.json"];
+
+        writeFileSync(join(root, "c.ts"), `const c = "${patC}";\n`);
+        writeFileSync(join(root, ".gitleaksignore"), `secret:${PAT_A}\npath:a.ts:rule:github-pat:secret:${PAT_B}\nsecret:${unused}\n`);
+
+        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, redact: true, report: reports }, root);
+
+        const outputs = [stdout.join(""), stderr.join(""), ...reports.map((report) => readFileSync(join(root, report.split("=")[1] as string), "utf8"))];
+        const leaked = outputs.filter((output) => [PAT_A, PAT_B, patC, unused].some((secret) => output.includes(secret)));
+
+        expect(leaked).toStrictEqual([]);
+        expect((JSON.parse(stdout.join("")) as Finding[]).map((f) => f.file)).toStrictEqual(["c.ts"]);
+        expect(stderr.join("")).toContain("2 finding(s) suppressed");
+        expect(stderr.join("")).toContain("line 3: <secret-value entry>");
+        expect(process.exitCode).toBe(1);
+    }, 60_000);
+
     it.skipIf(process.platform === "win32")(
         "writes report files owner-only unless redacted",
         async () => {

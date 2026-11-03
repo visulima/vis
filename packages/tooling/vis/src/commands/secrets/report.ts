@@ -1,7 +1,6 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { dim, green, yellow } from "@visulima/colorize";
 import { relative, resolve } from "@visulima/path";
-import { redact } from "@visulima/redact";
 import type { Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, ScanOptions, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
 import { listRules } from "@visulima/secret-scanner";
 
@@ -69,22 +68,29 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
     );
 };
 
-/** Print the `--format` report to stdout and write every `--report` file. */
+/**
+ * Print the `--format` report to stdout and write every `--report` file.
+ *
+ * With `--redact` the scanner has already masked every secret-bearing field,
+ * composite `requiredFindings` included, so the findings are rendered as is.
+ */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
     const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
     const shouldRedact = scanOptions.redact === true;
-    const reportFindings = shouldRedact ? redact(outcome.findings, ["match", "secret"]) : outcome.findings;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
     const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
+    // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
+    // History reports carry commit messages, which `--redact` doesn't mask and which
+    // can quote a secret, so they stay owner-only either way.
+    const sensitive = !shouldRedact || history;
 
-    process.stdout.write(renderReport(format, reportFindings, { ...renderContext, useColor }));
+    process.stdout.write(renderReport(format, outcome.findings, { ...renderContext, useColor }));
 
     for (const target of reports) {
         const path = resolve(toolbox.process.cwd, target.path);
 
-        // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
-        writeReportFileSync(path, renderReport(target.format, reportFindings, { ...renderContext, useColor: false }), !shouldRedact);
+        writeReportFileSync(path, renderReport(target.format, outcome.findings, { ...renderContext, useColor: false }), sensitive);
 
         if (!flags.quiet) {
             status.info(`Wrote ${target.format} report to ${relative(toolbox.process.cwd, path) || path}`);
