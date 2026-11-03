@@ -107,13 +107,13 @@ const validateFormat = (raw: string | undefined): ReportFormat => {
 /** The library clamps archive nesting at this depth; reject larger values instead. */
 const MAX_ARCHIVE_DEPTH = 8;
 
-const validateDepth = (value: number | undefined, flag: string, max = Number.MAX_SAFE_INTEGER): number | undefined => {
+const validateDepth = (value: number | undefined, flag: string, max?: number): number | undefined => {
     if (value === undefined) {
         return undefined;
     }
 
-    if (!Number.isInteger(value) || value < 0 || value > max) {
-        const range = max === Number.MAX_SAFE_INTEGER ? "a non-negative integer" : `an integer from 0 to ${String(max)}`;
+    if (!Number.isInteger(value) || value < 0 || (max !== undefined && value > max)) {
+        const range = max === undefined ? "a non-negative integer" : `an integer from 0 to ${String(max)}`;
 
         throw new VisUserError(`${flag} must be ${range} (got ${String(value)}).`);
     }
