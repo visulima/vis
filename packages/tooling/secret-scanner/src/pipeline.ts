@@ -92,17 +92,13 @@ const overlaps = (a: Finding, b: Finding): boolean =>
     comparePosition(a.startLine, a.startColumn, b.endLine, b.endColumn) < 0 && comparePosition(b.startLine, b.startColumn, a.endLine, a.endColumn) < 0;
 
 /**
- * Gitleaks parity (`detect.filter`): the catch-all `generic-api-key` rule only
- * reports text no other rule matched. `token = "ghp_…"` is a `github-pat`
- * finding, not also a generic one. The native span dedup only collapses
- * identical spans, and the generic match also covers the variable name, so the
- * two never share a span. Compares match positions rather than secrets so it
- * also works when `redact` has masked them.
+ * Drop the `generic-api-key` findings among `findings` that one of `shadowers`
+ * (any non-generic finding) overlaps.
  */
-const dropShadowedGenericFindings = <F extends Finding>(findings: F[]): F[] => {
+const dropShadowedBy = <F extends Finding>(findings: F[], shadowers: ReadonlyArray<Finding>): F[] => {
     const othersByFile = new Map<string, Finding[]>();
 
-    for (const finding of findings) {
+    for (const finding of shadowers) {
         if (finding.ruleId !== GENERIC_RULE_ID) {
             othersByFile.set(finding.file, [...(othersByFile.get(finding.file) ?? []), finding]);
         }
@@ -352,6 +348,36 @@ export const resetPipelineWarningsForTests = (): void => {
     warnedRedactWithValidate = false;
 };
 
+/** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
+const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined): F[] => {
+    const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
+    const heuristicsFiltered = applyHeuristicFilters(filtered, options);
+
+    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
+};
+
+/**
+ * Gitleaks parity (`detect.filter`): the catch-all `generic-api-key` rule only
+ * reports text no other rule matched. `token = "ghp_…"` is a `github-pat`
+ * finding, not also a generic one. The native span dedup only collapses
+ * identical spans, and the generic match also covers the variable name, so the
+ * two never share a span.
+ *
+ * Only a finding the scan would report shadows: one that survives the rule
+ * filter, heuristics and checksum, so excluding `github-pat` brings the
+ * generic finding back. Active findings shadow active generic ones only, so
+ * turning on `reportSuppressed` never changes `findings`; a suppressed generic
+ * finding is dropped when any finding overlaps it.
+ */
+export const dropShadowedGenericFindings = (report: ProcessedFindings, prepared: PreparedScan, options: ScanOptions | undefined): ProcessedFindings => {
+    const activeShadowers = preValidation(report.findings, prepared, options);
+
+    return {
+        findings: dropShadowedBy(report.findings, activeShadowers),
+        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options)]),
+    };
+};
+
 /**
  * Per-scan suppression state. Build it once per scan (not per file / blob):
  * the `.gitleaksignore` matcher records which entries were used.
@@ -433,23 +459,8 @@ export const postProcessDetailed = async (
     options: ScanOptions | undefined,
     suppression: SuppressionContext,
 ): Promise<ProcessedFindings> => {
-    const preValidation = <F extends Finding>(findings: F[]): F[] => {
-        const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
-        const heuristicsFiltered = applyHeuristicFilters(filtered, options);
-
-        return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
-    };
-
-    // Active findings shadow generic ones among themselves only, so turning on
-    // `reportSuppressed` never changes `findings`. A suppressed generic finding is
-    // also dropped when any finding overlaps it.
-    const shadowFree = dropShadowedGenericFindings(report.findings);
-    const nativeSuppressed = new Set<Finding>(report.suppressed);
-    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...report.suppressed]).filter((finding): finding is SuppressedFinding =>
-        nativeSuppressed.has(finding),
-    );
-
-    const validated = await applyValidation(preValidation(shadowFree), options, prepared.ruleMeta);
+    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options);
+    const validated = await applyValidation(preValidation(shadowFree, prepared, options), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
     const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
@@ -467,7 +478,7 @@ export const postProcessDetailed = async (
         }
     }
 
-    for (const finding of preValidation(suppressedShadowFree)) {
+    for (const finding of preValidation(suppressedShadowFree, prepared, options)) {
         // Mark matching ignore entries used; the native reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
