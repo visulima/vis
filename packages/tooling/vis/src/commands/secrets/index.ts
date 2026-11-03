@@ -11,7 +11,8 @@ const secretsOptionDefinitions = {
     },
     ...negatable({
         defaultValue: false,
-        description: "With --history, walk every branch, tag and remote ref (like `git rev-list --all`) instead of only HEAD. Cannot be combined with --history-range.",
+        description:
+            "With --history, walk every branch, tag and remote ref (like `git rev-list --all`) instead of only HEAD. Cannot be combined with --history-range.",
         name: "all",
         type: Boolean,
     }),
@@ -34,7 +35,7 @@ const secretsOptionDefinitions = {
     },
     "enable-rule": {
         description:
-                "Enable an opt-in rule or tag without restricting output — additive (e.g. tag:preset:weak-passwords, tag:preset:password-manager). Repeatable.",
+            "Enable an opt-in rule or tag without restricting output — additive (e.g. tag:preset:weak-passwords, tag:preset:password-manager). Repeatable.",
         multiple: true,
         type: String,
     },
@@ -53,20 +54,41 @@ const secretsOptionDefinitions = {
         multiple: true,
         type: String,
     },
+    ...negatable({
+        defaultValue: false,
+        description:
+            "Exit non-zero when a file or directory could not be read (permission denied, broken path, I/O error, or a blob missing from git). Files over --max-size don't count.",
+        name: "fail-on-unreadable",
+        type: Boolean,
+    }),
+    ...negatable({
+        defaultValue: false,
+        description:
+            "Exit non-zero when a .gitleaksignore entry matched no finding. Needs a full scan (no --staged/--since/--affected/paths/--history-range/--max-commits).",
+        name: "fail-on-unused-ignores",
+        type: Boolean,
+    }),
     format: {
         defaultValue: "text",
-        description: "Output format: text (default), json, sarif",
+        description: "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality",
         type: String,
     },
+    ...negatable({
+        defaultValue: true,
+        description:
+            "Honour .gitleaksignore at the workspace root: fingerprints ([commit:]file:rule:line), secret:<value> entries and * globs (use --no-gitleaks-ignore to disable)",
+        name: "gitleaks-ignore",
+        type: Boolean,
+    }),
     history: {
         defaultValue: false,
         description:
-                "Scan git history instead of the working tree. Surfaces secrets that were committed and later removed; each secret is reported once, at the commit that introduced it (merge commits included). Binary, oversized and missing blobs are skipped and counted; a git read failure exits non-zero. Cannot be combined with --staged/--since/--affected.",
+            "Scan git history instead of the working tree. Surfaces secrets that were committed and later removed; each secret is reported once, at the commit that introduced it (merge commits included). Binary, oversized and missing blobs are skipped and counted; a git read failure exits non-zero. Cannot be combined with --staged/--since/--affected.",
         type: Boolean,
     },
     "history-range": {
         description:
-                "With --history, limit the walk to a rev-list range (e.g. main..HEAD, HEAD~50..HEAD, or a single ref). Defaults to all reachable history of HEAD.",
+            "With --history, limit the walk to a rev-list range (e.g. main..HEAD, HEAD~50..HEAD, or a single ref). Defaults to all reachable history of HEAD.",
         type: String,
     },
     "include-hidden": {
@@ -79,6 +101,13 @@ const secretsOptionDefinitions = {
         multiple: true,
         type: String,
     },
+    ...negatable({
+        defaultValue: true,
+        description:
+            "Honour inline gitleaks:allow / secret-scanner:allow / pragma: allowlist markers (use --no-inline-allow in CI to report findings developers suppressed in code)",
+        name: "inline-allow",
+        type: Boolean,
+    }),
     init: {
         defaultValue: false,
         description: "Scaffold a baseline from current findings",
@@ -94,6 +123,12 @@ const secretsOptionDefinitions = {
         description: "Print non-HTTP validator types referenced by the current ruleset, with install hints for their optional peer dependencies.",
         type: Boolean,
     },
+    ...negatable({
+        defaultValue: false,
+        description: "Print every suppressed finding (baseline, allowlist, inline marker, .gitleaksignore) with the reason, to stderr",
+        name: "log-ignored",
+        type: Boolean,
+    }),
     "max-commits": {
         description: "With --history, cap the number of commits walked (most-recent first)",
         type: Number,
@@ -104,7 +139,7 @@ const secretsOptionDefinitions = {
     },
     "min-confidence": {
         description:
-                "Drop rules below this author-declared confidence: low (default), medium, high. Rules without a declared confidence (every gitleaks rule) are treated as low, so --min-confidence medium or higher drops them along with explicit low-confidence rules.",
+            "Drop rules below this author-declared confidence: low (default), medium, high. Rules without a declared confidence (every gitleaks rule) are treated as low, so --min-confidence medium or higher drops them along with explicit low-confidence rules.",
         type: String,
     },
     "no-extend-bundled": {
@@ -137,6 +172,12 @@ const secretsOptionDefinitions = {
         description: "With --update-baseline, replace rather than merge",
         type: Boolean,
     },
+    report: {
+        description:
+            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact.",
+        multiple: true,
+        type: String,
+    },
     since: {
         description: "Scan only files changed since <ref> (e.g. main, origin/HEAD)",
         type: String,
@@ -154,7 +195,7 @@ const secretsOptionDefinitions = {
     validate: {
         defaultValue: false,
         description:
-                "Live-verify each finding against its provider (one HTTP call per finding, max 8 concurrent). Only supports Kingfisher-style HTTP validators with StatusMatch / WordMatch response matchers; other types (gRPC, multi-step, checksum) mark the finding as validation=skipped. WARNING: sends candidate secrets to the provider — some providers alert their security team on failed auth attempts.",
+            "Live-verify each finding against its provider (one HTTP call per finding, max 8 concurrent). Only supports Kingfisher-style HTTP validators with StatusMatch / WordMatch response matchers; other types (gRPC, multi-step, checksum) mark the finding as validation=skipped. WARNING: sends candidate secrets to the provider — some providers alert their security team on failed auth attempts.",
         type: Boolean,
     },
     verbose: {
@@ -195,6 +236,9 @@ const secrets = defineCommand({
         ["vis secrets --baseline .secrets-baseline.json", "Suppress known findings; print diff vs. baseline"],
         ["vis secrets --update-baseline", "Merge current findings into the baseline (use --replace-baseline to overwrite)"],
         ["vis secrets --format sarif > report.sarif", "SARIF output for GitHub code-scanning"],
+        ["vis secrets --report sarif=secrets.sarif --report gitlab-code-quality=gl-code-quality.json", "Write several report formats in one run"],
+        ["vis secrets --no-inline-allow --log-ignored", "Audit suppressions: ignore inline markers and list everything still suppressed"],
+        ["vis secrets --fail-on-unreadable --fail-on-unused-ignores", "CI: fail on unreadable files and stale .gitleaksignore entries"],
     ],
     group: "Security",
     loader: () => import("./handler"),

@@ -1,7 +1,9 @@
-import { isAccessibleSync, readJsonSync, writeFileSync } from "@visulima/fs";
+import { isAccessibleSync, readJsonSync } from "@visulima/fs";
 import { isAbsolute, relative } from "@visulima/path";
 import type { Finding } from "@visulima/secret-scanner";
 import { fingerprint } from "@visulima/secret-scanner";
+
+import { writeReportFileSync } from "./secure-write";
 
 const toRelative = (file: string, root: string): string => {
     if (!isAbsolute(file)) {
@@ -57,6 +59,12 @@ export const diffBaseline = (findings: Finding[], baselinePath: string, root: st
 export interface WriteBaselineOptions {
     /** If true, replace the file instead of merging with existing entries. */
     replace?: boolean;
+
+    /**
+     * The findings hold real secrets (no `--redact`): write the file 0600.
+     * Default `true`.
+     */
+    sensitive?: boolean;
 }
 
 /**
@@ -88,7 +96,7 @@ export const writeBaseline = (findings: Finding[], baselinePath: string, root: s
         }
     }
 
-    writeFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`);
+    writeReportFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`, options.sensitive ?? true);
 
     return final.length;
 };

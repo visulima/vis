@@ -4,6 +4,7 @@ import { cyan, dim, green, red, yellow } from "@visulima/colorize";
 import { readFileSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
 import type { Finding, GitFinding, GitSkippedBlob, RuleInfo } from "@visulima/secret-scanner";
+import { toSarifUri as toRelativeSarifUri } from "@visulima/secret-scanner";
 
 const CONTEXT_RADIUS = 1;
 
@@ -222,13 +223,14 @@ export const formatSkippedBlobs = (skipped: GitSkippedBlob[], useColor: boolean,
 };
 
 /**
- * Convert an absolute path to a `file://` URI (SARIF-compliant) or keep a relative
- * path with forward-slash separators. Windows drive letters are handled by
- * `url.pathToFileURL`.
+ * Convert an absolute path to a `file://` URI (SARIF-compliant) or a relative
+ * path to a URI reference with forward slashes and each segment
+ * percent-encoded, so spaces, `#` and `%` don't break GitHub's SARIF upload.
+ * Windows drive letters are handled by `url.pathToFileURL`.
  */
-const toSarifUri = (path: string, root: string): string => {
+export const toSarifUri = (path: string, root: string): string => {
     if (!isAbsolute(path)) {
-        return path.replaceAll("\\", "/");
+        return toRelativeSarifUri(path);
     }
 
     try {

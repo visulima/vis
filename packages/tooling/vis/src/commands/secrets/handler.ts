@@ -3,19 +3,41 @@ import { dim, green, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
 import { join, relative, resolve } from "@visulima/path";
 import { redact } from "@visulima/redact";
-import type { Confidence, Finding, GitFinding, GitSkippedBlob, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
-import { inspectRuleset, listRequiredValidators, listRules, scan, scanFiles, scanGitHistoryDetailed, scanGitStaged } from "@visulima/secret-scanner";
+import type { Confidence, Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, ScanOptions, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import {
+    inspectRuleset,
+    listRequiredValidators,
+    listRules,
+    scan,
+    scanDetailed,
+    scanFilesDetailed,
+    scanGitHistoryDetailed,
+    scanGitStaged,
+} from "@visulima/secret-scanner";
 
 import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
-import { diffBaseline, toRelativeFinding, writeBaseline } from "../../secrets/baseline";
-import { formatHistoryText, formatSarif, formatSkippedBlobs, formatText } from "../../secrets/format";
+import { diffBaseline, writeBaseline } from "../../secrets/baseline";
+import { formatSkippedBlobs } from "../../secrets/format";
 import { filesSince, hasGit } from "../../secrets/git";
+import type { ReportFormat, ReportTarget } from "../../secrets/report";
+import {
+    formatSkippedFiles,
+    formatSuppressed,
+    formatUnusedIgnores,
+    isReportFormat,
+    parseReportTargets,
+    renderReport,
+    REPORT_FORMATS,
+} from "../../secrets/report";
+import { writeReportFileSync } from "../../secrets/secure-write";
+import { pathExists } from "../../util/toolbox-fs";
 import type { SecretsOptions } from "./index";
 
 type RepeatableString = string | string[];
-type ReportFormat = "json" | "sarif" | "text";
+
+const GITLEAKS_IGNORE = ".gitleaksignore";
 
 export interface SecretsFlags {
     affected?: boolean;
@@ -29,15 +51,20 @@ export interface SecretsFlags {
     excludeFrom?: RepeatableString;
     excludeRule?: RepeatableString;
     extendBundled?: boolean;
-    format?: ReportFormat;
+    failOnUnreadable?: boolean;
+    failOnUnusedIgnores?: boolean;
+    format?: string;
     gitignore?: boolean;
+    gitleaksIgnore?: boolean;
     history?: boolean;
     historyRange?: string;
     includeHidden?: boolean;
     includeRule?: RepeatableString;
     init?: boolean;
+    inlineAllow?: boolean;
     listRules?: boolean;
     listValidators?: boolean;
+    logIgnored?: boolean;
     maxCommits?: number;
     maxSize?: number;
     minConfidence?: string;
@@ -45,6 +72,7 @@ export interface SecretsFlags {
     quiet?: boolean;
     redact?: boolean;
     replaceBaseline?: boolean;
+    report?: RepeatableString;
     since?: string;
     staged?: boolean;
     updateBaseline?: boolean;
@@ -63,13 +91,15 @@ const toArray = (value: string | string[] | undefined): string[] => {
 };
 
 const validateFormat = (raw: string | undefined): ReportFormat => {
-    const allowed = new Set(["json", "sarif", "text"]);
-
-    if (raw && !allowed.has(raw)) {
-        throw new Error(`--format must be one of: ${[...allowed].join(", ")} (got "${raw}")`);
+    if (raw === undefined) {
+        return "text";
     }
 
-    return (raw ?? "text") as ReportFormat;
+    if (!isReportFormat(raw)) {
+        throw new Error(`--format must be one of: ${REPORT_FORMATS.join(", ")} (got "${raw}")`);
+    }
+
+    return raw;
 };
 
 const validateConfidence = (raw: string | undefined): Confidence | undefined => {
@@ -164,7 +194,7 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
         return;
     }
 
-    const count = writeBaseline(findings, baselinePath, root, { replace: true });
+    const count = writeBaseline(findings, baselinePath, root, { replace: true, sensitive: scanOptions.redact !== true });
 
     pail.success(`Wrote ${DEFAULT_BASELINE} (${String(count)} findings).`);
     pail.notice("Commit it. Use `vis secrets --baseline .secrets-baseline.json` in CI. Add path patterns to .gitignore to exclude directories from scanning.");
@@ -237,7 +267,9 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
             path: configPath,
             validate: flags.validate ?? cfg.config?.validate ?? false,
         },
+        inlineAllow: flags.inlineAllow,
         redact: flags.redact ?? cfg.redact,
+        reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },
         verbose: flags.verbose ?? false,
         walk: {
@@ -317,42 +349,153 @@ const chooseScanPaths = async (flags: SecretsFlags, args: string[], root: string
     return { paths: args && args.length > 0 ? args.map((p) => resolve(root, p)) : [root] };
 };
 
-const emitFindings = (
-    findings: Finding[],
-    format: ReportFormat,
-    root: string,
-    useColor: boolean,
-    toolVersion: string,
-    ruleMetadata: RuleInfo[],
-    redactFindings: boolean,
-): void => {
-    switch (format) {
-        case "json": {
-            const view = findings.map((f) => toRelativeFinding(f, root));
+/**
+ * Why a scan covers only part of the repository (staged files, a diff, a
+ * path subset, part of history). On such a scan an ignore entry for a file
+ * outside it would look unused, so unused entries are neither printed nor
+ * enforced.
+ */
+const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolean): string[] =>
+    [
+        flags.staged ? "--staged" : undefined,
+        flags.since === undefined ? undefined : "--since",
+        flags.affected ? "--affected" : undefined,
+        flags.historyRange === undefined ? undefined : "--history-range",
+        flags.maxCommits === undefined ? undefined : "--max-commits",
+        hasPathArguments ? "explicit paths" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
 
-            process.stdout.write(`${JSON.stringify(view, null, 2)}\n`);
-            break;
-        }
-        case "sarif": {
-            process.stdout.write(`${formatSarif(findings, toolVersion, root, ruleMetadata)}\n`);
-            break;
-        }
-        default: {
-            process.stdout.write(`${formatText(findings, root, useColor, { redact: redactFindings })}\n`);
-        }
+/**
+ * Reject the reporting flags in modes that never produce a scan report, and
+ * `--fail-on-unused-ignores` where a partial scan would call every entry for
+ * an unscanned file "unused".
+ */
+export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: boolean): void => {
+    const nonScanMode = [
+        flags.listRules ? "--list-rules" : undefined,
+        flags.listValidators ? "--list-validators" : undefined,
+        flags.init ? "--init" : undefined,
+        flags.updateBaseline ? "--update-baseline" : undefined,
+    ].find((flag): flag is string => flag !== undefined);
+    const reportingFlags = [
+        toArray(flags.report).length > 0 ? "--report" : undefined,
+        flags.logIgnored ? "--log-ignored" : undefined,
+        flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
+        flags.failOnUnusedIgnores ? "--fail-on-unused-ignores" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
+
+    if (nonScanMode !== undefined && reportingFlags.length > 0) {
+        throw new VisUserError(`${reportingFlags.join(", ")} only applies to a scan report and can't be combined with ${nonScanMode}.`);
     }
-};
 
-/** Tell the user which blobs were not inspected; the summary always, the list with --verbose. */
-const reportSkippedBlobs = (skipped: GitSkippedBlob[], flags: SecretsFlags, useColor: boolean): void => {
-    if (skipped.length === 0 || flags.quiet) {
+    if (!flags.failOnUnusedIgnores) {
         return;
     }
 
-    process.stderr.write(`${formatSkippedBlobs(skipped, useColor, { verbose: flags.verbose })}\n`);
+    if (flags.gitleaksIgnore === false) {
+        throw new VisUserError("--fail-on-unused-ignores checks .gitleaksignore, which --no-gitleaks-ignore turns off. Drop one of them.");
+    }
+
+    const partial = partialScanReasons(flags, hasPathArguments);
+
+    if (partial.length > 0) {
+        throw new VisUserError(
+            `--fail-on-unused-ignores needs a full scan: with ${partial.join(", ")}, entries for files outside the scan would be reported as unused. Run it on a full \`vis secrets\` or \`vis secrets --history\` scan.`,
+        );
+    }
 };
 
-const runHistoryScan = async (flags: SecretsFlags, root: string, scanOptions: ScanOptions, useColor: boolean, toolVersion: string): Promise<void> => {
+/** Everything a scan produced, whichever mode ran it. */
+interface ScanOutcome {
+    findings: Finding[];
+    skippedBlobs: GitSkippedBlob[];
+    skippedFiles: SkippedFile[];
+    suppressed: SuppressedFinding[];
+    unusedIgnores: GitleaksIgnoreEntry[];
+}
+
+interface ReportingContext {
+    flags: SecretsFlags;
+    format: ReportFormat;
+    /** The scan covered the whole tree / history, so unused ignore entries are meaningful. */
+    fullScan: boolean;
+    history: boolean;
+    reports: ReportTarget[];
+    root: string;
+    scanOptions: ScanOptions;
+    toolbox: Toolbox<Console, SecretsOptions>;
+    toolVersion: string;
+    useColor: boolean;
+}
+
+/** Diagnostics go to stderr so json / sarif / csv on stdout stay parseable. */
+const printDiagnostics = (outcome: ScanOutcome, context: ReportingContext): void => {
+    const { flags, root, useColor } = context;
+
+    if (!flags.quiet) {
+        if (outcome.skippedBlobs.length > 0) {
+            process.stderr.write(`${formatSkippedBlobs(outcome.skippedBlobs, useColor, { verbose: flags.verbose })}\n`);
+        }
+
+        if (outcome.skippedFiles.length > 0) {
+            process.stderr.write(`${formatSkippedFiles(outcome.skippedFiles, useColor, { verbose: flags.verbose })}\n`);
+        }
+
+        if (context.fullScan && outcome.unusedIgnores.length > 0) {
+            process.stderr.write(`${formatUnusedIgnores(outcome.unusedIgnores, GITLEAKS_IGNORE, useColor)}\n`);
+        }
+    }
+
+    // Explicitly requested, so printed even with --quiet.
+    if (flags.logIgnored) {
+        process.stderr.write(`${formatSuppressed(outcome.suppressed, root, useColor)}\n`);
+    }
+};
+
+/** Print the `--format` report to stdout and write every `--report` file. */
+const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
+    const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
+    const shouldRedact = scanOptions.redact === true;
+    const reportFindings = shouldRedact ? redact(outcome.findings, ["match", "secret"]) : outcome.findings;
+    const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
+    const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
+    const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
+
+    process.stdout.write(renderReport(format, reportFindings, { ...renderContext, useColor }));
+
+    for (const target of reports) {
+        const path = resolve(toolbox.process.cwd, target.path);
+
+        // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
+        writeReportFileSync(path, renderReport(target.format, reportFindings, { ...renderContext, useColor: false }), !shouldRedact);
+
+        if (!flags.quiet) {
+            pail.info(`Wrote ${target.format} report to ${relative(toolbox.process.cwd, path) || path}`);
+        }
+    }
+};
+
+/** Set the exit code for the opt-in diagnostics gates. */
+const applyDiagnosticGates = (outcome: ScanOutcome, flags: SecretsFlags): void => {
+    if (flags.failOnUnreadable) {
+        const unreadableFiles = outcome.skippedFiles.filter((file) => file.reason !== "too-large").length;
+        const unreadable = unreadableFiles + outcome.skippedBlobs.filter((blob) => blob.reason === "missing").length;
+
+        if (unreadable > 0) {
+            pail.error(`${String(unreadable)} file(s) could not be read; the scan is incomplete (--fail-on-unreadable).`);
+            process.exitCode = 1;
+        }
+    }
+
+    if (flags.failOnUnusedIgnores && outcome.unusedIgnores.length > 0) {
+        pail.error(
+            `${String(outcome.unusedIgnores.length)} unused ${GITLEAKS_IGNORE} entr${outcome.unusedIgnores.length === 1 ? "y" : "ies"} (--fail-on-unused-ignores).`,
+        );
+        process.exitCode = 1;
+    }
+};
+
+const runHistoryScan = async (flags: SecretsFlags, root: string, scanOptions: ScanOptions, context: Omit<ReportingContext, "history">): Promise<void> => {
     if (flags.staged || flags.since || flags.affected) {
         throw new Error("--history scans commit history and can't be combined with --staged / --since / --affected (those scan the working tree).");
     }
@@ -361,85 +504,77 @@ const runHistoryScan = async (flags: SecretsFlags, root: string, scanOptions: Sc
         throw new Error("--history requires a git working tree, and none was detected.");
     }
 
-    const format = validateFormat(flags.format);
-    const isInteractive = !flags.quiet && format === "text";
+    const isInteractive = !flags.quiet && context.format === "text";
     const spinner = createSpinner({ verbose: isInteractive });
 
     spinner.start("scanning git history for secrets");
 
-    let findings: GitFinding[];
-    let skipped: GitSkippedBlob[];
+    let outcome: ScanOutcome;
 
     try {
-        ({ findings, skipped } = await scanGitHistoryDetailed({
+        const result = await scanGitHistoryDetailed({
             ...scanOptions,
             all: flags.all,
             cwd: root,
             maxCommits: flags.maxCommits,
             range: flags.historyRange,
-        }));
+        });
+
+        outcome = {
+            findings: result.findings,
+            skippedBlobs: result.skipped,
+            skippedFiles: [],
+            suppressed: result.suppressed,
+            unusedIgnores: result.unusedIgnores,
+        };
         spinner.succeed();
     } catch (error) {
         spinner.failed();
         throw new VisUserError(`git-history secret scan failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
 
-    reportSkippedBlobs(skipped, flags, useColor);
+    const reporting = { ...context, history: true };
 
-    const shouldRedact = scanOptions.redact === true;
-    const reportFindings = shouldRedact ? redact(findings, ["match", "secret"]) : findings;
+    printDiagnostics(outcome, reporting);
+    await emitReports(outcome, reporting);
 
-    switch (format) {
-        case "json": {
-            process.stdout.write(
-                `${JSON.stringify(
-                    reportFindings.map((f) => toRelativeFinding(f, root)),
-                    null,
-                    2,
-                )}\n`,
-            );
-            break;
-        }
-        case "sarif": {
-            const ruleMetadata = await listRules(scanOptions).catch(() => [] as RuleInfo[]);
-
-            process.stdout.write(`${formatSarif(reportFindings, toolVersion, root, ruleMetadata)}\n`);
-            break;
-        }
-        default: {
-            process.stdout.write(`${formatHistoryText(reportFindings, useColor, { redact: shouldRedact })}\n`);
-        }
-    }
-
-    if (findings.length > 0) {
+    if (outcome.findings.length > 0) {
         if (!flags.quiet) {
-            pail.warn(`${String(findings.length)} potential secret(s) found across git history`);
+            pail.warn(`${String(outcome.findings.length)} potential secret(s) found across git history`);
             pail.notice(
                 "Findings reference the commit that introduced them — rotate the credential and rewrite history (e.g. git filter-repo) if it is still reachable.",
             );
         }
 
         process.exitCode = 1;
-
-        return;
-    }
-
-    if (!flags.quiet) {
+    } else if (!flags.quiet) {
         pail.success("No secrets detected in git history.");
     }
+
+    applyDiagnosticGates(outcome, flags);
 };
 
-const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<Console, SecretsOptions>): Promise<void> => {
+const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void> => {
+    const { argument, options, visConfig, workspaceRoot } = toolbox;
     const flags = options as unknown as SecretsFlags;
     const args = argument as string[] | undefined;
-    const root = workspaceRoot ?? process.cwd();
+    const root = workspaceRoot ?? toolbox.process.cwd;
     const useColor = !flags.quiet && process.stdout.isTTY;
     const visSecrets = (visConfig as { secrets?: VisSecretsConfig } | undefined)?.secrets;
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
-    // Before the --list-*/--init early returns, so no mode silently drops a history flag.
+    // Before the --list-*/--init early returns, so no mode silently drops a history or reporting flag.
     assertHistoryFlags(flags);
+    assertReportingFlags(flags, (args ?? []).length > 0);
+
+    const reports = parseReportTargets(toArray(flags.report));
+    const ignorePath = join(root, GITLEAKS_IGNORE);
+
+    // gitleaks reads `.gitleaksignore` from the scan root; do the same unless --no-gitleaks-ignore.
+    if (flags.gitleaksIgnore !== false && (await pathExists(toolbox.fs, ignorePath))) {
+        scanOptions.gitleaksIgnore = ignorePath;
+    }
 
     if (flags.listRules) {
         await printListRules(scanOptions, useColor);
@@ -459,8 +594,12 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
         return;
     }
 
+    const format = validateFormat(flags.format);
+    const fullScan = partialScanReasons(flags, (args ?? []).length > 0).length === 0;
+    const context = { flags, format, fullScan, reports, root, scanOptions, toolbox, toolVersion, useColor };
+
     if (flags.history) {
-        await runHistoryScan(flags, root, scanOptions, useColor, toolVersion);
+        await runHistoryScan(flags, root, scanOptions, context);
 
         return;
     }
@@ -475,20 +614,35 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
         return;
     }
 
-    const isInteractive = !flags.quiet && !["json", "sarif"].includes(flags.format ?? "text");
+    const isInteractive = !flags.quiet && format === "text";
     const spinner = createSpinner({ verbose: isInteractive });
 
     spinner.start("scanning for secrets");
 
-    let findings: Finding[];
-
-    let skippedBlobs: GitSkippedBlob[] = [];
+    let outcome: ScanOutcome;
 
     try {
         if (target.staged) {
-            ({ findings, skipped: skippedBlobs } = await scanGitStaged({ ...scanOptions, cwd: root }));
+            const result = await scanGitStaged({ ...scanOptions, cwd: root });
+
+            outcome = {
+                findings: result.findings,
+                skippedBlobs: result.skipped,
+                skippedFiles: [],
+                suppressed: result.suppressed,
+                unusedIgnores: result.unusedIgnores,
+            };
         } else {
-            findings = target.files === undefined ? await scan(target.paths ?? [root], scanOptions) : await scanFiles(target.files, scanOptions);
+            const pending = target.files === undefined ? scanDetailed(target.paths ?? [root], scanOptions) : scanFilesDetailed(target.files, scanOptions);
+            const result = await pending;
+
+            outcome = {
+                findings: result.findings,
+                skippedBlobs: [],
+                skippedFiles: result.skipped,
+                suppressed: result.suppressed,
+                unusedIgnores: result.unusedIgnores,
+            };
         }
 
         spinner.succeed();
@@ -500,7 +654,9 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
         throw target.staged ? new VisUserError(message, { cause: error }) : new Error(message, { cause: error });
     }
 
-    reportSkippedBlobs(skippedBlobs, flags, useColor);
+    const reporting = { ...context, history: false };
+
+    printDiagnostics(outcome, reporting);
 
     // Optional skipped-rule diagnostics (verbose only)
     if (flags.verbose) {
@@ -515,6 +671,8 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
         }
     }
 
+    const { findings } = outcome;
+
     // `ScanOptions.baseline` also accepts an inline Finding[]/fingerprint Set, but this
     // command only resolves a baseline file path (see resolveScanOptions), so narrow to
     // the string form and fall back to the default path otherwise.
@@ -522,21 +680,14 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
     const showDiff = !flags.quiet && isAccessibleSync(baselineFullPath);
 
     if (flags.updateBaseline) {
-        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline });
+        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline, sensitive: scanOptions.redact !== true });
 
         pail.success(`Baseline updated: ${relative(root, baselineFullPath) || baselineFullPath} now contains ${String(count)} entries.`);
 
         return;
     }
 
-    const format = validateFormat(flags.format);
-
-    const ruleMetadata = format === "sarif" ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
-
-    const shouldRedact = scanOptions.redact === true;
-    const reportFindings = shouldRedact ? redact(findings, ["match", "secret"]) : findings;
-
-    emitFindings(reportFindings, format, root, useColor, toolVersion, ruleMetadata, shouldRedact);
+    await emitReports(outcome, reporting);
 
     if (format === "text" && showDiff) {
         printDiff(diffBaseline(findings, baselineFullPath, root));
@@ -549,13 +700,11 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
         }
 
         process.exitCode = 1;
-
-        return;
-    }
-
-    if (!flags.quiet) {
+    } else if (!flags.quiet) {
         pail.success("No secrets detected.");
     }
+
+    applyDiagnosticGates(outcome, flags);
 };
 
 // fallow-ignore-next-line unused-export -- lazy-loaded command entry (cerebro loader/lazyNamed dynamic import)
