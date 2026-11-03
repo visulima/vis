@@ -210,7 +210,7 @@ const preparedConfig = (options: ScanOptions | undefined): PreparedConfig => {
  * Flatten the user's grouped options into the shape the native binding
  * expects. `redact` is not passed on: the pipeline masks (see `mask.ts`).
  */
-export const toNativeOptions = (options: ScanOptions | undefined, config: GitleaksConfig): Native.ScanOptions => {
+const toNativeOptions = (options: ScanOptions | undefined, config: GitleaksConfig): Native.ScanOptions => {
     return {
         concurrency: options?.concurrency,
         config,

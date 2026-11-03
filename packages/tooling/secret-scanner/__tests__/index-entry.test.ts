@@ -5,7 +5,7 @@ import type { Finding } from "../src/types";
 // Mock the native binding so the entry-point orchestrators (`scan`,
 // `scanFiles`, `listRequiredValidators`) can be exercised without loading the
 // real `.node` addon. We assert the JS orchestration (prepare → binding →
-// postProcess + verbose diagnostics) rather than detection itself.
+// postProcessDetailed + verbose diagnostics) rather than detection itself.
 const scanMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[]; suppressed: unknown[] }>>();
 const scanFilesMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[]; suppressed: unknown[] }>>();
 const inspectRulesetMock = vi.fn<(...args: unknown[]) => unknown>();

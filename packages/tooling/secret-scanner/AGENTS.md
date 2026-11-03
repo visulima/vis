@@ -8,7 +8,7 @@ This file provides guidance to AI coding agents when working with code in this d
 
 ## Architecture
 
-- Native Rust lives in `native/` (separate `Cargo.toml`). JS entry stays in `src/`. The TypeScript layer (`prepare-scan` -> native binding -> `pipeline.postProcess`) is intentionally thin — heavy lifting is in Rust.
+- Native Rust lives in `native/` (separate `Cargo.toml`). JS entry stays in `src/`. The TypeScript layer (`prepare-scan` -> native binding -> `pipeline.postProcessDetailed`) is intentionally thin — heavy lifting is in Rust.
 - `pnpm build` runs `pnpm run build:rules` first (executes `scripts/build-rules.mjs`, which converts upstream gitleaks + Kingfisher TOML refs into `data/ruleset.json`) and then `packem build`. After any change under `scripts/presets/` or to the `.ref` files, rebuild rules before testing.
 - Rule sources tracked via `scripts/gitleaks.ref` and `scripts/kingfisher.ref`. Don't bump those without running `scripts/analyze-overlap.mjs` and `test:parity`; `scripts/diff-rulesets.mjs <old> <new>` lists the rule ids added, removed or renamed. Kingfisher is pinned to 1.x (`major=1`): 2.x replaced its catalog with Betterleaks/Veles imports under new ids. `.github/workflows/secret-scanner-rules-sync.yml` opens the weekly bump PR.
 - Upstream gitleaks fixes go in `ruleOverrides` in `data/gitleaks.patches.json` (field-level, with the upstream PR link). Default-on Visulima rules go in `scripts/visulima-rules.toml`; opt-in ones in `scripts/presets/`. Write regexes with ASCII classes: Unicode `\w` can exceed the native regex size limit and the rule is then silently skipped (`inspectRuleset()` shows it). TP/FP tests go in `__tests__/rule-coverage.test.ts`.

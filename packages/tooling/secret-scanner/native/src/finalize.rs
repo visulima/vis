@@ -74,8 +74,8 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
     // priority in a single linear pass.
     //
     // Decoded findings share their encoded span with any plain finding on the blob itself,
-    // so the decode origin (chain, then inner offsets) is part of the key: `None` sorts
-    // first, keeping plain-only output (and its order) exactly as before.
+    // so the decode origin (chain, then inner offsets) is part of the key; plain findings
+    // (`None`) sort first.
     //
     // A satisfied composite finding (`required_findings` set) sorts ahead of every other
     // rule at its span, so the dedup below keeps it whatever its priority: its dependencies
@@ -176,7 +176,6 @@ fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<String> {
 
 /// Mask all but the first and last three **characters**. Works on `chars()` rather than
 /// bytes so a multibyte secret (`pässwört`) never slices through a UTF-8 sequence (#2261).
-/// For ASCII input the output is byte-identical to the previous byte-based mask.
 fn redact(s: &str) -> String {
     let len = s.chars().count();
     if len <= 6 {

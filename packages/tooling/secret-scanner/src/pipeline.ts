@@ -44,10 +44,9 @@ const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOp
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
     // The content-shape heuristics judge `finding.secret`. They stay off under
-    // `redact: true`, as they were when the native layer masked the secret
-    // before the pipeline saw it, so a redacted scan reports the same findings
-    // it always did. The file-based `lockFile` heuristic reads `finding.file`
-    // and is unaffected.
+    // `redact: true` so redacted scans keep reporting the findings they did
+    // when the native layer masked before the pipeline ran. The file-based
+    // `lockFile` heuristic reads `finding.file` and is unaffected.
     const skipSequential = !redact && heuristics?.sequentialString !== false;
     const skipUuid = !redact && heuristics?.potentialUuid !== false;
     const skipNonAlnum = !redact && heuristics?.notAlphanumericString !== false;
@@ -149,8 +148,8 @@ const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] 
  * mirroring Kingfisher's `skip_if_missing: true` default.
  */
 const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>, redact: boolean): F[] => {
-    // Skipped under `redact: true`, as it was when the native layer masked
-    // `finding.match` before the pipeline ran, so redacted results don't change.
+    // Skipped under `redact: true`, for the same compatibility as the
+    // heuristics above.
     if (redact || ruleMeta.size === 0) {
         return findings;
     }
