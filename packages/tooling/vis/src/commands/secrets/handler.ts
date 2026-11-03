@@ -3,14 +3,15 @@ import { dim, green, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
 import { join, relative, resolve } from "@visulima/path";
 import { redact } from "@visulima/redact";
-import type { Confidence, Finding, GitFinding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
-import { inspectRuleset, listRequiredValidators, listRules, scan, scanFiles, scanGitHistory } from "@visulima/secret-scanner";
+import type { Confidence, Finding, GitFinding, GitSkippedBlob, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
+import { inspectRuleset, listRequiredValidators, listRules, scan, scanFiles, scanGitHistoryDetailed, scanGitStaged } from "@visulima/secret-scanner";
 
+import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
 import { diffBaseline, toRelativeFinding, writeBaseline } from "../../secrets/baseline";
-import { formatHistoryText, formatSarif, formatText } from "../../secrets/format";
-import { filesSince, hasGit, stagedFiles } from "../../secrets/git";
+import { formatHistoryText, formatSarif, formatSkippedBlobs, formatText } from "../../secrets/format";
+import { filesSince, hasGit } from "../../secrets/git";
 import type { SecretsOptions } from "./index";
 
 type RepeatableString = string | string[];
@@ -18,6 +19,7 @@ type ReportFormat = "json" | "sarif" | "text";
 
 export interface SecretsFlags {
     affected?: boolean;
+    all?: boolean;
     baseline?: string;
     concurrency?: number;
     config?: string;
@@ -254,13 +256,39 @@ const printDiff = (diff: { fresh: Finding[]; resolved: Finding[]; surviving: Fin
     );
 };
 
-const chooseScanPaths = async (flags: SecretsFlags, args: string[], root: string): Promise<{ files?: string[]; paths?: string[] }> => {
+/**
+ * Reject history-only flags used without `--history`, and flag combinations
+ * the history walk can't honour, instead of silently ignoring them.
+ */
+export const assertHistoryFlags = (flags: SecretsFlags): void => {
+    if (!flags.history) {
+        const historyOnly = [
+            flags.all ? "--all" : undefined,
+            flags.historyRange === undefined ? undefined : "--history-range",
+            flags.maxCommits === undefined ? undefined : "--max-commits",
+        ].filter((flag): flag is string => flag !== undefined);
+
+        if (historyOnly.length > 0) {
+            throw new VisUserError(
+                `${historyOnly.join(", ")} only applies to git history scans. Did you mean \`vis secrets --history ${historyOnly.join(" ")}\`?`,
+            );
+        }
+
+        return;
+    }
+
+    if (flags.all && flags.historyRange !== undefined) {
+        throw new VisUserError("--all walks every ref and can't be combined with --history-range. Use one or the other.");
+    }
+};
+
+const chooseScanPaths = async (flags: SecretsFlags, args: string[], root: string): Promise<{ files?: string[]; paths?: string[]; staged?: true }> => {
     if (flags.staged) {
         if (!hasGit(root)) {
             throw new Error("--staged requires a git working tree, and none was detected.");
         }
 
-        return { files: stagedFiles(root) };
+        return { staged: true };
     }
 
     if (flags.since) {
@@ -315,6 +343,15 @@ const emitFindings = (
     }
 };
 
+/** Tell the user which blobs were not inspected; the summary always, the list with --verbose. */
+const reportSkippedBlobs = (skipped: GitSkippedBlob[], flags: SecretsFlags, useColor: boolean): void => {
+    if (skipped.length === 0 || flags.quiet) {
+        return;
+    }
+
+    process.stderr.write(`${formatSkippedBlobs(skipped, useColor, { verbose: flags.verbose })}\n`);
+};
+
 const runHistoryScan = async (flags: SecretsFlags, root: string, scanOptions: ScanOptions, useColor: boolean, toolVersion: string): Promise<void> => {
     if (flags.staged || flags.since || flags.affected) {
         throw new Error("--history scans commit history and can't be combined with --staged / --since / --affected (those scan the working tree).");
@@ -331,19 +368,23 @@ const runHistoryScan = async (flags: SecretsFlags, root: string, scanOptions: Sc
     spinner.start("scanning git history for secrets");
 
     let findings: GitFinding[];
+    let skipped: GitSkippedBlob[];
 
     try {
-        findings = await scanGitHistory({
+        ({ findings, skipped } = await scanGitHistoryDetailed({
             ...scanOptions,
+            all: flags.all,
             cwd: root,
             maxCommits: flags.maxCommits,
             range: flags.historyRange,
-        });
+        }));
         spinner.succeed();
     } catch (error) {
         spinner.failed();
-        throw new Error(`git-history secret scan failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        throw new VisUserError(`git-history secret scan failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
+
+    reportSkippedBlobs(skipped, flags, useColor);
 
     const shouldRedact = scanOptions.redact === true;
     const reportFindings = shouldRedact ? redact(findings, ["match", "secret"]) : findings;
@@ -397,6 +438,9 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
+    // Before the --list-*/--init early returns, so no mode silently drops a history flag.
+    assertHistoryFlags(flags);
+
     if (flags.listRules) {
         await printListRules(scanOptions, useColor);
 
@@ -438,13 +482,25 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
 
     let findings: Finding[];
 
+    let skippedBlobs: GitSkippedBlob[] = [];
+
     try {
-        findings = target.files === undefined ? await scan(target.paths ?? [root], scanOptions) : await scanFiles(target.files, scanOptions);
+        if (target.staged) {
+            ({ findings, skipped: skippedBlobs } = await scanGitStaged({ ...scanOptions, cwd: root }));
+        } else {
+            findings = target.files === undefined ? await scan(target.paths ?? [root], scanOptions) : await scanFiles(target.files, scanOptions);
+        }
+
         spinner.succeed();
     } catch (error) {
         spinner.failed();
-        throw new Error(`secret scan failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+
+        const message = `secret scan failed: ${error instanceof Error ? error.message : String(error)}`;
+
+        throw target.staged ? new VisUserError(message, { cause: error }) : new Error(message, { cause: error });
     }
+
+    reportSkippedBlobs(skippedBlobs, flags, useColor);
 
     // Optional skipped-rule diagnostics (verbose only)
     if (flags.verbose) {

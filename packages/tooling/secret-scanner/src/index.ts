@@ -134,7 +134,18 @@ export const scanFiles = async (files: string[], options?: ScanOptions): Promise
 export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
 export { fingerprint, legacyFingerprint } from "./fingerprint";
-export { type GitCommitInfo, type GitFinding, type GitScanOptions, scanGitHistory } from "./git-scan";
+export {
+    type GitCommitInfo,
+    type GitFinding,
+    type GitScanOptions,
+    type GitScanResult,
+    type GitSkippedBlob,
+    type GitSkipReason,
+    type GitStagedScanOptions,
+    scanGitHistory,
+    scanGitHistoryDetailed,
+    scanGitStaged,
+} from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
 export { type SarifLog, toSarif, type ToSarifOptions } from "./sarif";
 export { scanString } from "./scan-string";

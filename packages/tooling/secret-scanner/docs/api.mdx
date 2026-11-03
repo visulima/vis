@@ -50,6 +50,53 @@ const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 
 Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency.
 
+## Git
+
+All git helpers shell out to the `git` binary with array arguments (no shell). Every call overrides config that changes output shape (`core.quotepath=off`, `color.ui=never`, `--no-textconv`, `--no-ext-diff`, `--no-color`), and blobs are read by object id through `git cat-file --batch`, so textconv and smudge filters (sops, git-crypt, LFS) never run. Binary blobs (a NUL in the first 8 KiB), blobs larger than `walk.maxFileSize` (10 MiB by default) and blobs missing from the object store are skipped and reported. Any other git failure, such as a corrupt object or a permission error, throws.
+
+### `scanGitHistory(options?)`
+
+Scan commit history (gitleaks `git` mode). Finds secrets that were committed and later removed. Each finding carries the commit that introduced it in `finding.commit` (`sha`, `authorName`, `authorEmail`, `date`, `message`); `file` is the path at that commit.
+
+```typescript
+import { scanGitHistory } from "@visulima/secret-scanner";
+
+const leaked = await scanGitHistory({ cwd: process.cwd(), range: "main..HEAD" });
+const everywhere = await scanGitHistory({ all: true, maxCommits: 500 });
+```
+
+| Option               | Description                                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `cwd`                | Repository directory. Defaults to `process.cwd()`.                                                                   |
+| `range`              | Raw rev-list argument (`main..feature`, `HEAD~10..HEAD`, a ref). Takes precedence over `since`/`until`.              |
+| `since` / `until`    | Produce `since..until` (`until` defaults to `HEAD`).                                                                 |
+| `all`                | Walk every ref (branches, tags, remotes) like `git rev-list --all`. Cannot be combined with `range`/`since`/`until`. |
+| `maxCommits`         | Cap the number of commits walked, newest first.                                                                      |
+| …every `ScanOptions` | Rules, heuristics, baseline, redact and validate apply per blob.                                                     |
+
+How commits are read:
+
+- **Each finding is reported once.** Every changed blob is scanned in full, so a value added to an existing multi-line block is still caught. A finding is kept only when the same rule and secret were not in the parent's version of that blob. A secret in a long-lived file is reported at the commit that introduced it, not again on every later commit that touches the file. Renames are followed: the parent version is read from the old path. With `range`, `since`/`until` or `maxCommits`, a secret introduced before the first walked commit is therefore not reported, even when a commit in range edits its file; scan the full history (or that commit) to find it.
+- **Merge commits are scanned.** A merge is diffed against its first parent, and a finding is kept only when none of its parents had it. A secret added while resolving a conflict is reported at the merge commit. A secret merged cleanly from a side branch is reported only at the side-branch commit.
+- **Commit allowlists apply.** A global `allowlists[].commits` entry skips those commits entirely. With `targetRules`, or inside a rule's own allowlist, it drops only that rule's findings in those commits. SHAs must be the full 40 characters and are compared case-insensitively. An allowlist with `condition = "AND"` that also lists `paths`, `regexes` or `stopwords` is not evaluated against commits.
+- Submodule pointers and deleted files are not scanned.
+
+### `scanGitHistoryDetailed(options?)`
+
+Same as `scanGitHistory`, but returns `{ findings, skipped }`. `skipped` lists every blob that was not inspected, as `{ path, sha, commit, reason }` with `reason` one of `"binary"`, `"too-large"` or `"missing"`. Use it to tell a clean history from one that was only partly read.
+
+### `scanGitStaged(options?)`
+
+Scan the content staged in the git index, which is what the next commit will contain, rather than the working-tree files. A staged secret is found even after it was deleted from the working tree, and unstaged edits are ignored. Inside a `pre-commit` hook, the index git passes to the hook (`GIT_INDEX_FILE`) is the one read.
+
+```typescript
+import { scanGitStaged } from "@visulima/secret-scanner";
+
+const { findings, skipped } = await scanGitStaged({ cwd: process.cwd() });
+```
+
+Findings carry the absolute working-tree path, like `scanFiles`. `walk.excludePatterns` / `walk.excludeFromFiles` apply relative to `cwd`.
+
 ## Introspection
 
 ### `listRules(options?)`

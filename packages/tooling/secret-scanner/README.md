@@ -138,8 +138,18 @@ const leaked = await scanGitHistory({ cwd: process.cwd(), range: "HEAD~50..HEAD"
 for (const f of leaked) {
     console.log(`${f.ruleId} @ ${f.commit.sha.slice(0, 8)} (${f.commit.authorEmail}): ${f.file}`);
 }
-// Bound the walk with `range`, `since`/`until`, or `maxCommits`. Omit all
-// three to scan the entire reachable history of HEAD.
+// Bound the walk with `range`, `since`/`until`, or `maxCommits`, or pass
+// `all: true` to walk every branch and tag. Omit them all to scan the
+// entire reachable history of HEAD. A secret is reported once, at the
+// commit that introduced it; merge commits and `allowlists[].commits` are
+// honoured. `scanGitHistoryDetailed` also returns the blobs it skipped
+// (binary, too large, missing), and real git failures throw.
+
+// 3c) Scan the staged index (pre-commit): what will be committed, not the
+//     working tree.
+import { scanGitStaged } from "@visulima/secret-scanner";
+
+const { findings: stagedFindings } = await scanGitStaged({ cwd: process.cwd() });
 
 // 4) List every bundled rule
 const rules = await listRules();
