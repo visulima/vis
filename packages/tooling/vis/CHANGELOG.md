@@ -1,3 +1,9 @@
+## @visulima/vis [6.4.3](https://github.com/visulima/vis/compare/@visulima/vis@6.4.2...@visulima/vis@6.4.3) (2026-11-03)
+
+### Bug Fixes
+
+* **release:** scope the git-tag current version to the active channel ([#75](https://github.com/visulima/vis/issues/75)) ([90eacb7](https://github.com/visulima/vis/commit/90eacb790cd9e1c5df902cc20a87eba139b5301e))
+
 ## @visulima/vis [6.4.2](https://github.com/visulima/vis/compare/@visulima/vis@6.4.1...@visulima/vis@6.4.2) (2026-11-01)
 
 ### Bug Fixes
