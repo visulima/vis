@@ -1,6 +1,7 @@
 /* eslint-disable no-secrets/no-secrets -- Overview comment references the internal stage names verbatim; no actual secrets. */
 // Post-scan pipeline: runs after the native detector returns raw findings.
 //
+//   0. `dropShadowedGenericFindings` — generic-api-key yields to any overlapping finding.
 //   1. `applyRuleFilter`      — `rules.include` / `rules.exclude` (tag-expanded upstream).
 //   2. `applyChecksumFilter`  — drops findings whose CRC-style checksum fails.
 //   3. `applyValidation`      — populates `finding.validation` via HTTP / transport validators.
@@ -83,6 +84,39 @@ const applyHeuristicFilters = (findings: Finding[], options: ScanOptions | undef
 
         return true;
     });
+};
+
+const GENERIC_RULE_ID = "generic-api-key";
+
+const comparePosition = (lineA: number, columnA: number, lineB: number, columnB: number): number => lineA - lineB || columnA - columnB;
+
+const overlaps = (a: Finding, b: Finding): boolean =>
+    comparePosition(a.startLine, a.startColumn, b.endLine, b.endColumn) < 0 && comparePosition(b.startLine, b.startColumn, a.endLine, a.endColumn) < 0;
+
+/**
+ * Gitleaks parity (`detect.filter`): the catch-all `generic-api-key` rule only
+ * reports text no other rule matched. `token = "ghp_…"` is a `github-pat`
+ * finding, not also a generic one. The native span dedup only collapses
+ * identical spans, and the generic match also covers the variable name, so the
+ * two never share a span. Compares match positions rather than secrets so it
+ * also works when `redact` has masked them.
+ */
+const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
+    const othersByFile = new Map<string, Finding[]>();
+
+    for (const finding of findings) {
+        if (finding.ruleId !== GENERIC_RULE_ID) {
+            othersByFile.set(finding.file, [...(othersByFile.get(finding.file) ?? []), finding]);
+        }
+    }
+
+    if (othersByFile.size === 0) {
+        return findings;
+    }
+
+    return findings.filter(
+        (finding) => finding.ruleId !== GENERIC_RULE_ID || !(othersByFile.get(finding.file) ?? []).some((other) => overlaps(finding, other)),
+    );
 };
 
 const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, excludeIds: string[] | undefined): Finding[] => {
@@ -431,7 +465,15 @@ export const postProcessDetailed = async (
         return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
     };
 
-    const validated = await applyValidation(preValidation(active), options, prepared.ruleMeta);
+    // Active findings shadow generic ones among themselves only, so turning on
+    // `reportSuppressed` never changes `findings`. A suppressed generic finding is
+    // also dropped when any finding overlaps it.
+    const shadowFree = dropShadowedGenericFindings(active);
+    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...nativeSuppressed]).filter(
+        (finding) => (finding as Native.Finding).suppressedBy !== undefined,
+    );
+
+    const validated = await applyValidation(preValidation(shadowFree), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
@@ -446,7 +488,7 @@ export const postProcessDetailed = async (
         }
     }
 
-    for (const finding of preValidation(nativeSuppressed)) {
+    for (const finding of preValidation(suppressedShadowFree)) {
         // Mark matching ignore entries used; the native reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 

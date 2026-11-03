@@ -7,13 +7,13 @@ description: Fast secret and credential scanner — a Rust port of the gitleaks 
 
 **Fast secret and credential scanner for Node.js, built on a Rust port of the [gitleaks](https://github.com/gitleaks/gitleaks) detection engine and exposed through NAPI.**
 
-`@visulima/secret-scanner` ships a combined default ruleset (1,047 rules active by default — 222 upstream gitleaks rules MIT + 825 MongoDB Kingfisher rules Apache-2.0, plus 11 opt-in `preset:*` rules disabled by default) together with a vetted set of false-positive reductions, native `.gitignore` support, and a handful of ergonomic extensions (opt-in tagged rule groups, per-rule priority, per-rule pre-processing, target-scoped allowlists). The detector is PCRE-compatible, parallelised with `rayon`, and mmap-aware for large files.
+`@visulima/secret-scanner` ships a combined default ruleset (1,339 rules active by default — 222 upstream gitleaks rules MIT + 1,095 MongoDB Kingfisher rules Apache-2.0 + 22 Visulima rules, plus 48 opt-in `preset:*` rules disabled by default) together with a vetted set of false-positive reductions, native `.gitignore` support, and a handful of ergonomic extensions (opt-in tagged rule groups, per-rule priority, per-rule pre-processing, target-scoped allowlists). The detector is PCRE-compatible, parallelised with `rayon`, and mmap-aware for large files.
 
 Use it as a library, through the [`vis secrets`](../vis/index.mdx) CLI, or as a drop-in replacement for `gitleaks` / `secretlint` in existing pipelines.
 
 ## Features
 
-- **1,047 bundled rules** active by default — 222 from upstream gitleaks (MIT) + 825 from MongoDB Kingfisher (Apache-2.0) — plus 11 opt-in `preset:*` rules (`preset:weak-passwords` for low-entropy credentials, `preset:password-manager` for committed vault exports), disabled by default.
+- **1,339 bundled rules** active by default — 222 from upstream gitleaks (MIT) + 1,095 from MongoDB Kingfisher (Apache-2.0) + 22 Visulima rules for providers neither upstream covers — plus 48 opt-in `preset:*` rules (`preset:weak-passwords` for low-entropy credentials, `preset:password-manager` for committed vault exports, `preset:exposed-files` for leaked build artefacts), disabled by default.
 - **Fancy-regex engine** with lookaround support; delegates to `regex` internally when a pattern doesn't need PCRE features.
 - **Aho-Corasick keyword prefilter** — candidate rules are shortlisted in a single DFA pass before any per-rule regex runs.
 - **Parallel file scanning** via `rayon`, memory-mapped zero-copy reads above 1 MiB.

@@ -3,16 +3,18 @@
  *
  * Skipped by default — this test downloads gitleaks' `testdata/` directory
  * (via `git sparse-checkout`) into `node_modules/.cache/secret-scanner/`
- * using `@visulima/find-cache-dir`, then runs our scanner and (if the
- * `gitleaks` CLI is on PATH) cross-checks rule-id coverage.
+ * using `@visulima/find-cache-dir`, then runs our scanner on a temp copy and
+ * (if the `gitleaks` CLI is on PATH) checks that every location gitleaks
+ * reports is reported by us too.
  *
  * Run with: `pnpm test:parity` (sets SECRET_SCANNER_PARITY=1).
  * Pin a ref with: `SECRET_SCANNER_PARITY_REF=v8.30.2 pnpm test:parity`.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 import { env } from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -56,53 +58,67 @@ const fetchTestdata = async (): Promise<string> => {
     return resolve(tdRoot, "testdata");
 };
 
+// The walker skips anything under `node_modules`, which is where the cache
+// lives, so scan a copy in a temp dir instead.
+const copyTestdata = async (testdata: string): Promise<string> => {
+    const scanRoot = await mkdtemp(join(tmpdir(), "secret-scanner-parity-"));
+
+    await cp(testdata, scanRoot, { recursive: true });
+
+    return scanRoot;
+};
+
 describe.skipIf(!shouldRun)("gitleaks parity", () => {
-    it("scans upstream gitleaks testdata and (optionally) matches gitleaks CLI coverage", async () => {
-        expect.assertions(2);
+    it("scans upstream gitleaks testdata and reports every gitleaks finding location", async () => {
+        expect.hasAssertions();
 
-        const scanRoot = await fetchTestdata();
+        const scanRoot = await copyTestdata(await fetchTestdata());
 
-        expect(existsSync(scanRoot)).toBe(true);
+        try {
+            const ours = await scan([scanRoot], { walk: { gitignore: false, includeHidden: true } });
+            // A finding covers every line from its start to its end; Kingfisher's
+            // multi-line matches can start a line above the secret gitleaks reports.
+            const covers = (file: string, line: number): boolean => ours.some((f) => f.file === file && f.startLine <= line && line <= f.endLine);
 
-        const ours = await scan([scanRoot], { walk: { gitignore: false, includeHidden: true } });
-        const ourRuleIds = new Set(ours.map((f) => f.ruleId));
-
-        // eslint-disable-next-line no-console
-        console.log(`  our findings: ${ours.length} across ${ourRuleIds.size} rules`);
-
-        const gitleaksVersion = spawnSync("gitleaks", ["version"], { encoding: "utf8" });
-
-        if (gitleaksVersion.status !== 0) {
             // eslint-disable-next-line no-console
-            console.log("  (gitleaks CLI not on PATH — install from https://github.com/gitleaks/gitleaks to enable cross-check)");
+            console.log(`  our findings: ${String(ours.length)} across ${String(new Set(ours.map((f) => f.ruleId)).size)} rules`);
 
-            return;
-        }
+            expect(ours.length).toBeGreaterThan(0);
 
-        const cacheDir = await findCacheDir("secret-scanner", { create: true, cwd: packageRoot });
-        const reportPath = resolve(cacheDir!, "gitleaks-report.json");
+            const gitleaksVersion = spawnSync("gitleaks", ["version"], { encoding: "utf8" });
 
-        spawnSync("gitleaks", ["detect", "--source", scanRoot, "--no-git", "--report-format", "json", "--report-path", reportPath], { stdio: "pipe" });
+            if (gitleaksVersion.status !== 0) {
+                // eslint-disable-next-line no-console
+                console.log("  (gitleaks CLI not on PATH — install from https://github.com/gitleaks/gitleaks to enable cross-check)");
 
-        if (!existsSync(reportPath)) {
+                return;
+            }
+
+            const reportPath = `${scanRoot}.gitleaks.json`;
+
+            spawnSync("gitleaks", ["dir", scanRoot, "--report-format", "json", "--report-path", reportPath, "--no-banner"], { stdio: "pipe" });
+
+            const gitleaks = existsSync(reportPath) ? (JSON.parse(await readFile(reportPath, "utf8")) as GitleaksUpstream[]) : [];
+
+            // Rule ids differ by design (Kingfisher often wins the span dedup), so
+            // parity is measured on where findings are, not which rule reported them.
+            const missed = gitleaks.filter((f) => !covers(relative(scanRoot, f.File), f.StartLine));
+            const parity = gitleaks.length === 0 ? 1 : (gitleaks.length - missed.length) / gitleaks.length;
+
             // eslint-disable-next-line no-console
-            console.log("  (gitleaks produced no report — testdata may not match its current layout)");
+            console.log(
+                `  gitleaks findings: ${String(gitleaks.length)}, also reported by us: ${String(gitleaks.length - missed.length)} (${(parity * 100).toFixed(1)}%)`,
+            );
 
-            return;
-        }
+            for (const f of missed) {
+                // eslint-disable-next-line no-console
+                console.log(`  missed: ${f.RuleID} ${relative(scanRoot, f.File)}:${String(f.StartLine)}`);
+            }
 
-        const gitleaks = JSON.parse(await readFile(reportPath, "utf8")) as GitleaksUpstream[];
-        const theirRuleIds = new Set(gitleaks.map((f) => f.RuleID));
-        const overlap = [...ourRuleIds].filter((id) => theirRuleIds.has(id));
-        const parity = theirRuleIds.size === 0 ? 1 : overlap.length / theirRuleIds.size;
-
-        // eslint-disable-next-line no-console
-        console.log(`  gitleaks rules: ${theirRuleIds.size}, overlap: ${overlap.length}, parity: ${(parity * 100).toFixed(1)}%`);
-
-        // Soft assertion: warn loudly below 0.75, hard-fail below 0.5. Some rules need
-        // git-history walking (v1 skips) or specific filesystem layouts we may not replicate.
-        if (theirRuleIds.size > 0) {
-            expect(parity).toBeGreaterThan(0.5);
+            expect(parity).toBeGreaterThanOrEqual(0.9);
+        } finally {
+            await rm(scanRoot, { force: true, recursive: true });
+            await rm(`${scanRoot}.gitleaks.json`, { force: true });
         }
     }, 120_000);
 });

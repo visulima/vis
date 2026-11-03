@@ -112,7 +112,7 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
 // Memoise prepared scans by the subset of options that actually shape the
 // native config + rule meta. An editor integration calling `scanString` per
 // save re-runs `resolveConfig` + `gateOptInRules` + `buildRuleMeta` over
-// ~1,058 rules on every keystroke otherwise. Inline configs are *not* cached
+// ~1,390 rules on every keystroke otherwise. Inline configs are *not* cached
 // (their identity is the object reference, which we can't cheaply serialise and
 // which callers often rebuild) — the key includes a marker that forces a miss.
 const preparedScanCache = new Map<string, PreparedScan>();

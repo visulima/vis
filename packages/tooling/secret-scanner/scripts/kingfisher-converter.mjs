@@ -19,6 +19,11 @@ const BOUNDED_QUANTIFIER_PATTERN = /^\{\d+(?:,\d*)?\}$/;
 const METACHAR_PATTERN = /[()|^$*+?.]/;
 const LITERAL_CHAR_PATTERN = /[\w-]/;
 const NON_ALPHA_KEYWORD_PATTERN = /^[0-9_-]+$/;
+// `(?P<NAME>` (Python/Rust) and `(?<name>` (PCRE/JS) open a named capture group.
+// The name is syntax, not text the secret contains, so it must never become a
+// prefilter keyword. Lookbehinds `(?<=` / `(?<!` don't match: a name starts with
+// a letter or `_`. An escaped `\(` is a literal paren and is left alone.
+const NAMED_GROUP_PATTERN = /(?<!\\)\(\?P?<[A-Z_a-z]\w*>/g;
 
 const stripLeadingFlags = (pattern) => pattern.replace(INLINE_FLAGS_PATTERN, "");
 
@@ -32,7 +37,8 @@ const stripLeadingFlags = (pattern) => pattern.replace(INLINE_FLAGS_PATTERN, "")
  * - `\b<literal>` / `\b(<literal>...)`
  * - `(?:alt1|alt2|alt3)<rest>`  — extracts each alternative's leading literal
  * - `<literal><charclass>`      — literal up to the first `[` or quantifier
- * Ignores inline flags `(?x)`, `(?xi)`, `(?i)` at the very start.
+ * Ignores inline flags `(?x)`, `(?xi)`, `(?i)` at the very start, and named-group
+ * syntax `(?P<NAME>` / `(?<name>` anywhere in the pattern.
  * @param {string} pattern Raw regex source from the rule YAML.
  * @returns {string[]} Lower-cased candidate keywords. Empty when the pattern has no extractable literal prefix.
  */
@@ -44,7 +50,7 @@ export const extractKeywords = (pattern) => {
 
     // Collapse `(?x)` free-spacing whitespace + comments so the literal extractor
     // doesn't get confused. Kingfisher uses `(?x)` heavily.
-    let body = stripLeadingFlags(pattern);
+    let body = stripLeadingFlags(pattern).replaceAll(NAMED_GROUP_PATTERN, "(");
 
     if (FREE_SPACING_PATTERN.test(pattern)) {
         body = body.replaceAll(COMMENT_PATTERN, "").replaceAll(WHITESPACE_PATTERN, "");
@@ -64,6 +70,13 @@ export const extractKeywords = (pattern) => {
         }
 
         run = "";
+    };
+
+    // A literal char followed by `?`, `*` or `{0,n}` may be absent from the input
+    // (`ftps?://` matches `ftp://`), so it can't be part of a required keyword.
+    const dropOptionalChar = () => {
+        run = run.slice(0, -1);
+        flush();
     };
 
     let index = 0;
@@ -96,6 +109,11 @@ export const extractKeywords = (pattern) => {
             const end = body.indexOf("}", index + 1);
 
             if (end !== -1 && BOUNDED_QUANTIFIER_PATTERN.test(body.slice(index, end + 1))) {
+                // `x{0,n}` makes the preceding char optional, same as `x?`.
+                if (body[index + 1] === "0") {
+                    dropOptionalChar();
+                }
+
                 index = end + 1;
 
                 continue;
@@ -103,6 +121,10 @@ export const extractKeywords = (pattern) => {
         }
 
         if (METACHAR_PATTERN.test(ch)) {
+            if (ch === "?" || ch === "*") {
+                dropOptionalChar();
+            }
+
             flush();
             index += 1;
 

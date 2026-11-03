@@ -4,7 +4,7 @@ import { scanString, transformYamlBlockScalars } from "../src/index";
 
 // End-to-end tests that exercise the Rust detector through the JS wrapper.
 // Use a minimal inline config (one rule, `extendBundled: false`) so the
-// ruleset compile stays fast — the full 1,058-rule compile is multi-second
+// ruleset compile stays fast — the full ~1,390-rule compile is multi-second
 // on first call and would blow the default vitest 5s timeout.
 
 const MINIMAL_CONFIG = {
