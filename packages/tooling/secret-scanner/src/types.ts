@@ -135,6 +135,22 @@ export interface ScanOptions {
     };
 
     /**
+     * Archive scanning depth (gitleaks `--max-archive-depth`). zip, tar, gzip and
+     * tar.gz files are recognised by their magic bytes (not the extension), opened in
+     * memory and their entries scanned. Findings use the virtual path
+     * `archive.zip!inner/dir/file.env`. `1` opens top-level archives; each extra level
+     * opens one more layer of archives nested inside them (capped at 8). A gzip stream
+     * around a tar counts as one level.
+     *
+     * Limits per top-level archive: each entry obeys `walk.maxFileSize` (and the archive
+     * file itself too), 256 MiB decompressed in total, 10,000 entries, and entries or gzip
+     * streams that expand more than 100x past 1 MiB are skipped as decompression bombs.
+     * Binary entries are skipped like binary files. Applies to `scan` and `scanFiles`.
+     * Default: `0` (archives are skipped as binary files).
+     */
+    maxArchiveDepth?: number;
+
+    /**
      * How many layers of encoding to look through (gitleaks `--max-decode-depth`).
      * Base64 (standard and url-safe), hex and percent-encoded segments that decode
      * to printable UTF-8 are decoded and rescanned, recursively, up to this depth.
@@ -217,6 +233,13 @@ export interface Finding {
     entropy: number;
     file: string;
     match: string;
+
+    /**
+     * Composite rules only (`required` in the rule config): the findings of the rule's
+     * required dependencies that satisfied it, the nearest one per required id, in the
+     * order the rule declares them. Redacted along with `secret` when `redact` is on.
+     */
+    requiredFindings?: RequiredFinding[];
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */
@@ -231,6 +254,19 @@ export interface Finding {
      * {@link ValidationStatus} for the meaning of each value.
      */
     validation?: ValidationStatus;
+}
+
+/** A dependency finding attached to a composite-rule {@link Finding}. Same file as its primary. */
+export interface RequiredFinding {
+    /** Encoding chain when the dependency was found in decoded text. */
+    decoded?: string[];
+    endColumn: number;
+    endLine: number;
+    match: string;
+    ruleId: string;
+    secret: string;
+    startColumn: number;
+    startLine: number;
 }
 
 export interface SkippedRule {

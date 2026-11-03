@@ -68,7 +68,7 @@ for (const rule of rules) {
 
 ### `inspectRuleset(options?)`
 
-Return the rules that failed to compile (invalid regex, bad allowlist, etc.). Rules that compile are silently skipped otherwise, which makes this the canonical way to validate a config before scanning.
+Return the rules that failed to compile (invalid regex, bad allowlist, etc.) or were dropped because a `required` rule id isn't loaded. Rules that compile are silently skipped otherwise, which makes this the canonical way to validate a config before scanning.
 
 ```typescript
 import { inspectRuleset } from "@visulima/secret-scanner";
@@ -182,16 +182,29 @@ interface Finding {
     confidence: Confidence;
     alternateMatches: string[];
     decoded?: string[];
+    requiredFindings?: RequiredFinding[];
     source?: string;
     validation?: ValidationStatus;
 }
+
+interface RequiredFinding {
+    ruleId: string;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+    match: string;
+    secret: string;
+    decoded?: string[];
+}
 ```
 
-- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory.
+- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory. A finding inside an archive (see `maxArchiveDepth`) uses the virtual path `<archive>!<entry>`, e.g. `bundle.zip!config/app.env`.
 - Columns are **1-based and count Unicode code points**, not bytes — consumable by editor/LSP tooling.
 - `confidence` resolves to `"low"` when the rule declares none (every bundled gitleaks rule). Use it alongside `config.minConfidence` to filter.
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.
 - `decoded` is present only when the secret was found inside encoded text (see `maxDecodeDepth`). It lists the encoding chain, outermost first, e.g. `["base64"]` or `["base64", "hex"]`. `match` and `secret` hold the decoded value; line and column point at the original encoded span.
+- `requiredFindings` is present only on findings of composite rules (`required` in the rule config, see [Composite rules](./configuration#composite-rules-required-skipreport)). It holds, for each required rule id, the nearest finding in the same file that satisfied the rule. `match` and `secret` are redacted with `redact: true`.
 - `source` tags the rule's provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or whatever the user declared.
 - `validation` is set only when `config.validate: true`. See [`ValidationStatus`](#validationstatus) below.
 

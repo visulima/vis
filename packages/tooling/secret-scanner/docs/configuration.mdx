@@ -29,6 +29,7 @@ export interface ScanOptions {
         validate?: boolean;
     };
 
+    maxArchiveDepth?: number;
     maxDecodeDepth?: number;
 
     redact?: boolean;
@@ -53,13 +54,28 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option           | Type      | Default | Description                                                                                                                           |
-| ---------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline`       | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                     |
-| `concurrency`    | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                    |
-| `maxDecodeDepth` | `number`  | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below. |
-| `redact`         | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                       |
-| `verbose`        | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                           |
+| Option            | Type      | Default | Description                                                                                                                                         |
+| ----------------- | --------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`        | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                   |
+| `concurrency`     | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                  |
+| `maxArchiveDepth` | `number`  | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
+| `maxDecodeDepth`  | `number`  | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
+| `redact`          | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
+| `verbose`         | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
+
+### `maxArchiveDepth`
+
+Archives are opened in memory and their entries scanned like files, like gitleaks' `--max-archive-depth`. It is off by default because it costs time and changes results for existing setups.
+
+- **Formats**: zip (stored and deflate), tar, gzip and tar.gz. 7z, xz, bzip2 and zstd aren't opened.
+- **Detection by content**: archives are recognised by their magic bytes, not their extension. `notes.7z.txt` holding text is scanned as text, and a zip named `payload.dat` is still opened.
+- **Depth**: `1` opens archives found on disk, `2` also opens archives inside them, and so on, up to 8. A gzip stream wrapping a tar counts as one level, so a zip inside a `.tar.gz` needs `2`.
+- **Virtual paths**: findings report `file` as `<archive path>!<entry path>`, e.g. `release.tar.gz!vendor/inner.zip!deploy/.env`, gitleaks' `!` separator. A plain `.gz` file has one entry, named after the gzip header's file name or the archive name without `.gz`. Rule `path` regexes and allowlist `paths` see the full virtual path.
+- **Entry names**: `\` becomes `/`, control characters are removed, and `.`, `..`, empty and drive-letter components are dropped, so `../../etc/passwd` is reported as `etc/passwd`. Names are only labels; nothing is extracted to disk.
+- **Limits** (per archive on disk, across all nesting levels): every entry obeys `walk.maxFileSize` (as does the archive file itself), 256 MiB decompressed in total, 10,000 entries. An entry or gzip stream that expands more than 100x its compressed size, past the first 1 MiB, is a decompression bomb and is skipped. Hitting the total-bytes cap stops the archive; the findings found so far are kept.
+- **Skipped entries**: directories, symlinks, encrypted zip entries and binary entries (a NUL byte in the first 8 KiB), the same rule as for files.
+
+Archive scanning applies to `scan` and `scanFiles`. `scanString` and git history scans don't open archives.
 
 ### `maxDecodeDepth`
 
@@ -188,3 +204,55 @@ The config shape mirrors gitleaks' TOML schema. A few fields are ours (safe addi
 | `priority`        | Rule      | Integer (default `0`). When two rules match the same byte span, the higher priority wins (`#1997`).             |
 | `preRegexReplace` | Rule      | Ordered `[{ from, to }, …]` regex replacements applied to the scan buffer before the rule's main regex runs.    |
 | `targetRules`     | Allowlist | When non-empty, the allowlist only applies to findings whose rule id is in this list (gitleaks schema `#1919`). |
+
+Gitleaks' own `required` / `skipReport` composite-rule fields are supported too, see [Composite rules](#composite-rules-required-skipreport).
+
+## Composite rules (`required`, `skipReport`)
+
+Gitleaks 8.28+ composite rules load unchanged. A rule with a `required` list (TOML `[[rules.required]]`) is reported only when every required rule also has a finding in the same file. Key names are gitleaks' own, so a parsed `gitleaks.toml` (`[[rules.required]]` becomes the `required` array) works as is:
+
+```json
+{
+    "rules": [
+        {
+            "id": "aws-secret-access-key",
+            "regex": "(?i)aws_secret_access_key\\s*=\\s*([A-Za-z0-9/+]{40})",
+            "secretGroup": 1,
+            "required": [{ "id": "aws-access-key-id", "withinLines": 5 }]
+        },
+        {
+            "id": "aws-access-key-id",
+            "regex": "\\b((?:AKIA|ASIA)[A-Z0-9]{16})\\b",
+            "skipReport": true
+        }
+    ]
+}
+```
+
+| Field                      | Description                                                                                          |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `required[].id`            | Id of a rule that must also match in the same file.                                                  |
+| `required[].withinLines`   | Max distance between the start lines of the two findings.                                            |
+| `required[].withinColumns` | Max distance between the start columns. Compared **only when both findings start on the same line**. |
+| `skipReport`               | The rule still runs, so other rules can require it, but its own findings are never emitted.          |
+
+Proximity rules:
+
+- No `withinLines` / `withinColumns`: a finding anywhere in the file counts.
+- Same line: `withinColumns` (if set) bounds the column distance.
+- Different lines: only `withinLines` applies. `withinColumns` is never compared across lines (upstream gitleaks fixed the same bug in six PRs, #2123 to #2255). A rule with only `withinColumns` therefore needs the required finding on the same line. This differs from the "rectangular" area the gitleaks README describes for both bounds: a dependency on the next line is not rejected just because it starts at a different column.
+
+A reported finding carries `requiredFindings`: for each required id, the nearest finding that satisfied it (redacted with `redact: true`). The check runs per file, per archive entry and per `scanString` buffer, on the findings before the same-span dedup, so a required finding counts even if it is `skipReport` or itself a composite rule. The composite finding itself can still lose the same-span dedup to a higher-priority rule matching the exact same span.
+
+A rule whose `required` names a rule that isn't loaded (unknown id, failed regex, or filtered out by `minConfidence` or opt-in gating) can never match. It is dropped and listed by `inspectRuleset()` with the reason, and `verbose: true` prints it.
+
+When you extend the bundled ruleset, a user rule with a bundled rule's id but **no `regex` or `path`** extends that rule instead of replacing it: your fields (such as `required` or `skipReport`) are added, `keywords` and `tags` are merged and allowlists are appended (gitleaks #2024). A user rule with its own `regex` or `path` still replaces the bundled one.
+
+### `required` vs. Kingfisher `dependsOnRule`
+
+Both pair related secrets, at different stages:
+
+- `required` gates **detection**: the primary finding is not reported at all without its dependency nearby.
+- `dependsOnRule` (bundled Kingfisher rules) only feeds **validation**: the finding is always reported, and with `config.validate: true` the dependency's secret is passed to the validator as a template variable. If no dependency finding is reported in the same file, validation is `"skipped"`.
+
+`dependsOnRule` looks up reported findings, so it doesn't see findings of a `skipReport` rule. Don't mark a rule `skipReport` if a `dependsOnRule` validator needs it.
