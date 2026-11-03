@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
 import execute from "../../src/commands/secrets/handler";
 
-// pail logs only warnings and up under NODE_ENV=test, which hid the info /
-// notice lines that leaked onto stdout. Log as the CLI does; this must run
-// before the logger module is imported.
+// pail logs only warnings and up under NODE_ENV=test, which would hide info /
+// notice lines written to stdout. Log as the CLI does; this must run before
+// the logger module is imported.
 vi.hoisted(() => {
     process.env["PAIL_LOG_LEVEL"] = "informational";
 });
