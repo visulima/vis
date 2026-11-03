@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
-use crate::detector::{scan_text, RawFinding};
+use crate::detector::{scan_text_with, DetectOptions, RawFinding};
 use crate::rules::CompiledRuleset;
 
 const MMAP_THRESHOLD: u64 = 1 << 20; // 1 MiB
@@ -14,7 +14,19 @@ const BINARY_SNIFF_LEN: usize = 8192;
 /// Read `path` and run the detector against its contents.
 /// Returns `Ok(None)` if the file exceeds `max_bytes` (skipped).
 /// Binary files (null byte in first 8 KiB) are skipped to an empty Vec.
+#[allow(dead_code)] // default-options entry point, kept for callers that need no switches
 pub fn scan_file(path: &Path, ruleset: &CompiledRuleset, max_bytes: u64) -> io::Result<Option<Vec<RawFinding>>> {
+    scan_file_with(path, ruleset, max_bytes, DetectOptions::default())
+}
+
+/// [`scan_file`] with explicit detection switches.
+pub fn scan_file_with(
+    path: &Path,
+    ruleset: &CompiledRuleset,
+    max_bytes: u64,
+    opts: DetectOptions,
+) -> io::Result<Option<Vec<RawFinding>>> {
+    let scan_text = |ruleset: &CompiledRuleset, path: &Path, text: &str| scan_text_with(ruleset, path, text, opts);
     let meta = std::fs::metadata(path)?;
     let size = meta.len();
     if size == 0 {

@@ -716,11 +716,13 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { inspectRuleset, listRules, scan, scanFiles, scanSync, scanTextSync } = nativeBinding
+const { inspectRuleset, listRules, scan, scanDetailed, scanFiles, scanFilesDetailed, scanSync, scanTextSync } = nativeBinding
 export { inspectRuleset }
 export { listRules }
 export { scan }
+export { scanDetailed }
 export { scanFiles }
+export { scanFilesDetailed }
 export { scanSync }
 export { scanTextSync }
 export const __napiBindingTarget = __napiLoadedBindingTarget

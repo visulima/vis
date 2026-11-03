@@ -19,10 +19,10 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 
 use crate::config::Config;
-use crate::detector::RawFinding;
+use crate::detector::{DetectOptions, RawFinding};
 use crate::rules::{CompiledRuleset, Confidence};
-use crate::scanner::scan_file;
-use crate::walker::{walk_paths, WalkOptions};
+use crate::scanner::scan_file_with;
+use crate::walker::{io_reason, walk_paths_reporting, WalkOptions};
 
 /// Capacity of the compiled-ruleset cache. Four is enough to cover the
 /// common matrix: `gitleaks` vs `kingfisher` vs `combined` × optional
@@ -82,6 +82,20 @@ pub struct ScanOptions {
     /// legacy behaviour. Rules with no declared confidence are treated as "low"
     /// and so are dropped whenever a higher floor is set.
     pub min_confidence: Option<String>,
+    /// Honour inline suppressions (`gitleaks:allow`, `secret-scanner:allow`,
+    /// `pragma: allowlist secret`, allow-start/end blocks, nextline pragma).
+    /// Default `true`; `false` lets CI audit them.
+    pub inline_allow: Option<bool>,
+    /// Return allowlisted / inline-allowed matches with `suppressedBy` set
+    /// instead of dropping them. Default `false`.
+    pub report_suppressed: Option<bool>,
+}
+
+fn detect_options(opts: &ScanOptions) -> DetectOptions {
+    DetectOptions {
+        inline_allow: opts.inline_allow.unwrap_or(true),
+        report_suppressed: opts.report_suppressed.unwrap_or(false),
+    }
 }
 
 #[napi(object)]
@@ -106,6 +120,24 @@ pub struct Finding {
     /// Rule ids that matched the same byte span and were collapsed by the dedup
     /// pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
     pub alternate_matches: Vec<String>,
+    /// `"allowlist"` or `"inline-allow"` when the match was suppressed and
+    /// `reportSuppressed` is on. Absent on real findings.
+    pub suppressed_by: Option<String>,
+}
+
+/// A file the scan could not read. `reason` is `"permission-denied"`,
+/// `"not-found"` (e.g. a broken symlink passed to `scanFiles`), `"too-large"`,
+/// `"symlink-loop"` or `"io-error"`.
+#[napi(object)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: String,
+}
+
+#[napi(object)]
+pub struct ScanReport {
+    pub findings: Vec<Finding>,
+    pub skipped: Vec<SkippedFile>,
 }
 
 #[napi(object)]
@@ -160,6 +192,7 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         source: f.source,
         confidence: f.confidence.to_string(),
         alternate_matches: f.alternate_matches,
+        suppressed_by: f.suppressed_by.map(str::to_string),
     }
 }
 
@@ -206,54 +239,109 @@ fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
     Ok(arc)
 }
 
-fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
+/// A file that could not be scanned, with its reason.
+type Skip = (PathBuf, &'static str);
+
+/// Scan `files` on the configured pool, collecting findings and unreadable files.
+fn scan_paths(
+    files: &[PathBuf],
+    ruleset: &CompiledRuleset,
+    opts: &ScanOptions,
+) -> Result<(Vec<RawFinding>, Vec<Skip>)> {
+    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
+    let concurrency = opts.concurrency.unwrap_or(0) as usize;
+    let detect = detect_options(opts);
+
+    let do_scan = || -> (Vec<RawFinding>, Vec<Skip>) {
+        let outcomes: Vec<std::result::Result<Vec<RawFinding>, Skip>> = files
+            .par_iter()
+            .map(|p| match scan_file_with(p, ruleset, max_bytes, detect) {
+                Ok(Some(v)) => Ok(v),
+                Ok(None) => Err((p.clone(), "too-large")),
+                Err(e) => Err((p.clone(), io_reason(&e))),
+            })
+            .collect();
+        let mut findings = Vec::new();
+        let mut skipped = Vec::new();
+        for outcome in outcomes {
+            match outcome {
+                Ok(v) => findings.extend(v),
+                Err(s) => skipped.push(s),
+            }
+        }
+        (findings, skipped)
+    };
+
+    if concurrency == 0 {
+        // Use rayon's global pool — no per-call pool construction.
+        Ok(do_scan())
+    } else {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(concurrency)
+            .build()
+            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
+        Ok(pool.install(do_scan))
+    }
+}
+
+/// Build the NAPI report: finalize findings, rewrite skipped paths like findings.
+fn build_report(findings: Vec<RawFinding>, skipped: Vec<Skip>, roots: &[PathBuf], redact_secrets: bool) -> ScanReport {
+    let canon_roots = canonicalize_roots(roots);
+    let mut skipped: Vec<SkippedFile> = skipped
+        .into_iter()
+        .map(|(path, reason)| {
+            let raw = path.to_string_lossy().to_string();
+            SkippedFile { path: relative_to_root(&raw, &canon_roots).unwrap_or(raw), reason: reason.to_string() }
+        })
+        .collect();
+    skipped.sort_by(|a, b| a.path.cmp(&b.path));
+
+    ScanReport {
+        findings: finalize_findings(findings, roots).into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect(),
+        skipped,
+    }
+}
+
+fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     let roots: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     if roots.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ScanReport { findings: Vec::new(), skipped: Vec::new() });
     }
     let ruleset = load_ruleset(&opts)?;
-    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
-    let concurrency = opts.concurrency.unwrap_or(0) as usize;
 
     let walk_opts = WalkOptions {
         respect_gitignore: opts.respect_gitignore.unwrap_or(true),
         respect_hidden: !opts.include_hidden.unwrap_or(false),
         extra_ignores: opts.extra_ignores.clone().unwrap_or_default(),
         ignore_files: opts.ignore_files.clone().unwrap_or_default().into_iter().map(PathBuf::from).collect(),
-        threads: concurrency,
+        threads: opts.concurrency.unwrap_or(0) as usize,
     };
 
-    let files = walk_paths(&roots, &walk_opts);
+    let (files, walk_errors) = walk_paths_reporting(&roots, &walk_opts);
+    let (findings, mut skipped) = scan_paths(&files, &ruleset, &opts)?;
 
-    let do_scan = || -> Vec<RawFinding> {
-        files
-            .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
-                Ok(Some(v)) => v.into_iter(),
-                _ => Vec::new().into_iter(),
-            })
-            .collect()
-    };
+    skipped.extend(walk_errors.into_iter().map(|e| (e.path, e.reason)));
 
-    let findings: Vec<RawFinding> = if concurrency == 0 {
-        // Use rayon's global pool — no per-call pool construction.
-        do_scan()
-    } else {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
-        pool.install(do_scan)
-    };
-
-    let findings = finalize_findings(findings, &roots);
-    Ok(findings.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
+    Ok(build_report(findings, skipped, &roots, redact_secrets))
 }
 
 /// Post-process raw findings: relative paths, priority-based span dedup, exact-duplicate
 /// collapse, stable ordering. Used by both `scan()` and `scanFiles()`.
-fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFinding> {
+fn finalize_findings(findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFinding> {
+    // Suppressed findings (only present with `reportSuppressed`) are deduped
+    // separately: a suppressed higher-priority match must never swallow a real
+    // finding at the same span.
+    let (suppressed, active): (Vec<RawFinding>, Vec<RawFinding>) =
+        findings.into_iter().partition(|f| f.suppressed_by.is_some());
+    let mut out = finalize_group(active, roots);
+    if !suppressed.is_empty() {
+        out.extend(finalize_group(suppressed, roots));
+    }
+    out
+}
+
+fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFinding> {
     // #1059 — rewrite `file` relative to the nearest root so baselines are portable across cwd.
     // `scan_text_sync` passes `&[]` and opts out of the rewrite (in-memory scan has no root).
     if !roots.is_empty() {
@@ -349,6 +437,13 @@ fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<String> {
 
 #[napi]
 pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+    Ok(scan_detailed(paths, options).await?.findings)
+}
+
+/// Like `scan`, but also returns the files that could not be read (permission
+/// denied, unreadable directory, I/O error, larger than `maxFileSize`).
+#[napi]
+pub async fn scan_detailed(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     tokio::task::spawn_blocking(move || scan_impl(paths, opts))
         .await
@@ -357,7 +452,7 @@ pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Ve
 
 #[napi]
 pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
-    scan_impl(paths, options.unwrap_or_default())
+    Ok(scan_impl(paths, options.unwrap_or_default())?.findings)
 }
 
 #[napi]
@@ -366,7 +461,7 @@ pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
-    let raw = crate::detector::scan_text(&ruleset, &path, &content);
+    let raw = crate::detector::scan_text_with(&ruleset, &path, &content, detect_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
     let finalized = finalize_findings(raw, &[]);
     Ok(finalized.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
@@ -409,47 +504,30 @@ pub fn list_rules(options: Option<ScanOptions>) -> Result<Vec<RuleInfo>> {
 /// Scan a fixed list of files (e.g. from `git diff --name-only`). Bypasses the walker.
 #[napi]
 pub async fn scan_files(files: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+    Ok(scan_files_detailed(files, options).await?.findings)
+}
+
+/// Like `scanFiles`, but also returns the files that could not be read.
+#[napi]
+pub async fn scan_files_detailed(files: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     tokio::task::spawn_blocking(move || scan_files_impl(files, opts))
         .await
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
 }
 
-fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
+fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     if files.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ScanReport { findings: Vec::new(), skipped: Vec::new() });
     }
     let ruleset = load_ruleset(&opts)?;
-    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
-    let concurrency = opts.concurrency.unwrap_or(0) as usize;
-
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-
-    let do_scan = || -> Vec<RawFinding> {
-        paths
-            .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
-                Ok(Some(v)) => v.into_iter(),
-                _ => Vec::new().into_iter(),
-            })
-            .collect()
-    };
-
-    let findings: Vec<RawFinding> = if concurrency == 0 {
-        do_scan()
-    } else {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
-        pool.install(do_scan)
-    };
+    let (findings, skipped) = scan_paths(&paths, &ruleset, &opts)?;
 
     // Walker is bypassed here — use cwd as the root so paths normalise relative to it.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let findings = finalize_findings(findings, &[cwd]);
-    Ok(findings.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
+    Ok(build_report(findings, skipped, &[cwd], redact_secrets))
 }
 
 #[cfg(test)]
@@ -475,6 +553,7 @@ mod tests {
             source: None,
             confidence: "low",
             alternate_matches: Vec::new(),
+            suppressed_by: None,
         }
     }
 
@@ -518,5 +597,19 @@ mod tests {
         assert_eq!(out[0].alternate_matches.len(), 2);
         assert!(out[0].alternate_matches.contains(&"rule.b".into()));
         assert!(out[0].alternate_matches.contains(&"rule.c".into()));
+    }
+
+    #[test]
+    fn finalize_never_collapses_a_real_finding_into_a_suppressed_one() {
+        let mut suppressed = raw_finding("rule.high", 5, 10, 30);
+        suppressed.suppressed_by = Some(crate::detector::SUPPRESSED_ALLOWLIST);
+        let active = raw_finding("rule.low", 1, 10, 30);
+
+        let out = finalize_findings(vec![suppressed, active], &[]);
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].rule_id, "rule.low");
+        assert!(out[0].suppressed_by.is_none());
+        assert_eq!(out[1].suppressed_by, Some("allowlist"));
     }
 }
