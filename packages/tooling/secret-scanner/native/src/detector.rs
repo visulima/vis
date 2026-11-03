@@ -34,7 +34,19 @@ fn window_around(content: &str, span: (usize, usize)) -> (usize, usize) {
     (start, end)
 }
 
-#[derive(Debug, Clone)]
+/// Where a decoded finding came from inside its encoded span. Field order is the
+/// sort order: chain, then the inner offsets.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DecodeOrigin {
+    /// Encoding chain, outermost first (e.g. `["base64", "hex"]`).
+    pub chain: Vec<String>,
+    /// Offsets of the match inside the decoded fragment. Keeps two secrets decoded from
+    /// one encoded span distinct in the span dedup.
+    pub inner_start: u32,
+    pub inner_end: u32,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct RawFinding {
     pub rule_id: String,
     pub description: String,
@@ -61,14 +73,9 @@ pub struct RawFinding {
     /// Rule ids that matched the same span and were collapsed by the dedup pass.
     /// Populated in `finalize_findings`; detector emits an empty `Vec`.
     pub alternate_matches: Vec<String>,
-    /// Encoding chain (outermost first, e.g. `["base64", "hex"]`) when the finding came
-    /// from the decode pass; `None` for plain matches. The offsets above then cover the
-    /// whole encoded span in the original content.
-    pub decoded: Option<Vec<String>>,
-    /// Offsets of the match inside the decoded fragment. Keeps two secrets decoded from
-    /// one encoded span distinct in the span dedup. Always 0 for plain findings.
-    pub inner_start: u32,
-    pub inner_end: u32,
+    /// Set when the finding came from the decode pass; `None` for plain matches. The
+    /// offsets above then cover the whole encoded span in the original content.
+    pub decoded: Option<DecodeOrigin>,
     /// Findings of the rule's `[[rules.required]]` dependencies that satisfied it, nearest
     /// first, one per required id. Set by the composite pass; `None` for plain rules.
     pub required_findings: Option<Vec<RawFinding>>,
@@ -79,6 +86,13 @@ pub struct RawFinding {
     /// Why the finding was suppressed. Only set when
     /// [`DetectOptions::report_suppressed`] is on; `None` for real findings.
     pub suppressed_by: Option<SuppressionReason>,
+}
+
+impl RawFinding {
+    /// The decode pass's encoding chain, `None` for plain matches.
+    pub fn decode_chain(&self) -> Option<&[String]> {
+        self.decoded.as_ref().map(|d| d.chain.as_slice())
+    }
 }
 
 /// Per-scan detection switches. Kept off [`CompiledRuleset`] on purpose: the
@@ -263,13 +277,8 @@ pub fn detect(
                 end_offset: 0,
                 source: rule.source.clone(),
                 confidence: rule.confidence.as_str(),
-                alternate_matches: Vec::new(),
-                decoded: None,
-                inner_start: 0,
-                inner_end: 0,
-                required_findings: None,
-                archive_entry: None,
                 suppressed_by: path_suppressed.then_some(SuppressionReason::Allowlist),
+                ..Default::default()
             });
             continue;
         }
@@ -511,13 +520,8 @@ impl MatchCtx<'_> {
             end_offset: span.match_end as u32,
             source: self.rule.source.clone(),
             confidence: self.rule.confidence.as_str(),
-            alternate_matches: Vec::new(),
-            decoded: None,
-            inner_start: 0,
-            inner_end: 0,
-            required_findings: None,
-            archive_entry: None,
             suppressed_by,
+            ..Default::default()
         });
     }
 }

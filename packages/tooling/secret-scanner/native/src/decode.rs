@@ -17,7 +17,7 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::detector::{detect, DetectOptions, Pass, RawFinding};
+use crate::detector::{detect, DecodeOrigin, DetectOptions, Pass, RawFinding};
 use crate::lines::{compute_line_offsets, offset_to_line_col};
 use crate::rules::CompiledRuleset;
 use crate::scanner::TextScanOptions;
@@ -526,15 +526,17 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
         f.suppressed_by = Some(SuppressionReason::InlineAllow);
     }
 
-    f.inner_start = (s - frag.start) as u32;
-    f.inner_end = (e - frag.start) as u32;
+    f.decoded = Some(DecodeOrigin {
+        chain: chain.iter().map(|enc| enc.as_str().to_string()).collect(),
+        inner_start: (s - frag.start) as u32,
+        inner_end: (e - frag.start) as u32,
+    });
     f.start_offset = orig_start as u32;
     f.end_offset = orig_end as u32;
     f.start_line = sl;
     f.start_column = sc;
     f.end_line = el;
     f.end_column = ec;
-    f.decoded = Some(chain.iter().map(|enc| enc.as_str().to_string()).collect());
     Some(f)
 }
 
@@ -595,7 +597,7 @@ mod tests {
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
         assert_eq!(f.secret, KEY);
-        assert_eq!(f.decoded.as_deref(), Some(&["base64".to_string()][..]));
+        assert_eq!(f.decode_chain(), Some(&["base64".to_string()][..]));
         assert_eq!(f.start_line, 2);
         assert_eq!(f.start_column, 8);
         assert_eq!(f.end_column as usize, 8 + encoded.len());
@@ -607,9 +609,9 @@ mod tests {
         let url_safe = b64(&format!("{KEY}??>>")).replace('+', "-").replace('/', "_");
         assert!(url_safe.contains('_') || url_safe.contains('-'));
         assert_eq!(scan(&format!("a={url_safe}\n"), 1).len(), 1);
-        assert_eq!(scan(&format!("a={}\n", hex(KEY)), 1)[0].decoded.as_deref(), Some(&["hex".to_string()][..]));
+        assert_eq!(scan(&format!("a={}\n", hex(KEY)), 1)[0].decode_chain(), Some(&["hex".to_string()][..]));
         let percent: String = KEY.bytes().map(|b| format!("%{b:02X}")).collect();
-        assert_eq!(scan(&format!("a={percent}\n"), 1)[0].decoded.as_deref(), Some(&["percent".to_string()][..]));
+        assert_eq!(scan(&format!("a={percent}\n"), 1)[0].decode_chain(), Some(&["percent".to_string()][..]));
     }
 
     #[test]
@@ -619,7 +621,7 @@ mod tests {
         assert!(scan(&text, 1).is_empty());
         let findings = scan(&text, 2);
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].decoded.as_deref(), Some(&["base64".to_string(), "base64".to_string()][..]));
+        assert_eq!(findings[0].decode_chain(), Some(&["base64".to_string(), "base64".to_string()][..]));
         assert_eq!(findings[0].start_line, 1);
         assert_eq!(findings[0].start_column, 7);
     }
@@ -722,7 +724,7 @@ mod tests {
         let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].secret, "hunter2secret");
-        assert_eq!(findings[0].decoded.as_deref(), Some(&["percent".to_string()][..]));
+        assert_eq!(findings[0].decode_chain(), Some(&["percent".to_string()][..]));
     }
 
     #[test]

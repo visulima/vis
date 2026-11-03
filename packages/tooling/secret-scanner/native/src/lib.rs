@@ -228,7 +228,7 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         source: f.source,
         confidence: f.confidence.to_string(),
         alternate_matches: f.alternate_matches,
-        decoded: f.decoded,
+        decoded: f.decoded.map(|d| d.chain),
         required_findings: f.required_findings.map(|list| {
             list.into_iter()
                 .map(|r| RequiredFinding {
@@ -239,7 +239,7 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
                     end_column: r.end_column,
                     r#match: if redact_secrets { redact(&r.r#match) } else { r.r#match },
                     secret: if redact_secrets { redact(&r.secret) } else { r.secret },
-                    decoded: r.decoded,
+                    decoded: r.decoded.map(|d| d.chain),
                 })
                 .collect()
         }),
@@ -440,8 +440,8 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
     // priority in a single linear pass.
     //
     // Decoded findings share their encoded span with any plain finding on the blob itself,
-    // so the decode chain and the inner offsets are part of the key: `None` sorts first,
-    // keeping plain-only output (and its order) exactly as before.
+    // so the decode origin (chain, then inner offsets) is part of the key: `None` sorts
+    // first, keeping plain-only output (and its order) exactly as before.
     //
     // A satisfied composite finding (`required_findings` set) sorts ahead of every other
     // rule at its span, so the dedup below keeps it whatever its priority: its dependencies
@@ -454,8 +454,6 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
             a.start_offset,
             a.end_offset,
             &a.decoded,
-            a.inner_start,
-            a.inner_end,
             a.required_findings.is_none(),
             std::cmp::Reverse(a.priority),
             &a.rule_id,
@@ -467,8 +465,6 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
                 b.start_offset,
                 b.end_offset,
                 &b.decoded,
-                b.inner_start,
-                b.inner_end,
                 b.required_findings.is_none(),
                 std::cmp::Reverse(b.priority),
                 &b.rule_id,
@@ -484,7 +480,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
             && a.end_line == b.end_line
             && a.end_column == b.end_column
             && a.secret == b.secret
-            && a.decoded == b.decoded
+            && a.decode_chain() == b.decode_chain()
     });
 
     // #1567 / #1997 — when two rules match the **same byte span** on the same file, keep the
@@ -507,8 +503,6 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
                 && last.start_offset == f.start_offset
                 && last.end_offset == f.end_offset
                 && last.decoded == f.decoded
-                && last.inner_start == f.inner_start
-                && last.inner_end == f.inner_end
             {
                 // Same span — the sort put a composite, then the highest priority first. Record the
                 // dropped rule on the winner so reporters can show "also: id1, id2".
@@ -644,12 +638,11 @@ fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<ScanReport> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::detector::DecodeOrigin;
 
     fn raw_finding(rule_id: &str, priority: i32, start: u32, end: u32) -> RawFinding {
         RawFinding {
             rule_id: rule_id.into(),
-            description: String::new(),
-            tags: Vec::new(),
             file: "/tmp/fixture.txt".into(),
             start_line: 1,
             end_line: 1,
@@ -661,15 +654,8 @@ mod tests {
             priority,
             start_offset: start,
             end_offset: end,
-            source: None,
             confidence: "low",
-            alternate_matches: Vec::new(),
-            decoded: None,
-            inner_start: 0,
-            inner_end: 0,
-            required_findings: None,
-            archive_entry: None,
-            suppressed_by: None,
+            ..Default::default()
         }
     }
 
@@ -719,11 +705,10 @@ mod tests {
         // encoded span; they must not collapse into one.
         let plain = raw_finding("generic", 5, 10, 30);
         let mut decoded = raw_finding("openrouter", 0, 10, 30);
-        decoded.decoded = Some(vec!["base64".into()]);
+        decoded.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], ..Default::default() });
         decoded.secret = "sk-or-v1-...".into();
         let mut second = decoded.clone();
-        second.inner_start = 40;
-        second.inner_end = 60;
+        second.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], inner_start: 40, inner_end: 60 });
         second.secret = "other".into();
 
         let out = finalize_findings(vec![second, decoded, plain], &[]);

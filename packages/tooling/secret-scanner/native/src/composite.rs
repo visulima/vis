@@ -124,8 +124,6 @@ mod tests {
     fn finding(rule_id: &str, line: u32, col: u32) -> RawFinding {
         RawFinding {
             rule_id: rule_id.into(),
-            description: String::new(),
-            tags: Vec::new(),
             file: "f.env".into(),
             start_line: line,
             end_line: line,
@@ -133,19 +131,10 @@ mod tests {
             end_column: col + 4,
             r#match: format!("{rule_id}@{line}:{col}"),
             secret: format!("{rule_id}@{line}:{col}"),
-            entropy: 0.0,
-            priority: 0,
             start_offset: line * 100 + col,
             end_offset: line * 100 + col + 4,
-            source: None,
             confidence: "low",
-            alternate_matches: Vec::new(),
-            decoded: None,
-            inner_start: 0,
-            inner_end: 0,
-            required_findings: None,
-            archive_entry: None,
-            suppressed_by: None,
+            ..Default::default()
         }
     }
 
