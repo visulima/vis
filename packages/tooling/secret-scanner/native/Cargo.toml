@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 napi = { version = "3", features = ["async", "serde-json"] }
 napi-derive = "3"
 regex = "1"
+regex-syntax = "0.8"
 fancy-regex = "0.19"
 aho-corasick = "1"
 serde = { version = "1", features = ["derive"] }

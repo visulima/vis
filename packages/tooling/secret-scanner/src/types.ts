@@ -134,6 +134,16 @@ export interface ScanOptions {
         validateAllowedHosts?: string[];
     };
 
+    /**
+     * How many layers of encoding to look through (gitleaks `--max-decode-depth`).
+     * Base64 (standard and url-safe), hex and percent-encoded segments that decode
+     * to printable UTF-8 are decoded and rescanned, recursively, up to this depth.
+     * Findings from decoded text report the line/column of the original encoded
+     * span and carry {@link Finding.decoded}. Decoded output is capped at 4 MiB per
+     * file. Default: `2`. `0` disables decoding.
+     */
+    maxDecodeDepth?: number;
+
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;
 
@@ -194,6 +204,13 @@ export interface Finding {
     alternateMatches: string[];
     /** `"low"` when the rule declares no confidence (default floor). */
     confidence: Confidence;
+
+    /**
+     * Present when the secret was found inside encoded text: the encoding chain,
+     * outermost first (e.g. `["base64"]`, `["base64", "hex"]`). `match` and `secret`
+     * hold the decoded text; the line/column fields point at the original encoded span.
+     */
+    decoded?: string[];
     description: string;
     endColumn: number;
     endLine: number;

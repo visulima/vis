@@ -61,12 +61,20 @@ pub struct RawFinding {
     /// Rule ids that matched the same span and were collapsed by the dedup pass.
     /// Populated in `finalize_findings`; detector emits an empty `Vec`.
     pub alternate_matches: Vec<String>,
+    /// Encoding chain (outermost first, e.g. `["base64", "hex"]`) when the finding came
+    /// from the decode pass; `None` for plain matches. The offsets above then cover the
+    /// whole encoded span in the original content.
+    pub decoded: Option<Vec<String>>,
+    /// Offsets of the match inside the decoded fragment. Keeps two secrets decoded from
+    /// one encoded span distinct in the span dedup. Always 0 for plain findings.
+    pub inner_start: u32,
+    pub inner_end: u32,
 }
 
 /// Byte ranges inside `content` marked by `gitleaks:allow-start` ... `gitleaks:allow-end`
 /// or `secret-scanner:allow-start` ... `:allow-end` pairs. Any finding whose match falls
 /// inside one of these ranges is suppressed.
-fn find_allow_regions(content: &str) -> Vec<(usize, usize)> {
+pub(crate) fn find_allow_regions(content: &str) -> Vec<(usize, usize)> {
     let lc = content.to_ascii_lowercase();
     let mut regions = Vec::new();
     let mut cursor = 0;
@@ -100,11 +108,24 @@ fn find_allow_regions(content: &str) -> Vec<(usize, usize)> {
     regions
 }
 
-fn is_in_allow_region(regions: &[(usize, usize)], offset: usize) -> bool {
+pub(crate) fn is_in_allow_region(regions: &[(usize, usize)], offset: usize) -> bool {
     regions.iter().any(|&(start, end)| offset >= start && offset <= end)
 }
 
 pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
+    scan_text_inner(ruleset, path, content, true)
+}
+
+/// Scan decoded text produced by the decode pass. Path-only rules are skipped: they
+/// already fired (or not) for this file during the plain scan.
+pub(crate) fn scan_text_decoded(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
+    scan_text_inner(ruleset, path, content, false)
+}
+
+/// `plain == false` is the decode pass: path-only rules don't refire, and `preRegexReplace`
+/// rules are skipped because their offsets index the rewritten text, which the decode
+/// layer can't map back to the original content.
+fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain: bool) -> Vec<RawFinding> {
     // Normalise to forward slashes so user-authored path regexes (rule `path`
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
@@ -212,6 +233,9 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
         if rule.engine.is_none() && rule.path_regex.is_some() {
+            if !plain {
+                continue;
+            }
             if is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "") {
                 continue;
             }
@@ -234,11 +258,17 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
                 source: rule.source.clone(),
                 confidence: rule.confidence.as_str(),
                 alternate_matches: Vec::new(),
+                decoded: None,
+                inner_start: 0,
+                inner_end: 0,
             });
             continue;
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
+        if !plain && !rule.pre_regex_replace.is_empty() {
+            continue;
+        }
 
         // Per-rule pre-regex text replacement. When a rule declares replacements we build a
         // new scratch `String` and rewrite line offsets for it; otherwise we scan the original
@@ -268,6 +298,8 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
         // that region (±LOOKBACK_WINDOW_BYTES) instead of the whole file. Falls back
         // to the full `text_ref` when:
         //   - the rule has no keywords (always-run, `ac_spans[i] = None`);
+        //   - the rule's regex can span an unbounded multi-line run (`private-key`'s
+        //     `[\s\S-]{64,}?` body), so no fixed window is guaranteed to reach its end;
         //   - the rule uses `preRegexReplace` so offsets from AC hits over the original
         //     `content` don't map cleanly to `text` (the rewritten buffer);
         //   - the computed window spans the whole file anyway.
@@ -275,7 +307,7 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
         // The slice stays at char boundaries via `window_around`, and we translate
         // slice-relative offsets back to absolute via `slice_start` before emission.
         let uses_pre_replace = !rule.pre_regex_replace.is_empty();
-        let window = if uses_pre_replace { None } else { ac_spans[i] };
+        let window = if uses_pre_replace || rule.unbounded_multiline { None } else { ac_spans[i] };
         let (slice_start, slice_end) = match window {
             Some(span) => window_around(text_ref, span),
             None => (0, text_ref.len()),
@@ -366,7 +398,7 @@ struct MatchSpan {
 
 #[allow(clippy::too_many_arguments)]
 fn emit_match(
-    span: MatchSpan,
+    mut span: MatchSpan,
     rule: &CompiledRule,
     ruleset: &CompiledRuleset,
     path_str: &str,
@@ -375,6 +407,24 @@ fn emit_match(
     allow_regions: &[(usize, usize)],
     out: &mut Vec<RawFinding>,
 ) {
+    // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
+    // Pull the span back one byte so CRLF and LF checkouts yield the same match, secret,
+    // end column, entropy and fingerprint. Done before any filter so every downstream
+    // check sees the normalised value.
+    let bytes = text_ref.as_bytes();
+    if span.match_end > span.match_start && bytes[span.match_end - 1] == b'\r' {
+        // Only shrink a non-empty secret: an empty capture sitting at `match_end` would
+        // otherwise end up with `secret_end < secret_start` and panic on the slice below.
+        if span.secret_end == span.match_end && span.secret_end > span.secret_start {
+            span.secret_end -= 1;
+        }
+        span.match_end -= 1;
+    }
+    if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
+        span.secret_end -= 1;
+    }
+    span.secret_end = span.secret_end.max(span.secret_start);
+
     let match_str = &text_ref[span.match_start..span.match_end];
     let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {
         match_str
@@ -449,6 +499,9 @@ fn emit_match(
         source: rule.source.clone(),
         confidence: rule.confidence.as_str(),
         alternate_matches: Vec::new(),
+        decoded: None,
+        inner_start: 0,
+        inner_end: 0,
     });
 }
 
@@ -458,7 +511,7 @@ fn emit_match(
 /// (detect-secrets compat). All three work regardless of the comment syntax
 /// used by the host language (`#`, `//`, `/* */`, `--`, `<!-- -->`, …) — we
 /// look for the marker text itself, not the comment delimiters.
-fn has_allow_comment(line: &str) -> bool {
+pub(crate) fn has_allow_comment(line: &str) -> bool {
     const MARKERS: [&str; 3] = ["gitleaks:allow", "secret-scanner:allow", "pragma: allowlist secret"];
     // Shortest marker bounds the cheap-path length check.
     if line.len() < "gitleaks:allow".len() {
@@ -477,7 +530,7 @@ fn has_allow_comment(line: &str) -> bool {
 /// Cheap pre-check: scan the raw bytes for `p`/`P` before paying the
 /// `to_ascii_lowercase()` allocation. The vast majority of source lines
 /// contain neither, so the allocation only fires on ~1% of lookups.
-fn has_nextline_pragma(line: &str) -> bool {
+pub(crate) fn has_nextline_pragma(line: &str) -> bool {
     const MARKER: &str = "pragma: allowlist nextline secret";
     if line.len() < MARKER.len() {
         return false;
@@ -578,7 +631,7 @@ fn check_pattern_requirements(secret: &str, req: &CompiledPatternRequirements) -
     true
 }
 
-fn compute_line_offsets(s: &str) -> Vec<usize> {
+pub(crate) fn compute_line_offsets(s: &str) -> Vec<usize> {
     let mut v = vec![0usize];
     for (i, b) in s.bytes().enumerate() {
         if b == b'\n' {
@@ -596,7 +649,7 @@ fn compute_line_offsets(s: &str) -> Vec<usize> {
 /// still avoid bare `[idx]` here: the offsets slice may come from a future caller that
 /// forgets the invariant, and a corrupt index on user-controlled content is not worth a
 /// panic when emitting `1` is a correct fallback.
-fn offset_to_line_col(offsets: &[usize], start: usize, end: usize, content: &str) -> (u32, u32, u32, u32) {
+pub(crate) fn offset_to_line_col(offsets: &[usize], start: usize, end: usize, content: &str) -> (u32, u32, u32, u32) {
     let sl = offsets.partition_point(|&o| o <= start);
     let el = offsets.partition_point(|&o| o <= end);
     let start_line_offset = offsets.get(sl.saturating_sub(1)).copied().unwrap_or(0);
@@ -615,7 +668,7 @@ fn codepoint_col(content: &str, line_start: usize, offset: usize) -> u32 {
     (content[line_start..end].chars().count() as u32) + 1
 }
 
-fn line_slice<'a>(content: &'a str, offsets: &[usize], line: u32) -> &'a str {
+pub(crate) fn line_slice<'a>(content: &'a str, offsets: &[usize], line: u32) -> &'a str {
     let idx = (line as usize).saturating_sub(1);
     let start = offsets.get(idx).copied().unwrap_or(0);
     let end = offsets.get(idx + 1).copied().unwrap_or(content.len());
@@ -625,6 +678,88 @@ fn line_slice<'a>(content: &'a str, offsets: &[usize], line: u32) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ruleset(json: &str) -> CompiledRuleset {
+        let cfg: crate::config::Config = serde_json::from_str(json).expect("config json");
+        CompiledRuleset::compile(&cfg).expect("compile")
+    }
+
+    #[test]
+    fn crlf_trailing_cr_is_stripped_from_match_and_secret() {
+        let rs = ruleset(r#"{"rules":[{"id":"tok","regex":"token=(.+)","secretGroup":1,"keywords":["token="]}]}"#);
+        let lf = scan_text(&rs, Path::new("a.env"), "x=1\ntoken=abcDEF123456\ny=2\n");
+        let crlf = scan_text(&rs, Path::new("a.env"), "x=1\r\ntoken=abcDEF123456\r\ny=2\r\n");
+        assert_eq!(lf.len(), 1);
+        assert_eq!(crlf.len(), 1);
+        assert_eq!(crlf[0].secret, "abcDEF123456");
+        assert_eq!(crlf[0].secret, lf[0].secret);
+        assert_eq!(crlf[0].r#match, lf[0].r#match);
+        assert_eq!(crlf[0].end_column, lf[0].end_column);
+        assert_eq!(crlf[0].entropy.to_bits(), lf[0].entropy.to_bits());
+    }
+
+    #[test]
+    fn crlf_trim_with_empty_capture_at_match_end_does_not_panic() {
+        // The match ends on `\r` and the secret group is empty at `match_end`. Shrinking
+        // the secret end past its start used to panic on the slice.
+        let rs =
+            ruleset(r#"{"rules":[{"id":"tok","regex":"token=[a-z0-9]+\\r()","secretGroup":1,"keywords":["token="]}]}"#);
+        let findings = scan_text(&rs, Path::new("a.env"), "token=abc123\r\nnext\r\n");
+        // Empty secret -> dropped by the whitespace-only guard, but no panic.
+        assert!(findings.is_empty());
+
+        // Optional group that does not participate, match ending on `\r`.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok","regex":"token=([a-z]+)?[0-9]*\\r","secretGroup":1,"keywords":["token="]}]}"#,
+        );
+        let findings = scan_text(&rs, Path::new("a.env"), "token=123\r\n");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].r#match, "token=123");
+        assert_eq!(findings[0].secret, "token=123");
+    }
+
+    const PRIVATE_KEY_RULE: &str = r#"{"rules":[{"id":"private-key","regex":"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\\s\\S-]{64,}?KEY(?: BLOCK)?-----","keywords":["-----begin"]}]}"#;
+
+    /// Deterministic pseudo-random base64 body wrapped at 64 columns (xorshift, no deps).
+    fn base64_body(bytes: usize) -> String {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut out = String::with_capacity(bytes + bytes / 64);
+        for i in 0..bytes {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.push(ALPHABET[(state % 64) as usize] as char);
+            if i % 64 == 63 {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn large_pgp_private_key_block_matches_past_window() {
+        let rs = ruleset(PRIVATE_KEY_RULE);
+        let body = base64_body(8 * 1024);
+        let text = format!(
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\n{body}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----\n"
+        );
+        assert!(text.len() > 2 * LOOKBACK_WINDOW_BYTES);
+        let findings = scan_text(&rs, Path::new("key.asc"), &text);
+        assert!(findings.iter().any(|f| f.rule_id == "private-key"), "no private-key finding");
+        assert!(findings[0].r#match.ends_with("-----END PGP PRIVATE KEY BLOCK-----"));
+    }
+
+    #[test]
+    fn large_pem_private_key_matches_past_window() {
+        let rs = ruleset(PRIVATE_KEY_RULE);
+        // ~8192-bit RSA key body is ~6.3 KiB of base64.
+        let body = base64_body(6 * 1024 + 300);
+        let text = format!("config:\n-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----\n");
+        let findings = scan_text(&rs, Path::new("id_rsa"), &text);
+        assert!(findings.iter().any(|f| f.rule_id == "private-key"), "no private-key finding");
+        assert_eq!(findings[0].end_line as usize, text.lines().count());
+    }
 
     #[test]
     fn allow_comment_gitleaks() {

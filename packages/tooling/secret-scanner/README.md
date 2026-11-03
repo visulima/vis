@@ -41,6 +41,7 @@ Production-grade secret and credential scanner for Node.js. Written in Rust, del
 - **1,058 rules** covering 350+ providers — gitleaks compatibility for established detectors, Kingfisher for breadth, Visulima opt-ins (`preset:weak-passwords`, `preset:password-manager`) for niches the upstreams don't cover.
 - **Confidence floors** — drop low/medium-confidence rules with `config.minConfidence`. Rules without a declared confidence resolve to `"low"` so the floor behaves as expected in CI.
 - **Pattern requirements & stopword filters** — Kingfisher-style `minLength`, `minDigits`, and `ignoreIfContains` reject documentation placeholders (`EXAMPLE`, `YOUR_KEY_HERE`) before entropy is even computed.
+- **Encoded secrets** — base64 (standard and url-safe), hex and percent-encoded values that decode to printable text are decoded and rescanned, two layers deep by default (`maxDecodeDepth`). A base64-wrapped key or a Kubernetes `Secret` `data:` value is reported at its encoded location with `Finding.decoded` naming the encoding chain.
 - **Rule priority + dedup** — overlapping matches collapse to the most specific rule; the rest are surfaced on `Finding.alternateMatches`.
 - **Source provenance** — every finding carries `source: "gitleaks" | "kingfisher" | "visulima" | <user>` so reporters and baselines can route appropriately.
 
@@ -321,6 +322,12 @@ interface ScanOptions {
         /** Host allowlist for HTTP validators — off-allowlist hosts are skipped, not contacted. */
         validateAllowedHosts?: string[];
     };
+
+    /**
+     * Decode base64 / hex / percent-encoded segments and rescan them, recursively up to
+     * this depth (gitleaks `--max-decode-depth`). Default: 2. `0` disables decoding.
+     */
+    maxDecodeDepth?: number;
 
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;

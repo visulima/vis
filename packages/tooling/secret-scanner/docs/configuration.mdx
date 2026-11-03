@@ -29,6 +29,8 @@ export interface ScanOptions {
         validate?: boolean;
     };
 
+    maxDecodeDepth?: number;
+
     redact?: boolean;
 
     rules?: {
@@ -51,12 +53,32 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option        | Type      | Default | Description                                                                       |
-| ------------- | --------- | ------- | --------------------------------------------------------------------------------- |
-| `baseline`    | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint. |
-| `concurrency` | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                |
-| `redact`      | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                   |
-| `verbose`     | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                       |
+| Option           | Type      | Default | Description                                                                                                                           |
+| ---------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`       | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                     |
+| `concurrency`    | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                    |
+| `maxDecodeDepth` | `number`  | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below. |
+| `redact`         | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                       |
+| `verbose`        | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                           |
+
+### `maxDecodeDepth`
+
+Secrets are often committed in encoded form, for example a base64-wrapped API key or a Kubernetes `Secret` whose `data:` values are base64. The scanner looks for encoded segments, decodes them, and rescans the decoded text, like gitleaks' `--max-decode-depth`:
+
+- **Encodings**: base64 (standard and url-safe, at least 16 chars), hex (at least 32 chars), and percent-encoding.
+- **Acceptance**: a segment is decoded only when the result is valid UTF-8 with no control characters other than tab, CR and LF. Non-ASCII text is accepted. Binary data such as images, hashes and ciphertext is skipped.
+- **Context**: the decoded text is rescanned together with up to 256 bytes of its original line, so `password: <base64>` still matches keyword rules.
+- **Recursion**: each level looks for further encoded segments inside the decoded text. `2` (the default) covers one layer of wrapping on top of the usual encoding. `0` turns the pass off.
+- **Memory cap**: decoded output is limited to 4 MiB per file across all levels.
+
+A finding from decoded text reports the line and column of the **original encoded span**. Its `match` and `secret` hold the decoded value, and `decoded` lists the encoding chain, outermost first:
+
+```typescript
+const [finding] = await scanString(`token: ${Buffer.from(key).toString("base64")}`, "secret.yaml");
+// finding.decoded === ["base64"], finding.secret === key
+```
+
+Plain findings are unaffected. They keep the same positions, order and fingerprints with or without decoding.
 
 ## `config` — rule source + validation
 

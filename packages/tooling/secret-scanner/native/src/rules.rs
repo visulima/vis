@@ -123,6 +123,12 @@ pub struct CompiledRule {
     pub confidence: Confidence,
     pub pattern_requirements: Option<CompiledPatternRequirements>,
     pub allowlists: Vec<CompiledAllowlist>,
+    /// `true` when the main regex can consume an unbounded run of arbitrary text across
+    /// line breaks (`[\s\S]{64,}?`, `(?s).*`, `[^"]+`). Such a match has no fixed reach
+    /// from its keyword, so the detector scans the whole file for it instead of the
+    /// keyword window — otherwise a >4 KiB PEM/PGP body never reaches its `KEY-----`
+    /// terminator (gitleaks #1651).
+    pub unbounded_multiline: bool,
 }
 
 #[derive(Debug)]
@@ -325,6 +331,66 @@ impl CompiledRuleset {
     }
 }
 
+/// Does `pattern` contain an unbounded repetition (`*`, `+`, `{n,}`) over a class that can
+/// match both a newline and non-whitespace? Plain `\s*` gaps don't count: they only span
+/// whitespace, which the keyword window always covers in practice.
+///
+/// Patterns `regex-syntax` can't parse (lookaround / backrefs, i.e. Fancy rules) fall back
+/// to a textual check for the common multi-line idioms.
+pub fn is_unbounded_multiline(pattern: &str) -> bool {
+    use regex_syntax::hir::{Class, Hir, HirKind};
+
+    fn class_spans_lines(class: &Class) -> bool {
+        match class {
+            Class::Unicode(u) => {
+                let has_newline = u.ranges().iter().any(|r| r.start() <= '\n' && '\n' <= r.end());
+                let has_non_ws = u.ranges().iter().any(|r| {
+                    let (lo, hi) = (r.start() as u32, r.end() as u32);
+                    (lo..=hi).any(|cp| char::from_u32(cp).is_some_and(|c| !c.is_whitespace()))
+                });
+                has_newline && has_non_ws
+            }
+            Class::Bytes(b) => {
+                let has_newline = b.ranges().iter().any(|r| r.start() <= b'\n' && b'\n' <= r.end());
+                let has_non_ws = b.ranges().iter().any(|r| (r.start()..=r.end()).any(|x| !x.is_ascii_whitespace()));
+                has_newline && has_non_ws
+            }
+        }
+    }
+
+    fn can_cross_lines(h: &Hir) -> bool {
+        match h.kind() {
+            HirKind::Class(c) => class_spans_lines(c),
+            HirKind::Capture(c) => can_cross_lines(&c.sub),
+            HirKind::Repetition(r) => can_cross_lines(&r.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => v.iter().any(can_cross_lines),
+            _ => false,
+        }
+    }
+
+    fn has_unbounded(h: &Hir) -> bool {
+        match h.kind() {
+            HirKind::Repetition(r) => (r.max.is_none() && can_cross_lines(&r.sub)) || has_unbounded(&r.sub),
+            HirKind::Capture(c) => has_unbounded(&c.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => v.iter().any(has_unbounded),
+            _ => false,
+        }
+    }
+
+    match regex_syntax::ParserBuilder::new().build().parse(pattern) {
+        Ok(hir) => has_unbounded(&hir),
+        Err(_) => {
+            pattern.contains("\\s\\S")
+                || pattern.contains("\\S\\s")
+                || pattern.contains("(?s")
+                || pattern.contains("(?ms")
+                || pattern.contains("(?is")
+                || pattern.contains("(?ims")
+                || pattern.contains("(?xs")
+        }
+    }
+}
+
 fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
     let engine = raw.regex.as_ref().map(|p| build_engine(p, &raw.id)).transpose()?;
     let path_regex = raw
@@ -364,5 +430,32 @@ fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
         confidence,
         pattern_requirements,
         allowlists,
+        unbounded_multiline: raw.regex.as_deref().is_some_and(is_unbounded_multiline),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_unbounded_multiline;
+
+    #[test]
+    fn classifies_multiline_patterns() {
+        // Bundled `private-key`: lazy `[\s\S-]{64,}?` body.
+        assert!(is_unbounded_multiline(
+            r"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S-]{64,}?KEY(?: BLOCK)?-----"
+        ));
+        assert!(is_unbounded_multiline(r"(?s)BEGIN.*END"));
+        assert!(is_unbounded_multiline(r#"pw="[^"]+""#));
+        // Fancy-only syntax (lookbehind) falls back to the textual check.
+        assert!(is_unbounded_multiline(r"(?<=x)[\s\S]+?END"));
+    }
+
+    #[test]
+    fn single_line_patterns_keep_windowing() {
+        assert!(!is_unbounded_multiline(r"ghp_[0-9A-Za-z]{36}"));
+        assert!(!is_unbounded_multiline(r"(?i)password\s*[:=]\s*([A-Za-z0-9]{8,})"));
+        assert!(!is_unbounded_multiline(r"(?:.|[\n\r]){0,32}?key"));
+        assert!(!is_unbounded_multiline(r"token=(.+)"));
+        assert!(!is_unbounded_multiline(r"(?<=x)\w+"));
+    }
 }
