@@ -201,7 +201,7 @@ jobs:
             - name: "Setup resources and environment"
               if: "steps.need-build.outputs.any == 'true' || (matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.any-changed == 'true'))"
               id: "setup"
-              uses: "anolilab/workflows/step/node@056e19811003e2bda8981e33e64355bc4784c20c" # anolilab/workflows#539 (pnpm/setup)
+              uses: "anolilab/workflows/step/node@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
               with:
                   node-version: "24"
                   cache-prefix: "build-native"
