@@ -181,6 +181,18 @@ export interface WriteBaselineOptions {
 export const writeBaseline = async (path: string, findings: ReadonlyArray<Finding>, options: WriteBaselineOptions = {}): Promise<void> => {
     const mode = options.mode ?? 0o600;
 
+    // Restrict an existing file before the secrets go in: `writeFile`'s mode
+    // only applies on creation, so a world-readable file would otherwise hold
+    // them until the chmod after the write.
+    try {
+        await chmod(path, mode);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+        }
+    }
+
     await writeFile(path, createBaseline(findings), { encoding: "utf8", mode });
+    // Again after creation: the umask may have stripped bits from `mode`.
     await chmod(path, mode);
 };
