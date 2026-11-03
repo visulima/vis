@@ -195,7 +195,7 @@ export const applyReleasePlan = async (
             return {
                 changelogEntry: entry,
                 changelogPath: cl,
-                changelogVersion: release.newVersion,
+                changelogRelease: { name: release.name, version: release.newVersion },
                 // A non-npm manifest (Cargo.toml, pyproject.toml) is TOML: its version and
                 // requirements are written by the ecosystem plan, never serialized from the synthetic manifest.
                 manifestWrite:
@@ -217,7 +217,7 @@ export const applyReleasePlan = async (
     // Per-package routing falls out of this for free — each package has
     // a unique path and ends up alone in its bucket.
     const changelogBuckets = new Map<string, string[]>();
-    const changelogVersions = new Map<string, string[]>();
+    const changelogReleases = new Map<string, ChangelogRelease[]>();
 
     for (const result of perReleaseResults) {
         if (!result) {
@@ -236,7 +236,7 @@ export const applyReleasePlan = async (
             changelogBuckets.set(result.changelogPath, [result.changelogEntry]);
         }
 
-        changelogVersions.set(result.changelogPath, [...(changelogVersions.get(result.changelogPath) ?? []), result.changelogVersion]);
+        changelogReleases.set(result.changelogPath, [...(changelogReleases.get(result.changelogPath) ?? []), result.changelogRelease]);
     }
 
     // Each bucket reads its existing changelog once, then prepends the
@@ -247,7 +247,7 @@ export const applyReleasePlan = async (
         const existingChangelog = options.readChangelog?.(path);
 
         writes.push({
-            content: prependChangelog(aggregated, existingChangelog, changelogVersions.get(path) ?? []),
+            content: prependChangelog(aggregated, existingChangelog, changelogReleases.get(path) ?? []),
             path,
         });
     }
@@ -315,22 +315,38 @@ const ENTRY_HEADER_RE = /^## /m;
  *      then insert.
  */
 
+export interface ChangelogRelease {
+    name: string;
+    version: string;
+}
+
+const escapeForRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
 /**
- * Drop the sections of `existing` that head a version being written, so re-releasing a version
- * replaces its section instead of stacking a second one. A section runs from its `## ` line to the next.
+ * Drop the sections of `existing` headed by a release being written, so re-releasing a version replaces
+ * its section instead of stacking a second one. A section runs from its `## ` line to the next. A shared
+ * changelog holds several packages, so a heading matches only when it names both the package and the version.
  */
-const withoutVersionSections = (existing: string, versions: ReadonlyArray<string>): string => {
-    if (versions.length === 0) {
+const withoutReleaseSections = (existing: string, releases: ReadonlyArray<ChangelogRelease>): string => {
+    if (releases.length === 0) {
         return existing;
     }
 
-    const patterns = versions.map((version) => new RegExp(String.raw`(^|[\s\[@])${version.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}(?![\w.-])`));
+    const matchers = releases.map((release) => {
+        return {
+            name: new RegExp(String.raw`(^|[\s\[])${escapeForRegExp(release.name)}(?=[\s\[])`),
+            version: new RegExp(String.raw`(^|[\s\[@])v?${escapeForRegExp(release.version)}(?![\w.-])`),
+        };
+    });
+    // A heading that names a scoped package is one of the shared sections, so it must name this release's
+    // package too. A heading without one (a single-package changelog) matches on its version alone.
+    const namesScopedPackage = /(?:^|[\s[])@[\w.-]+\//;
     const kept: string[] = [];
     let dropping = false;
 
     for (const line of existing.split(/\r?\n/)) {
         if (line.startsWith("## ")) {
-            dropping = patterns.some((pattern) => pattern.test(line));
+            dropping = matchers.some((matcher) => matcher.version.test(line) && (!namesScopedPackage.test(line) || matcher.name.test(line)));
         }
 
         if (!dropping) {
@@ -341,9 +357,10 @@ const withoutVersionSections = (existing: string, versions: ReadonlyArray<string
     return kept.join("\n");
 };
 
-export const prependChangelog = (entry: string, existing: string | undefined, versions: ReadonlyArray<string> = []): string => {
+export const prependChangelog = (entry: string, existing: string | undefined, releases: ReadonlyArray<ChangelogRelease> = []): string => {
     const trimmedEntry = entry.trim();
-    const kept = existing === undefined ? undefined : withoutVersionSections(existing, versions);
+    // An empty entry replaces nothing: removing a section then would leave the file without its release notes.
+    const kept = existing === undefined || trimmedEntry === "" ? existing : withoutReleaseSections(existing, releases);
 
     if (!kept || kept.trim() === "") {
         return `# Changelog\n\n${trimmedEntry}\n`;

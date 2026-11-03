@@ -331,7 +331,9 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
             ctx = await buildContext({ channel: options.channel, cwd });
         }
 
-        const recovered = await publishMissing(ctx, { noBranchPush: true, tag: ctx.channel?.tag });
+        // While stranded versions publish in this run, recovery waits: a dependent recovered first could reach the
+        // registry ahead of the stranded version it depends on. The next run recovers what this one deferred.
+        const recovered = await publishMissing(ctx, { deferRecovery: stranded.length > 0, noBranchPush: true, tag: ctx.channel?.tag });
 
         // Only what actually landed: a failed entry is reported with the failures below.
         for (const entry of recovered.completed) {
