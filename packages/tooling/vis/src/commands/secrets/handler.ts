@@ -438,6 +438,9 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
+    // Before the --list-*/--init early returns, so no mode silently drops a history flag.
+    assertHistoryFlags(flags);
+
     if (flags.listRules) {
         await printListRules(scanOptions, useColor);
 
@@ -455,8 +458,6 @@ const execute = async ({ argument, options, visConfig, workspaceRoot }: Toolbox<
 
         return;
     }
-
-    assertHistoryFlags(flags);
 
     if (flags.history) {
         await runHistoryScan(flags, root, scanOptions, useColor, toolVersion);
