@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
-import { GitleaksIgnore, maskSecret } from "../src/gitleaks-ignore";
+import { GitleaksIgnore } from "../src/gitleaks-ignore";
 import { scanDetailed, scanFilesDetailed } from "../src/index";
+import { maskSecret } from "../src/mask";
 import type { Finding, ScanOptions } from "../src/types";
 
 const SECRET = "TESTTOKEN_abcdefghij0123456789";
@@ -98,14 +99,13 @@ describe("gitleaksIgnore parsing", () => {
     });
 
     it("supports secret-value entries with optional rule and path scope", () => {
-        expect.assertions(6);
+        expect.assertions(5);
 
         const ignore = new GitleaksIgnore(
             [`secret:${SECRET}`, `rule:other:secret:${OTHER}`, `path:src/b.ts:secret:${OTHER}`, `path:src/c.ts:rule:test-token:secret:${OTHER}`].join("\n"),
             "/repo",
         );
 
-        expect(ignore.hasSecretEntries).toBe(true);
         expect(ignore.match(finding({ file: "anywhere.ts" }), ["/repo"])?.line).toBe(1);
         expect(ignore.match(finding({ secret: OTHER }), ["/repo"])).toBeUndefined();
         expect(ignore.match(finding({ file: "src/b.ts", secret: OTHER }), ["/repo"])?.line).toBe(3);

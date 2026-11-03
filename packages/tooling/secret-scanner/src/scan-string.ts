@@ -4,7 +4,7 @@
 // surface.
 
 import { binding } from "./binding";
-import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { createSuppressionContext, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
 import type { Finding, ScanOptions } from "./types";
 
@@ -22,7 +22,7 @@ import type { Finding, ScanOptions } from "./types";
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
     const prepared = prepareScan(options);
     const context = await createSuppressionContext(options, [process.cwd()]);
-    const report = binding.scanTextSync(content, file, nativeOptionsFor(prepared, context));
+    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
 
     const { findings } = await postProcessDetailed(report, prepared, options, context);
 

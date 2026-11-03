@@ -24,7 +24,6 @@
 
 import { resolve } from "node:path";
 
-import type { Native } from "./binding";
 import { binding } from "./binding";
 import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
@@ -33,7 +32,7 @@ import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
-import { nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { beginScan, finishResult } from "./scan-session";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
@@ -270,9 +269,6 @@ const withoutPresent = (report: ProcessedFindings, parent: ReadonlySet<string>):
 
 const isEmpty = (report: ProcessedFindings): boolean => report.findings.length === 0 && report.suppressed.length === 0;
 
-const spanKey = (finding: Finding): string =>
-    `${finding.ruleId}\0${String(finding.startLine)}:${String(finding.startColumn)}:${String(finding.endLine)}:${String(finding.endColumn)}`;
-
 /** Shared per-scan state: prepared options, the blob reader and the skip log. */
 class BlobScanner {
     public readonly skipped: GitSkippedBlob[] = [];
@@ -283,8 +279,6 @@ class BlobScanner {
 
     readonly #prepared: PreparedScan;
 
-    readonly #rawNativeOptions: Native.ScanOptions;
-
     readonly #reader: GitBlobReader;
 
     readonly #parentCache = new Map<string, Set<string>>();
@@ -293,9 +287,6 @@ class BlobScanner {
         this.#context = context;
         this.#options = options;
         this.#prepared = prepared;
-        // Comparisons need real secrets: masked values from two different
-        // secrets can be identical (`ghp***xY4`).
-        this.#rawNativeOptions = { ...prepared.nativeOptions, redact: false };
         this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
     }
 
@@ -326,11 +317,13 @@ class BlobScanner {
     }
 
     /**
-     * Native detection with real (unredacted) secrets and no post-processing.
-     * `commit` lets AND allowlists that list `commits` match.
+     * Native detection with no post-processing. Secrets are real even under
+     * `redact` (the pipeline masks), so parent comparisons never confuse two
+     * secrets that mask alike (`ghp***xY4`). `commit` lets AND allowlists that
+     * list `commits` match.
      */
     public detectRaw(content: string, path: string, commit?: string): ProcessedFindings {
-        return binding.scanTextSync(content, path, { ...this.#rawNativeOptions, commit });
+        return binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */
@@ -351,24 +344,12 @@ class BlobScanner {
     }
 
     /**
-     * Run the user-facing pipeline over the selected raw findings. Under
-     * `redact`, the native scan is repeated with masking on and the same spans
-     * are kept, so masking stays the native layer's job. `commit` is attached
-     * before suppression so commit-scoped `.gitleaksignore` entries can match.
+     * Run the user-facing pipeline over the selected raw findings. `commit`
+     * is attached before suppression so commit-scoped `.gitleaksignore`
+     * entries can match.
      */
-    public async finish(content: string, path: string, selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
+    public async finish(selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
         let report = selected;
-        const nativeOptions = nativeOptionsFor(this.#prepared, this.#context);
-
-        if (nativeOptions.redact === true) {
-            const keep = new Set([...selected.findings, ...selected.suppressed].map((finding) => spanKey(finding)));
-            const redacted = binding.scanTextSync(content, path, { ...nativeOptions, commit: commit?.sha });
-
-            report = {
-                findings: redacted.findings.filter((finding) => keep.has(spanKey(finding))),
-                suppressed: redacted.suppressed.filter((finding) => keep.has(spanKey(finding))),
-            };
-        }
 
         if (commit !== undefined) {
             report = {
@@ -449,7 +430,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    const processed = await scanner.finish(content, path, fresh, commit.info);
+    const processed = await scanner.finish(fresh, commit.info);
     const findings: GitFinding[] = [];
     const suppressed = processed.suppressed as SuppressedFinding<GitFinding>[];
 
@@ -579,7 +560,7 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
-                const processed = await scanner.finish(content, file, raw);
+                const processed = await scanner.finish(raw);
 
                 findings.push(...processed.findings);
                 suppressed.push(...processed.suppressed);

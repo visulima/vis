@@ -15,7 +15,7 @@ import { resolve } from "node:path";
 import { binding } from "./binding";
 import { resolveConfig } from "./config-loader";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
-import { nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
 import { beginScan, finishResult } from "./scan-session";
 import type { ValidatorReport } from "./transports";
@@ -113,7 +113,7 @@ export const scanDetailed = async (paths: string[], options?: ScanOptions): Prom
         options,
         paths.map((path) => resolve(path)),
     );
-    const report = await binding.scanDetailed(paths, nativeOptionsFor(prepared, context));
+    const report = await binding.scanDetailed(paths, prepared.nativeOptions);
 
     return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
 };
@@ -133,7 +133,7 @@ export const scanFilesDetailed = async (files: string[], options?: ScanOptions):
     const { context, prepared } = await beginScan(options, [process.cwd()]);
     const matcher = buildIgnoreMatcher(options);
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
-    const report = await binding.scanFilesDetailed(filteredFiles, nativeOptionsFor(prepared, context));
+    const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
     return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
 };

@@ -176,22 +176,6 @@ const parseFingerprint = (raw: string, entry: GitleaksIgnoreEntry): FingerprintR
 };
 
 /**
- * Mask a secret the way the native layer does (`abc***xyz`, `******` for six
- * characters or fewer), counting characters rather than bytes.
- */
-export const maskSecret = (value: string): string => {
-    // Code points, like Rust `chars()`; grapheme clusters aren't needed for a mask.
-    // eslint-disable-next-line @typescript-eslint/no-misused-spread -- See above.
-    const chars = [...value];
-
-    if (chars.length <= 6) {
-        return "******";
-    }
-
-    return `${chars.slice(0, 3).join("")}${"*".repeat(chars.length - 6)}${chars.slice(-3).join("")}`;
-};
-
-/**
  * A loaded `.gitleaksignore`. Create one per scan: it records which entries
  * matched so {@link GitleaksIgnore.unused} can report stale ones.
  */
@@ -247,11 +231,6 @@ export class GitleaksIgnore {
                 this.#fingerprints.push(fingerprintRule);
             }
         }
-    }
-
-    /** True when any entry matches on the secret value (needs unredacted findings). */
-    public get hasSecretEntries(): boolean {
-        return this.#secrets.length > 0;
     }
 
     /**

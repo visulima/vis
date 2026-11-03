@@ -23,11 +23,11 @@ describe("prepareScan — memoization", () => {
         expect.assertions(3);
 
         const low = prepareScan({ config: { minConfidence: "low" as const } });
-        const high = prepareScan({ config: { minConfidence: "high" as const }, redact: true });
+        const high = prepareScan({ config: { minConfidence: "high" as const }, maxDecodeDepth: 3 });
 
         expect(high.config).toBe(low.config);
         expect(high.nativeOptions.minConfidence).toBe("high");
-        expect(high.nativeOptions.redact).toBe(true);
+        expect(high.nativeOptions.maxDecodeDepth).toBe(3);
     });
 
     it("does not cache inline configs (rebuilds each call)", () => {
