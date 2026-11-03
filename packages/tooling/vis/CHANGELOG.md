@@ -1,3 +1,9 @@
+## @visulima/vis [6.5.2](https://github.com/visulima/vis/compare/@visulima/vis@6.5.1...@visulima/vis@6.5.2) (2026-11-03)
+
+### Bug Fixes
+
+* **vis:** release versions a release commit set but never published ([#85](https://github.com/visulima/vis/issues/85)) ([839d9ae](https://github.com/visulima/vis/commit/839d9aead60f16f22627ac067ac3570bb40b675f))
+
 ## @visulima/vis [6.5.1](https://github.com/visulima/vis/compare/@visulima/vis@6.5.0...@visulima/vis@6.5.1) (2026-11-03)
 
 ### Bug Fixes
