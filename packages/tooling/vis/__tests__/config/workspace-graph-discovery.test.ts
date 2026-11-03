@@ -221,6 +221,28 @@ describe("workspace root project", () => {
         expect(workspace.projects["workspace-root"]?.targets?.["lint:oxlint"]).toBeDefined();
     });
 
+    it("should drop root scripts that run their own target through vis run, so the root does not re-run itself", () => {
+        expect.assertions(4);
+
+        writePackage(
+            scratch,
+            ".",
+            {
+                name: "fixture-root",
+                private: true,
+                scripts: { build: "vis run build", lint: "pnpm exec vis run --affected lint", "lint:oxlint": "oxlint", test: "vis run test:unit" },
+            },
+            { name: "workspace-root" },
+        );
+
+        const targets = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets ?? {};
+
+        expect(targets["build"]).toBeUndefined();
+        expect(targets["lint"]).toBeUndefined();
+        expect(targets["lint:oxlint"]).toBeDefined();
+        expect(targets["test"]).toBeDefined();
+    });
+
     it("should list the root once when the workspace patterns already include it", () => {
         expect.assertions(1);
 

@@ -393,6 +393,33 @@ const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): st
     return [".", ...workspacePatterns];
 };
 
+const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
+
+/**
+ * Drops the root scripts that run their own target through `vis run`, such as
+ * `"build": "vis run build"`. As targets of the root project they would select
+ * the root project again and spawn `vis run build` without end.
+ */
+const withoutSelfRunScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
+    if (scripts === undefined) {
+        return undefined;
+    }
+
+    return Object.fromEntries(
+        Object.entries(scripts).filter(([name, command]) => {
+            for (const match of command.matchAll(VIS_RUN_RE)) {
+                const target = match[1]!.split(/\s+/).find((token) => token.length > 0 && !token.startsWith("-"));
+
+                if (target === name) {
+                    return false;
+                }
+            }
+
+            return true;
+        }),
+    );
+};
+
 /**
  * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
  * discovery drops those directories exactly as it drops pnpm `!` entries.
@@ -1182,7 +1209,8 @@ const discoverWorkspace = (
         const defaults = collectTargetDefaults(config, projectJson, projectType);
 
         const overlayTargets = mergeProjectTargets(projectJson?.targets, taskConfigs?.get(projectDirectory)?.tasks);
-        const visTargets = createTargetsFromScripts(pkg?.scripts, overlayTargets, defaults, config.fileGroups);
+        const scripts = projectDirectory === "." ? withoutSelfRunScripts(pkg?.scripts) : pkg?.scripts;
+        const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
         // pipeline so the command from a package.json script,

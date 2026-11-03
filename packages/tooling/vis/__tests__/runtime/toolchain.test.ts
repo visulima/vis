@@ -1056,6 +1056,17 @@ describe("toolchain", () => {
                 expect(logger.messages.filter((m) => m.kind === "warn")).toHaveLength(0);
             });
 
+            it("should name the running node, not the failing PATH binary, when the fallback supplied the version", async () => {
+                expect.assertions(1);
+
+                writeFileSync(join(binDirectory, "node"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+                writeFileSync(join(tmpDirectory, ".nvmrc"), "1.2\n");
+
+                const result = await ensureToolchain(tmpDirectory, undefined, collectingLogger());
+
+                expect(result.failed[0]?.error).toContain(`active node is ${process.versions.node} (${process.execPath})`);
+            });
+
             it("should report one failure that names the pin, its source and the active version", async () => {
                 expect.assertions(4);
 
