@@ -114,9 +114,12 @@ const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
         return findings;
     }
 
-    return findings.filter(
-        (finding) => finding.ruleId !== GENERIC_RULE_ID || !(othersByFile.get(finding.file) ?? []).some((other) => overlaps(finding, other)),
-    );
+    // A satisfied composite generic finding (`requiredFindings`) stays: its dependency
+    // often overlaps it by design.
+    const isShadowed = (finding: Finding): boolean =>
+        finding.requiredFindings === undefined && (othersByFile.get(finding.file) ?? []).some((other) => overlaps(finding, other));
+
+    return findings.filter((finding) => finding.ruleId !== GENERIC_RULE_ID || !isShadowed(finding));
 };
 
 const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, excludeIds: string[] | undefined): Finding[] => {

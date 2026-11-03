@@ -445,6 +445,10 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
     // Decoded findings share their encoded span with any plain finding on the blob itself,
     // so the decode chain and the inner offsets are part of the key: `None` sorts first,
     // keeping plain-only output (and its order) exactly as before.
+    //
+    // A satisfied composite finding (`required_findings` set) sorts ahead of every other
+    // rule at its span, so the dedup below keeps it whatever its priority: its dependencies
+    // were found, which is stronger evidence than a higher-priority single-pattern match.
     findings.sort_by(|a, b| {
         (
             &a.file,
@@ -455,6 +459,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
             &a.decoded,
             a.inner_start,
             a.inner_end,
+            a.required_findings.is_none(),
             std::cmp::Reverse(a.priority),
             &a.rule_id,
         )
@@ -467,6 +472,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
                 &b.decoded,
                 b.inner_start,
                 b.inner_end,
+                b.required_findings.is_none(),
                 std::cmp::Reverse(b.priority),
                 &b.rule_id,
             ))
@@ -507,7 +513,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFi
                 && last.inner_start == f.inner_start
                 && last.inner_end == f.inner_end
             {
-                // Same span — the sort put the highest priority first. Record the
+                // Same span — the sort put a composite, then the highest priority first. Record the
                 // dropped rule on the winner so reporters can show "also: id1, id2".
                 if last.rule_id != f.rule_id && !last.alternate_matches.contains(&f.rule_id) {
                     last.alternate_matches.push(f.rule_id);
@@ -745,6 +751,19 @@ mod tests {
         assert_eq!(out[0].alternate_matches.len(), 2);
         assert!(out[0].alternate_matches.contains(&"rule.b".into()));
         assert!(out[0].alternate_matches.contains(&"rule.c".into()));
+    }
+
+    #[test]
+    fn finalize_keeps_a_satisfied_composite_over_a_higher_priority_rule() {
+        let high = raw_finding("rule.high", 10, 10, 30);
+        let mut composite = raw_finding("rule.composite", 0, 10, 30);
+        composite.required_findings = Some(vec![raw_finding("rule.dep", 0, 40, 50)]);
+
+        let out = finalize_findings(vec![high, composite], &[]);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule_id, "rule.composite");
+        assert_eq!(out[0].alternate_matches, vec!["rule.high".to_string()]);
     }
 
     #[test]

@@ -170,3 +170,51 @@ describe("composite rules (rules.required)", () => {
         expect(alone).toHaveLength(0);
     });
 });
+
+describe("composite precedence", () => {
+    it("keeps a satisfied composite over a higher-priority rule on the same span", async () => {
+        expect.assertions(3);
+
+        const config: GitleaksConfig = {
+            rules: [
+                ...(gitleaksShaped([{ id: "aws-key-id", withinLines: 5 }]).rules ?? []),
+                {
+                    id: "specific-aws-secret",
+                    keywords: ["aws_secret_access_key"],
+                    priority: 10,
+                    regex: String.raw`(?i)aws_secret_access_key\s*=\s*([A-Za-z0-9/+]{40})`,
+                    secretGroup: 1,
+                },
+            ],
+        };
+
+        const findings = await scanWith(lines(1), config);
+        const atSecret = findings.filter((finding) => finding.startLine === 2);
+
+        expect(atSecret.map((finding) => finding.ruleId)).toStrictEqual(["aws-secret"]);
+        expect(atSecret[0]?.alternateMatches).toStrictEqual(["specific-aws-secret"]);
+        expect(atSecret[0]?.requiredFindings?.[0]?.ruleId).toBe("aws-key-id");
+    });
+
+    it("keeps a composite generic-api-key whose dependency overlaps it", async () => {
+        expect.assertions(2);
+
+        const config: GitleaksConfig = {
+            rules: [
+                { id: "token-prefix", keywords: ["tok_"], regex: String.raw`tok_[a-z0-9]{8}` },
+                {
+                    id: "generic-api-key",
+                    keywords: ["api_key"],
+                    regex: String.raw`api_key\s*=\s*(tok_[a-z0-9]{8}[A-Z]{6})`,
+                    required: [{ id: "token-prefix" }],
+                    secretGroup: 1,
+                },
+            ],
+        };
+
+        const findings = await scanWith("api_key = tok_abcd1234QWERTY\n", config);
+
+        expect(findings.map((finding) => finding.ruleId).toSorted((a, b) => a.localeCompare(b))).toStrictEqual(["generic-api-key", "token-prefix"]);
+        expect(findings.find((finding) => finding.ruleId === "generic-api-key")?.requiredFindings).toHaveLength(1);
+    });
+});
