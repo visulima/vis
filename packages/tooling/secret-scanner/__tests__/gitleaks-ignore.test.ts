@@ -63,7 +63,7 @@ describe("gitleaksIgnore parsing", () => {
 
         expect(ignore.match(finding(), ["/repo"])?.line).toBe(2);
         expect(ignore.match(finding({ startLine: 4 }), ["/repo"])).toBeUndefined();
-        expect(ignore.unused(false).map((entry) => entry.raw)).toStrictEqual(["src/b.ts:test-token:3"]);
+        expect(ignore.unused().map((entry) => entry.raw)).toStrictEqual(["src/b.ts:test-token:3"]);
     });
 
     it("parses paths containing colons from the right", () => {
@@ -81,7 +81,7 @@ describe("gitleaksIgnore parsing", () => {
         const ignore = new GitleaksIgnore(`${sha}:src/a.ts:test-token:3`, "/repo");
 
         expect(ignore.match(finding(), ["/repo"])).toBeUndefined();
-        expect(ignore.unused(false)).toStrictEqual([]);
+        expect(ignore.unused()).toStrictEqual([]);
         expect(ignore.match(finding({ commit: { sha: "f".repeat(40) } }), ["/repo"])).toBeUndefined();
         expect(ignore.match(finding({ commit: { sha } }), ["/repo"])).toBeDefined();
     });
@@ -110,7 +110,7 @@ describe("gitleaksIgnore parsing", () => {
         expect(ignore.match(finding({ secret: OTHER }), ["/repo"])).toBeUndefined();
         expect(ignore.match(finding({ file: "src/b.ts", secret: OTHER }), ["/repo"])?.line).toBe(3);
         expect(ignore.match(finding({ file: "src/c.ts", secret: OTHER }), ["/repo"])?.line).toBe(4);
-        expect(ignore.unused(false).map((entry) => entry.line)).toStrictEqual([2]);
+        expect(ignore.unused().map((entry) => entry.line)).toStrictEqual([2]);
     });
 
     it("reports lines it can't parse as invalid", () => {
@@ -128,7 +128,7 @@ describe("gitleaksIgnore parsing", () => {
 
         ignore.match(finding(), ["/repo"]);
 
-        expect(ignore.unused(true)).toStrictEqual([]);
+        expect(ignore.unused({ includeCommitEntries: true })).toStrictEqual([]);
     });
 
     it("masks by characters, matching the native shape", () => {

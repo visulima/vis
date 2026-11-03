@@ -12,7 +12,7 @@
 // only returned under `reportSuppressed`) go through the same filters but skip
 // validation, and come back in `suppressed` instead of `findings`.
 //
-// Each stage is pure + testable in isolation; `postProcess` is the orchestrator.
+// Each stage is pure + testable in isolation; `postProcessDetailed` is the orchestrator.
 /* eslint-enable no-secrets/no-secrets */
 
 import { resolveBaselineSet } from "./baseline";
@@ -448,10 +448,8 @@ export const postProcessDetailed = async (
     report: ProcessedFindings,
     prepared: PreparedScan,
     options: ScanOptions | undefined,
-    context?: SuppressionContext,
+    suppression: SuppressionContext,
 ): Promise<ProcessedFindings> => {
-    const suppression = context ?? (await createSuppressionContext(options, [process.cwd()]));
-
     const preValidation = <F extends Finding>(findings: F[]): F[] => {
         const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
         const heuristicsFiltered = applyHeuristicFilters(filtered, options);
@@ -496,20 +494,4 @@ export const postProcessDetailed = async (
         findings: findings.map((finding) => mask(finding)),
         suppressed: options?.reportSuppressed === true ? suppressed.map((finding) => mask(finding)) : [],
     };
-};
-
-/**
- * Shared post-processing pipeline for every scan variant. Consumers pass the
- * native report plus the prepared-scan bundle; this returns the final
- * filtered list ready for return to the caller.
- */
-export const postProcess = async (
-    report: ProcessedFindings,
-    prepared: PreparedScan,
-    options: ScanOptions | undefined,
-    context?: SuppressionContext,
-): Promise<Finding[]> => {
-    const result = await postProcessDetailed(report, prepared, options, context);
-
-    return result.findings;
 };

@@ -26,16 +26,15 @@ import { resolve } from "node:path";
 
 import type { Native } from "./binding";
 import { binding } from "./binding";
-import { warnOnSkippedRules } from "./diagnostics";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
 import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
-import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { nativeOptionsFor, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
-import { prepareScan } from "./prepare-scan";
+import { beginScan, finishResult } from "./scan-session";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
 
 /** Default per-blob size cap; matches the working-tree walker. */
@@ -140,6 +139,18 @@ interface CommitRecord {
 }
 
 const isSet = (value: string | undefined): value is string => value !== undefined && value !== "";
+
+/**
+ * Root of the work tree containing `cwd`. `--show-cdup` rather than
+ * `--show-toplevel`: the latter is a realpath (`/private/var/…` on macOS),
+ * which would not line up with a caller's symlinked spelling of the same
+ * directory.
+ */
+const repositoryRoot = async (cwd: string, environment?: NodeJS.ProcessEnv): Promise<string> => {
+    const cdup = await runGit(["rev-parse", "--show-cdup"], cwd, environment);
+
+    return resolve(cwd, cdup.trim());
+};
 
 /**
  * Resolve the rev-list range arguments from the option shape: `--all`, a
@@ -464,18 +475,10 @@ const scanChangedBlob = async (
  */
 export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<GitScanResult<GitFinding>> => {
     const cwd = options?.cwd ?? process.cwd();
-    const prepared = prepareScan(options);
-
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
-
+    // History paths are repository-relative, whatever subdirectory `cwd` is.
+    const { context, prepared } = await beginScan(options, [await repositoryRoot(cwd)]);
     const allowlist = buildCommitAllowlist(prepared.config);
     const commits = await listCommits(options, cwd);
-    // History paths are repository-relative, whatever subdirectory `cwd` is.
-    const cdup = await runGit(["rev-parse", "--show-cdup"], cwd);
-    const toplevel = resolve(cwd, cdup.trim());
-    const context = await createSuppressionContext(options, [toplevel]);
     const scanner = new BlobScanner(cwd, options, prepared, context);
     const findings: GitFinding[] = [];
     const suppressed: SuppressedFinding<GitFinding>[] = [];
@@ -502,7 +505,7 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         scanner.close();
     }
 
-    return { findings, skipped: scanner.skipped, suppressed, unusedIgnores: context.ignore?.unused(true) ?? [] };
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { includeCommitEntries: true });
 };
 
 /**
@@ -543,17 +546,8 @@ export const scanGitHistory = async (options?: GitScanOptions): Promise<GitFindi
 export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<GitScanResult> => {
     const cwd = options?.cwd ?? process.cwd();
     const environment = gitEnvironment(true);
-    const prepared = prepareScan(options);
-
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
-
-    // `--show-cdup` rather than `--show-toplevel`: the latter is a realpath
-    // (`/private/var/…` on macOS), which would not line up with a caller's
-    // symlinked spelling of the same directory.
-    const cdup = await runGit(["rev-parse", "--show-cdup"], cwd, environment);
-    const toplevel = resolve(cwd, cdup.trim());
+    const toplevel = await repositoryRoot(cwd, environment);
+    const { context, prepared } = await beginScan(options, [toplevel, cwd]);
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
     const absolute = (path: string): string => resolve(toplevel, path);
@@ -564,7 +558,6 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
             cwd,
         ),
     );
-    const context = await createSuppressionContext(options, [toplevel, cwd]);
     const scanner = new BlobScanner(toplevel, options, prepared, context);
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
@@ -598,5 +591,5 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         scanner.close();
     }
 
-    return { findings, skipped: scanner.skipped, suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+    return finishResult({ findings, suppressed }, scanner.skipped, context);
 };

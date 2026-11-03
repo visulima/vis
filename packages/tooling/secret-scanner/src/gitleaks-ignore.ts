@@ -303,10 +303,10 @@ export class GitleaksIgnore {
 
     /**
      * Entries that matched nothing so far. Commit-scoped fingerprints are only
-     * meaningful for git history scans; pass `includeCommitEntries: false` for
+     * meaningful for git history scans; leave `includeCommitEntries` off for
      * working-tree scans so they aren't reported as stale.
      */
-    public unused(includeCommitEntries: boolean): GitleaksIgnoreEntry[] {
+    public unused({ includeCommitEntries = false }: { includeCommitEntries?: boolean } = {}): GitleaksIgnoreEntry[] {
         const unused = [
             ...this.#fingerprints.filter((rule) => includeCommitEntries || rule.commit === undefined).map((rule) => rule.entry),
             ...this.#secrets.map((rule) => rule.entry),
