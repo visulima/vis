@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod config;
+mod decode;
 mod detector;
 mod entropy;
 mod rules;
@@ -19,6 +20,7 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 
 use crate::config::Config;
+use crate::decode::DecodeOptions;
 use crate::detector::RawFinding;
 use crate::rules::{CompiledRuleset, Confidence};
 use crate::scanner::scan_file;
@@ -82,6 +84,9 @@ pub struct ScanOptions {
     /// legacy behaviour. Rules with no declared confidence are treated as "low"
     /// and so are dropped whenever a higher floor is set.
     pub min_confidence: Option<String>,
+    /// Recursion depth of the decode pass (base64 / hex / percent-encoding). Each level
+    /// decodes printable-UTF-8 segments and rescans them. Default 2; 0 disables decoding.
+    pub max_decode_depth: Option<u32>,
 }
 
 #[napi(object)]
@@ -106,6 +111,10 @@ pub struct Finding {
     /// Rule ids that matched the same byte span and were collapsed by the dedup
     /// pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
     pub alternate_matches: Vec<String>,
+    /// Set when the secret was found inside encoded text: the encoding chain, outermost
+    /// first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+    /// original encoded span while `match` / `secret` hold the decoded text.
+    pub decoded: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -162,7 +171,12 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         source: f.source,
         confidence: f.confidence.to_string(),
         alternate_matches: f.alternate_matches,
+        decoded: f.decoded,
     }
+}
+
+fn decode_options(opts: &ScanOptions) -> DecodeOptions {
+    DecodeOptions { max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH), ..Default::default() }
 }
 
 fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
@@ -217,6 +231,7 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
     let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
+    let decode_opts = decode_options(&opts);
 
     let walk_opts = WalkOptions {
         respect_gitignore: opts.respect_gitignore.unwrap_or(true),
@@ -231,7 +246,7 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
     let do_scan = || -> Vec<RawFinding> {
         files
             .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
+            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts) {
                 Ok(Some(v)) => v.into_iter(),
                 _ => Vec::new().into_iter(),
             })
@@ -269,14 +284,32 @@ fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<Ra
 
     // Sort so findings at the same span sit next to each other: then we can dedup + apply
     // priority in a single linear pass.
+    //
+    // Decoded findings share their encoded span with any plain finding on the blob itself,
+    // so the decode chain and the inner offsets are part of the key: `None` sorts first,
+    // keeping plain-only output (and its order) exactly as before.
     findings.sort_by(|a, b| {
-        (&a.file, a.start_line, a.start_column, a.start_offset, a.end_offset, std::cmp::Reverse(a.priority), &a.rule_id)
+        (
+            &a.file,
+            a.start_line,
+            a.start_column,
+            a.start_offset,
+            a.end_offset,
+            &a.decoded,
+            a.inner_start,
+            a.inner_end,
+            std::cmp::Reverse(a.priority),
+            &a.rule_id,
+        )
             .cmp(&(
                 &b.file,
                 b.start_line,
                 b.start_column,
                 b.start_offset,
                 b.end_offset,
+                &b.decoded,
+                b.inner_start,
+                b.inner_end,
                 std::cmp::Reverse(b.priority),
                 &b.rule_id,
             ))
@@ -291,6 +324,7 @@ fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<Ra
             && a.end_line == b.end_line
             && a.end_column == b.end_column
             && a.secret == b.secret
+            && a.decoded == b.decoded
     });
 
     // #1567 / #1997 — when two rules match the **same byte span** on the same file, keep the
@@ -312,6 +346,9 @@ fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<Ra
                 && last.file == f.file
                 && last.start_offset == f.start_offset
                 && last.end_offset == f.end_offset
+                && last.decoded == f.decoded
+                && last.inner_start == f.inner_start
+                && last.inner_end == f.inner_end
             {
                 // Same span — the sort put the highest priority first. Record the
                 // dropped rule on the winner so reporters can show "also: id1, id2".
@@ -368,7 +405,7 @@ pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
-    let raw = crate::detector::scan_text(&ruleset, &path, &content);
+    let raw = crate::decode::scan_text_with_decoding(&ruleset, &path, &content, decode_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
     let finalized = finalize_findings(raw, &[]);
     Ok(finalized.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
@@ -425,13 +462,14 @@ fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>
     let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
+    let decode_opts = decode_options(&opts);
 
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
 
     let do_scan = || -> Vec<RawFinding> {
         paths
             .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
+            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts) {
                 Ok(Some(v)) => v.into_iter(),
                 _ => Vec::new().into_iter(),
             })
@@ -477,6 +515,9 @@ mod tests {
             source: None,
             confidence: "low",
             alternate_matches: Vec::new(),
+            decoded: None,
+            inner_start: 0,
+            inner_end: 0,
         }
     }
 
@@ -517,6 +558,26 @@ mod tests {
         let out = finalize_findings(vec![a, b], &[]);
 
         assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
+    }
+
+    #[test]
+    fn finalize_keeps_decoded_finding_on_same_span_as_plain() {
+        // A plain rule matching the base64 blob and a decoded finding inside it share the
+        // encoded span; they must not collapse into one.
+        let plain = raw_finding("generic", 5, 10, 30);
+        let mut decoded = raw_finding("openrouter", 0, 10, 30);
+        decoded.decoded = Some(vec!["base64".into()]);
+        decoded.secret = "sk-or-v1-...".into();
+        let mut second = decoded.clone();
+        second.inner_start = 40;
+        second.inner_end = 60;
+        second.secret = "other".into();
+
+        let out = finalize_findings(vec![second, decoded, plain], &[]);
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].rule_id, "generic");
         assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
     }
 

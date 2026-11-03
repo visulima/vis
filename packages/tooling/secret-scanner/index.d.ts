@@ -27,6 +27,12 @@ export interface Finding {
      * pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
      */
     alternateMatches: Array<string>;
+    /**
+     * Set when the secret was found inside encoded text: the encoding chain, outermost
+     * first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+     * original encoded span while `match` / `secret` hold the decoded text.
+     */
+    decoded?: Array<string>;
 }
 
 /**
@@ -92,6 +98,11 @@ export interface ScanOptions {
      * and so are dropped whenever a higher floor is set.
      */
     minConfidence?: string;
+    /**
+     * Recursion depth of the decode pass (base64 / hex / percent-encoding). Each level
+     * decodes printable-UTF-8 segments and rescans them. Default 2; 0 disables decoding.
+     */
+    maxDecodeDepth?: number;
 }
 
 export declare function scanSync(paths: Array<string>, options?: ScanOptions | undefined | null): Array<Finding>;
