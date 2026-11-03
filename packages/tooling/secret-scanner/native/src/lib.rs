@@ -41,12 +41,15 @@ use crate::walker::{walk_paths_reporting, WalkOptions};
 /// `min_confidence` / user preset layering.
 const RULESET_CACHE_CAPACITY: usize = 4;
 
+/// Cached rulesets, oldest first, keyed by [`hash_ruleset_key`].
+type RulesetCache = VecDeque<(u64, Arc<CompiledRuleset>)>;
+
 /// FIFO cache keyed by a content hash of `(config JSON, min_confidence)`.
 /// Eliminates the per-scan 5-9s compile cost when the same config is reused
 /// across `scan()` / `scanFiles()` / `listRules()` / repeat CLI invocations
 /// within the same process. FIFO is sufficient at cap 4; a true LRU would
 /// need an extra dep without measurable benefit at this size.
-static RULESET_CACHE: Lazy<Mutex<VecDeque<(u64, Arc<CompiledRuleset>)>>> =
+static RULESET_CACHE: Lazy<Mutex<RulesetCache>> =
     Lazy::new(|| Mutex::new(VecDeque::with_capacity(RULESET_CACHE_CAPACITY)));
 
 fn hash_ruleset_key(value: &serde_json::Value, min_confidence: Option<&str>) -> u64 {

@@ -36,8 +36,12 @@ impl Engine {
 const REGEX_SIZE_LIMIT: usize = 10 << 20;
 const REGEX_SET_DFA_SIZE_LIMIT: usize = 64 << 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
+    /// Also the default: rules that don't declare confidence keep their historical
+    /// behaviour — never filtered by `min_confidence`. Any explicit user floor (e.g.
+    /// `--min-confidence medium`) drops the unlabeled rules, which is the point.
+    #[default]
     Low,
     Medium,
     High,
@@ -59,15 +63,6 @@ impl Confidence {
             Self::Medium => "medium",
             Self::High => "high",
         }
-    }
-}
-
-impl Default for Confidence {
-    fn default() -> Self {
-        // Rules that don't declare confidence keep their historical behaviour — never
-        // filtered by `min_confidence`. Any explicit user floor (e.g. `--min-confidence
-        // medium`) drops the unlabeled rules, which is the point.
-        Self::Low
     }
 }
 
