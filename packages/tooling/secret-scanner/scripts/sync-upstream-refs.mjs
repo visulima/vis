@@ -15,6 +15,8 @@ import { dirname, resolve } from "node:path";
 import { argv, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { parseRefFile, updateRefFile } from "./ref-file.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 const UPSTREAMS = [
@@ -33,15 +35,6 @@ const parseVersion = (tag) => {
 };
 
 const compareVersions = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-
-const readEntries = (text) =>
-    Object.fromEntries(
-        text
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line && !line.startsWith("#") && line.includes("="))
-            .map((line) => [line.slice(0, line.indexOf("=")).trim(), line.slice(line.indexOf("=") + 1).trim()]),
-    );
 
 // Newest stable release; with `major`, the newest stable release in that major.
 const pickRelease = (repo, major) => {
@@ -73,8 +66,8 @@ let changed = false;
 for (const { file, label, repo } of UPSTREAMS) {
     const path = resolve(here, file);
     const text = readFileSync(path, "utf8");
-    const entries = readEntries(text);
-    const major = entries.major === undefined ? undefined : Number(entries.major);
+    const entries = parseRefFile(text, path);
+    const { major } = entries;
     const { newerMajor, tag } = pickRelease(repo, major);
     // `commits/<tag>` peels annotated tags to the commit; build-rules compares
     // against `git rev-parse HEAD`, which is the commit, not the tag object.
@@ -84,7 +77,7 @@ for (const { file, label, repo } of UPSTREAMS) {
         summary.push(`- ${label}: \`${tag}\` (unchanged)`);
     } else {
         changed = true;
-        writeFileSync(path, text.replace(/^ref=.*$/m, `ref=${tag}`).replace(/^sha=.*$/m, `sha=${sha}`));
+        writeFileSync(path, updateRefFile(text, { ref: tag, sha }));
         summary.push(`- ${label}: \`${entries.ref}\` -> [\`${tag}\`](https://github.com/${repo}/releases/tag/${tag})`);
     }
 
