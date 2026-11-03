@@ -1,7 +1,7 @@
 // Compare two `ruleset.json` files and summarise rule ids that were added,
 // removed, renamed or changed. Used by the rules-sync workflow for the PR body
 // and by humans reviewing a `.ref` bump. Rule ids end up in user baselines and
-// `rules.disable` lists, so removed and renamed ids are the part to read.
+// `rules.exclude` lists, so removed and renamed ids are the part to read.
 //
 // Usage: node scripts/diff-rulesets.mjs <old ruleset.json> <new ruleset.json>
 //
@@ -81,7 +81,7 @@ export const formatMarkdown = (diff) => {
         "",
         `### Removed ids (${diff.removed.length})`,
         "",
-        "Baselines and `rules.disable` entries naming these ids stop matching.",
+        "Baselines and `rules.exclude` entries naming these ids stop matching.",
         "",
         idList(diff.removed),
         `### Renamed ids (${diff.renamed.length})`,
