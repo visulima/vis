@@ -134,8 +134,8 @@
             "allowlists": [
                 {
                     "description": "Editor keybinding chords such as ctrl+shift+down (gitleaks#2195).",
-                    "regexTarget": "match",
-                    "regexes": ["(?i)(?:(?:ctrl|control|shift|alt|cmd|command|meta|win|super|option)\\+){1,5}[a-z0-9]+"]
+                    "regexTarget": "secret",
+                    "regexes": ["(?i)^(?:(?:ctrl|control|shift|alt|cmd|command|meta|win|super|option)\\+){1,5}[a-z0-9]{1,12}$"]
                 },
                 {
                     "description": "JS instance property assigned to another identifier, e.g. this.vocab=new (gitleaks#2136).",
@@ -147,9 +147,10 @@
                     "regexes": ["^\\s*(?:[\\w@()]+\\s+)*(?:let|var)\\s+\\w+\\s*:\\s*[A-Z][\\w.<>, ?]*$"]
                 },
                 {
-                    "description": "Bitnami sealed-secrets ciphertext (encryptedData values), safe to commit (gitleaks#1728).",
-                    "regexTarget": "match",
-                    "regexes": ["\\bAg[A-D][0-9A-Za-z+/]{600,}={0,2}"]
+                    "description": "Bitnami sealed-secrets ciphertext (encryptedData values) in YAML/JSON manifests, safe to commit (gitleaks#1728).",
+                    "regexes": ["^Ag[A-D][0-9A-Za-z+/]{600,}={0,2}$"],
+                    "condition": "AND",
+                    "paths": ["(?i)\\.(?:ya?ml|json)$"]
                 }
             ]
         }

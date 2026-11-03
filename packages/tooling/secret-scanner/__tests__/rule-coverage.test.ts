@@ -220,6 +220,22 @@ const GENERIC_TRUE_POSITIVES: RuleCase[] = [
         name: "query parameter terminated by & (gitleaks#1954)",
         ruleId: "generic-api-key",
     },
+    { content: 'api_key = "Shift+9fA8kQ2zLm7Xv4Pw1Rt6Yc3"\n', name: "real secret that starts with a key chord", ruleId: "generic-api-key" },
+    { content: 'client_secret = "Wq9zX3ctrl+aK7mP2vL8nR4tY6"\n', name: "real secret containing a key chord", ruleId: "generic-api-key" },
+    {
+        content:
+            'cookie_key = "AgBPtYgjmUhBel31iEl2hpChYgCfrL1spNxnyVmihA/2O76UMFxFkM/R5Kjp1vRt+1fjORS/6ilI8ihN5KXSc7Tvo/hBKqFYY/kv5ZJr3J1TWDtkwtDDb+xHKas1VOqg6YYZYn9ZhyiA4uoRgnatmUdjAWtGSU8po+799NksnRH9ucAUsdMlHUvTCQCyEZDz/TddJ8HyS5SUkCnD8zRA9a9SkpXz9w3QlY7Zkuvqdt7s8Stqcbnr3yBdGBLEPH1qhT61qtc4xatws8phP9nhFyJfm5di4PzJ59FHz5r1pY4OjE2jBMptUsGr7CmY+uCu3ZR1zTOlUcR64cXQLioDnkHIfxIq2HZt/PlJhx2jIclHkCiHp6bR1IqfEouHgxzNNAL5wIScGebcy8F5n3/YNBDRzrZSgqbjG3uhkWKFLf6xuI5aHUQPFeNBTxaQWk8JzFalHlsZfYcMMDktXP/tKsf2rcDkdfrUnW5gcF+Ha6ili8GjHEAD6/Wj9KfzjsQGMrb9h+ImB+LK777pzNk8cL6j5IXAAjlsHUqJoUD/+Ydua+5ZMs1SWOpQaPRYpzbLGViYXjU2JgJngKtFI3OyV2dZAkg05rK+gqv81RKMGHZEM9YpvujA/C5Q52ryFlwRlOEVHzc0X0AWIRh/JUqBlIFXZ53Ncqe28+ajY75FnCttn6kfaqDeMqG3omjMyXHCabM6JOF8EFd0Nhcy/1k=="\n',
+        file: "settings.py",
+        name: "Ag-prefixed base64 secret outside a YAML/JSON manifest",
+        ruleId: "generic-api-key",
+    },
+    {
+        content:
+            "cookie_key: Zq9/AgBPtYgjmUhBel31iEl2hpChYgCfrL1spNxnyVmihA/2O76UMFxFkM/R5Kjp1vRt+1fjORS/6ilI8ihN5KXSc7Tvo/hBKqFYY/kv5ZJr3J1TWDtkwtDDb+xHKas1VOqg6YYZYn9ZhyiA4uoRgnatmUdjAWtGSU8po+799NksnRH9ucAUsdMlHUvTCQCyEZDz/TddJ8HyS5SUkCnD8zRA9a9SkpXz9w3QlY7Zkuvqdt7s8Stqcbnr3yBdGBLEPH1qhT61qtc4xatws8phP9nhFyJfm5di4PzJ59FHz5r1pY4OjE2jBMptUsGr7CmY+uCu3ZR1zTOlUcR64cXQLioDnkHIfxIq2HZt/PlJhx2jIclHkCiHp6bR1IqfEouHgxzNNAL5wIScGebcy8F5n3/YNBDRzrZSgqbjG3uhkWKFLf6xuI5aHUQPFeNBTxaQWk8JzFalHlsZfYcMMDktXP/tKsf2rcDkdfrUnW5gcF+Ha6ili8GjHEAD6/Wj9KfzjsQGMrb9h+ImB+LK777pzNk8cL6j5IXAAjlsHUqJoUD/+Ydua+5ZMs1SWOpQaPRYpzbLGViYXjU2JgJngKtFI3OyV2dZAkg05rK+gqv81RKMGHZEM9YpvujA/C5Q52ryFlwRlOEVHzc0X0AWIRh/JUqBlIFXZ53Ncqe28+ajY75FnCttn6kfaqDeMqG3omjMyXHCabM6JOF8EFd0Nhcy/1k==\n",
+        file: "values.yaml",
+        name: "Ag-prefixed base64 run inside a longer YAML secret",
+        ruleId: "generic-api-key",
+    },
 ];
 
 const GENERIC_FALSE_POSITIVES: RuleCase[] = [
