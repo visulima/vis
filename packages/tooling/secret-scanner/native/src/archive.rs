@@ -113,7 +113,7 @@ impl Ctx<'_> {
     /// Record content that was not scanned. `suffix` is the virtual suffix of the entry
     /// (`!dir/file.env`), or of the archive layer itself when the walk stopped early.
     fn skip(&mut self, suffix: &str, reason: &'static str) {
-        self.out.skipped.push((format!("{}{suffix}", self.outer), reason));
+        self.out.skipped.push((suffix.to_string(), reason));
     }
 }
 
@@ -493,7 +493,7 @@ mod tests {
         let out = scan_full(&z, "b.zip", o);
         // The bomb is skipped and reported, the following entry still scanned.
         assert_eq!(files(&out.findings), vec!["b.zip!ok.env"]);
-        assert_eq!(out.skipped, vec![("b.zip!bomb.txt".to_string(), "too-large")]);
+        assert_eq!(out.skipped, vec![("!bomb.txt".to_string(), "too-large")]);
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
         let o = ArchiveOptions { ratio_floor: 64 << 10, ..opts(1) };
         let out = scan_full(&gz(&body), "big.gz", o);
         assert!(out.findings.is_empty());
-        assert_eq!(out.skipped, vec![("big.gz!big".to_string(), "too-large")]);
+        assert_eq!(out.skipped, vec![("!big".to_string(), "too-large")]);
         // A ratio limit high enough for this stream lets it through.
         assert_eq!(scan(&gz(&body), "big.gz", ArchiveOptions { max_ratio: 100_000, ..opts(1) }).len(), 1);
     }
@@ -518,7 +518,7 @@ mod tests {
         let out = scan_full(&z, "z.zip", ArchiveOptions { max_entries: 2, ..opts(1) });
         assert_eq!(out.findings.len(), 2);
         // The rest of the archive was not read: the archive itself is reported as skipped.
-        assert_eq!(out.skipped, vec![("z.zip".to_string(), "too-large")]);
+        assert_eq!(out.skipped, vec![(String::new(), "too-large")]);
         let budget = SECRET_LINE.len() as u64 * 3;
         assert_eq!(scan(&z, "z.zip", ArchiveOptions { max_total_bytes: budget, ..opts(1) }).len(), 3);
         // Entries above maxFileSize are skipped, not fatal.

@@ -332,16 +332,8 @@ fn scan_paths(
             .par_iter()
             .map(|p| match scan_file(p, ruleset, max_bytes, text_opts, archive_opts) {
                 Ok(Some(scanned)) => {
-                    // Archive skips carry the archive's own path as a prefix; keep only the
-                    // entry suffix so the on-disk part is relativised like any other path.
-                    let outer_len = p.to_string_lossy().len();
-                    let skipped = scanned
-                        .skipped
-                        .into_iter()
-                        .map(|(virtual_path, reason)| {
-                            (p.clone(), virtual_path.get(outer_len..).unwrap_or_default().to_string(), reason)
-                        })
-                        .collect();
+                    let skipped =
+                        scanned.skipped.into_iter().map(|(entry, reason)| (p.clone(), entry, reason)).collect();
                     (scanned.findings, skipped)
                 }
                 Ok(None) => (Vec::new(), vec![(p.clone(), String::new(), "too-large")]),

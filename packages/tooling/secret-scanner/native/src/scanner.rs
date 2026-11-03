@@ -18,8 +18,8 @@ pub struct TextScanOptions<'a> {
 }
 
 /// What scanning one file produced. `skipped` lists content inside it that was not scanned
-/// (archive entries over a size cap, unreadable entries), as virtual paths like
-/// `a.zip!dir/file.env`, with the reason.
+/// (archive entries over a size cap, unreadable entries) by archive-entry suffix
+/// (`!dir/file.env`, empty for the archive itself), with the reason.
 #[derive(Debug, Default)]
 pub struct FileScan {
     pub findings: Vec<RawFinding>,

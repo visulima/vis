@@ -34,7 +34,7 @@ import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
-import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { createSuppressionContext, isNativeSuppressed, nativeOptionsFor, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { prepareScan } from "./prepare-scan";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
@@ -238,8 +238,6 @@ const blobAt = async (commit: string, path: string, cwd: string): Promise<string
 
     return type === "blob" && isSet(oid) ? oid : undefined;
 };
-
-const isNativeSuppressed = (finding: Finding): boolean => (finding as Native.Finding).suppressedBy !== undefined;
 
 const presenceKey = (finding: Finding): string => `${finding.ruleId}\0${finding.secret}`;
 

@@ -438,6 +438,9 @@ export interface ProcessedFindings {
     suppressed: SuppressedFinding[];
 }
 
+/** Allowlisted / inline-allowed match the native layer returned under `reportSuppressed`. */
+export const isNativeSuppressed = (finding: Finding): boolean => (finding as Native.Finding).suppressedBy !== undefined;
+
 /**
  * Shared post-processing pipeline for every scan variant. Takes the raw
  * native findings plus the prepared-scan bundle and returns the findings to
@@ -454,10 +457,10 @@ export const postProcessDetailed = async (
     const nativeSuppressed: Finding[] = [];
 
     for (const finding of raw) {
-        if ((finding as Native.Finding).suppressedBy === undefined) {
-            active.push(finding);
-        } else {
+        if (isNativeSuppressed(finding)) {
             nativeSuppressed.push(finding);
+        } else {
+            active.push(finding);
         }
     }
 
@@ -472,9 +475,7 @@ export const postProcessDetailed = async (
     // `reportSuppressed` never changes `findings`. A suppressed generic finding is
     // also dropped when any finding overlaps it.
     const shadowFree = dropShadowedGenericFindings(active);
-    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...nativeSuppressed]).filter(
-        (finding) => (finding as Native.Finding).suppressedBy !== undefined,
-    );
+    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...nativeSuppressed]).filter((finding) => isNativeSuppressed(finding));
 
     const validated = await applyValidation(preValidation(shadowFree), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
