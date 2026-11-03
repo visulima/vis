@@ -39,11 +39,6 @@ export interface Finding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
-    /**
-     * `"allowlist"` or `"inline-allow"` when the match was suppressed and
-     * `reportSuppressed` is on. Absent on real findings.
-     */
-    suppressedBy?: string;
 }
 
 /**
@@ -85,18 +80,20 @@ export interface RuleInfo {
     confidence: string;
 }
 
-export declare function scan(paths: Array<string>, options?: ScanOptions | undefined | null): Promise<Array<Finding>>;
+/** Same as `scanDetailed`. Kept as the plain name the native-binding smoke test loads. */
+export declare function scan(paths: Array<string>, options?: ScanOptions | undefined | null): Promise<ScanReport>;
 
 /**
- * Like `scan`, but also returns the files that could not be read (permission
- * denied, unreadable directory, I/O error, larger than `maxFileSize`).
+ * Walk `paths` and scan every file on the rayon pool. `skipped` lists what could not
+ * be read (permission denied, unreadable directory, I/O error, larger than
+ * `maxFileSize`).
  */
 export declare function scanDetailed(paths: Array<string>, options?: ScanOptions | undefined | null): Promise<ScanReport>;
 
-/** Scan a fixed list of files (e.g. from `git diff --name-only`). Bypasses the walker. */
-export declare function scanFiles(files: Array<string>, options?: ScanOptions | undefined | null): Promise<Array<Finding>>;
-
-/** Like `scanFiles`, but also returns the files that could not be read. */
+/**
+ * Scan a fixed list of files (e.g. from `git diff --name-only`), bypassing the walker.
+ * A listed file that can't be read lands in `skipped`.
+ */
 export declare function scanFilesDetailed(files: Array<string>, options?: ScanOptions | undefined | null): Promise<ScanReport>;
 
 export interface ScanOptions {
@@ -149,7 +146,7 @@ export interface ScanOptions {
      */
     inlineAllow?: boolean;
     /**
-     * Return allowlisted / inline-allowed matches with `suppressedBy` set
+     * Return allowlisted / inline-allowed matches in `ScanReport.suppressed`
      * instead of dropping them. Default `false`.
      */
     reportSuppressed?: boolean;
@@ -161,14 +158,21 @@ export interface ScanOptions {
     commit?: string;
 }
 
+/** Result of every scan entry point. */
 export interface ScanReport {
+    /** Active findings. */
     findings: Array<Finding>;
+    /** Allowlisted / inline-allowed matches. Empty unless `reportSuppressed`. */
+    suppressed: Array<SuppressedFinding>;
+    /** Content that could not be read. Always empty for `scanTextSync`. */
     skipped: Array<SkippedFile>;
 }
 
-export declare function scanSync(paths: Array<string>, options?: ScanOptions | undefined | null): Array<Finding>;
+/** `scanDetailed` on the calling thread. */
+export declare function scanSync(paths: Array<string>, options?: ScanOptions | undefined | null): ScanReport;
 
-export declare function scanTextSync(content: string, file: string, options?: ScanOptions | undefined | null): Array<Finding>;
+/** Scan an in-memory string as if it lived at `file`. Paths are kept as given. */
+export declare function scanTextSync(content: string, file: string, options?: ScanOptions | undefined | null): ScanReport;
 
 /**
  * A file the scan could not read. `reason` is `"permission-denied"`,
@@ -185,4 +189,51 @@ export interface SkippedFile {
 export interface SkippedRule {
     ruleId: string;
     reason: string;
+}
+
+/**
+ * A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
+ * Only returned with `reportSuppressed`. NAPI objects can't flatten, so the fields
+ * are repeated; keep them in sync with [`Finding`].
+ */
+export interface SuppressedFinding {
+    ruleId: string;
+    description: string;
+    file: string;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+    match: string;
+    secret: string;
+    entropy: number;
+    tags: Array<string>;
+    /**
+     * Rule provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or a user string.
+     * `None` for legacy rules that don't declare a source.
+     */
+    source?: string;
+    /**
+     * Author-declared quality signal: `"low"`, `"medium"`, or `"high"`. Always set —
+     * rules that don't declare confidence resolve to `"low"`.
+     */
+    confidence: string;
+    /**
+     * Rule ids that matched the same byte span and were collapsed by the dedup
+     * pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
+     */
+    alternateMatches: Array<string>;
+    /**
+     * Set when the secret was found inside encoded text: the encoding chain, outermost
+     * first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+     * original encoded span while `match` / `secret` hold the decoded text.
+     */
+    decoded?: Array<string>;
+    /**
+     * Composite rules only: the findings of the rule's `required` dependencies that
+     * satisfied it, one per required id (the nearest), in declaration order.
+     */
+    requiredFindings?: Array<RequiredFinding>;
+    /** `"allowlist"` or `"inline-allow"`. */
+    suppressedBy: string;
 }

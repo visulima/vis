@@ -124,8 +124,6 @@ mod tests {
     fn finding(rule_id: &str, line: u32, col: u32) -> RawFinding {
         RawFinding {
             rule_id: rule_id.into(),
-            description: String::new(),
-            tags: Vec::new(),
             file: "f.env".into(),
             start_line: line,
             end_line: line,
@@ -133,19 +131,10 @@ mod tests {
             end_column: col + 4,
             r#match: format!("{rule_id}@{line}:{col}"),
             secret: format!("{rule_id}@{line}:{col}"),
-            entropy: 0.0,
-            priority: 0,
             start_offset: line * 100 + col,
             end_offset: line * 100 + col + 4,
-            source: None,
             confidence: "low",
-            alternate_matches: Vec::new(),
-            decoded: None,
-            inner_start: 0,
-            inner_end: 0,
-            required_findings: None,
-            archive_entry: None,
-            suppressed_by: None,
+            ..Default::default()
         }
     }
 
@@ -220,9 +209,9 @@ mod tests {
     fn suppressed_findings_never_satisfy_a_requirement() {
         let rs = rules_with(serde_json::json!([{ "id": "dep" }]));
         let mut dep = finding("dep", 1, 10);
-        dep.suppressed_by = Some(crate::detector::SUPPRESSED_ALLOWLIST);
+        dep.suppressed_by = Some(crate::suppression::SuppressionReason::Allowlist);
         let mut primary = finding("primary", 1, 1);
-        primary.suppressed_by = Some(crate::detector::SUPPRESSED_INLINE);
+        primary.suppressed_by = Some(crate::suppression::SuppressionReason::InlineAllow);
 
         // The primary is dropped; the suppressed dependency itself is passed through.
         let out = apply(&rs, vec![finding("primary", 1, 1), dep]);
@@ -231,7 +220,7 @@ mod tests {
         // A suppressed primary is still a composite: kept (as suppressed) only when satisfied.
         let out = apply(&rs, vec![primary, finding("dep", 1, 10)]);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].suppressed_by, Some("inline-allow"));
+        assert_eq!(out[0].suppressed_by, Some(crate::suppression::SuppressionReason::InlineAllow));
     }
 
     #[test]

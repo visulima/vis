@@ -17,8 +17,11 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::detector::{self, DetectOptions, RawFinding};
+use crate::detector::{detect, DecodeOrigin, DetectOptions, Pass, RawFinding};
+use crate::lines::{compute_line_offsets, offset_to_line_col};
 use crate::rules::CompiledRuleset;
+use crate::scanner::TextScanOptions;
+use crate::suppression::{find_allow_regions, inline_suppressed, SuppressionReason};
 
 /// Default recursion depth. 2 covers "base64 in a k8s Secret" and one extra wrapping
 /// layer without the blow-up of deeper recursion.
@@ -108,29 +111,30 @@ pub fn scan_text_with_decoding(
     ruleset: &CompiledRuleset,
     path: &Path,
     content: &str,
-    opts: DecodeOptions,
-    detect: DetectOptions<'_>,
+    opts: TextScanOptions<'_>,
 ) -> Vec<RawFinding> {
-    let mut out = detector::scan_text_with(ruleset, path, content, detect);
-    if opts.max_depth == 0 || opts.max_bytes == 0 {
+    let TextScanOptions { decode, detect: detect_opts } = opts;
+    let mut out = detect(ruleset, path, content, detect_opts, Pass::Plain);
+    if decode.max_depth == 0 || decode.max_bytes == 0 {
         return out;
     }
 
-    let mut budget = opts.max_bytes;
+    let mut budget = decode.max_bytes;
     let segments = find_segments(content, 0, content.len(), &mut budget);
     if segments.is_empty() {
         return out;
     }
 
-    let line_offsets = detector::compute_line_offsets(content);
-    let allow_regions = if detect.inline_allow { detector::find_allow_regions(content) } else { Vec::new() };
-    let original = Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect };
+    let line_offsets = compute_line_offsets(content);
+    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let original =
+        Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts };
 
     let (mut buf, mut fragments) = first_level(content, segments);
-    for depth in 1..=opts.max_depth {
+    for depth in 1..=decode.max_depth {
         // Inline markers are checked against the original line in `map_finding`; in the
         // joined fragment buffer a nextline pragma would leak into the next fragment.
-        let raw = detector::scan_text_decoded(ruleset, path, &buf, DetectOptions { inline_allow: false, ..detect });
+        let raw = detect(ruleset, path, &buf, DetectOptions { inline_allow: false, ..detect_opts }, Pass::Decoded);
         for finding in raw {
             let Some(mapped) = map_finding(finding, &fragments, &original) else { continue };
             // A percent run keeps the literal text between its escapes, so a plain secret
@@ -143,7 +147,7 @@ pub fn scan_text_with_decoding(
             out.push(mapped);
         }
 
-        if depth == opts.max_depth || budget == 0 {
+        if depth == decode.max_depth || budget == 0 {
             break;
         }
         match next_level(&buf, &fragments, &mut budget) {
@@ -512,33 +516,27 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
 
     // Suppression markers live on the original line, which the decoded buffer may not
     // fully contain — re-check them against the original content.
-    let (sl, sc, el, ec) = detector::offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
-    let line = detector::line_slice(original.content, original.line_offsets, sl);
+    let (sl, sc, el, ec) = offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
     let inline_allowed = original.detect.inline_allow
-        && (detector::has_allow_comment(line)
-            || detector::is_in_allow_region(original.allow_regions, orig_start)
-            || (sl > 1
-                && detector::has_nextline_pragma(detector::line_slice(
-                    original.content,
-                    original.line_offsets,
-                    sl - 1,
-                ))));
+        && inline_suppressed(original.content, original.line_offsets, original.allow_regions, sl, orig_start);
     if inline_allowed {
         if !original.detect.report_suppressed {
             return None;
         }
-        f.suppressed_by = Some(detector::SUPPRESSED_INLINE);
+        f.suppressed_by = Some(SuppressionReason::InlineAllow);
     }
 
-    f.inner_start = (s - frag.start) as u32;
-    f.inner_end = (e - frag.start) as u32;
+    f.decoded = Some(DecodeOrigin {
+        chain: chain.iter().map(|enc| enc.as_str().to_string()).collect(),
+        inner_start: (s - frag.start) as u32,
+        inner_end: (e - frag.start) as u32,
+    });
     f.start_offset = orig_start as u32;
     f.end_offset = orig_end as u32;
     f.start_line = sl;
     f.start_column = sc;
     f.end_line = el;
     f.end_column = ec;
-    f.decoded = Some(chain.iter().map(|enc| enc.as_str().to_string()).collect());
     Some(f)
 }
 
@@ -577,14 +575,17 @@ mod tests {
     const OPENROUTER: &str = r#"{"rules":[{"id":"openrouter","regex":"\\b(sk-or-v1-[0-9a-f]{64})\\b","secretGroup":1,"keywords":["sk-or-v1-"]}]}"#;
     const KEY: &str = concat!("sk-or-v1-0123456789abcdef0123456789a", "bcdef0123456789abcdef0123456789abcdef");
 
+    fn decode_opts(decode: DecodeOptions) -> TextScanOptions<'static> {
+        TextScanOptions { decode, ..Default::default() }
+    }
+
     fn scan(text: &str, depth: u32) -> Vec<RawFinding> {
         let rs = ruleset(OPENROUTER);
         scan_text_with_decoding(
             &rs,
             Path::new("x.txt"),
             text,
-            DecodeOptions { max_depth: depth, ..Default::default() },
-            DetectOptions::default(),
+            decode_opts(DecodeOptions { max_depth: depth, ..Default::default() }),
         )
     }
 
@@ -596,7 +597,7 @@ mod tests {
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
         assert_eq!(f.secret, KEY);
-        assert_eq!(f.decoded.as_deref(), Some(&["base64".to_string()][..]));
+        assert_eq!(f.decode_chain(), Some(&["base64".to_string()][..]));
         assert_eq!(f.start_line, 2);
         assert_eq!(f.start_column, 8);
         assert_eq!(f.end_column as usize, 8 + encoded.len());
@@ -608,9 +609,9 @@ mod tests {
         let url_safe = b64(&format!("{KEY}??>>")).replace('+', "-").replace('/', "_");
         assert!(url_safe.contains('_') || url_safe.contains('-'));
         assert_eq!(scan(&format!("a={url_safe}\n"), 1).len(), 1);
-        assert_eq!(scan(&format!("a={}\n", hex(KEY)), 1)[0].decoded.as_deref(), Some(&["hex".to_string()][..]));
+        assert_eq!(scan(&format!("a={}\n", hex(KEY)), 1)[0].decode_chain(), Some(&["hex".to_string()][..]));
         let percent: String = KEY.bytes().map(|b| format!("%{b:02X}")).collect();
-        assert_eq!(scan(&format!("a={percent}\n"), 1)[0].decoded.as_deref(), Some(&["percent".to_string()][..]));
+        assert_eq!(scan(&format!("a={percent}\n"), 1)[0].decode_chain(), Some(&["percent".to_string()][..]));
     }
 
     #[test]
@@ -620,7 +621,7 @@ mod tests {
         assert!(scan(&text, 1).is_empty());
         let findings = scan(&text, 2);
         assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].decoded.as_deref(), Some(&["base64".to_string(), "base64".to_string()][..]));
+        assert_eq!(findings[0].decode_chain(), Some(&["base64".to_string(), "base64".to_string()][..]));
         assert_eq!(findings[0].start_line, 1);
         assert_eq!(findings[0].start_column, 7);
     }
@@ -650,9 +651,9 @@ mod tests {
         let rs = ruleset(OPENROUTER);
         let text = format!("value: {}\n", b64(KEY));
         let tight = DecodeOptions { max_depth: 2, max_bytes: KEY.len() - 1 };
-        assert!(scan_text_with_decoding(&rs, Path::new("x"), &text, tight, DetectOptions::default()).is_empty());
+        assert!(scan_text_with_decoding(&rs, Path::new("x"), &text, decode_opts(tight)).is_empty());
         let fits = DecodeOptions { max_depth: 2, max_bytes: KEY.len() };
-        assert_eq!(scan_text_with_decoding(&rs, Path::new("x"), &text, fits, DetectOptions::default()).len(), 1);
+        assert_eq!(scan_text_with_decoding(&rs, Path::new("x"), &text, decode_opts(fits)).len(), 1);
 
         // Many segments: the budget is shared, so only the first few get decoded.
         let many: String = (0..100).map(|_| format!("v: {}\n", b64(KEY))).collect();
@@ -720,11 +721,10 @@ mod tests {
             r#"{"rules":[{"id":"pw","regex":"password=(hunter2[a-z]+)","secretGroup":1,"keywords":["password"]}]}"#,
         );
         let text = "q=password%3Dhunter2secret&x=%20\n";
-        let findings =
-            scan_text_with_decoding(&rs, Path::new("a"), text, DecodeOptions::default(), DetectOptions::default());
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].secret, "hunter2secret");
-        assert_eq!(findings[0].decoded.as_deref(), Some(&["percent".to_string()][..]));
+        assert_eq!(findings[0].decode_chain(), Some(&["percent".to_string()][..]));
     }
 
     #[test]
@@ -734,8 +734,7 @@ mod tests {
             r#"{"rules":[{"id":"r","regex":"sk-or-v1-[0-9a-f]{64}","keywords":["sk-or"],"preRegexReplace":[{"from":"ä","to":""}]}]}"#,
         );
         let text = format!("ääää ääää {} ääää sk-or-v1-{}\n", b64(KEY), "0123456789abcdef".repeat(4));
-        let findings =
-            scan_text_with_decoding(&rs, Path::new("a"), &text, DecodeOptions::default(), DetectOptions::default());
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), &text, TextScanOptions::default());
         assert!(findings.iter().all(|f| f.decoded.is_none()));
     }
 
@@ -746,13 +745,7 @@ mod tests {
             r#"{"rules":[{"id":"pw","regex":"password: (hunter2[a-z]+)","secretGroup":1,"keywords":["password"]}]}"#,
         );
         let text = format!("data:\n  password: {}\n", b64("hunter2secretvalue"));
-        let findings = scan_text_with_decoding(
-            &rs,
-            Path::new("s.yaml"),
-            &text,
-            DecodeOptions::default(),
-            DetectOptions::default(),
-        );
+        let findings = scan_text_with_decoding(&rs, Path::new("s.yaml"), &text, TextScanOptions::default());
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].secret, "hunter2secretvalue");
         assert_eq!(findings[0].start_line, 2);
