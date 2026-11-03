@@ -87,7 +87,7 @@ fn is_tar(bytes: &[u8]) -> bool {
 struct Ctx<'a> {
     ruleset: &'a CompiledRuleset,
     decode: DecodeOptions,
-    detect: DetectOptions,
+    detect: DetectOptions<'a>,
     opts: ArchiveOptions,
     /// Path of the archive file on disk, as passed to the scanner.
     outer: String,
@@ -125,7 +125,7 @@ pub fn scan_archive(
     bytes: &[u8],
     kind: ArchiveKind,
     decode: DecodeOptions,
-    detect: DetectOptions,
+    detect: DetectOptions<'_>,
     opts: ArchiveOptions,
 ) -> Option<FileScan> {
     let mut ctx = Ctx {

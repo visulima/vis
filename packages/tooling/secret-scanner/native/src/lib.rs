@@ -102,12 +102,17 @@ pub struct ScanOptions {
     /// Return allowlisted / inline-allowed matches with `suppressedBy` set
     /// instead of dropping them. Default `false`.
     pub report_suppressed: Option<bool>,
+    /// Commit SHA the scanned content belongs to (git-history scans). Lets allowlists
+    /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
+    /// match; without it they never do.
+    pub commit: Option<String>,
 }
 
-fn detect_options(opts: &ScanOptions) -> DetectOptions {
+fn detect_options(opts: &ScanOptions) -> DetectOptions<'_> {
     DetectOptions {
         inline_allow: opts.inline_allow.unwrap_or(true),
         report_suppressed: opts.report_suppressed.unwrap_or(false),
+        commit: opts.commit.as_deref(),
     }
 }
 
@@ -252,7 +257,7 @@ fn decode_options(opts: &ScanOptions) -> DecodeOptions {
     DecodeOptions { max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH), ..Default::default() }
 }
 
-fn text_scan_options(opts: &ScanOptions) -> TextScanOptions {
+fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
     TextScanOptions { decode: decode_options(opts), detect: detect_options(opts) }
 }
 

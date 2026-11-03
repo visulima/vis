@@ -228,7 +228,7 @@ Gitleaks' own `required` / `skipReport` composite-rule fields are supported too,
 
 - A global allowlist without `targetRules` skips the listed commits entirely.
 - A global allowlist with `targetRules`, or a rule's own allowlist, drops only those rules' findings in the listed commits.
-- With `condition = "AND"`, an allowlist that also lists `paths`, `regexes` or `stopwords` is not matched against commits.
+- With `condition = "AND"`, an allowlist that also lists `paths`, `regexes` or `stopwords` matches only when the commit is listed **and** every other criterion matches. Working-tree scans (`scan`, `scanFiles`, `scanString`, `--staged`) have no commit, so such an allowlist never applies there.
 
 ## Composite rules (`required`, `skipReport`)
 

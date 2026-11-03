@@ -11,8 +11,8 @@
 //
 // With the default OR condition a commit match alone is enough. An allowlist
 // using `condition = "AND"` that also lists paths, regexes or stopwords needs
-// every criterion to match; the native side evaluates those without the
-// commit, so such entries are left to it and ignored here.
+// every criterion to match; the history scan passes the commit to the native
+// detector, which evaluates those entries, so they are ignored here.
 //
 // SHAs match exactly (full 40-char id), ignoring case, like gitleaks.
 

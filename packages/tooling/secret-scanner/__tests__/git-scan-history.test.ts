@@ -222,6 +222,37 @@ describe("scanGitHistory commit allowlists", () => {
         expect(secretsOf(allowlisted, SECRET_A)).toBe(0);
         expect(secretsOf(allowlisted, SECRET_B)).toBe(0);
     });
+
+    it("matches AND allowlists that combine commits with paths", async () => {
+        expect.assertions(3);
+
+        const { git, repo, write } = createRepo();
+
+        write("fixture-one.ts", `t = "${SECRET_A}"\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "one");
+
+        const first = git("rev-parse", "HEAD");
+
+        write("fixture-two.ts", `t = "${SECRET_B}"\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "two");
+
+        const options = {
+            config: { inline: { allowlists: [{ commits: [first], condition: "AND", paths: ["^fixture-"] }] } },
+            cwd: repo,
+        };
+        const findings = await scanGitHistory(options);
+
+        // Listed commit + matching path: suppressed. Other commit: reported.
+        expect(secretsOf(findings, SECRET_A)).toBe(0);
+        expect(secretsOf(findings, SECRET_B)).toBe(1);
+
+        // A working-tree scan has no commit, so the AND allowlist doesn't apply.
+        const workingTree = await scanString(`t = "${SECRET_A}"\n`, "fixture-one.ts", { config: options.config });
+
+        expect(secretsOf(workingTree, SECRET_A)).toBe(1);
+    });
 });
 
 describe("scanGitHistory blob handling", () => {

@@ -154,6 +154,9 @@ pub struct CompiledAllowlist {
     /// Empty = applies to every rule. Non-empty = only applies when the current rule id
     /// is in this set (gitleaks `targetRules`).
     pub target_rules: Vec<String>,
+    /// gitleaks `commits`, trimmed. Read natively only under `condition_and` (see
+    /// `detector::is_allowlisted`).
+    pub commits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +256,7 @@ fn compile_allowlists(rule_id: &str, lists: &[Allowlist]) -> Result<Vec<Compiled
             regex_target,
             condition_and,
             target_rules: a.target_rules.clone(),
+            commits: a.commits.iter().map(|c| c.trim().to_string()).collect(),
         });
     }
     Ok(out)

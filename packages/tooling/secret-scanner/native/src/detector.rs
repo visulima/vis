@@ -85,18 +85,22 @@ pub struct RawFinding {
 /// ruleset is cached by config hash, so a flag stored there would leak between
 /// scans that differ only in these options.
 #[derive(Debug, Clone, Copy)]
-pub struct DetectOptions {
+pub struct DetectOptions<'a> {
     /// Honour inline suppressions (`gitleaks:allow`, `pragma: allowlist secret`,
     /// allow-start/end blocks, nextline pragma). Default `true`.
     pub inline_allow: bool,
     /// Emit allowlisted / inline-allowed matches tagged with `suppressed_by`
     /// instead of dropping them. Default `false`.
     pub report_suppressed: bool,
+    /// Commit the content belongs to (git-history scans). Only allowlists with
+    /// `condition = "AND"` that list `commits` next to paths / regexes / stopwords read
+    /// it: without a commit, such an allowlist never matches.
+    pub commit: Option<&'a str>,
 }
 
-impl Default for DetectOptions {
+impl Default for DetectOptions<'_> {
     fn default() -> Self {
-        Self { inline_allow: true, report_suppressed: false }
+        Self { inline_allow: true, report_suppressed: false, commit: None }
     }
 }
 
@@ -149,7 +153,12 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
     scan_text_with(ruleset, path, content, DetectOptions::default())
 }
 
-pub fn scan_text_with(ruleset: &CompiledRuleset, path: &Path, content: &str, opts: DetectOptions) -> Vec<RawFinding> {
+pub fn scan_text_with(
+    ruleset: &CompiledRuleset,
+    path: &Path,
+    content: &str,
+    opts: DetectOptions<'_>,
+) -> Vec<RawFinding> {
     scan_text_inner(ruleset, path, content, opts, true)
 }
 
@@ -159,7 +168,7 @@ pub(crate) fn scan_text_decoded(
     ruleset: &CompiledRuleset,
     path: &Path,
     content: &str,
-    opts: DetectOptions,
+    opts: DetectOptions<'_>,
 ) -> Vec<RawFinding> {
     scan_text_inner(ruleset, path, content, opts, false)
 }
@@ -171,7 +180,7 @@ fn scan_text_inner(
     ruleset: &CompiledRuleset,
     path: &Path,
     content: &str,
-    opts: DetectOptions,
+    opts: DetectOptions<'_>,
     plain: bool,
 ) -> Vec<RawFinding> {
     // Normalise to forward slashes so user-authored path regexes (rule `path`
@@ -284,7 +293,7 @@ fn scan_text_inner(
             if !plain {
                 continue;
             }
-            let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "");
+            let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "", opts.commit);
 
             if path_suppressed && !opts.report_suppressed {
                 continue;
@@ -461,7 +470,7 @@ fn emit_match(
     text_ref: &str,
     offsets_ref: &[usize],
     allow_regions: &[(usize, usize)],
-    opts: DetectOptions,
+    opts: DetectOptions<'_>,
     out: &mut Vec<RawFinding>,
 ) {
     // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
@@ -528,8 +537,8 @@ fn emit_match(
     // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
     let suppressed_by = if inline_allowed {
         Some(SUPPRESSED_INLINE)
-    } else if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line)
-        || is_allowlisted(&ruleset.global_allowlists, &rule.id, path_str, match_str, secret_slice, line)
+    } else if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
+        || is_allowlisted(&ruleset.global_allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
     {
         Some(SUPPRESSED_ALLOWLIST)
     } else {
@@ -603,7 +612,19 @@ pub(crate) fn has_nextline_pragma(line: &str) -> bool {
     line.to_ascii_lowercase().contains(MARKER)
 }
 
-fn is_allowlisted(lists: &[CompiledAllowlist], rule_id: &str, path: &str, m: &str, secret: &str, line: &str) -> bool {
+/// `commits` is only evaluated here for `condition = "AND"` allowlists that also list
+/// paths / regexes / stopwords. A commit list on its own, or under OR, is applied by the
+/// git-history scan in TypeScript (`git-commit-allowlist.ts`), which can skip a whole
+/// commit before reading it.
+fn is_allowlisted(
+    lists: &[CompiledAllowlist],
+    rule_id: &str,
+    path: &str,
+    m: &str,
+    secret: &str,
+    line: &str,
+    commit: Option<&str>,
+) -> bool {
     for a in lists {
         // #1919 — an allowlist with a non-empty `targetRules` only applies to those rules.
         if !a.target_rules.is_empty() && !a.target_rules.iter().any(|r| r == rule_id) {
@@ -644,6 +665,9 @@ fn is_allowlisted(lists: &[CompiledAllowlist], rule_id: &str, path: &str, m: &st
         }
         if !check_paths && !check_regexes && !check_stopwords {
             continue;
+        }
+        if a.condition_and && !a.commits.is_empty() {
+            matched_all &= commit.is_some_and(|c| a.commits.iter().any(|listed| listed.eq_ignore_ascii_case(c.trim())));
         }
 
         if (a.condition_and && matched_all) || (!a.condition_and && matched_any) {
@@ -778,6 +802,25 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].r#match, "token=123");
         assert_eq!(findings[0].secret, "token=123");
+    }
+
+    #[test]
+    fn and_allowlist_with_commits_needs_the_commit() {
+        const SHA: &str = "9f1c2e4b7a0d3c5e8f6a1b2c3d4e5f60718293a4";
+        let rs = ruleset(&format!(
+            r#"{{"rules":[{{"id":"tok","regex":"tok_[a-z0-9]{{8}}","keywords":["tok_"]}}],
+                "allowlists":[{{"condition":"AND","commits":["{}"],"paths":["^fixtures/"]}}]}}"#,
+            SHA.to_uppercase()
+        ));
+        let scan = |path: &str, commit: Option<&str>| {
+            scan_text_with(&rs, Path::new(path), "tok_abcd1234\n", DetectOptions { commit, ..Default::default() }).len()
+        };
+
+        assert_eq!(scan("fixtures/a.env", Some(SHA)), 0);
+        assert_eq!(scan("fixtures/a.env", Some("0000000000000000000000000000000000000000")), 1);
+        assert_eq!(scan("src/a.env", Some(SHA)), 1);
+        // A working-tree scan has no commit: the AND allowlist can't match.
+        assert_eq!(scan("fixtures/a.env", None), 1);
     }
 
     #[test]

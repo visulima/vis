@@ -153,6 +153,12 @@ export interface ScanOptions {
      * instead of dropping them. Default `false`.
      */
     reportSuppressed?: boolean;
+    /**
+     * Commit SHA the scanned content belongs to (git-history scans). Lets allowlists
+     * with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
+     * match; without it they never do.
+     */
+    commit?: string;
 }
 
 export interface ScanReport {

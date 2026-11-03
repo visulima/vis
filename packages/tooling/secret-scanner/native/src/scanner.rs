@@ -12,9 +12,9 @@ use crate::rules::CompiledRuleset;
 
 /// Per-scan switches for one unit of text: the decode pass and the detection options.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TextScanOptions {
+pub struct TextScanOptions<'a> {
     pub decode: DecodeOptions,
-    pub detect: DetectOptions,
+    pub detect: DetectOptions<'a>,
 }
 
 /// What scanning one file produced. `skipped` lists content inside it that was not scanned
@@ -39,7 +39,7 @@ pub fn scan_text_full(
     path: &Path,
     content: &str,
     decode: DecodeOptions,
-    detect: DetectOptions,
+    detect: DetectOptions<'_>,
 ) -> Vec<RawFinding> {
     crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, decode, detect))
 }
@@ -56,7 +56,7 @@ pub fn scan_file(
     path: &Path,
     ruleset: &CompiledRuleset,
     max_bytes: u64,
-    opts: TextScanOptions,
+    opts: TextScanOptions<'_>,
     archive: ArchiveOptions,
 ) -> io::Result<Option<FileScan>> {
     let meta = std::fs::metadata(path)?;
@@ -104,7 +104,7 @@ fn scan_bytes(
     path: &Path,
     ruleset: &CompiledRuleset,
     bytes: &[u8],
-    opts: TextScanOptions,
+    opts: TextScanOptions<'_>,
     archive: ArchiveOptions,
 ) -> FileScan {
     if archive.max_depth > 0 {

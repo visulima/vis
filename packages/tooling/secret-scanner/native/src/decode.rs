@@ -109,7 +109,7 @@ pub fn scan_text_with_decoding(
     path: &Path,
     content: &str,
     opts: DecodeOptions,
-    detect: DetectOptions,
+    detect: DetectOptions<'_>,
 ) -> Vec<RawFinding> {
     let mut out = detector::scan_text_with(ruleset, path, content, detect);
     if opts.max_depth == 0 || opts.max_bytes == 0 {
@@ -169,7 +169,7 @@ struct Original<'a> {
     content: &'a str,
     line_offsets: &'a [usize],
     allow_regions: &'a [(usize, usize)],
-    detect: DetectOptions,
+    detect: DetectOptions<'a>,
 }
 
 /// Find decodable segments in `text[from..to]`. Returned offsets are absolute in `text`,

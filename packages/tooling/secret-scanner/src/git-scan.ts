@@ -310,9 +310,12 @@ class BlobScanner {
         return undefined;
     }
 
-    /** Native detection with real (unredacted) secrets and no post-processing. */
-    public detectRaw(content: string, path: string): Finding[] {
-        return binding.scanTextSync(content, path, this.#rawNativeOptions) as Finding[];
+    /**
+     * Native detection with real (unredacted) secrets and no post-processing.
+     * `commit` lets AND allowlists that list `commits` match.
+     */
+    public detectRaw(content: string, path: string, commit?: string): Finding[] {
+        return binding.scanTextSync(content, path, { ...this.#rawNativeOptions, commit }) as Finding[];
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */
@@ -345,7 +348,9 @@ class BlobScanner {
         if (nativeOptions.redact === true) {
             const keep = new Set(selected.map((finding) => spanKey(finding)));
 
-            findings = (binding.scanTextSync(content, path, nativeOptions) as Finding[]).filter((finding) => keep.has(spanKey(finding)));
+            findings = (binding.scanTextSync(content, path, { ...nativeOptions, commit: commit?.sha }) as Finding[]).filter((finding) =>
+                keep.has(spanKey(finding)),
+            );
         }
 
         if (commit !== undefined) {
@@ -387,7 +392,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    const raw = scanner.detectRaw(content, path);
+    const raw = scanner.detectRaw(content, path, commit.info.sha);
 
     if (raw.length === 0) {
         return none;
