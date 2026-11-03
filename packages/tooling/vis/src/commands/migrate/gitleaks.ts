@@ -1,5 +1,3 @@
-import { unlinkSync } from "node:fs";
-
 import { isAccessibleSync, readFileSync, writeFileSync } from "@visulima/fs";
 import { join } from "@visulima/path";
 
@@ -11,7 +9,7 @@ import { addManualStep, addMigrationWarning, bumpPerMigration } from "./types";
 
 // Gitleaks artifacts are mostly format-compatible with @visulima/secret-scanner:
 // - `gitleaks.toml` / `.gitleaks.toml` — same schema; the scanner accepts it via --config
-// - `.gitleaksignore` — same fingerprint format (file:ruleID:startLine)
+// - `.gitleaksignore` — read directly by `vis secrets` at scan time; kept as-is
 // - baseline JSON — same fields (mapped from RuleID -> ruleId etc. Gitleaks uses PascalCase;
 //   our scanner uses camelCase. Auto-convert below.)
 //
@@ -224,108 +222,6 @@ const rewriteHooks = (root: string, dryRun: boolean, logger: MigrateLogger, repo
     }
 };
 
-const FINGERPRINT_LINE_RE = /^([^:#][^:]*):([^:]+):(\d+)$/;
-
-interface FingerprintFinding {
-    description: string;
-    endColumn: number;
-    endLine: number;
-    entropy: number;
-    file: string;
-    match: string;
-    ruleId: string;
-    secret: string;
-    startColumn: number;
-    startLine: number;
-    tags: string[];
-}
-
-const fingerprintToBaselineEntry = (line: string): FingerprintFinding | undefined => {
-    const match = FINGERPRINT_LINE_RE.exec(line.trim());
-
-    if (!match) {
-        return undefined;
-    }
-
-    const [, file, ruleId, startLineStr] = match;
-    const startLine = Number.parseInt(startLineStr ?? "0", 10);
-
-    return {
-        description: "",
-        endColumn: 0,
-        endLine: startLine,
-        entropy: 0,
-        file: file ?? "",
-        match: "",
-        ruleId: ruleId ?? "",
-        secret: "",
-        startColumn: 0,
-        startLine,
-        tags: [],
-    };
-};
-
-/**
- * Convert a `.gitleaksignore` file (one fingerprint per line) to entries in the
- * `.secrets-baseline.json` used by vis secrets. We merge rather than replace so
- * users with an existing baseline don't lose prior triage decisions.
- */
-const migrateIgnoreFile = (root: string, dryRun: boolean, logger: MigrateLogger, report: MigrationReport, useEditorconfig?: boolean): void => {
-    const source = detectGitleaksIgnore(root);
-
-    if (!source) {
-        return;
-    }
-
-    const content: string = readFileSync(source);
-    const lines = content
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0 && !line.startsWith("#"));
-
-    const entries = lines.map((line) => fingerprintToBaselineEntry(line)).filter((entry): entry is FingerprintFinding => entry !== undefined);
-
-    if (entries.length === 0) {
-        addMigrationWarning(report, `${source} contained no recognisable fingerprint lines — deleting it.`);
-    }
-
-    const baselinePath = join(root, ".secrets-baseline.json");
-    const existing = isAccessibleSync(baselinePath) ? (readJsonFile<FingerprintFinding[]>(baselinePath) ?? []) : [];
-    const seen = new Set(existing.map((f) => `${f.file}:${f.ruleId}:${String(f.startLine)}`));
-    const merged = [...existing];
-
-    for (const entry of entries) {
-        const key = `${entry.file}:${entry.ruleId}:${String(entry.startLine)}`;
-
-        if (!seen.has(key)) {
-            seen.add(key);
-            merged.push(entry);
-        }
-    }
-
-    if (dryRun) {
-        logger.info(`[dry-run] Would merge ${String(entries.length)} .gitleaksignore fingerprint(s) into ${baselinePath}, then delete ${source}.`);
-
-        return;
-    }
-
-    backupFile(source, report);
-
-    const baselineContents = isAccessibleSync(baselinePath) ? readFileSync(baselinePath) : undefined;
-
-    if (baselineContents !== undefined) {
-        backupFile(baselinePath, report);
-    }
-
-    const indent = resolveIndentForFile(baselinePath, baselineContents, { defaultIndent: "    ", useEditorconfig });
-
-    writeFileSync(baselinePath, `${JSON.stringify(merged, null, indent)}\n`);
-    unlinkSync(source);
-
-    logger.info(`Merged ${String(entries.length)} fingerprint(s) from ${source} into ${baselinePath}; removed .gitleaksignore.`);
-    bumpPerMigration(report, "gitleaks", "rewrittenScriptCount", entries.length);
-};
-
 const migrateGitleaks = (
     root: string,
     options: { dryRun: boolean; silent?: boolean; useEditorconfig?: boolean },
@@ -350,7 +246,10 @@ const migrateGitleaks = (
     }
 
     if (ignorePath) {
-        migrateIgnoreFile(root, options.dryRun, logger, report, options.useEditorconfig);
+        // `vis secrets` reads `.gitleaksignore` itself (fingerprints, commit
+        // fingerprints, secret-value entries, globs). Converting it would drop
+        // the forms a baseline can't express, so it stays as-is.
+        logger.info(`Keeping ${ignorePath} as-is (vis secrets reads it directly; --no-gitleaks-ignore turns that off).`);
     }
 
     migrateBaseline(root, options.dryRun, logger, report, options.useEditorconfig);
