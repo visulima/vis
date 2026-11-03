@@ -99,7 +99,8 @@ export interface GitScanOptions extends ScanOptions {
 
     /**
      * Cap the number of commits walked (most-recent first). Maps to
-     * `git rev-list --max-count`. Unset = no limit.
+     * `git rev-list --max-count`. Unset = no limit; `0` throws rather than
+     * silently scanning nothing or everything.
      */
     maxCommits?: number;
 
@@ -476,9 +477,13 @@ const scanChangedBlob = async (
  * (binary, larger than `walk.maxFileSize`, or missing from the object store)
  * so a caller can tell a clean history from one that wasn't fully read.
  * @throws if `git` is not on PATH, `cwd` is not a git repository, or git fails
- * to read an object that exists (corruption, permissions).
+ * to read an object that exists (corruption, permissions), or `maxCommits` is 0.
  */
 export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<GitScanResult<GitFinding>> => {
+    if (options?.maxCommits === 0) {
+        throw new Error("secret-scanner: git `maxCommits` must be at least 1; omit it to scan every commit.");
+    }
+
     const cwd = options?.cwd ?? process.cwd();
     // History paths are repository-relative, whatever subdirectory `cwd` is.
     const { context, prepared } = await beginScan(options, [await repositoryRoot(cwd)]);
@@ -534,7 +539,7 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
  *
  * Skipped blobs are not reported here; use {@link scanGitHistoryDetailed}.
  * @throws if `git` is not on PATH, `cwd` is not a git repository, or git fails
- * to read an object that exists (corruption, permissions).
+ * to read an object that exists (corruption, permissions), or `maxCommits` is 0.
  */
 export const scanGitHistory = async (options?: GitScanOptions): Promise<GitFinding[]> => {
     const result = await scanGitHistoryDetailed(options);
