@@ -1,8 +1,9 @@
 import { dim, yellow } from "@visulima/colorize";
 import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../errors/vis-user-error";
-import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit, gitleaksFingerprint } from "../report/secrets";
+import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
 import { toRelativeFinding } from "./baseline";
 import { formatHistoryText, formatSarif, formatText } from "./format";
 
@@ -139,7 +140,7 @@ export const formatSuppressed = (suppressed: SuppressedFinding<Finding & Partial
         const relative = toRelativeFinding(finding, root);
         const entryLine = finding.suppressedByEntry === undefined ? "" : ` line ${String(finding.suppressedByEntry.line)}`;
         const reason = `${finding.suppressedBy}${entryLine}`;
-        const detail = `  - [${finding.ruleId}] ${gitleaksFingerprint({ ...relative, commit: finding.commit })} (${reason})`;
+        const detail = `  - [${finding.ruleId}] ${gitleaksIgnoreFingerprint({ ...relative, commit: finding.commit })} (${reason})`;
 
         lines.push(useColor ? dim(detail) : detail);
     }

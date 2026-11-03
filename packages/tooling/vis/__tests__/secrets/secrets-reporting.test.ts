@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/handler";
 import execute, { assertReportingFlags } from "../../src/commands/secrets/handler";
-import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit, gitleaksFingerprint } from "../../src/report/secrets";
+import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
 import { formatSuppressed, formatUnusedIgnores, parseReportTargets } from "../../src/secrets/report";
@@ -67,7 +67,7 @@ describe("report emitters", () => {
         expect(csvCell("=cmd|'/c calc'!A1")).toBe("'=cmd|'/c calc'!A1");
         expect(csvCell("@SUM(1)")).toBe("'@SUM(1)");
         expect(csvCell("-2+3")).toBe("'-2+3");
-        expect(csvCell("a,\"b\"")).toBe("\"a,\"\"b\"\"\"");
+        expect(csvCell('a,"b"')).toBe('"a,""b"""');
         expect(csvCell("plain")).toBe("plain");
     });
 
@@ -79,7 +79,7 @@ describe("report emitters", () => {
         const [header, row] = csv.split("\r\n");
 
         expect(header).toBe("RuleID,Commit,File,Secret,Match,StartLine,EndLine,StartColumn,EndColumn,Author,Message,Date,Email,Fingerprint,Tags");
-        expect(row).toContain(",'=HYPERLINK(1),\"add, token\",");
+        expect(row).toContain(',\'=HYPERLINK(1),"add, token",');
         expect(row).toContain(`,${sha}:src/a.ts:github-pat:3,`);
     });
 
@@ -88,10 +88,19 @@ describe("report emitters", () => {
 
         const xml = emitSecretsJUnit([finding({ description: "bad\u0001desc <x>" }), finding({ file: "b.ts" })], { now: new Date("2026-01-01T00:00:00Z") });
 
-        expect(xml).toContain("<testsuites name=\"vis-secrets\" tests=\"2\" failures=\"2\"");
-        expect(xml).toContain("message=\"baddesc &lt;x&gt;\"");
+        expect(xml).toContain('<testsuites name="vis-secrets" tests="2" failures="2"');
+        expect(xml).toContain('message="baddesc &lt;x&gt;"');
         expect(xml).not.toContain("\u0001");
-        expect(emitSecretsJUnit([])).toContain("tests=\"0\" failures=\"0\"");
+        expect(emitSecretsJUnit([])).toContain('tests="0" failures="0"');
+    });
+
+    it("masks the secret in JUnit output", () => {
+        expect.assertions(2);
+
+        const xml = emitSecretsJUnit([finding()]);
+
+        expect(xml).not.toContain(PAT_A);
+        expect(xml).toContain(`Secret: ghp${"*".repeat(PAT_A.length - 6)}xY4`);
     });
 
     it("emits GitLab Code Quality issues without the secret and with stable distinct fingerprints", () => {
@@ -111,11 +120,14 @@ describe("report emitters", () => {
         expect(JSON.parse(emitSecretsGitlabCodeQuality([finding()]))[0].fingerprint).toBe(issues[0]?.["fingerprint"]);
     });
 
-    it("builds gitleaks fingerprints", () => {
-        expect.assertions(2);
+    it("doesn't derive the GitLab Code Quality fingerprint from the secret", () => {
+        expect.assertions(1);
 
-        expect(gitleaksFingerprint(finding())).toBe("src/a.ts:github-pat:3");
-        expect(gitleaksFingerprint(finding({ commit: { sha: "abc" } as GitFinding["commit"] }))).toBe("abc:src/a.ts:github-pat:3");
+        const [first, second] = JSON.parse(emitSecretsGitlabCodeQuality([finding(), finding({ match: `token = "${PAT_B}"`, secret: PAT_B })])) as {
+            fingerprint: string;
+        }[];
+
+        expect(first?.fingerprint).toBe(second?.fingerprint);
     });
 });
 

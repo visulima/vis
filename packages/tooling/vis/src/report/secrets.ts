@@ -9,21 +9,11 @@
 import { createHash } from "node:crypto";
 
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
+import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
 import { cdata, escapeAttribute } from "./junit-audit";
 
 type SecretsFinding = Finding & Partial<Pick<GitFinding, "commit">>;
-
-/**
- * The gitleaks fingerprint of a finding — `file:rule:line`, prefixed with the
- * commit for history findings. Pasting it into `.gitleaksignore` suppresses
- * the finding.
- */
-export const gitleaksFingerprint = (finding: SecretsFinding): string => {
-    const base = `${finding.file}:${finding.ruleId}:${String(finding.startLine)}`;
-
-    return finding.commit === undefined ? base : `${finding.commit.sha}:${base}`;
-};
 
 // OWASP CSV-injection guidance: a cell starting with one of these is evaluated
 // as a formula by Excel / LibreOffice / Sheets (gitleaks #2237).
@@ -33,7 +23,7 @@ const FORMULA_TRIGGER = /^[\t\r+=@-]/;
 export const csvCell = (value: string): string => {
     const safe = FORMULA_TRIGGER.test(value) ? `'${value}` : value;
 
-    return /[\n\r",]/.test(safe) ? `"${safe.replaceAll("\"", "\"\"")}"` : safe;
+    return /[\n\r",]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
 };
 
 const CSV_COLUMNS = [
@@ -71,12 +61,30 @@ export const emitSecretsCsv = (findings: SecretsFinding[]): string => {
             csvCell(finding.commit?.message ?? ""),
             csvCell(finding.commit?.date ?? ""),
             csvCell(finding.commit?.authorEmail ?? ""),
-            csvCell(gitleaksFingerprint(finding)),
+            csvCell(gitleaksIgnoreFingerprint(finding)),
             csvCell(finding.tags.join(" ")),
         ].join(","),
     );
 
     return `${[CSV_COLUMNS.join(","), ...rows].join("\r\n")}\r\n`;
+};
+
+/**
+ * Mask a secret as the scanner does under `redact` (`abc***xyz`, `******` for
+ * six characters or fewer). Idempotent, so already-redacted findings pass
+ * through unchanged. JUnit results are shown in CI UIs to anyone with read
+ * access, so they never carry the raw value.
+ */
+const maskSecret = (value: string): string => {
+    // Code points, as the scanner counts; grapheme clusters aren't needed for a mask.
+    // eslint-disable-next-line @typescript-eslint/no-misused-spread -- See above.
+    const chars = [...value];
+
+    if (chars.length <= 6) {
+        return "******";
+    }
+
+    return `${chars.slice(0, 3).join("")}${"*".repeat(chars.length - 6)}${chars.slice(-3).join("")}`;
 };
 
 /**
@@ -95,8 +103,8 @@ export const emitSecretsJUnit = (findings: SecretsFinding[], options: { now?: Da
                 ...(finding.commit === undefined
                     ? []
                     : [`Commit: ${finding.commit.sha}`, `Author: ${finding.commit.authorName} <${finding.commit.authorEmail}>`]),
-                `Secret: ${finding.secret}`,
-                `Fingerprint: ${gitleaksFingerprint(finding)}`,
+                `Secret: ${maskSecret(finding.secret)}`,
+                `Fingerprint: ${gitleaksIgnoreFingerprint(finding)}`,
             ].join("\n");
 
             const failure = `<failure type="${escapeAttribute(finding.ruleId)}" message="${escapeAttribute(finding.description || finding.ruleId)}">${cdata(details)}</failure>`;
@@ -133,8 +141,9 @@ interface CodeQualityIssue {
 
 /**
  * GitLab Code Quality report (`artifacts:reports:codequality`), the shape
- * gitleaks #2096 emits. The description never contains the secret; the
- * fingerprint is stable across runs so GitLab can diff MRs against the base.
+ * gitleaks #2096 emits. Neither the description nor the fingerprint is
+ * derived from the secret: the fingerprint hashes the finding's location, so
+ * it is stable across runs and GitLab can diff MRs against the base.
  */
 export const emitSecretsGitlabCodeQuality = (findings: SecretsFinding[]): string => {
     const issues: CodeQualityIssue[] = findings.map((finding) => {
@@ -144,7 +153,7 @@ export const emitSecretsGitlabCodeQuality = (findings: SecretsFinding[]): string
             description: `${finding.ruleId}: ${finding.description || "Potential secret"}`,
             engine_name: "vis-secrets",
             fingerprint: createHash("sha256")
-                .update(`${gitleaksFingerprint(finding)}\0${String(finding.startColumn)}\0${finding.secret}`)
+                .update(`${gitleaksIgnoreFingerprint(finding)}\0${String(finding.startColumn)}\0${String(finding.endLine)}\0${String(finding.endColumn)}`)
                 .digest("hex"),
             location: { lines: { begin: finding.startLine, end: finding.endLine }, path: finding.file },
             severity: "critical",
