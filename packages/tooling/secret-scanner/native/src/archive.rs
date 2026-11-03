@@ -10,10 +10,8 @@ use std::path::Path;
 
 use flate2::read::MultiGzDecoder;
 
-use crate::decode::DecodeOptions;
-use crate::detector::DetectOptions;
 use crate::rules::CompiledRuleset;
-use crate::scanner::{is_binary, scan_text_full, FileScan};
+use crate::scanner::{is_binary, scan_text_full, FileScan, TextScanOptions};
 
 /// Off by default: opening archives costs time and changes results for existing users.
 pub const DEFAULT_MAX_ARCHIVE_DEPTH: u32 = 0;
@@ -86,9 +84,8 @@ fn is_tar(bytes: &[u8]) -> bool {
 
 struct Ctx<'a> {
     ruleset: &'a CompiledRuleset,
-    decode: DecodeOptions,
-    detect: DetectOptions<'a>,
-    opts: ArchiveOptions,
+    text: TextScanOptions<'a>,
+    limits: ArchiveOptions,
     /// Path of the archive file on disk, as passed to the scanner.
     outer: String,
     total: u64,
@@ -98,16 +95,16 @@ struct Ctx<'a> {
 
 impl Ctx<'_> {
     fn remaining(&self) -> u64 {
-        self.opts.max_total_bytes.saturating_sub(self.total)
+        self.limits.max_total_bytes.saturating_sub(self.total)
     }
 
     fn exhausted(&self) -> bool {
-        self.remaining() == 0 || self.entries >= self.opts.max_entries
+        self.remaining() == 0 || self.entries >= self.limits.max_entries
     }
 
     /// Decompressed bytes an input of `compressed` bytes may expand to.
     fn ratio_cap(&self, compressed: u64) -> u64 {
-        compressed.saturating_mul(self.opts.max_ratio).max(self.opts.ratio_floor)
+        compressed.saturating_mul(self.limits.max_ratio).max(self.limits.ratio_floor)
     }
 
     /// Record content that was not scanned. `suffix` is the virtual suffix of the entry
@@ -124,15 +121,13 @@ pub fn scan_archive(
     path: &Path,
     bytes: &[u8],
     kind: ArchiveKind,
-    decode: DecodeOptions,
-    detect: DetectOptions<'_>,
-    opts: ArchiveOptions,
+    opts: TextScanOptions<'_>,
+    limits: ArchiveOptions,
 ) -> Option<FileScan> {
     let mut ctx = Ctx {
         ruleset,
-        decode,
-        detect,
-        opts: ArchiveOptions { max_depth: opts.max_depth.min(MAX_ARCHIVE_DEPTH_CAP), ..opts },
+        text: opts,
+        limits: ArchiveOptions { max_depth: limits.max_depth.min(MAX_ARCHIVE_DEPTH_CAP), ..limits },
         outer: path.to_string_lossy().into_owned(),
         total: 0,
         entries: 0,
@@ -176,7 +171,7 @@ fn walk_zip(ctx: &mut Ctx<'_>, bytes: &[u8], prefix: &str, depth: u32) -> bool {
         let name = sanitize_entry_name(&String::from_utf8_lossy(file.name_raw()));
         // Header sizes are attacker-controlled: they only allow an early skip, the read
         // below is capped independently.
-        if file.size() > ctx.opts.max_entry_bytes {
+        if file.size() > ctx.limits.max_entry_bytes {
             ctx.skip(&format!("{prefix}!{name}"), "too-large");
             continue;
         }
@@ -217,7 +212,7 @@ fn walk_tar<R: Read>(ctx: &mut Ctx<'_>, reader: R, prefix: &str, depth: u32) -> 
         ctx.entries += 1;
 
         let name = sanitize_entry_name(&String::from_utf8_lossy(&entry.path_bytes()));
-        if entry.size() > ctx.opts.max_entry_bytes {
+        if entry.size() > ctx.limits.max_entry_bytes {
             ctx.skip(&format!("{prefix}!{name}"), "too-large");
             continue;
         }
@@ -284,7 +279,7 @@ enum ReadOutcome {
 /// Read an entry under `min(maxFileSize, remaining budget, ratio_cap)` bytes.
 fn read_capped<R: Read + ?Sized>(ctx: &mut Ctx<'_>, reader: &mut R, ratio_cap: u64) -> ReadOutcome {
     let remaining = ctx.remaining();
-    let limit = ctx.opts.max_entry_bytes.min(remaining).min(ratio_cap);
+    let limit = ctx.limits.max_entry_bytes.min(remaining).min(ratio_cap);
     let mut data = Vec::new();
     let result = reader.take(limit.saturating_add(1)).read_to_end(&mut data);
     ctx.total = ctx.total.saturating_add(data.len() as u64);
@@ -303,7 +298,7 @@ fn handle_entry(ctx: &mut Ctx<'_>, data: Vec<u8>, prefix: &str, name: &str, dept
     let suffix = format!("{prefix}!{name}");
 
     if let Some(kind) = detect(&data) {
-        if depth < ctx.opts.max_depth {
+        if depth < ctx.limits.max_depth {
             let base = name.rsplit('/').next().unwrap_or(name).to_string();
             open(ctx, &data, kind, &suffix, &base, depth + 1);
         }
@@ -319,7 +314,7 @@ fn handle_entry(ctx: &mut Ctx<'_>, data: Vec<u8>, prefix: &str, name: &str, dept
         Err(e) => encoding_rs::UTF_8.decode(e.as_bytes()).0.into_owned(),
     };
     let virtual_path = format!("{}{suffix}", ctx.outer);
-    for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.decode, ctx.detect) {
+    for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.text) {
         finding.archive_entry = Some(suffix.clone());
         ctx.out.findings.push(finding);
     }
@@ -437,8 +432,7 @@ mod tests {
     fn scan_full(bytes: &[u8], name: &str, o: ArchiveOptions) -> FileScan {
         let rs = ruleset();
         let kind = detect(bytes).expect("archive");
-        scan_archive(&rs, Path::new(name), bytes, kind, DecodeOptions::default(), DetectOptions::default(), o)
-            .expect("opened")
+        scan_archive(&rs, Path::new(name), bytes, kind, TextScanOptions::default(), o).expect("opened")
     }
 
     fn scan(bytes: &[u8], name: &str, o: ArchiveOptions) -> Vec<RawFinding> {
@@ -544,16 +538,9 @@ mod tests {
     fn garbage_with_zip_magic_falls_back() {
         let rs = ruleset();
         let bytes = b"PK\x03\x04 not really a zip";
-        assert!(scan_archive(
-            &rs,
-            Path::new("x"),
-            bytes,
-            ArchiveKind::Zip,
-            DecodeOptions::default(),
-            DetectOptions::default(),
-            opts(1)
-        )
-        .is_none());
+        assert!(
+            scan_archive(&rs, Path::new("x"), bytes, ArchiveKind::Zip, TextScanOptions::default(), opts(1)).is_none()
+        );
     }
 
     #[test]
@@ -562,16 +549,8 @@ mod tests {
         let mut text = vec![b'x'; 300];
         text[TAR_MAGIC_OFFSET..TAR_MAGIC_OFFSET + 5].copy_from_slice(b"ustar");
         assert_eq!(detect(&text), Some(ArchiveKind::Tar));
-        assert!(scan_archive(
-            &rs,
-            Path::new("t.txt"),
-            &text,
-            ArchiveKind::Tar,
-            DecodeOptions::default(),
-            DetectOptions::default(),
-            opts(1)
-        )
-        .is_none());
+        assert!(scan_archive(&rs, Path::new("t.txt"), &text, ArchiveKind::Tar, TextScanOptions::default(), opts(1))
+            .is_none());
     }
 
     #[test]

@@ -110,14 +110,6 @@ pub struct ScanOptions {
     pub commit: Option<String>,
 }
 
-fn detect_options(opts: &ScanOptions) -> DetectOptions<'_> {
-    DetectOptions {
-        inline_allow: opts.inline_allow.unwrap_or(true),
-        report_suppressed: opts.report_suppressed.unwrap_or(false),
-        commit: opts.commit.as_deref(),
-    }
-}
-
 #[napi(object)]
 pub struct Finding {
     pub rule_id: String,
@@ -255,12 +247,18 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
     }
 }
 
-fn decode_options(opts: &ScanOptions) -> DecodeOptions {
-    DecodeOptions { max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH), ..Default::default() }
-}
-
 fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
-    TextScanOptions { decode: decode_options(opts), detect: detect_options(opts) }
+    TextScanOptions {
+        decode: DecodeOptions {
+            max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH),
+            ..Default::default()
+        },
+        detect: DetectOptions {
+            inline_allow: opts.inline_allow.unwrap_or(true),
+            report_suppressed: opts.report_suppressed.unwrap_or(false),
+            commit: opts.commit.as_deref(),
+        },
+    }
 }
 
 fn archive_options(opts: &ScanOptions, max_bytes: u64) -> ArchiveOptions {
@@ -332,7 +330,7 @@ fn scan_paths(
     let do_scan = || -> (Vec<RawFinding>, Vec<Skip>) {
         let outcomes: Vec<(Vec<RawFinding>, Vec<Skip>)> = files
             .par_iter()
-            .map(|p| match scan_file(p, ruleset, max_bytes, text_opts, archive_opts) {
+            .map(|p| match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
                 Ok(Some(scanned)) => {
                     let skipped =
                         scanned.skipped.into_iter().map(|(entry, reason)| (p.clone(), entry, reason)).collect();
@@ -574,7 +572,7 @@ pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
-    let raw = scan_text_full(&ruleset, &path, &content, decode_options(&opts), detect_options(&opts));
+    let raw = scan_text_full(&ruleset, &path, &content, text_scan_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
     let finalized = finalize_findings(raw, &[]);
     Ok(finalized.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())

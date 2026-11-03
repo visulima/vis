@@ -38,10 +38,9 @@ pub fn scan_text_full(
     ruleset: &CompiledRuleset,
     path: &Path,
     content: &str,
-    decode: DecodeOptions,
-    detect: DetectOptions<'_>,
+    opts: TextScanOptions<'_>,
 ) -> Vec<RawFinding> {
-    crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, decode, detect))
+    crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, opts))
 }
 
 const MMAP_THRESHOLD: u64 = 1 << 20; // 1 MiB
@@ -53,8 +52,8 @@ const BINARY_SNIFF_LEN: usize = 8192;
 /// its entries scanned. Otherwise binary files (null byte in first 8 KiB) are skipped to
 /// an empty result.
 pub fn scan_file(
-    path: &Path,
     ruleset: &CompiledRuleset,
+    path: &Path,
     max_bytes: u64,
     opts: TextScanOptions<'_>,
     archive: ArchiveOptions,
@@ -74,7 +73,7 @@ pub fn scan_file(
         // SAFETY: another process truncating the file mid-scan would raise SIGBUS
         // for this thread. We accept that rare risk to keep the zero-copy path.
         if let Ok(map) = unsafe { memmap2::Mmap::map(&file) } {
-            return Ok(Some(scan_bytes(path, ruleset, &map, opts, archive)));
+            return Ok(Some(scan_bytes(ruleset, path, &map, opts, archive)));
         }
     }
 
@@ -89,27 +88,27 @@ pub fn scan_file(
             return Ok(Some(FileScan::default()));
         }
         let findings = match String::from_utf8(bytes) {
-            Ok(s) => scan_text_full(ruleset, path, &s, opts.decode, opts.detect),
+            Ok(s) => scan_text_full(ruleset, path, &s, opts),
             Err(e) => {
                 let (cow, _, _) = encoding_rs::UTF_8.decode(e.as_bytes());
-                scan_text_full(ruleset, path, &cow, opts.decode, opts.detect)
+                scan_text_full(ruleset, path, &cow, opts)
             }
         };
         return Ok(Some(findings.into()));
     }
-    Ok(Some(scan_bytes(path, ruleset, &bytes, opts, archive)))
+    Ok(Some(scan_bytes(ruleset, path, &bytes, opts, archive)))
 }
 
 fn scan_bytes(
-    path: &Path,
     ruleset: &CompiledRuleset,
+    path: &Path,
     bytes: &[u8],
     opts: TextScanOptions<'_>,
     archive: ArchiveOptions,
 ) -> FileScan {
     if archive.max_depth > 0 {
         if let Some(kind) = archive::detect(bytes) {
-            if let Some(found) = archive::scan_archive(ruleset, path, bytes, kind, opts.decode, opts.detect, archive) {
+            if let Some(found) = archive::scan_archive(ruleset, path, bytes, kind, opts, archive) {
                 return found;
             }
         }
@@ -118,10 +117,10 @@ fn scan_bytes(
         return FileScan::default();
     }
     let findings = match std::str::from_utf8(bytes) {
-        Ok(s) => scan_text_full(ruleset, path, s, opts.decode, opts.detect),
+        Ok(s) => scan_text_full(ruleset, path, s, opts),
         Err(_) => {
             let (cow, _, _) = encoding_rs::UTF_8.decode(bytes);
-            scan_text_full(ruleset, path, &cow, opts.decode, opts.detect)
+            scan_text_full(ruleset, path, &cow, opts)
         }
     };
     findings.into()

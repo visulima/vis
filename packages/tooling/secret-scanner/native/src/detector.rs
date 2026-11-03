@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
-use crate::rules::{CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
+use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
 use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, SuppressionReason};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
@@ -104,40 +104,31 @@ impl Default for DetectOptions<'_> {
     }
 }
 
+/// Which text a [`detect`] call scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pass {
+    /// The file content itself.
+    Plain,
+    /// Text produced by the decode pass. Path-only rules don't refire (they already
+    /// fired, or not, for this file during the plain pass), and `preRegexReplace` rules
+    /// are skipped because their offsets index the rewritten text, which the decode
+    /// layer can't map back to the original content.
+    Decoded,
+}
+
 #[cfg(test)]
 pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
-    scan_text_with(ruleset, path, content, DetectOptions::default())
+    detect(ruleset, path, content, DetectOptions::default(), Pass::Plain)
 }
 
-pub fn scan_text_with(
+/// Run every candidate rule of `ruleset` over `content`. Callers outside the decode
+/// layer go through [`crate::scanner::scan_text_full`].
+pub fn detect(
     ruleset: &CompiledRuleset,
     path: &Path,
     content: &str,
     opts: DetectOptions<'_>,
-) -> Vec<RawFinding> {
-    scan_text_inner(ruleset, path, content, opts, true)
-}
-
-/// Scan decoded text produced by the decode pass. Path-only rules are skipped: they
-/// already fired (or not) for this file during the plain scan.
-pub(crate) fn scan_text_decoded(
-    ruleset: &CompiledRuleset,
-    path: &Path,
-    content: &str,
-    opts: DetectOptions<'_>,
-) -> Vec<RawFinding> {
-    scan_text_inner(ruleset, path, content, opts, false)
-}
-
-/// `plain == false` is the decode pass: path-only rules don't refire, and `preRegexReplace`
-/// rules are skipped because their offsets index the rewritten text, which the decode
-/// layer can't map back to the original content.
-fn scan_text_inner(
-    ruleset: &CompiledRuleset,
-    path: &Path,
-    content: &str,
-    opts: DetectOptions<'_>,
-    plain: bool,
+    pass: Pass,
 ) -> Vec<RawFinding> {
     // Normalise to forward slashes so user-authored path regexes (rule `path`
     // and `allowlists.paths`) match consistently on Windows. Without this,
@@ -246,7 +237,7 @@ fn scan_text_inner(
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
         if rule.engine.is_none() && rule.path_regex.is_some() {
-            if !plain {
+            if pass == Pass::Decoded {
                 continue;
             }
             let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "", opts.commit);
@@ -284,7 +275,7 @@ fn scan_text_inner(
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
-        if !plain && !rule.pre_regex_replace.is_empty() {
+        if pass == Pass::Decoded && !rule.pre_regex_replace.is_empty() {
             continue;
         }
 
@@ -331,6 +322,15 @@ fn scan_text_inner(
             None => (0, text_ref.len()),
         };
         let slice = &text_ref[slice_start..slice_end];
+        let ctx = MatchCtx {
+            ruleset,
+            rule,
+            path: &path_str,
+            text: text_ref,
+            line_offsets: offsets_ref,
+            allow_regions: &allow_regions,
+            opts,
+        };
 
         // Secret extraction follows gitleaks: an explicit `secretGroup`, else the first
         // non-empty capture group, else the whole match.
@@ -354,20 +354,13 @@ fn scan_text_inner(
                     };
                     let (s_start, s_end) = group.map_or((whole.start(), whole.end()), |m| (m.start(), m.end()));
 
-                    emit_match(
+                    ctx.emit(
                         MatchSpan {
                             match_start: slice_start + whole.start(),
                             match_end: slice_start + whole.end(),
                             secret_start: slice_start + s_start,
                             secret_end: slice_start + s_end,
                         },
-                        rule,
-                        ruleset,
-                        &path_str,
-                        text_ref,
-                        offsets_ref,
-                        &allow_regions,
-                        opts,
                         &mut out,
                     );
                 }
@@ -383,20 +376,13 @@ fn scan_text_inner(
                     };
                     let (s_start, s_end) = group.map_or((whole.start(), whole.end()), |m| (m.start(), m.end()));
 
-                    emit_match(
+                    ctx.emit(
                         MatchSpan {
                             match_start: slice_start + whole.start(),
                             match_end: slice_start + whole.end(),
                             secret_start: slice_start + s_start,
                             secret_end: slice_start + s_end,
                         },
-                        rule,
-                        ruleset,
-                        &path_str,
-                        text_ref,
-                        offsets_ref,
-                        &allow_regions,
-                        opts,
                         &mut out,
                     );
                 }
@@ -417,116 +403,123 @@ struct MatchSpan {
     secret_end: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_match(
-    mut span: MatchSpan,
-    rule: &CompiledRule,
-    ruleset: &CompiledRuleset,
-    path_str: &str,
-    text_ref: &str,
-    offsets_ref: &[usize],
-    allow_regions: &[(usize, usize)],
-    opts: DetectOptions<'_>,
-    out: &mut Vec<RawFinding>,
-) {
-    // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
-    // Pull the span back one byte so CRLF and LF checkouts yield the same match, secret,
-    // end column, entropy and fingerprint. Done before any filter so every downstream
-    // check sees the normalised value.
-    let bytes = text_ref.as_bytes();
-    if span.match_end > span.match_start && bytes[span.match_end - 1] == b'\r' {
-        // Only shrink a non-empty secret: an empty capture sitting at `match_end` would
-        // otherwise end up with `secret_end < secret_start` and panic on the slice below.
-        if span.secret_end == span.match_end && span.secret_end > span.secret_start {
+/// Everything [`MatchCtx::emit`] needs about the rule and the text it ran over.
+struct MatchCtx<'a> {
+    ruleset: &'a CompiledRuleset,
+    rule: &'a CompiledRule,
+    /// Forward-slash path of the scanned unit.
+    path: &'a str,
+    /// The text the rule ran over (post `preRegexReplace`) and its line offsets.
+    text: &'a str,
+    line_offsets: &'a [usize],
+    allow_regions: &'a [(usize, usize)],
+    opts: DetectOptions<'a>,
+}
+
+impl MatchCtx<'_> {
+    /// Filter one regex match (secret, entropy, requirements, suppression) and push the
+    /// finding.
+    fn emit(&self, mut span: MatchSpan, out: &mut Vec<RawFinding>) {
+        // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
+        // Pull the span back one byte so CRLF and LF checkouts yield the same match, secret,
+        // end column, entropy and fingerprint. Done before any filter so every downstream
+        // check sees the normalised value.
+        let bytes = self.text.as_bytes();
+        if span.match_end > span.match_start && bytes[span.match_end - 1] == b'\r' {
+            // Only shrink a non-empty secret: an empty capture sitting at `match_end` would
+            // otherwise end up with `secret_end < secret_start` and panic on the slice below.
+            if span.secret_end == span.match_end && span.secret_end > span.secret_start {
+                span.secret_end -= 1;
+            }
+            span.match_end -= 1;
+        }
+        if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
             span.secret_end -= 1;
         }
-        span.match_end -= 1;
-    }
-    if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
-        span.secret_end -= 1;
-    }
 
-    let match_str = &text_ref[span.match_start..span.match_end];
-    let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {
-        match_str
-    } else {
-        &text_ref[span.secret_start..span.secret_end]
-    };
+        let match_str = &self.text[span.match_start..span.match_end];
+        let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {
+            match_str
+        } else {
+            &self.text[span.secret_start..span.secret_end]
+        };
 
-    // #1828 — drop findings whose secret group is empty or whitespace-only. Covers
-    // `FOO=` / `token = ""` and similar generic-rule false positives.
-    if secret_slice.trim().is_empty() {
-        return;
-    }
-
-    // Entropy check
-    let ent = shannon(secret_slice);
-    if let Some(min) = rule.entropy {
-        if ent < min {
+        // #1828 — drop findings whose secret group is empty or whitespace-only. Covers
+        // `FOO=` / `token = ""` and similar generic-rule false positives.
+        if secret_slice.trim().is_empty() {
             return;
         }
-    }
 
-    // Kingfisher-style cheap post-match filters (min length, min digit count,
-    // ignore-if-contains). Slots between entropy and allowlist so a failed
-    // requirement short-circuits before the more expensive regex/path work.
-    if let Some(req) = &rule.pattern_requirements {
-        if !check_pattern_requirements(secret_slice, req) {
+        // Entropy check
+        let ent = shannon(secret_slice);
+        if let Some(min) = self.rule.entropy {
+            if ent < min {
+                return;
+            }
+        }
+
+        // Kingfisher-style cheap post-match filters (min length, min digit count,
+        // ignore-if-contains). Slots between entropy and allowlist so a failed
+        // requirement short-circuits before the more expensive regex/path work.
+        if let Some(req) = &self.rule.pattern_requirements {
+            if !check_pattern_requirements(secret_slice, req) {
+                return;
+            }
+        }
+
+        // Line containing the match (for "line" allowlist target)
+        let (sl, sc, el, ec) = offset_to_line_col(self.line_offsets, span.match_start, span.match_end, self.text);
+        let line = line_slice(self.text, self.line_offsets, sl);
+
+        // Inline allow-comment (same line), block allow-region
+        // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
+        // `pragma: allowlist nextline secret` on the line preceding the match.
+        // `inline_allow: false` disables all three so CI can audit them.
+        let inline_allowed = self.opts.inline_allow
+            && inline_suppressed(self.text, self.line_offsets, self.allow_regions, sl, span.match_start);
+
+        // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
+        let allowlisted = |lists: &[CompiledAllowlist]| {
+            is_allowlisted(lists, &self.rule.id, self.path, match_str, secret_slice, line, self.opts.commit)
+        };
+        let suppressed_by = if inline_allowed {
+            Some(SuppressionReason::InlineAllow)
+        } else if allowlisted(&self.rule.allowlists) || allowlisted(&self.ruleset.global_allowlists) {
+            Some(SuppressionReason::Allowlist)
+        } else {
+            None
+        };
+
+        if suppressed_by.is_some() && !self.opts.report_suppressed {
             return;
         }
+
+        out.push(RawFinding {
+            rule_id: self.rule.id.clone(),
+            description: self.rule.description.clone(),
+            tags: self.rule.tags.clone(),
+            file: self.path.to_string(),
+            start_line: sl,
+            end_line: el,
+            start_column: sc,
+            end_column: ec,
+            r#match: match_str.to_string(),
+            secret: secret_slice.to_string(),
+            entropy: ent,
+            priority: self.rule.priority,
+            start_offset: span.match_start as u32,
+            end_offset: span.match_end as u32,
+            source: self.rule.source.clone(),
+            confidence: self.rule.confidence.as_str(),
+            alternate_matches: Vec::new(),
+            decoded: None,
+            inner_start: 0,
+            inner_end: 0,
+            required_findings: None,
+            archive_entry: None,
+            suppressed_by,
+        });
     }
-
-    // Line containing the match (for "line" allowlist target)
-    let (sl, sc, el, ec) = offset_to_line_col(offsets_ref, span.match_start, span.match_end, text_ref);
-    let line = line_slice(text_ref, offsets_ref, sl);
-
-    // Inline allow-comment (same line), block allow-region
-    // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
-    // `pragma: allowlist nextline secret` on the line preceding the match.
-    // `inline_allow: false` disables all three so CI can audit them.
-    let inline_allowed =
-        opts.inline_allow && inline_suppressed(text_ref, offsets_ref, allow_regions, sl, span.match_start);
-
-    // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
-    let suppressed_by = if inline_allowed {
-        Some(SuppressionReason::InlineAllow)
-    } else if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
-        || is_allowlisted(&ruleset.global_allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
-    {
-        Some(SuppressionReason::Allowlist)
-    } else {
-        None
-    };
-
-    if suppressed_by.is_some() && !opts.report_suppressed {
-        return;
-    }
-
-    out.push(RawFinding {
-        rule_id: rule.id.clone(),
-        description: rule.description.clone(),
-        tags: rule.tags.clone(),
-        file: path_str.to_string(),
-        start_line: sl,
-        end_line: el,
-        start_column: sc,
-        end_column: ec,
-        r#match: match_str.to_string(),
-        secret: secret_slice.to_string(),
-        entropy: ent,
-        priority: rule.priority,
-        start_offset: span.match_start as u32,
-        end_offset: span.match_end as u32,
-        source: rule.source.clone(),
-        confidence: rule.confidence.as_str(),
-        alternate_matches: Vec::new(),
-        decoded: None,
-        inner_start: 0,
-        inner_end: 0,
-        required_findings: None,
-        archive_entry: None,
-        suppressed_by,
-    });
 }
 
 /// Returns `true` when the captured secret passes every declared requirement.
@@ -621,7 +614,8 @@ mod tests {
             SHA.to_uppercase()
         ));
         let scan = |path: &str, commit: Option<&str>| {
-            scan_text_with(&rs, Path::new(path), "tok_abcd1234\n", DetectOptions { commit, ..Default::default() }).len()
+            let opts = DetectOptions { commit, ..Default::default() };
+            detect(&rs, Path::new(path), "tok_abcd1234\n", opts, Pass::Plain).len()
         };
 
         assert_eq!(scan("fixtures/a.env", Some(SHA)), 0);
