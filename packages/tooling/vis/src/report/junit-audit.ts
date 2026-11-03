@@ -43,7 +43,7 @@ const stripInvalidXml = (value: string): string => value.replaceAll(INVALID_XML_
  * escaping would explode the line count.
  */
 export const escapeAttribute = (value: string): string =>
-    stripInvalidXml(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
+    stripInvalidXml(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 
 /** Wraps text in CDATA, defensively splitting any embedded `]]>` sequences. */
 export const cdata = (value: string): string => `<![CDATA[${stripInvalidXml(value).replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;

@@ -21,7 +21,6 @@ const createRandom = (seed: number): (() => number) => {
     };
 };
 
-/* eslint-disable @stylistic/quotes -- sample lockfiles embed double quotes; prettier picks single quotes to avoid escapes */
 const SAMPLES: Record<string, { ecosystem: string; sample: string }> = {
     "Cargo.lock": {
         ecosystem: "cargo",
@@ -72,8 +71,6 @@ const SAMPLES: Record<string, { ecosystem: string; sample: string }> = {
         sample: '[[package]]\nname = "requests"\nversion = "2.31.0"\n',
     },
 };
-
-/* eslint-enable @stylistic/quotes */
 
 const ALPHABET = `{}[]()"'\\:,=#%\n\r\t -./0123456789abcdefghijklmnopqrstuvwxyz\u0000\uFFFD`;
 

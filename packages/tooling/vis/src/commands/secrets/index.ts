@@ -135,7 +135,7 @@ const secretsOptionDefinitions = {
         type: Number,
     },
     "max-commits": {
-        description: "With --history, cap the number of commits walked (most-recent first)",
+        description: "With --history, cap the number of commits walked (most-recent first); at least 1",
         type: Number,
     },
     "max-decode-depth": {
@@ -184,7 +184,7 @@ const secretsOptionDefinitions = {
     },
     report: {
         description:
-            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact.",
+            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact (--history reports always, as commit messages are not masked).",
         multiple: true,
         type: String,
     },

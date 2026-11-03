@@ -1,8 +1,9 @@
 import { dim, yellow } from "@visulima/colorize";
-import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SuppressedFinding } from "@visulima/secret-scanner";
+import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../errors/vis-user-error";
-import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit, gitleaksFingerprint } from "../report/secrets";
+import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
 import { toRelativeFinding } from "./baseline";
 import { formatHistoryText, formatSarif, formatText } from "./format";
 
@@ -90,29 +91,6 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
     }
 };
 
-/** Files the scan could not read, grouped by reason; listed with `verbose`. */
-export const formatSkippedFiles = (skipped: SkippedFile[], useColor: boolean, options: { verbose?: boolean } = {}): string => {
-    const counts = new Map<string, number>();
-
-    for (const file of skipped) {
-        counts.set(file.reason, (counts.get(file.reason) ?? 0) + 1);
-    }
-
-    const breakdown = [...counts].map(([reason, count]) => `${reason}: ${String(count)}`).join(", ");
-    const summary = `${String(skipped.length)} file(s) not scanned (${breakdown})${options.verbose ? "" : "; use --verbose to list them"}`;
-    const lines = [useColor ? yellow(summary) : summary];
-
-    if (options.verbose) {
-        for (const file of skipped) {
-            const detail = `  - ${file.path} [${file.reason}]`;
-
-            lines.push(useColor ? dim(detail) : detail);
-        }
-    }
-
-    return lines.join("\n");
-};
-
 /** Describe an ignore entry without printing a secret-value entry's secret. */
 const describeIgnoreEntry = (entry: GitleaksIgnoreEntry): string => (entry.kind === "secret" ? "<secret-value entry>" : entry.raw);
 
@@ -139,7 +117,7 @@ export const formatSuppressed = (suppressed: SuppressedFinding<Finding & Partial
         const relative = toRelativeFinding(finding, root);
         const entryLine = finding.suppressedByEntry === undefined ? "" : ` line ${String(finding.suppressedByEntry.line)}`;
         const reason = `${finding.suppressedBy}${entryLine}`;
-        const detail = `  - [${finding.ruleId}] ${gitleaksFingerprint({ ...relative, commit: finding.commit })} (${reason})`;
+        const detail = `  - [${finding.ruleId}] ${gitleaksIgnoreFingerprint({ ...relative, commit: finding.commit })} (${reason})`;
 
         lines.push(useColor ? dim(detail) : detail);
     }

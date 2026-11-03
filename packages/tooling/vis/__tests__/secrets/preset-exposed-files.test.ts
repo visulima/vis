@@ -94,17 +94,17 @@ const fixtures: Fixture[] = [
     { content: "binary placeholder", expectFinding: true, path: "Thumbs.db", ruleId: "exposed-thumbs-db" },
 
     // build hygiene
-    { content: "{\"name\":\"app\"}\n", expectFinding: true, path: "dist/package-lock.json", ruleId: "exposed-lockfile-in-build-output" },
+    { content: '{"name":"app"}\n', expectFinding: true, path: "dist/package-lock.json", ruleId: "exposed-lockfile-in-build-output" },
     { content: "0", expectFinding: true, path: "dist/main.tsbuildinfo", ruleId: "exposed-tsconfig-buildinfo" },
     {
-        content: "{\"version\":3,\"sources\":[\"src/index.ts\"],\"sourcesContent\":[\"export const x = 1;\"],\"mappings\":\"\"}\n",
+        content: '{"version":3,"sources":["src/index.ts"],"sourcesContent":["export const x = 1;"],"mappings":""}\n',
         expectFinding: true,
         path: "dist/index.js.map",
         ruleId: "exposed-source-map-with-sources",
     },
     // Map without sourcesContent is not a leak — must NOT fire.
     {
-        content: "{\"version\":3,\"sources\":[\"src/index.ts\"],\"mappings\":\"\"}\n",
+        content: '{"version":3,"sources":["src/index.ts"],"mappings":""}\n',
         expectFinding: false,
         path: "dist/clean.js.map",
         ruleId: "exposed-source-map-with-sources",
@@ -118,7 +118,7 @@ const fixtures: Fixture[] = [
     { content: "alice:$apr1$abc$def\n", expectFinding: true, path: ".htpasswd", ruleId: "exposed-htpasswd" },
 
     // jetbrains workspace
-    { content: "<?xml version=\"1.0\"?><project></project>\n", expectFinding: true, path: ".idea/workspace.xml", ruleId: "exposed-jetbrains-workspace" },
+    { content: '<?xml version="1.0"?><project></project>\n', expectFinding: true, path: ".idea/workspace.xml", ruleId: "exposed-jetbrains-workspace" },
 ];
 
 describe("exposed-files preset", () => {

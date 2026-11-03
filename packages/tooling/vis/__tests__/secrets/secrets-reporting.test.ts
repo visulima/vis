@@ -8,9 +8,10 @@ import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SecretsFlags } from "../../src/commands/secrets/handler";
-import execute, { assertReportingFlags } from "../../src/commands/secrets/handler";
-import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit, gitleaksFingerprint } from "../../src/report/secrets";
+import type { SecretsFlags } from "../../src/commands/secrets/flags";
+import { assertReportingFlags } from "../../src/commands/secrets/flags";
+import execute from "../../src/commands/secrets/handler";
+import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
 import { formatSuppressed, formatUnusedIgnores, parseReportTargets } from "../../src/secrets/report";
@@ -67,7 +68,7 @@ describe("report emitters", () => {
         expect(csvCell("=cmd|'/c calc'!A1")).toBe("'=cmd|'/c calc'!A1");
         expect(csvCell("@SUM(1)")).toBe("'@SUM(1)");
         expect(csvCell("-2+3")).toBe("'-2+3");
-        expect(csvCell("a,\"b\"")).toBe("\"a,\"\"b\"\"\"");
+        expect(csvCell('a,"b"')).toBe('"a,""b"""');
         expect(csvCell("plain")).toBe("plain");
     });
 
@@ -79,7 +80,7 @@ describe("report emitters", () => {
         const [header, row] = csv.split("\r\n");
 
         expect(header).toBe("RuleID,Commit,File,Secret,Match,StartLine,EndLine,StartColumn,EndColumn,Author,Message,Date,Email,Fingerprint,Tags");
-        expect(row).toContain(",'=HYPERLINK(1),\"add, token\",");
+        expect(row).toContain(',\'=HYPERLINK(1),"add, token",');
         expect(row).toContain(`,${sha}:src/a.ts:github-pat:3,`);
     });
 
@@ -88,10 +89,19 @@ describe("report emitters", () => {
 
         const xml = emitSecretsJUnit([finding({ description: "bad\u0001desc <x>" }), finding({ file: "b.ts" })], { now: new Date("2026-01-01T00:00:00Z") });
 
-        expect(xml).toContain("<testsuites name=\"vis-secrets\" tests=\"2\" failures=\"2\"");
-        expect(xml).toContain("message=\"baddesc &lt;x&gt;\"");
+        expect(xml).toContain('<testsuites name="vis-secrets" tests="2" failures="2"');
+        expect(xml).toContain('message="baddesc &lt;x&gt;"');
         expect(xml).not.toContain("\u0001");
-        expect(emitSecretsJUnit([])).toContain("tests=\"0\" failures=\"0\"");
+        expect(emitSecretsJUnit([])).toContain('tests="0" failures="0"');
+    });
+
+    it("masks the secret in JUnit output", () => {
+        expect.assertions(2);
+
+        const xml = emitSecretsJUnit([finding()]);
+
+        expect(xml).not.toContain(PAT_A);
+        expect(xml).toContain(`Secret: ghp${"*".repeat(PAT_A.length - 6)}xY4`);
     });
 
     it("emits GitLab Code Quality issues without the secret and with stable distinct fingerprints", () => {
@@ -111,11 +121,14 @@ describe("report emitters", () => {
         expect(JSON.parse(emitSecretsGitlabCodeQuality([finding()]))[0].fingerprint).toBe(issues[0]?.["fingerprint"]);
     });
 
-    it("builds gitleaks fingerprints", () => {
-        expect.assertions(2);
+    it("doesn't derive the GitLab Code Quality fingerprint from the secret", () => {
+        expect.assertions(1);
 
-        expect(gitleaksFingerprint(finding())).toBe("src/a.ts:github-pat:3");
-        expect(gitleaksFingerprint(finding({ commit: { sha: "abc" } as GitFinding["commit"] }))).toBe("abc:src/a.ts:github-pat:3");
+        const [first, second] = JSON.parse(emitSecretsGitlabCodeQuality([finding(), finding({ match: `token = "${PAT_B}"`, secret: PAT_B })])) as {
+            fingerprint: string;
+        }[];
+
+        expect(first?.fingerprint).toBe(second?.fingerprint);
     });
 });
 
@@ -158,6 +171,20 @@ describe(assertReportingFlags, () => {
         expect(() => {
             assertReportingFlags({ logIgnored: true, updateBaseline: true }, false);
         }).toThrow(/--update-baseline/);
+    });
+
+    it("rejects scan targets in modes that don't scan them", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertReportingFlags({ init: true, staged: true }, false);
+        }).toThrow(/--staged picks what to scan and can't be combined with --init/);
+        expect(() => {
+            assertReportingFlags({ listRules: true }, true);
+        }).toThrow(/explicit paths/);
+        expect(() => {
+            assertReportingFlags({ staged: true, updateBaseline: true }, false);
+        }).not.toThrow();
     });
 
     it("rejects --fail-on-unused-ignores on partial scans and without the ignore file", () => {
@@ -353,6 +380,29 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(JSON.parse(readFileSync(join(root, "out", "s.sarif"), "utf8")).version).toBe("2.1.0");
         expect(readFileSync(join(root, "out", "s.csv"), "utf8")).toContain(PAT_A);
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
+    }, 60_000);
+
+    it("never prints or writes a raw secret with --redact", async () => {
+        expect.assertions(5);
+
+        // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens
+        const [patC, unused] = ["ghp_Qw1Er2Ty3Ui4Op5A" + "s6Df7Gh8Jk9Lz0Xc1Vb2", "ghp_Mn3Bv4Cx5Zl6Kj7H" + "g8Fd9Sa0Po1Iu2Yt3Re4"];
+        const root = workspace();
+        const reports = ["json=r.json", "csv=r.csv", "junit=r.xml", "sarif=r.sarif", "gitlab-code-quality=r.gl.json"];
+
+        writeFileSync(join(root, "c.ts"), `const c = "${patC}";\n`);
+        writeFileSync(join(root, ".gitleaksignore"), `secret:${PAT_A}\npath:a.ts:rule:github-pat:secret:${PAT_B}\nsecret:${unused}\n`);
+
+        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, redact: true, report: reports }, root);
+
+        const outputs = [stdout.join(""), stderr.join(""), ...reports.map((report) => readFileSync(join(root, report.split("=")[1] as string), "utf8"))];
+        const leaked = outputs.filter((output) => [PAT_A, PAT_B, patC, unused].some((secret) => output.includes(secret)));
+
+        expect(leaked).toStrictEqual([]);
+        expect((JSON.parse(stdout.join("")) as Finding[]).map((f) => f.file)).toStrictEqual(["c.ts"]);
+        expect(stderr.join("")).toContain("2 finding(s) suppressed");
+        expect(stderr.join("")).toContain("line 3: <secret-value entry>");
+        expect(process.exitCode).toBe(1);
     }, 60_000);
 
     it.skipIf(process.platform === "win32")(

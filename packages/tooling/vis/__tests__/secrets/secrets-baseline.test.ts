@@ -141,6 +141,21 @@ describe("secrets-baseline", () => {
             expect(diff.resolved).toStrictEqual([]);
         });
 
+        it("matches entries by file, rule and line, as the scanner's legacy fingerprint does", () => {
+            expect.assertions(3);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+            const old = makeFinding({ file: "a", ruleId: "tok", secret: "rotated-away", startLine: 4 });
+
+            writeFileSync(baselinePath, JSON.stringify([old]));
+
+            const diff = diffBaseline([{ ...old, match: "new-value", secret: "new-value" }], baselinePath, tmpDir);
+
+            expect(diff.fresh).toStrictEqual([]);
+            expect(diff.surviving).toHaveLength(1);
+            expect(diff.resolved).toStrictEqual([]);
+        });
+
         it("replaces whole-match entries when merging", () => {
             expect.assertions(1);
 
