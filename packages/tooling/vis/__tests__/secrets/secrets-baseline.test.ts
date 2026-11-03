@@ -126,6 +126,33 @@ describe("secrets-baseline", () => {
     });
 
     describe(diffBaseline, () => {
+        it("matches entries that recorded the whole match as the secret", () => {
+            expect.assertions(3);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+            const old = makeFinding({ file: "a", match: `token = "abc123"`, ruleId: "tok", secret: `token = "abc123"` });
+
+            writeFileSync(baselinePath, JSON.stringify([old]));
+
+            const diff = diffBaseline([{ ...old, secret: "abc123" }], baselinePath, tmpDir);
+
+            expect(diff.fresh).toStrictEqual([]);
+            expect(diff.surviving).toHaveLength(1);
+            expect(diff.resolved).toStrictEqual([]);
+        });
+
+        it("replaces whole-match entries when merging", () => {
+            expect.assertions(1);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+            const old = makeFinding({ file: "a", match: `token = "abc123"`, ruleId: "tok", secret: `token = "abc123"` });
+
+            writeFileSync(baselinePath, JSON.stringify([old]));
+            writeBaseline([{ ...old, secret: "abc123" }], baselinePath, tmpDir);
+
+            expect((JSON.parse(readFileSync(baselinePath, "utf8")) as { secret: string }[]).map((f) => f.secret)).toStrictEqual(["abc123"]);
+        });
+
         it("splits findings into fresh / surviving / resolved", () => {
             expect.assertions(3);
 

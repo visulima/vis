@@ -367,6 +367,9 @@ fn scan_text_inner(
         };
         let slice = &text_ref[slice_start..slice_end];
 
+        // Secret extraction follows gitleaks: an explicit `secretGroup`, else the first
+        // non-empty capture group, else the whole match.
+        //
         // Dispatch on engine. Both branches feed the same `emit_match` helper — we only
         // differ on how we enumerate spans, because `regex::bytes` and `fancy_regex`
         // disagree on Captures types. Keeping two short loops is faster than wrapping in
@@ -379,13 +382,12 @@ fn scan_text_inner(
                 // re-validating.
                 for caps in re.captures_iter(slice.as_bytes()) {
                     let Some(whole) = caps.get(0) else { continue };
-                    let (s_start, s_end) = if rule.secret_group == 0 {
-                        (whole.start(), whole.end())
+                    let group = if rule.secret_group == 0 {
+                        caps.iter().skip(1).flatten().find(|m| !m.is_empty())
                     } else {
                         caps.get(rule.secret_group as usize)
-                            .map(|m| (m.start(), m.end()))
-                            .unwrap_or((whole.start(), whole.end()))
                     };
+                    let (s_start, s_end) = group.map_or((whole.start(), whole.end()), |m| (m.start(), m.end()));
 
                     emit_match(
                         MatchSpan {
@@ -409,13 +411,12 @@ fn scan_text_inner(
                 for caps_res in re.captures_iter(slice) {
                     let Ok(caps) = caps_res else { continue };
                     let Some(whole) = caps.get(0) else { continue };
-                    let (s_start, s_end) = if rule.secret_group == 0 {
-                        (whole.start(), whole.end())
+                    let group = if rule.secret_group == 0 {
+                        caps.iter().skip(1).flatten().find(|m| m.start() < m.end())
                     } else {
                         caps.get(rule.secret_group as usize)
-                            .map(|m| (m.start(), m.end()))
-                            .unwrap_or((whole.start(), whole.end()))
                     };
+                    let (s_start, s_end) = group.map_or((whole.start(), whole.end()), |m| (m.start(), m.end()));
 
                     emit_match(
                         MatchSpan {
@@ -777,6 +778,23 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].r#match, "token=123");
         assert_eq!(findings[0].secret, "token=123");
+    }
+
+    #[test]
+    fn without_secret_group_the_first_non_empty_group_is_the_secret() {
+        // gitleaks: `secretGroup` unset -> first non-empty capture group, not the whole match.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok","regex":"(?:(x+)|token)\\s*=\\s*['\"]([a-z0-9]{8})['\"]","keywords":["token"]}]}"#,
+        );
+        let findings = scan_text(&rs, Path::new("a.env"), "token = 'abcd1234'\n");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].r#match, "token = 'abcd1234'");
+        assert_eq!(findings[0].secret, "abcd1234");
+
+        // No capture group at all: the whole match stays the secret.
+        let rs = ruleset(r#"{"rules":[{"id":"tok","regex":"tok_[a-z0-9]{8}","keywords":["tok_"]}]}"#);
+        let findings = scan_text(&rs, Path::new("a.env"), "tok_abcd1234\n");
+        assert_eq!(findings[0].secret, "tok_abcd1234");
     }
 
     const PRIVATE_KEY_RULE: &str = r#"{"rules":[{"id":"private-key","regex":"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\\s\\S-]{64,}?KEY(?: BLOCK)?-----","keywords":["-----begin"]}]}"#;

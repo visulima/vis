@@ -209,6 +209,8 @@ The config shape mirrors gitleaks' TOML schema. A few fields are ours (safe addi
 | `preRegexReplace` | Rule      | Ordered `[{ from, to }, …]` regex replacements applied to the scan buffer before the rule's main regex runs.    |
 | `targetRules`     | Allowlist | When non-empty, the allowlist only applies to findings whose rule id is in this list (gitleaks schema `#1919`). |
 
+`secretGroup` follows gitleaks: when it is unset or `0`, the secret is the first non-empty capture group, or the whole match if the regex has none.
+
 Gitleaks' own `required` / `skipReport` composite-rule fields are supported too, see [Composite rules](#composite-rules-required-skipreport).
 
 ### Commit allowlists

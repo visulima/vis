@@ -487,7 +487,15 @@ describe("postProcess — redact interactions", () => {
         // would resolve to "error". The redact guard skips it, leaving
         // `validation` untouched, and no garbage request is fired.
         const meta = new Map<string, RuleMeta>([
-            ["rule.http", { validation: { content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } }, type: "Http" } }],
+            [
+                "rule.http",
+                {
+                    validation: {
+                        content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } },
+                        type: "Http",
+                    },
+                },
+            ],
         ]);
         const findings = [sampleFinding({ ruleId: "rule.http", secret: "abc***xyz" })];
 
@@ -566,5 +574,16 @@ describe("postProcess — suppressions", () => {
         const out = await postProcess([suppressed, fresh], preparedScan(), { baseline: baselinePath });
 
         expect(out.map((f) => f.ruleId)).toStrictEqual(["fresh-leak"]);
+    });
+
+    it("accepts baseline entries that recorded the whole match as the secret", async () => {
+        expect.assertions(1);
+
+        // Written before secret-group parity: the secret was the whole match.
+        const old = sampleFinding({ match: `token = "abc123"`, ruleId: "moved", secret: `token = "abc123"`, startLine: 1 });
+        const current = { ...old, secret: "abc123", startLine: 7 };
+        const out = await postProcess([current], preparedScan(), { baseline: [old] });
+
+        expect(out).toStrictEqual([]);
     });
 });

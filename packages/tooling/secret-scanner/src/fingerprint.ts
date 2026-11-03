@@ -32,3 +32,13 @@ export const fingerprint = (finding: Finding): string => {
  * `vis secrets --update-baseline`.
  */
 export const legacyFingerprint = (finding: Finding): string => `${finding.file}:${finding.ruleId}:${String(finding.startLine)}`;
+
+/**
+ * Content-hash fingerprint computed with the whole `match` as the secret. Before
+ * gitleaks secret-group parity, a rule without `secretGroup` reported the whole
+ * match as its secret; it now reports the first non-empty capture group, as
+ * gitleaks does. Baselines written before that change hold the old secret, so
+ * suppression and baseline diffs also accept this form. Equal to
+ * {@link fingerprint} when the secret is the whole match.
+ */
+export const wholeMatchFingerprint = (finding: Finding): string => fingerprint({ ...finding, secret: finding.match });

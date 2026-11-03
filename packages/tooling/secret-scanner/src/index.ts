@@ -165,7 +165,7 @@ export const scanFiles = async (files: string[], options?: ScanOptions): Promise
 
 export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline, type WriteBaselineOptions } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
-export { fingerprint, legacyFingerprint } from "./fingerprint";
+export { fingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
 export {
     type GitCommitInfo,
     type GitFinding,

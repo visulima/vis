@@ -85,6 +85,8 @@ const findings = await scan([process.cwd()], { baseline: ".secrets-baseline.json
 
 The fingerprint used for matching is a **content hash** — SHA-256 over `(secret, ruleId, file)` truncated to 16 hex chars. This means moving a secret up or down the file doesn't invalidate its baseline entry; edits only invalidate the entry if the secret itself, the rule that matched, or the file path changes. Legacy `<file>:<ruleID>:<startLine>` baselines are still accepted on read, so older gitleaks-style baselines keep suppressing correctly while you migrate.
 
+**Secret-group change.** A rule without `secretGroup` now reports its first non-empty capture group as the secret, as gitleaks does, instead of the whole match (which could include the key name and quotes). This changes the `secret` and the content-hash fingerprint of findings from those rules (163 bundled gitleaks rules; Kingfisher and Visulima rules all set `secretGroup`). Baseline entries written before the change still suppress: the fingerprint is also checked with `match` as the secret (`wholeMatchFingerprint`), and `vis secrets --update-baseline` replaces such entries with the new form. `.gitleaksignore` `secret:` entries written with the whole match as the value no longer match; update them to the captured value.
+
 Malformed baselines log a stderr warning and are treated as empty — scans never fail because of a broken file.
 
 `writeBaseline(path, findings)` writes the file with mode `0600` (and tightens an existing file to it), because a baseline holds every triaged secret in clear text. Pass `{ mode }` to override.

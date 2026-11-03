@@ -1,7 +1,7 @@
 import { isAccessibleSync, readJsonSync } from "@visulima/fs";
 import { isAbsolute, relative } from "@visulima/path";
 import type { Finding } from "@visulima/secret-scanner";
-import { fingerprint } from "@visulima/secret-scanner";
+import { fingerprint, wholeMatchFingerprint } from "@visulima/secret-scanner";
 
 import { writeReportFileSync } from "./secure-write";
 
@@ -47,12 +47,14 @@ export const diffBaseline = (findings: Finding[], baselinePath: string, root: st
     const existing = readBaseline(baselinePath).map((f) => toRelativeFinding(f, root));
     const existingKeys = new Set(existing.map((f) => fingerprint(f)));
     const currentRelative = findings.map((f) => toRelativeFinding(f, root));
-    const currentKeys = new Set(currentRelative.map((f) => fingerprint(f)));
+    // An entry written before secret-group parity holds the whole match as its secret.
+    const currentKeys = new Set(currentRelative.flatMap((f) => [fingerprint(f), wholeMatchFingerprint(f)]));
+    const isKnown = (f: Finding): boolean => existingKeys.has(fingerprint(f)) || existingKeys.has(wholeMatchFingerprint(f));
 
     return {
-        fresh: currentRelative.filter((f) => !existingKeys.has(fingerprint(f))),
+        fresh: currentRelative.filter((f) => !isKnown(f)),
         resolved: existing.filter((f) => !currentKeys.has(fingerprint(f))),
-        surviving: currentRelative.filter((f) => existingKeys.has(fingerprint(f))),
+        surviving: currentRelative.filter((f) => isKnown(f)),
     };
 };
 
@@ -79,7 +81,12 @@ export const writeBaseline = (findings: Finding[], baselinePath: string, root: s
     if (options.replace) {
         final = incoming;
     } else {
-        const existing = readBaseline(baselinePath).map((f) => toRelativeFinding(f, root));
+        // Incoming findings supersede entries that recorded the same finding with the
+        // whole match as its secret (written before secret-group parity).
+        const superseded = new Set(incoming.filter((f) => f.secret !== f.match).map((f) => wholeMatchFingerprint(f)));
+        const existing = readBaseline(baselinePath)
+            .map((f) => toRelativeFinding(f, root))
+            .filter((f) => !superseded.has(fingerprint(f)));
         const seen = new Set<string>();
 
         final = [];
