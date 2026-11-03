@@ -366,7 +366,7 @@ struct MatchSpan {
 
 #[allow(clippy::too_many_arguments)]
 fn emit_match(
-    span: MatchSpan,
+    mut span: MatchSpan,
     rule: &CompiledRule,
     ruleset: &CompiledRuleset,
     path_str: &str,
@@ -375,6 +375,21 @@ fn emit_match(
     allow_regions: &[(usize, usize)],
     out: &mut Vec<RawFinding>,
 ) {
+    // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
+    // Pull the span back one byte so CRLF and LF checkouts yield the same match, secret,
+    // end column, entropy and fingerprint. Done before any filter so every downstream
+    // check sees the normalised value.
+    let bytes = text_ref.as_bytes();
+    if span.match_end > span.match_start && bytes[span.match_end - 1] == b'\r' {
+        if span.secret_end == span.match_end {
+            span.secret_end -= 1;
+        }
+        span.match_end -= 1;
+    }
+    if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
+        span.secret_end -= 1;
+    }
+
     let match_str = &text_ref[span.match_start..span.match_end];
     let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {
         match_str
@@ -625,6 +640,25 @@ fn line_slice<'a>(content: &'a str, offsets: &[usize], line: u32) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ruleset(json: &str) -> CompiledRuleset {
+        let cfg: crate::config::Config = serde_json::from_str(json).expect("config json");
+        CompiledRuleset::compile(&cfg).expect("compile")
+    }
+
+    #[test]
+    fn crlf_trailing_cr_is_stripped_from_match_and_secret() {
+        let rs = ruleset(r#"{"rules":[{"id":"tok","regex":"token=(.+)","secretGroup":1,"keywords":["token="]}]}"#);
+        let lf = scan_text(&rs, Path::new("a.env"), "x=1\ntoken=abcDEF123456\ny=2\n");
+        let crlf = scan_text(&rs, Path::new("a.env"), "x=1\r\ntoken=abcDEF123456\r\ny=2\r\n");
+        assert_eq!(lf.len(), 1);
+        assert_eq!(crlf.len(), 1);
+        assert_eq!(crlf[0].secret, "abcDEF123456");
+        assert_eq!(crlf[0].secret, lf[0].secret);
+        assert_eq!(crlf[0].r#match, lf[0].r#match);
+        assert_eq!(crlf[0].end_column, lf[0].end_column);
+        assert_eq!(crlf[0].entropy.to_bits(), lf[0].entropy.to_bits());
+    }
 
     #[test]
     fn allow_comment_gitleaks() {
