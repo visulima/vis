@@ -116,7 +116,7 @@ export const exchangeOidcTokenForPackage = async (packageName: string, idToken: 
  * @param packageNames packages the release is about to publish.
  * @param env process environment.
  */
-export const assertOidcPublishable = async (packageNames: readonly string[], env: NodeJS.ProcessEnv, config: VisReleaseConfig): Promise<void> => {
+export const assertOidcPublishable = async (packageNames: ReadonlyArray<string>, env: NodeJS.ProcessEnv, config: VisReleaseConfig): Promise<void> => {
     // The exchange below is GitHub-only; npm checks GitLab's NPM_ID_TOKEN itself.
     if (packageNames.length === 0 || !env["ACTIONS_ID_TOKEN_REQUEST_URL"] || !npmUsesOidc(env, config)) {
         return;

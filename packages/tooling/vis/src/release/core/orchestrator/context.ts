@@ -332,7 +332,9 @@ export const npmCliPackageNames = async (state: {
 
         const actionsId = resolveVersionActionsId(pkg, state.perPackageConfig.get(release.name) ?? {});
 
-        if (actionsId === "npm" || (actionsId === "native-addon" && (await getPlatformDirs(pkg.dir)).length === 0)) {
+        const platformDirs = actionsId === "native-addon" ? await getPlatformDirs(pkg.dir) : [];
+
+        if (actionsId === "npm" || (actionsId === "native-addon" && platformDirs.length === 0)) {
             names.push(release.name);
         }
     }

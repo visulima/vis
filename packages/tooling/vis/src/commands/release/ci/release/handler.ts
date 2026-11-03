@@ -44,10 +44,10 @@ import {
     toRepoRelativePath,
 } from "../../../../release/core/git";
 import { applyContext, buildContext, publishContext, publishMissing, syncLockfile } from "../../../../release/core/orchestrator";
+import { npmCliPackageNames } from "../../../../release/core/orchestrator/context";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
-import { npmCliPackageNames } from "../../../../release/core/orchestrator/context";
 import { assertOidcPublishable } from "../../../../release/core/version-actions/auth";
 import { mergeProtectedContent } from "../../../../release/core/version-pr-merge";
 import { logError, logWarning, reportPublishResult, reportWarnings } from "../../publish-report";
