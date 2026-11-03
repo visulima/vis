@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 
 import { fingerprint, legacyFingerprint } from "./fingerprint";
 import type { Finding } from "./types";
@@ -167,7 +167,32 @@ export const resolveBaselineSet = async (baseline: Finding[] | ReadonlySet<strin
  */
 export const createBaseline = (findings: ReadonlyArray<Finding>): string => `${JSON.stringify(findings, undefined, 2)}\n`;
 
+export interface WriteBaselineOptions {
+    /**
+     * File mode. Default `0o600`: a baseline holds the raw secret of every
+     * finding, so it is owner-only like gitleaks' report files (gitleaks
+     * #2300). The mode is applied to an existing file too, since `open`'s mode
+     * only takes effect on creation.
+     */
+    mode?: number;
+}
+
 /** Write `findings` to `path` in the baseline-file JSON shape (see {@link createBaseline}). */
-export const writeBaseline = async (path: string, findings: ReadonlyArray<Finding>): Promise<void> => {
-    await writeFile(path, createBaseline(findings), "utf8");
+export const writeBaseline = async (path: string, findings: ReadonlyArray<Finding>, options: WriteBaselineOptions = {}): Promise<void> => {
+    const mode = options.mode ?? 0o600;
+
+    // Restrict an existing file before the secrets go in: `writeFile`'s mode
+    // only applies on creation, so a world-readable file would otherwise hold
+    // them until the chmod after the write.
+    try {
+        await chmod(path, mode);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+        }
+    }
+
+    await writeFile(path, createBaseline(findings), { encoding: "utf8", mode });
+    // Again after creation: the umask may have stripped bits from `mode`.
+    await chmod(path, mode);
 };

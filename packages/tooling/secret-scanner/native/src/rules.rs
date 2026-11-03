@@ -36,8 +36,12 @@ impl Engine {
 const REGEX_SIZE_LIMIT: usize = 10 << 20;
 const REGEX_SET_DFA_SIZE_LIMIT: usize = 64 << 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
+    /// Also the default: rules that don't declare confidence keep their historical
+    /// behaviour — never filtered by `min_confidence`. Any explicit user floor (e.g.
+    /// `--min-confidence medium`) drops the unlabeled rules, which is the point.
+    #[default]
     Low,
     Medium,
     High,
@@ -59,15 +63,6 @@ impl Confidence {
             Self::Medium => "medium",
             Self::High => "high",
         }
-    }
-}
-
-impl Default for Confidence {
-    fn default() -> Self {
-        // Rules that don't declare confidence keep their historical behaviour — never
-        // filtered by `min_confidence`. Any explicit user floor (e.g. `--min-confidence
-        // medium`) drops the unlabeled rules, which is the point.
-        Self::Low
     }
 }
 
@@ -123,6 +118,24 @@ pub struct CompiledRule {
     pub confidence: Confidence,
     pub pattern_requirements: Option<CompiledPatternRequirements>,
     pub allowlists: Vec<CompiledAllowlist>,
+    /// `true` when the main regex can consume an unbounded run of arbitrary text across
+    /// line breaks (`[\s\S]{64,}?`, `(?s).*`, `[^"]+`). Such a match has no fixed reach
+    /// from its keyword, so the detector scans the whole file for it instead of the
+    /// keyword window — otherwise a >4 KiB PEM/PGP body never reaches its `KEY-----`
+    /// terminator (gitleaks #1651).
+    pub unbounded_multiline: bool,
+    /// Composite-rule dependencies (gitleaks `[[rules.required]]`). Every id is checked
+    /// against the compiled ruleset at load time.
+    pub required: Vec<RequiredRule>,
+    /// Gitleaks `skipReport`: evaluated as a dependency, never emitted.
+    pub skip_report: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequiredRule {
+    pub rule_id: String,
+    pub within_lines: Option<u32>,
+    pub within_columns: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -136,6 +149,9 @@ pub struct CompiledAllowlist {
     /// Empty = applies to every rule. Non-empty = only applies when the current rule id
     /// is in this set (gitleaks `targetRules`).
     pub target_rules: Vec<String>,
+    /// gitleaks `commits`, trimmed. Read natively only under `condition_and` (see
+    /// `detector::is_allowlisted`).
+    pub commits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +179,9 @@ pub struct CompiledRuleset {
     pub global_allowlists: Vec<CompiledAllowlist>,
     /// Rules that failed to compile (id -> reason). Kept for diagnostics.
     pub skipped_rules: Vec<(String, String)>,
+    /// `true` when any rule declares `required` or `skipReport`. Lets the composite pass
+    /// return straight away for the (default) rulesets that use neither.
+    pub has_composite: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -224,7 +243,9 @@ fn compile_allowlists(rule_id: &str, lists: &[Allowlist]) -> Result<Vec<Compiled
             Some("line") => AllowlistTarget::Line,
             _ => AllowlistTarget::Secret, // gitleaks default
         };
-        let condition_and = matches!(a.condition.as_deref(), Some("AND") | Some("and"));
+        // gitleaks reads the condition case-insensitively and accepts `&&` for AND.
+        let condition_and =
+            a.condition.as_deref().is_some_and(|c| c.trim().eq_ignore_ascii_case("AND") || c.trim() == "&&");
         out.push(CompiledAllowlist {
             paths,
             regexes,
@@ -232,6 +253,7 @@ fn compile_allowlists(rule_id: &str, lists: &[Allowlist]) -> Result<Vec<Compiled
             regex_target,
             condition_and,
             target_rules: a.target_rules.clone(),
+            commits: a.commits.iter().map(|c| c.trim().to_string()).collect(),
         });
     }
     Ok(out)
@@ -247,6 +269,8 @@ impl CompiledRuleset {
                 Err(e) => skipped.push((raw.id.clone(), e.to_string())),
             }
         }
+        drop_unsatisfiable_composites(&mut rules, &mut skipped);
+        let has_composite = rules.iter().any(|r| r.skip_report || !r.required.is_empty());
 
         // Build global keyword AC
         let mut patterns: Vec<String> = Vec::new();
@@ -321,7 +345,102 @@ impl CompiledRuleset {
             regex_set_pattern_to_rule,
             global_allowlists,
             skipped_rules: skipped,
+            has_composite,
         })
+    }
+}
+
+/// Drop every rule whose `required` list names a rule that isn't loaded: it could never
+/// be reported, so say why in `skipped` (surfaced by `inspectRuleset`) instead of letting
+/// it sit silently dead (gitleaks #1932). Repeats until stable, since dropping a rule can
+/// strand another rule that requires it.
+fn drop_unsatisfiable_composites(rules: &mut Vec<CompiledRule>, skipped: &mut Vec<(String, String)>) {
+    loop {
+        let loaded: std::collections::HashSet<&str> = rules.iter().map(|r| r.id.as_str()).collect();
+        let mut dropped: Vec<(usize, String)> = Vec::new();
+
+        for (i, rule) in rules.iter().enumerate() {
+            let Some(missing) = rule.required.iter().find(|req| !loaded.contains(req.rule_id.as_str())) else {
+                continue;
+            };
+            let reason = match skipped.iter().find(|(id, _)| *id == missing.rule_id) {
+                Some(_) => format!("required rule '{}' was skipped, so this rule can never match", missing.rule_id),
+                None => format!(
+                    "required rule '{}' is not defined (unknown id, or filtered out by minConfidence / opt-in gating)",
+                    missing.rule_id
+                ),
+            };
+            dropped.push((i, reason));
+        }
+
+        if dropped.is_empty() {
+            return;
+        }
+
+        for (i, reason) in dropped.into_iter().rev() {
+            let rule = rules.remove(i);
+            skipped.push((rule.id, reason));
+        }
+    }
+}
+
+/// Does `pattern` contain an unbounded repetition (`*`, `+`, `{n,}`) over a class that can
+/// match both a newline and non-whitespace? Plain `\s*` gaps don't count: they only span
+/// whitespace, which the keyword window always covers in practice.
+///
+/// Patterns `regex-syntax` can't parse (lookaround / backrefs, i.e. Fancy rules) fall back
+/// to a textual check for the common multi-line idioms.
+pub fn is_unbounded_multiline(pattern: &str) -> bool {
+    use regex_syntax::hir::{Class, Hir, HirKind};
+
+    fn class_spans_lines(class: &Class) -> bool {
+        match class {
+            Class::Unicode(u) => {
+                let has_newline = u.ranges().iter().any(|r| r.start() <= '\n' && '\n' <= r.end());
+                let has_non_ws = u.ranges().iter().any(|r| {
+                    let (lo, hi) = (r.start() as u32, r.end() as u32);
+                    (lo..=hi).any(|cp| char::from_u32(cp).is_some_and(|c| !c.is_whitespace()))
+                });
+                has_newline && has_non_ws
+            }
+            Class::Bytes(b) => {
+                let has_newline = b.ranges().iter().any(|r| r.start() <= b'\n' && b'\n' <= r.end());
+                let has_non_ws = b.ranges().iter().any(|r| (r.start()..=r.end()).any(|x| !x.is_ascii_whitespace()));
+                has_newline && has_non_ws
+            }
+        }
+    }
+
+    fn can_cross_lines(h: &Hir) -> bool {
+        match h.kind() {
+            HirKind::Class(c) => class_spans_lines(c),
+            HirKind::Capture(c) => can_cross_lines(&c.sub),
+            HirKind::Repetition(r) => can_cross_lines(&r.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => v.iter().any(can_cross_lines),
+            _ => false,
+        }
+    }
+
+    fn has_unbounded(h: &Hir) -> bool {
+        match h.kind() {
+            HirKind::Repetition(r) => (r.max.is_none() && can_cross_lines(&r.sub)) || has_unbounded(&r.sub),
+            HirKind::Capture(c) => has_unbounded(&c.sub),
+            HirKind::Concat(v) | HirKind::Alternation(v) => v.iter().any(has_unbounded),
+            _ => false,
+        }
+    }
+
+    match regex_syntax::ParserBuilder::new().build().parse(pattern) {
+        Ok(hir) => has_unbounded(&hir),
+        Err(_) => {
+            pattern.contains("\\s\\S")
+                || pattern.contains("\\S\\s")
+                || pattern.contains("(?s")
+                || pattern.contains("(?ms")
+                || pattern.contains("(?is")
+                || pattern.contains("(?ims")
+                || pattern.contains("(?xs")
+        }
     }
 }
 
@@ -364,5 +483,42 @@ fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
         confidence,
         pattern_requirements,
         allowlists,
+        unbounded_multiline: raw.regex.as_deref().is_some_and(is_unbounded_multiline),
+        required: raw
+            .required
+            .iter()
+            .map(|r| RequiredRule {
+                rule_id: r.id.clone(),
+                within_lines: r.within_lines,
+                within_columns: r.within_columns,
+            })
+            .collect(),
+        skip_report: raw.skip_report,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_unbounded_multiline;
+
+    #[test]
+    fn classifies_multiline_patterns() {
+        // Bundled `private-key`: lazy `[\s\S-]{64,}?` body.
+        assert!(is_unbounded_multiline(
+            r"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S-]{64,}?KEY(?: BLOCK)?-----"
+        ));
+        assert!(is_unbounded_multiline(r"(?s)BEGIN.*END"));
+        assert!(is_unbounded_multiline(r#"pw="[^"]+""#));
+        // Fancy-only syntax (lookbehind) falls back to the textual check.
+        assert!(is_unbounded_multiline(r"(?<=x)[\s\S]+?END"));
+    }
+
+    #[test]
+    fn single_line_patterns_keep_windowing() {
+        assert!(!is_unbounded_multiline(r"ghp_[0-9A-Za-z]{36}"));
+        assert!(!is_unbounded_multiline(r"(?i)password\s*[:=]\s*([A-Za-z0-9]{8,})"));
+        assert!(!is_unbounded_multiline(r"(?:.|[\n\r]){0,32}?key"));
+        assert!(!is_unbounded_multiline(r"token=(.+)"));
+        assert!(!is_unbounded_multiline(r"(?<=x)\w+"));
+    }
 }

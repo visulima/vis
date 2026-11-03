@@ -5,13 +5,14 @@
 // the module that uses them — they never appear here.
 
 import type { GitleaksConfig } from "./config-loader";
+import type { CONFIDENCE_LEVELS } from "./constants";
 
 /**
  * Author-declared rule quality. Drives the `--min-confidence` filter: unlabeled
  * rules resolve to `"low"` so raising the floor drops them along with explicit
  * low-confidence rules.
  */
-export type Confidence = "high" | "low" | "medium";
+export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
 
 /**
  * Validation status on a finding after the optional HTTP validator runs.
@@ -134,8 +135,69 @@ export interface ScanOptions {
         validateAllowedHosts?: string[];
     };
 
+    /**
+     * Path to a gitleaks `.gitleaksignore` file. Each line is one of:
+     *
+     * - a fingerprint `file:rule:line`, or `commit:file:rule:line` for git history findings;
+     * - a secret-value entry `secret:&lt;value>`, optionally scoped as
+     * `rule:&lt;id>:secret:&lt;value>`, `path:&lt;file>:secret:&lt;value>` or
+     * `path:&lt;file>:rule:&lt;id>:secret:&lt;value>`.
+     *
+     * `*` in any component matches any run of characters (`src/gen/*:generic-api-key:*`).
+     * `#` starts a comment. Paths are matched relative to the directory that holds
+     * the file, however the scan root was spelled. Not auto-discovered by the
+     * library; `false` or omitted disables it. Matching findings are suppressed
+     * with `suppressedBy: "gitleaksignore"`; entries that matched nothing are
+     * returned as `unusedIgnores` by the `*Detailed` scans.
+     */
+    gitleaksIgnore?: string | false;
+
+    /**
+     * Honour inline suppressions — `gitleaks:allow`, `secret-scanner:allow`,
+     * `pragma: allowlist secret`, `pragma: allowlist nextline secret` and
+     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Default `true`.
+     * Set `false` in CI to audit what developers suppressed in code.
+     */
+    inlineAllow?: boolean;
+
+    /**
+     * Archive scanning depth (gitleaks `--max-archive-depth`). zip, tar, gzip and
+     * tar.gz files are recognised by their magic bytes (not the extension), opened in
+     * memory and their entries scanned. Findings use the virtual path
+     * `archive.zip!inner/dir/file.env`. `1` opens top-level archives; each extra level
+     * opens one more layer of archives nested inside them (capped at 8, `MAX_ARCHIVE_DEPTH`). A gzip stream
+     * around a tar counts as one level.
+     *
+     * Limits per top-level archive: each entry obeys `walk.maxFileSize` (and the archive
+     * file itself too), 256 MiB decompressed in total, 10,000 entries, and entries or gzip
+     * streams that expand more than 100x past 1 MiB are skipped as decompression bombs.
+     * Binary entries are skipped like binary files. Entries skipped for size, as bombs or
+     * because they can't be read (e.g. encrypted) are listed in the `*Detailed` scans'
+     * `skipped` under their virtual path. Applies to `scan` and `scanFiles`.
+     * Default: `0` (archives are skipped as binary files).
+     */
+    maxArchiveDepth?: number;
+
+    /**
+     * How many layers of encoding to look through (gitleaks `--max-decode-depth`).
+     * Base64 (standard and url-safe), hex and percent-encoded segments that decode
+     * to printable UTF-8 are decoded and rescanned, recursively, up to this depth.
+     * Findings from decoded text report the line/column of the original encoded
+     * span and carry {@link Finding.decoded}. Decoded output is capped at 4 MiB per
+     * file. Default: `2`. `0` disables decoding.
+     */
+    maxDecodeDepth?: number;
+
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;
+
+    /**
+     * Have the `*Detailed` scans return the findings that were suppressed —
+     * by the baseline, a config allowlist, an inline pragma or
+     * `.gitleaksignore` — in `suppressed`, each with a `suppressedBy` reason.
+     * They never appear in `findings`. Default `false`.
+     */
+    reportSuppressed?: boolean;
 
     /**
      * Rule id + tag filters. Entries are either literal rule ids (e.g.
@@ -194,12 +256,26 @@ export interface Finding {
     alternateMatches: string[];
     /** `"low"` when the rule declares no confidence (default floor). */
     confidence: Confidence;
+
+    /**
+     * Present when the secret was found inside encoded text: the encoding chain,
+     * outermost first (e.g. `["base64"]`, `["base64", "hex"]`). `match` and `secret`
+     * hold the decoded text; the line/column fields point at the original encoded span.
+     */
+    decoded?: string[];
     description: string;
     endColumn: number;
     endLine: number;
     entropy: number;
     file: string;
     match: string;
+
+    /**
+     * Composite rules only (`required` in the rule config): the findings of the rule's
+     * required dependencies that satisfied it, the nearest one per required id, in the
+     * order the rule declares them. Redacted along with `secret` when `redact` is on.
+     */
+    requiredFindings?: RequiredFinding[];
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */
@@ -214,6 +290,67 @@ export interface Finding {
      * {@link ValidationStatus} for the meaning of each value.
      */
     validation?: ValidationStatus;
+}
+
+/** A dependency finding attached to a composite-rule {@link Finding}. Same file as its primary. */
+export interface RequiredFinding {
+    /** Encoding chain when the dependency was found in decoded text. */
+    decoded?: string[];
+    endColumn: number;
+    endLine: number;
+    match: string;
+    ruleId: string;
+    secret: string;
+    startColumn: number;
+    startLine: number;
+}
+
+/** Why a finding was suppressed. */
+export type SuppressionReason = "allowlist" | "baseline" | "gitleaksignore" | "inline-allow";
+
+/** A finding that matched but was suppressed (see `ScanOptions.reportSuppressed`). */
+export type SuppressedFinding<F extends Finding = Finding> = F & {
+    suppressedBy: SuppressionReason;
+    /** The `.gitleaksignore` line that suppressed it, when `suppressedBy` is `"gitleaksignore"`. */
+    suppressedByEntry?: GitleaksIgnoreEntry;
+};
+
+/** One parsed `.gitleaksignore` line. */
+export interface GitleaksIgnoreEntry {
+    /** `fingerprint` for `[commit:]file:rule:line`, `secret` for secret-value entries. */
+    kind: "fingerprint" | "secret";
+    /** 1-based line number in the ignore file. */
+    line: number;
+    /** The line as written (trimmed). Secret entries contain the secret value. */
+    raw: string;
+}
+
+/** Why a working-tree file was not scanned. */
+export type SkipReason = "io-error" | "not-found" | "permission-denied" | "symlink-loop" | "too-large";
+
+/**
+ * A working-tree file (or directory) the scan could not read. With `maxArchiveDepth`,
+ * also an archive entry (`a.zip!dir/file.env`), or an archive whose walk stopped at its
+ * byte / entry budget (`"too-large"`).
+ */
+export interface SkippedFile {
+    /** Path, relative to the scan root like `Finding.file` when possible. */
+    path: string;
+    reason: SkipReason;
+}
+
+/**
+ * Result of `scanDetailed` / `scanFilesDetailed`: the findings plus everything
+ * needed to tell a clean scan from one that didn't look at everything.
+ */
+export interface ScanResult {
+    findings: Finding[];
+    /** Files that could not be read. A scan with entries here is not proof of "no secrets". */
+    skipped: SkippedFile[];
+    /** Suppressed findings; empty unless `reportSuppressed` is on. */
+    suppressed: SuppressedFinding[];
+    /** `.gitleaksignore` entries that matched no finding in this scan. */
+    unusedIgnores: GitleaksIgnoreEntry[];
 }
 
 export interface SkippedRule {

@@ -119,12 +119,12 @@ vis migrate gitleaks --dry-run
 **Auto-migrated:**
 
 - The baseline JSON is converted to vis's allowlist shape and written into `vis.config.ts` (`secrets.allowlist`).
-- `.gitleaksignore` fingerprints (`file:rule:line`) are translated to allowlist entries.
 - Scripts matching `\bgitleaks\b` are rewritten to `vis secrets` invocations (with the original line preserved as a manual step when the mapping is ambiguous).
 - Pre-commit hooks (`.husky/pre-commit`, `.vis/hooks/pre-commit`, `.git/hooks/pre-commit`) referencing `gitleaks` are rewritten to call `vis secrets`.
 
 **Routed to manual steps:**
 
+- `.gitleaksignore` is left in place: `vis secrets` reads it at scan time (fingerprints, commit fingerprints, `secret:` entries and `*` globs), so there is nothing to convert.
 - `gitleaks.toml` (the rule definitions) is left in place — vis ships its own rule set, so the original config is preserved for reviewer comparison rather than translated.
 - Custom regex rules: review and re-add them via `secrets.extraRules` in `vis.config.ts` if needed.
 

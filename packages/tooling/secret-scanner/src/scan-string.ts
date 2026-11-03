@@ -4,7 +4,7 @@
 // surface.
 
 import { binding } from "./binding";
-import { postProcess } from "./pipeline";
+import { createSuppressionContext, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
 import type { Finding, ScanOptions } from "./types";
 
@@ -14,14 +14,17 @@ import type { Finding, ScanOptions } from "./types";
  *
  * **Note**: detection runs synchronously on the calling thread (the native
  * binding is sync for string input — scanning ~550 KB takes ~11 ms with the
- * full 1,047-rule set). The `async` signature exists because `postProcess`
+ * full ~1,340-rule set). The `async` signature exists because the pipeline
  * may await validators. For large buffers on a latency-sensitive event loop
  * (HTTP server request handler, VSCode extension main thread), chunk the
  * input yourself or offload to a worker.
  */
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
     const prepared = prepareScan(options);
-    const raw = binding.scanTextSync(content, file, prepared.nativeOptions) as Finding[];
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
 
-    return postProcess(raw, prepared, options);
+    const { findings } = await postProcessDetailed(report, prepared, options, context);
+
+    return findings;
 };

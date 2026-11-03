@@ -1,10 +1,17 @@
 #![deny(clippy::all)]
 
+mod archive;
+mod composite;
 mod config;
+mod decode;
 mod detector;
 mod entropy;
+mod finalize;
+mod lines;
 mod rules;
 mod scanner;
+mod skip;
+mod suppression;
 mod walker;
 
 use std::collections::hash_map::DefaultHasher;
@@ -18,23 +25,31 @@ use napi_derive::napi;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 
+use crate::archive::ArchiveOptions;
 use crate::config::Config;
-use crate::detector::RawFinding;
+use crate::decode::DecodeOptions;
+use crate::detector::{DetectOptions, RawFinding};
+use crate::finalize::build_report;
 use crate::rules::{CompiledRuleset, Confidence};
-use crate::scanner::scan_file;
-use crate::walker::{walk_paths, WalkOptions};
+use crate::scanner::{scan_file, scan_text_full, TextScanOptions};
+use crate::skip::{SkipReason, Skipped};
+use crate::suppression::SuppressionReason;
+use crate::walker::{walk_paths_reporting, WalkOptions};
 
 /// Capacity of the compiled-ruleset cache. Four is enough to cover the
 /// common matrix: `gitleaks` vs `kingfisher` vs `combined` × optional
 /// `min_confidence` / user preset layering.
 const RULESET_CACHE_CAPACITY: usize = 4;
 
+/// Cached rulesets, oldest first, keyed by [`hash_ruleset_key`].
+type RulesetCache = VecDeque<(u64, Arc<CompiledRuleset>)>;
+
 /// FIFO cache keyed by a content hash of `(config JSON, min_confidence)`.
 /// Eliminates the per-scan 5-9s compile cost when the same config is reused
 /// across `scan()` / `scanFiles()` / `listRules()` / repeat CLI invocations
 /// within the same process. FIFO is sufficient at cap 4; a true LRU would
 /// need an extra dep without measurable benefit at this size.
-static RULESET_CACHE: Lazy<Mutex<VecDeque<(u64, Arc<CompiledRuleset>)>>> =
+static RULESET_CACHE: Lazy<Mutex<RulesetCache>> =
     Lazy::new(|| Mutex::new(VecDeque::with_capacity(RULESET_CACHE_CAPACITY)));
 
 fn hash_ruleset_key(value: &serde_json::Value, min_confidence: Option<&str>) -> u64 {
@@ -82,6 +97,25 @@ pub struct ScanOptions {
     /// legacy behaviour. Rules with no declared confidence are treated as "low"
     /// and so are dropped whenever a higher floor is set.
     pub min_confidence: Option<String>,
+    /// Recursion depth of the decode pass (base64 / hex / percent-encoding). Each level
+    /// decodes printable-UTF-8 segments and rescans them. Default 2; 0 disables decoding.
+    pub max_decode_depth: Option<u32>,
+    /// Nesting depth for archive scanning (gitleaks `--max-archive-depth`). zip / tar /
+    /// gzip / tar.gz files, detected by magic bytes, are opened and their entries scanned;
+    /// findings use the virtual path `archive.zip!inner/file`. 1 opens top-level archives,
+    /// each extra level one more layer of nested archives (max 8). Default 0 (off).
+    pub max_archive_depth: Option<u32>,
+    /// Honour inline suppressions (`gitleaks:allow`, `secret-scanner:allow`,
+    /// `pragma: allowlist secret`, allow-start/end blocks, nextline pragma).
+    /// Default `true`; `false` lets CI audit them.
+    pub inline_allow: Option<bool>,
+    /// Return allowlisted / inline-allowed matches in `ScanReport.suppressed`
+    /// instead of dropping them. Default `false`.
+    pub report_suppressed: Option<bool>,
+    /// Commit SHA the scanned content belongs to (git-history scans). Lets allowlists
+    /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
+    /// match; without it they never do.
+    pub commit: Option<String>,
 }
 
 #[napi(object)]
@@ -106,6 +140,109 @@ pub struct Finding {
     /// Rule ids that matched the same byte span and were collapsed by the dedup
     /// pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
     pub alternate_matches: Vec<String>,
+    /// Set when the secret was found inside encoded text: the encoding chain, outermost
+    /// first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+    /// original encoded span while `match` / `secret` hold the decoded text.
+    pub decoded: Option<Vec<String>>,
+    /// Composite rules only: the findings of the rule's `required` dependencies that
+    /// satisfied it, one per required id (the nearest), in declaration order.
+    pub required_findings: Option<Vec<RequiredFinding>>,
+}
+
+/// A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
+/// Only returned with `reportSuppressed`. NAPI objects can't flatten, so the fields
+/// are repeated; keep them in sync with [`Finding`].
+#[napi(object)]
+pub struct SuppressedFinding {
+    pub rule_id: String,
+    pub description: String,
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+    pub r#match: String,
+    pub secret: String,
+    pub entropy: f64,
+    pub tags: Vec<String>,
+    /// Rule provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or a user string.
+    /// `None` for legacy rules that don't declare a source.
+    pub source: Option<String>,
+    /// Author-declared quality signal: `"low"`, `"medium"`, or `"high"`. Always set —
+    /// rules that don't declare confidence resolve to `"low"`.
+    pub confidence: String,
+    /// Rule ids that matched the same byte span and were collapsed by the dedup
+    /// pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
+    pub alternate_matches: Vec<String>,
+    /// Set when the secret was found inside encoded text: the encoding chain, outermost
+    /// first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+    /// original encoded span while `match` / `secret` hold the decoded text.
+    pub decoded: Option<Vec<String>>,
+    /// Composite rules only: the findings of the rule's `required` dependencies that
+    /// satisfied it, one per required id (the nearest), in declaration order.
+    pub required_findings: Option<Vec<RequiredFinding>>,
+    /// `"allowlist"` or `"inline-allow"`.
+    pub suppressed_by: String,
+}
+
+impl Finding {
+    fn suppressed(self, reason: SuppressionReason) -> SuppressedFinding {
+        SuppressedFinding {
+            rule_id: self.rule_id,
+            description: self.description,
+            file: self.file,
+            start_line: self.start_line,
+            end_line: self.end_line,
+            start_column: self.start_column,
+            end_column: self.end_column,
+            r#match: self.r#match,
+            secret: self.secret,
+            entropy: self.entropy,
+            tags: self.tags,
+            source: self.source,
+            confidence: self.confidence,
+            alternate_matches: self.alternate_matches,
+            decoded: self.decoded,
+            required_findings: self.required_findings,
+            suppressed_by: reason.as_str().to_string(),
+        }
+    }
+}
+
+/// A dependency finding attached to a composite-rule finding. Same file as its primary.
+#[napi(object)]
+pub struct RequiredFinding {
+    pub rule_id: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+    pub r#match: String,
+    pub secret: String,
+    pub decoded: Option<Vec<String>>,
+}
+
+/// A file the scan could not read. `reason` is `"permission-denied"`,
+/// `"not-found"` (e.g. a broken symlink passed to `scanFiles`), `"too-large"`,
+/// `"symlink-loop"` or `"io-error"`. Archive entries that could not be scanned use
+/// their virtual path (`a.zip!dir/file.env`); an archive whose walk stopped at the
+/// byte / entry budget is listed under its own path as `"too-large"`.
+#[napi(object)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Result of every scan entry point.
+#[napi(object)]
+#[derive(Default)]
+pub struct ScanReport {
+    /// Active findings.
+    pub findings: Vec<Finding>,
+    /// Allowlisted / inline-allowed matches. Empty unless `reportSuppressed`.
+    pub suppressed: Vec<SuppressedFinding>,
+    /// Content that could not be read. Always empty for `scanTextSync`.
+    pub skipped: Vec<SkippedFile>,
 }
 
 #[napi(object)]
@@ -131,35 +268,25 @@ pub struct RuleInfo {
     pub confidence: String,
 }
 
-fn redact(s: &str) -> String {
-    if s.len() <= 6 {
-        return "******".into();
+fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
+    TextScanOptions {
+        decode: DecodeOptions {
+            max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH),
+            ..Default::default()
+        },
+        detect: DetectOptions {
+            inline_allow: opts.inline_allow.unwrap_or(true),
+            report_suppressed: opts.report_suppressed.unwrap_or(false),
+            commit: opts.commit.as_deref(),
+        },
     }
-    let mut out = String::with_capacity(s.len());
-    out.push_str(&s[..3]);
-    for _ in 0..(s.len() - 6) {
-        out.push('*');
-    }
-    out.push_str(&s[s.len() - 3..]);
-    out
 }
 
-fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
-    Finding {
-        rule_id: f.rule_id,
-        description: f.description,
-        file: f.file,
-        start_line: f.start_line,
-        end_line: f.end_line,
-        start_column: f.start_column,
-        end_column: f.end_column,
-        r#match: if redact_secrets { redact(&f.r#match) } else { f.r#match },
-        secret: if redact_secrets { redact(&f.secret) } else { f.secret },
-        entropy: f.entropy as f64,
-        tags: f.tags,
-        source: f.source,
-        confidence: f.confidence.to_string(),
-        alternate_matches: f.alternate_matches,
+fn archive_options(opts: &ScanOptions, max_bytes: u64) -> ArchiveOptions {
+    ArchiveOptions {
+        max_depth: opts.max_archive_depth.unwrap_or(archive::DEFAULT_MAX_ARCHIVE_DEPTH),
+        max_entry_bytes: max_bytes,
+        ..Default::default()
     }
 }
 
@@ -206,170 +333,104 @@ fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
     Ok(arc)
 }
 
-fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
+/// Scan `files` on the configured pool, collecting findings and unreadable files.
+fn scan_paths(
+    files: &[PathBuf],
+    ruleset: &CompiledRuleset,
+    opts: &ScanOptions,
+) -> Result<(Vec<RawFinding>, Vec<Skipped>)> {
+    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
+    let concurrency = opts.concurrency.unwrap_or(0) as usize;
+    let text_opts = text_scan_options(opts);
+    let archive_opts = archive_options(opts, max_bytes);
+
+    let do_scan = || -> (Vec<RawFinding>, Vec<Skipped>) {
+        let outcomes: Vec<(Vec<RawFinding>, Vec<Skipped>)> = files
+            .par_iter()
+            .map(|p| match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
+                Ok(Some(scanned)) => (scanned.findings, scanned.skipped),
+                Ok(None) => (Vec::new(), vec![Skipped::file(p.clone(), SkipReason::TooLarge)]),
+                Err(e) => (Vec::new(), vec![Skipped::file(p.clone(), (&e).into())]),
+            })
+            .collect();
+        let mut findings = Vec::new();
+        let mut skipped = Vec::new();
+        for (f, s) in outcomes {
+            findings.extend(f);
+            skipped.extend(s);
+        }
+        (findings, skipped)
+    };
+
+    if concurrency == 0 {
+        // Use rayon's global pool — no per-call pool construction.
+        Ok(do_scan())
+    } else {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(concurrency)
+            .build()
+            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
+        Ok(pool.install(do_scan))
+    }
+}
+
+fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     let roots: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     if roots.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ScanReport::default());
     }
     let ruleset = load_ruleset(&opts)?;
-    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
-    let concurrency = opts.concurrency.unwrap_or(0) as usize;
 
     let walk_opts = WalkOptions {
         respect_gitignore: opts.respect_gitignore.unwrap_or(true),
         respect_hidden: !opts.include_hidden.unwrap_or(false),
         extra_ignores: opts.extra_ignores.clone().unwrap_or_default(),
         ignore_files: opts.ignore_files.clone().unwrap_or_default().into_iter().map(PathBuf::from).collect(),
-        threads: concurrency,
+        threads: opts.concurrency.unwrap_or(0) as usize,
     };
 
-    let files = walk_paths(&roots, &walk_opts);
+    let (files, walk_errors) = walk_paths_reporting(&roots, &walk_opts);
+    let (findings, mut skipped) = scan_paths(&files, &ruleset, &opts)?;
 
-    let do_scan = || -> Vec<RawFinding> {
-        files
-            .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
-                Ok(Some(v)) => v.into_iter(),
-                _ => Vec::new().into_iter(),
-            })
-            .collect()
-    };
+    skipped.extend(walk_errors);
 
-    let findings: Vec<RawFinding> = if concurrency == 0 {
-        // Use rayon's global pool — no per-call pool construction.
-        do_scan()
-    } else {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
-        pool.install(do_scan)
-    };
-
-    let findings = finalize_findings(findings, &roots);
-    Ok(findings.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
+    Ok(build_report(findings, skipped, &roots, redact_secrets))
 }
 
-/// Post-process raw findings: relative paths, priority-based span dedup, exact-duplicate
-/// collapse, stable ordering. Used by both `scan()` and `scanFiles()`.
-fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<RawFinding> {
-    // #1059 — rewrite `file` relative to the nearest root so baselines are portable across cwd.
-    // `scan_text_sync` passes `&[]` and opts out of the rewrite (in-memory scan has no root).
-    if !roots.is_empty() {
-        let canon_roots = canonicalize_roots(roots);
-        for f in &mut findings {
-            if let Some(rel) = relative_to_root(&f.file, &canon_roots) {
-                f.file = rel;
-            }
-        }
-    }
-
-    // Sort so findings at the same span sit next to each other: then we can dedup + apply
-    // priority in a single linear pass.
-    findings.sort_by(|a, b| {
-        (&a.file, a.start_line, a.start_column, a.start_offset, a.end_offset, std::cmp::Reverse(a.priority), &a.rule_id)
-            .cmp(&(
-                &b.file,
-                b.start_line,
-                b.start_column,
-                b.start_offset,
-                b.end_offset,
-                std::cmp::Reverse(b.priority),
-                &b.rule_id,
-            ))
-    });
-
-    // #1054 — collapse exact duplicates (same file + rule + position + secret).
-    findings.dedup_by(|a, b| {
-        a.file == b.file
-            && a.rule_id == b.rule_id
-            && a.start_line == b.start_line
-            && a.start_column == b.start_column
-            && a.end_line == b.end_line
-            && a.end_column == b.end_column
-            && a.secret == b.secret
-    });
-
-    // #1567 / #1997 — when two rules match the **same byte span** on the same file, keep the
-    // highest-priority finding. Ties fall back to deterministic rule-id order (already sorted).
-    //
-    // Behavioural note: different rules extracting different `secretGroup` slices from the
-    // same whole-match span collapse to one finding (the higher-priority rule wins). This is
-    // intentional — one span = one leak — but it means documenting a specific-over-generic
-    // preference is the right way to model priority for custom rules.
-    //
-    // Path-only findings all emit offsets (0, 0) as a sentinel; we skip the span-dedup for
-    // them so two different path-only rules on the same file can coexist (they represent
-    // different file-level concerns — e.g. `keepass-kdbx-file` + `password-manager-export-path`).
-    let mut deduped: Vec<RawFinding> = Vec::with_capacity(findings.len());
-    for f in findings {
-        let is_path_only = f.start_offset == 0 && f.end_offset == 0;
-        if let Some(last) = deduped.last_mut() {
-            if !is_path_only
-                && last.file == f.file
-                && last.start_offset == f.start_offset
-                && last.end_offset == f.end_offset
-            {
-                // Same span — the sort put the highest priority first. Record the
-                // dropped rule on the winner so reporters can show "also: id1, id2".
-                if last.rule_id != f.rule_id && !last.alternate_matches.contains(&f.rule_id) {
-                    last.alternate_matches.push(f.rule_id);
-                }
-                continue;
-            }
-        }
-        deduped.push(f);
-    }
-    deduped
-}
-
-/// Canonicalise each root and sort by descending path length so `relative_to_root` picks
-/// the deepest-matching root first (e.g. with roots `/a` and `/a/b`, a file under `/a/b/c`
-/// strips against `/a/b` → `c`, not `/a` → `b/c`).
-fn canonicalize_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut canon: Vec<PathBuf> = roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
-    canon.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
-    canon
-}
-
-fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<String> {
-    let file_path = PathBuf::from(file);
-    let file_canon = file_path.canonicalize().unwrap_or(file_path);
-    for root in roots {
-        if let Ok(stripped) = file_canon.strip_prefix(root) {
-            let s = stripped.to_string_lossy();
-            // Normalise separators so baselines are identical across platforms.
-            let out = s.replace('\\', "/");
-            return Some(out);
-        }
-    }
-    None
-}
-
+/// Walk `paths` and scan every file on the rayon pool. `skipped` lists what could not
+/// be read (permission denied, unreadable directory, I/O error, larger than
+/// `maxFileSize`).
 #[napi]
-pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+pub async fn scan_detailed(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     tokio::task::spawn_blocking(move || scan_impl(paths, opts))
         .await
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
 }
 
+/// Same as `scanDetailed`. Kept as the plain name the native-binding smoke test loads.
 #[napi]
-pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
+    scan_detailed(paths, options).await
+}
+
+/// `scanDetailed` on the calling thread.
+#[napi]
+pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     scan_impl(paths, options.unwrap_or_default())
 }
 
+/// Scan an in-memory string as if it lived at `file`. Paths are kept as given.
 #[napi]
-pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
-    let raw = crate::detector::scan_text(&ruleset, &path, &content);
+    let raw = scan_text_full(&ruleset, &path, &content, text_scan_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
-    let finalized = finalize_findings(raw, &[]);
-    Ok(finalized.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
+    Ok(build_report(raw, Vec::new(), &[], redact_secrets))
 }
 
 /// Compile a ruleset and return rules that failed to compile, with their reason.
@@ -406,117 +467,26 @@ pub fn list_rules(options: Option<ScanOptions>) -> Result<Vec<RuleInfo>> {
         .collect())
 }
 
-/// Scan a fixed list of files (e.g. from `git diff --name-only`). Bypasses the walker.
+/// Scan a fixed list of files (e.g. from `git diff --name-only`), bypassing the walker.
+/// A listed file that can't be read lands in `skipped`.
 #[napi]
-pub async fn scan_files(files: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+pub async fn scan_files_detailed(files: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     tokio::task::spawn_blocking(move || scan_files_impl(files, opts))
         .await
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
 }
 
-fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
+fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     if files.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ScanReport::default());
     }
     let ruleset = load_ruleset(&opts)?;
-    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let redact_secrets = opts.redact.unwrap_or(false);
-    let concurrency = opts.concurrency.unwrap_or(0) as usize;
-
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-
-    let do_scan = || -> Vec<RawFinding> {
-        paths
-            .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes) {
-                Ok(Some(v)) => v.into_iter(),
-                _ => Vec::new().into_iter(),
-            })
-            .collect()
-    };
-
-    let findings: Vec<RawFinding> = if concurrency == 0 {
-        do_scan()
-    } else {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
-        pool.install(do_scan)
-    };
+    let (findings, skipped) = scan_paths(&paths, &ruleset, &opts)?;
 
     // Walker is bypassed here — use cwd as the root so paths normalise relative to it.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let findings = finalize_findings(findings, &[cwd]);
-    Ok(findings.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn raw_finding(rule_id: &str, priority: i32, start: u32, end: u32) -> RawFinding {
-        RawFinding {
-            rule_id: rule_id.into(),
-            description: String::new(),
-            tags: Vec::new(),
-            file: "/tmp/fixture.txt".into(),
-            start_line: 1,
-            end_line: 1,
-            start_column: 1,
-            end_column: (end - start + 1),
-            r#match: "AKIA0123456789ABCDEF".into(),
-            secret: "AKIA0123456789ABCDEF".into(),
-            entropy: 3.5,
-            priority,
-            start_offset: start,
-            end_offset: end,
-            source: None,
-            confidence: "low",
-            alternate_matches: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn finalize_records_alternate_matches_for_same_span() {
-        // Two rules matching the exact same byte span — the higher-priority wins,
-        // the loser's rule_id lands in `alternate_matches`.
-        let winner = raw_finding("kingfisher.aws.1", 2, 10, 30);
-        let loser = raw_finding("aws-access-token", 1, 10, 30);
-
-        let out = finalize_findings(vec![winner, loser], &[]);
-
-        assert_eq!(out.len(), 1, "same-span findings should collapse to one");
-        assert_eq!(out[0].rule_id, "kingfisher.aws.1");
-        assert_eq!(out[0].alternate_matches, vec!["aws-access-token"]);
-    }
-
-    #[test]
-    fn finalize_keeps_distinct_spans_untouched() {
-        let a = raw_finding("rule.a", 0, 10, 30);
-        let b = raw_finding("rule.b", 0, 40, 60);
-
-        let out = finalize_findings(vec![a, b], &[]);
-
-        assert_eq!(out.len(), 2);
-        assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
-    }
-
-    #[test]
-    fn finalize_dedups_three_rules_at_same_span() {
-        // Three rules at the same span — the winner accumulates two alternates,
-        // losers collapse entirely (no duplicate entries in `alternate_matches`).
-        let a = raw_finding("rule.a", 3, 10, 30); // winner
-        let b = raw_finding("rule.b", 2, 10, 30);
-        let c = raw_finding("rule.c", 1, 10, 30);
-
-        let out = finalize_findings(vec![c, a, b], &[]);
-
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].rule_id, "rule.a");
-        assert_eq!(out[0].alternate_matches.len(), 2);
-        assert!(out[0].alternate_matches.contains(&"rule.b".into()));
-        assert!(out[0].alternate_matches.contains(&"rule.c".into()));
-    }
+    Ok(build_report(findings, skipped, &[cwd], redact_secrets))
 }

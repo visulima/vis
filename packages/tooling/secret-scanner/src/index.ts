@@ -4,21 +4,23 @@
 //   1. Public surface re-exports (types, fingerprint, ruleset helpers, …).
 //   2. The three top-level scan orchestrators — `scan`, `scanFiles`,
 //      `scanString` — that thread `prepareScan` → native binding →
-//      `postProcess`.
+//      `postProcessDetailed`.
 //
 // Everything else lives in a dedicated module. Keep this file thin so
 // consumers see the public surface at a glance and contributors know where
 // to go for each concern (`baseline.ts`, `pipeline.ts`, `validator/`, …).
 
+import { resolve } from "node:path";
+
 import { binding } from "./binding";
 import { resolveConfig } from "./config-loader";
-import { warnOnSkippedRules } from "./diagnostics";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
-import { postProcess } from "./pipeline";
+import { postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
+import { beginScan, finishResult } from "./scan-session";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
-import type { Finding, RuleInfo, ScanOptions, SkippedRule } from "./types";
+import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedRule } from "./types";
 
 /** Return any rules from the given config that failed to compile, with the reason. */
 export const inspectRuleset = async (options?: ScanOptions): Promise<SkippedRule[]> => {
@@ -98,17 +100,42 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
     return reportValidators(rulesArray);
 };
 
+/**
+ * Scan the given paths for secrets and report everything a caller needs to
+ * tell a clean scan from an incomplete one: `skipped` lists files and
+ * directories that could not be read (permission denied, I/O error, larger
+ * than `walk.maxFileSize`), `suppressed` the findings a baseline, allowlist,
+ * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`), and
+ * `unusedIgnores` the `.gitleaksignore` entries nothing matched.
+ */
+export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
+    const { context, prepared } = await beginScan(
+        options,
+        paths.map((path) => resolve(path)),
+    );
+    const report = await binding.scanDetailed(paths, prepared.nativeOptions);
+
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
+};
+
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
 export const scan = async (paths: string[], options?: ScanOptions): Promise<Finding[]> => {
-    const prepared = prepareScan(options);
+    const result = await scanDetailed(paths, options);
 
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
+    return result.findings;
+};
 
-    const raw = (await binding.scan(paths, prepared.nativeOptions)) as Finding[];
+/**
+ * Like {@link scanFiles}, with the diagnostics of {@link scanDetailed}. A listed
+ * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
+ */
+export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
+    const { context, prepared } = await beginScan(options, [process.cwd()]);
+    const matcher = buildIgnoreMatcher(options);
+    const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
+    const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
-    return postProcess(raw, prepared, options);
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
 };
 
 /**
@@ -117,27 +144,45 @@ export const scan = async (paths: string[], options?: ScanOptions): Promise<Find
  * honoured here in JS via the `ignore` package.
  */
 export const scanFiles = async (files: string[], options?: ScanOptions): Promise<Finding[]> => {
-    const prepared = prepareScan(options);
+    const result = await scanFilesDetailed(files, options);
 
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
-
-    const matcher = buildIgnoreMatcher(options);
-    const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
-
-    const raw = (await binding.scanFiles(filteredFiles, prepared.nativeOptions)) as Finding[];
-
-    return postProcess(raw, prepared, options);
+    return result.findings;
 };
 
-export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline } from "./baseline";
+export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline, type WriteBaselineOptions } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
-export { fingerprint, legacyFingerprint } from "./fingerprint";
-export { type GitCommitInfo, type GitFinding, type GitScanOptions, scanGitHistory } from "./git-scan";
+export { CONFIDENCE_LEVELS, DEFAULT_MAX_FILE_SIZE, MAX_ARCHIVE_DEPTH } from "./constants";
+export { baselineKeys, fingerprint, gitleaksIgnoreFingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+export { DIFF_HARDENING_FLAGS, GIT_CONFIG_OVERRIDES } from "./git-command";
+export {
+    type GitCommitInfo,
+    type GitFinding,
+    type GitScanOptions,
+    type GitScanResult,
+    type GitSkippedBlob,
+    type GitSkipReason,
+    type GitStagedScanOptions,
+    scanGitHistory,
+    scanGitHistoryDetailed,
+    scanGitStaged,
+} from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
-export { type SarifLog, toSarif, type ToSarifOptions } from "./sarif";
+export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
 export { scanString } from "./scan-string";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
-export type { Confidence, Finding, RuleInfo, ScanOptions, SkippedRule, ValidationStatus } from "./types";
+export type {
+    Confidence,
+    Finding,
+    GitleaksIgnoreEntry,
+    RequiredFinding,
+    RuleInfo,
+    ScanOptions,
+    ScanResult,
+    SkippedFile,
+    SkippedRule,
+    SkipReason,
+    SuppressedFinding,
+    SuppressionReason,
+    ValidationStatus,
+} from "./types";

@@ -1,0 +1,236 @@
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { Toolbox } from "@visulima/cerebro";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { SecretsFlags } from "../../src/commands/secrets/flags";
+import { assertArchiveFlags, assertHistoryFlags } from "../../src/commands/secrets/flags";
+import execute from "../../src/commands/secrets/handler";
+import { formatSkipped } from "../../src/secrets/format";
+
+// Fake GitHub PAT matching the bundled `github-pat` rule.
+// eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
+const FAKE_PAT = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
+// eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
+const OTHER_PAT = "ghp_Zx9Yw8Vu7Ts6Rq5P" + "o4Nm3Lk2Ji1Hg0Fe9Dc8";
+
+const GIT_REPO_ENV_KEYS = new Set(["GIT_COMMON_DIR", "GIT_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE"]);
+const hermeticGitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_REPO_ENV_KEYS.has(key)));
+
+const repos: string[] = [];
+
+const createRepo = (): { git: (...arguments_: string[]) => string; repo: string } => {
+    const repo = mkdtempSync(join(tmpdir(), "vis-secrets-git-"));
+
+    repos.push(repo);
+
+    const git = (...arguments_: string[]): string => execFileSync("git", arguments_, { cwd: repo, encoding: "utf8", env: hermeticGitEnv }).trim();
+
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test User");
+    git("config", "commit.gpgsign", "false");
+
+    return { git, repo };
+};
+
+const runSecrets = async (options: SecretsFlags, workspaceRoot: string): Promise<void> => {
+    await (execute as unknown as (toolbox: Partial<Toolbox>) => Promise<void>)({
+        argument: [],
+        fs: { access, mkdir, readdir, readFile, rm, stat, writeFile },
+        options,
+        workspaceRoot,
+    } as unknown as Partial<Toolbox>);
+};
+
+describe(assertArchiveFlags, () => {
+    it("rejects --max-archive-depth with git blob scans", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertArchiveFlags({ history: true, maxArchiveDepth: 1 });
+        }).toThrow(/--history scans git blobs as text/);
+        expect(() => {
+            assertArchiveFlags({ maxArchiveDepth: 1, staged: true });
+        }).toThrow(/--staged scans git blobs as text/);
+        expect(() => {
+            assertArchiveFlags({ maxArchiveDepth: 1, since: "main" });
+        }).not.toThrow();
+    });
+});
+
+describe(assertHistoryFlags, () => {
+    it("rejects history-only flags without --history", () => {
+        expect.assertions(2);
+
+        expect(() => {
+            assertHistoryFlags({ all: true });
+        }).toThrow(/--all only applies to git history scans/);
+        expect(() => {
+            assertHistoryFlags({ maxCommits: 5 });
+        }).toThrow(/--max-commits/);
+    });
+
+    it("rejects --all combined with --history-range", () => {
+        expect.assertions(1);
+
+        expect(() => {
+            assertHistoryFlags({ all: true, history: true, historyRange: "main..HEAD" });
+        }).toThrow(/can't be combined with --history-range/);
+    });
+
+    it("rejects --max-commits below 1 and --update-baseline with --history", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertHistoryFlags({ history: true, maxCommits: 0 });
+        }).toThrow(/--max-commits must be a positive integer \(got 0\)/);
+        expect(() => {
+            assertHistoryFlags({ history: true, maxCommits: 1.5 });
+        }).toThrow(/--max-commits/);
+        expect(() => {
+            assertHistoryFlags({ history: true, updateBaseline: true });
+        }).toThrow(/--update-baseline .* can't be combined with --history/);
+    });
+
+    it("rejects two scan targets at once", () => {
+        expect.assertions(2);
+
+        expect(() => {
+            assertHistoryFlags({ history: true, staged: true });
+        }).toThrow(/--history, --staged each pick what to scan/);
+        expect(() => {
+            assertHistoryFlags({ affected: true, since: "main" });
+        }).toThrow(/--since, --affected/);
+    });
+
+    it("accepts --all with --history", () => {
+        expect.assertions(1);
+
+        expect(() => {
+            assertHistoryFlags({ all: true, history: true });
+        }).not.toThrow();
+    });
+});
+
+describe(formatSkipped, () => {
+    it("summarises by reason and lists blobs with --verbose", () => {
+        expect.assertions(2);
+
+        const skipped = [
+            { commit: "a".repeat(40), path: "logo.png", reason: "binary" as const, sha: "b".repeat(40) },
+            { commit: "a".repeat(40), path: "gone.ts", reason: "missing" as const, sha: "c".repeat(40) },
+        ];
+
+        expect(formatSkipped(skipped, "blob", false)).toBe("2 blob(s) not scanned (binary: 1, missing: 1); use --verbose to list them");
+        expect(formatSkipped(skipped, "blob", false, { verbose: true })).toContain("  - gone.ts [missing] aaaaaaaaaa cccccccccc");
+    });
+
+    it("lists files without a commit or object id", () => {
+        expect.assertions(2);
+
+        const skipped = [{ path: "locked.ts", reason: "permission-denied" as const }];
+
+        expect(formatSkipped(skipped, "file", false)).toBe("1 file(s) not scanned (permission-denied: 1); use --verbose to list them");
+        expect(formatSkipped(skipped, "file", false, { verbose: true }).split("\n")[1]).toBe("  - locked.ts [permission-denied]");
+    });
+});
+
+describe("vis secrets git modes", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        process.exitCode = undefined;
+
+        for (const repo of repos.splice(0)) {
+            rmSync(repo, { force: true, recursive: true });
+        }
+    });
+
+    it("--staged scans the index, not the working tree", async () => {
+        expect.assertions(2);
+
+        const { git, repo } = createRepo();
+
+        writeFileSync(join(repo, "base.ts"), "export const a = 1;\n");
+        git("add", ".");
+        git("commit", "-q", "-m", "base");
+        writeFileSync(join(repo, "staged.ts"), `t = "${FAKE_PAT}"\n`);
+        git("add", "staged.ts");
+        // Remove the secret from the working tree only; the index still holds it.
+        writeFileSync(join(repo, "staged.ts"), "t = process.env.TOKEN\n");
+
+        const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+        await runSecrets({ format: "json", quiet: true, staged: true }, repo);
+
+        const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+        const findings = JSON.parse(output) as { file: string; secret: string }[];
+
+        expect(findings.map((finding) => finding.file)).toStrictEqual(["staged.ts"]);
+        expect(process.exitCode).toBe(1);
+    });
+
+    it("--staged from a subdirectory matches the root baseline and .gitleaksignore and reports root-relative paths", async () => {
+        expect.assertions(3);
+
+        const { git, repo } = createRepo();
+
+        mkdirSync(join(repo, "sub"));
+        writeFileSync(join(repo, "sub", "known.ts"), `t = "${FAKE_PAT}"\n`);
+        git("add", ".");
+
+        const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+        // Seed the baseline from the repository root: it records `sub/known.ts`.
+        await runSecrets({ baseline: ".secrets-baseline.json", quiet: true, staged: true, updateBaseline: true }, repo);
+
+        writeFileSync(join(repo, "sub", "ignored.ts"), `t = "${OTHER_PAT}"\n`);
+        writeFileSync(join(repo, "sub", "fresh.ts"), `u = "${OTHER_PAT}"\n`);
+        writeFileSync(join(repo, ".gitleaksignore"), "sub/ignored.ts:github-pat:1\n");
+        git("add", "sub");
+        stdout.mockClear();
+        // The scanner reports staged paths relative to the process cwd.
+        vi.spyOn(process, "cwd").mockReturnValue(join(repo, "sub"));
+
+        await runSecrets({ baseline: ".secrets-baseline.json", format: "json", quiet: true, staged: true }, repo);
+
+        const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+        const findings = JSON.parse(output) as { file: string }[];
+
+        expect(findings.map((finding) => finding.file)).toStrictEqual(["sub/fresh.ts"]);
+        expect(process.exitCode).toBe(1);
+
+        stdout.mockClear();
+        process.exitCode = undefined;
+        git("rm", "-q", "--cached", "sub/fresh.ts");
+        await runSecrets({ baseline: ".secrets-baseline.json", format: "json", quiet: true, staged: true }, repo);
+
+        expect(process.exitCode).toBeUndefined();
+    });
+
+    it("--history fails when git cannot read an object", async () => {
+        expect.assertions(1);
+
+        const { git, repo } = createRepo();
+
+        writeFileSync(join(repo, "app.ts"), `t = "${FAKE_PAT}"\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "add");
+
+        const oid = git("rev-parse", "HEAD:app.ts");
+        const objectFile = join(repo, ".git", "objects", oid.slice(0, 2), oid.slice(2));
+
+        chmodSync(objectFile, 0o644);
+        writeFileSync(objectFile, "corrupt");
+        vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+        await expect(runSecrets({ format: "json", history: true, quiet: true }, repo)).rejects.toMatchObject({
+            isVisUserError: true,
+            message: expect.stringMatching(/git-history secret scan failed: .*could not read object/),
+        });
+    });
+});

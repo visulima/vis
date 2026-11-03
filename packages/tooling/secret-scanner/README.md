@@ -34,20 +34,23 @@
 
 ---
 
-Production-grade secret and credential scanner for Node.js. Written in Rust, delivered as a NAPI module, and shipped with **1,058 bundled rules** — the union of [gitleaks](https://github.com/gitleaks/gitleaks)' default ruleset (MIT, 222 rules), MongoDB [Kingfisher](https://github.com/mongodb/kingfisher) (Apache-2.0, 825 rules), and 11 opt-in Visulima detectors. Plug it into pre-commit hooks, CI gates, editor extensions, or library code without shelling out to a Go binary.
+Production-grade secret and credential scanner for Node.js. Written in Rust, delivered as a NAPI module, and shipped with **1,387 bundled rules** — the union of [gitleaks](https://github.com/gitleaks/gitleaks)' default ruleset (MIT, 222 rules), MongoDB [Kingfisher](https://github.com/mongodb/kingfisher) (Apache-2.0, 1,095 rules), 22 Visulima rules for providers neither upstream covers, and 48 opt-in Visulima preset detectors. Plug it into pre-commit hooks, CI gates, editor extensions, or library code without shelling out to a Go binary.
 
 ### Detection
 
-- **1,058 rules** covering 350+ providers — gitleaks compatibility for established detectors, Kingfisher for breadth, Visulima opt-ins (`preset:weak-passwords`, `preset:password-manager`) for niches the upstreams don't cover.
+- **1,387 rules** covering 600+ providers — gitleaks compatibility for established detectors, Kingfisher for breadth, Visulima rules for gaps in both, and Visulima opt-ins (`preset:weak-passwords`, `preset:password-manager`, `preset:exposed-files`) for niches the upstreams don't cover.
 - **Confidence floors** — drop low/medium-confidence rules with `config.minConfidence`. Rules without a declared confidence resolve to `"low"` so the floor behaves as expected in CI.
 - **Pattern requirements & stopword filters** — Kingfisher-style `minLength`, `minDigits`, and `ignoreIfContains` reject documentation placeholders (`EXAMPLE`, `YOUR_KEY_HERE`) before entropy is even computed.
+- **Encoded secrets** — base64 (standard and url-safe), hex and percent-encoded values that decode to printable text are decoded and rescanned, two layers deep by default (`maxDecodeDepth`). A base64-wrapped key or a Kubernetes `Secret` `data:` value is reported at its encoded location with `Finding.decoded` naming the encoding chain.
+- **Archives** (opt-in) — with `maxArchiveDepth`, zip, tar, gzip and tar.gz files are recognised by their magic bytes and their entries scanned in memory, nested archives included. Findings report `archive.zip!inner/file.env`. Per-entry size, total-bytes, entry-count and decompression-ratio limits guard against bombs.
+- **Composite rules** — gitleaks 8.28+ `[[rules.required]]` (with `withinLines` / `withinColumns`) and `skipReport` load unchanged. A finding is reported only when its required rules match nearby; the matching dependencies are attached as `Finding.requiredFindings`.
 - **Rule priority + dedup** — overlapping matches collapse to the most specific rule; the rest are surfaced on `Finding.alternateMatches`.
 - **Source provenance** — every finding carries `source: "gitleaks" | "kingfisher" | "visulima" | <user>` so reporters and baselines can route appropriately.
 
 ### Live validation (opt-in)
 
-- **HTTP validators** for ~493 Kingfisher rules — `StatusMatch`, `WordMatch`, `JsonValid`, and `HeaderMatch` matchers run against the provider's API. Liquid-lite templating (`{{ TOKEN }}`, filters `downcase`/`upcase`/`b64enc`/`b64dec`) builds the request.
-- **Cross-rule chaining** — `dependsOnRule` pairs related secrets (AWS AKID + secret, OAuth id + secret, 106 rules total) before validation.
+- **HTTP validators** for Kingfisher's 646 HTTP-validated rules — `StatusMatch`, `WordMatch`, `JsonValid`, and `HeaderMatch` matchers run against the provider's API. Liquid-lite templating (`{{ TOKEN }}`, filters `downcase`/`upcase`/`b64enc`/`b64dec`) builds the request.
+- **Cross-rule chaining** — `dependsOnRule` pairs related secrets (AWS AKID + secret, OAuth id + secret, 142 rules total) before validation.
 - **Offline checks** — JWT formal-validity and CRC32 checksum filters short-circuit before the network is touched.
 - **Per-host rate limiting** under a global concurrency cap; `Retry-After` honoured on 429 / 503.
 - `config.onlyVerified: true` filters to provider-confirmed leaks for hard CI gating.
@@ -135,8 +138,18 @@ const leaked = await scanGitHistory({ cwd: process.cwd(), range: "HEAD~50..HEAD"
 for (const f of leaked) {
     console.log(`${f.ruleId} @ ${f.commit.sha.slice(0, 8)} (${f.commit.authorEmail}): ${f.file}`);
 }
-// Bound the walk with `range`, `since`/`until`, or `maxCommits`. Omit all
-// three to scan the entire reachable history of HEAD.
+// Bound the walk with `range`, `since`/`until`, or `maxCommits`, or pass
+// `all: true` to walk every branch and tag. Omit them all to scan the
+// entire reachable history of HEAD. A secret is reported once, at the
+// commit that introduced it; merge commits and `allowlists[].commits` are
+// honoured. `scanGitHistoryDetailed` also returns the blobs it skipped
+// (binary, too large, missing), and real git failures throw.
+
+// 3c) Scan the staged index (pre-commit): what will be committed, not the
+//     working tree.
+import { scanGitStaged } from "@visulima/secret-scanner";
+
+const { findings: stagedFindings } = await scanGitStaged({ cwd: process.cwd() });
 
 // 4) List every bundled rule
 const rules = await listRules();
@@ -201,13 +214,14 @@ await scan([process.cwd()], {
 | Source                 | Rules     | License    | Default state                                                    |
 | ---------------------- | --------- | ---------- | ---------------------------------------------------------------- |
 | gitleaks               | 222       | MIT        | enabled                                                          |
-| MongoDB Kingfisher     | 825       | Apache-2.0 | enabled                                                          |
-| Visulima preset bundle | 11        | MIT        | **disabled** — enable with `rules.enable: ["tag:preset:<name>"]` |
-| **Total**              | **1,058** |            | 1,047 active by default                                          |
+| MongoDB Kingfisher     | 1,095     | Apache-2.0 | enabled                                                          |
+| Visulima rules         | 22        | MIT        | enabled                                                          |
+| Visulima preset bundle | 48        | MIT        | **disabled** — enable with `rules.enable: ["tag:preset:<name>"]` |
+| **Total**              | **1,387** |            | 1,339 active by default                                          |
 
-The Kingfisher import is regenerated from the pinned upstream commit in `scripts/kingfisher.ref` via `pnpm run build:rules`. Eleven Kingfisher rules with `pattern_requirements.checksum:` are skipped during import (their loose patterns aren't meaningful without CRC verification — see `data/kingfisher.skipped.log`); their `dependsOnRule` metadata is preserved everywhere else for future multi-token chaining.
+The Kingfisher import is regenerated from the pinned upstream commit in `scripts/kingfisher.ref` (v1.113.0, the last 1.x release) via `pnpm run build:rules`. Rules with `pattern_requirements.checksum:` are imported and checked at scan time by the CRC filter. Fixes from open gitleaks PRs are backported through `ruleOverrides` in `data/gitleaks.patches.json`, and the Visulima rules live in `scripts/visulima-rules.toml`. A weekly workflow (`secret-scanner-rules-sync.yml`) opens a pull request when either upstream ships a new release.
 
-The opt-in HTTP validator handles 493 of Kingfisher's 510 validation-carrying rules. Native validators (`AWS`, `GCP`, `MongoDB`, `Postgres`, `Jdbc`, `Grpc`, `Raw`) and a handful of JSON / XML matchers populate `finding.validation = "skipped"` — they belong in plugin packages rather than the core, since each adds a provider SDK for ≤2 rules.
+Kingfisher ships validation metadata on 680 rules, 646 of them HTTP; the opt-in HTTP validator handles those. Native validators (`AWS`, `GCP`, `MongoDB`, `Postgres`, `Jdbc`, `Grpc`, `Raw`) and a handful of JSON / XML matchers populate `finding.validation = "skipped"` — they belong in plugin packages rather than the core, since each adds a provider SDK for ≤2 rules.
 
 ### Suppression
 
@@ -225,9 +239,7 @@ const third = "ghp_..."; // pragma: allowlist secret   # detect-secrets compat
 
 ```ts
 // gitleaks:allow-start
-const testFixtures = {
-    /* ... */
-};
+const testFixtures = {/* ... */};
 // gitleaks:allow-end
 ```
 
@@ -242,6 +254,8 @@ token: |
 **Baseline JSON**
 
 - Array of `Finding` objects (same shape `scan()` returns). Pass via `baseline: "./path.json"`, or inline as `baseline: findings` (a `Finding[]`, no file IO), or as a pre-computed `baseline: set` (`ReadonlySet<string>` of fingerprints). Findings whose content-hash fingerprint (SHA-256 over `secret + ruleId + file`, truncated to 16 hex chars) matches an entry in the baseline are suppressed. Line-shift tolerant; the legacy `file:ruleID:startLine` format continues to suppress correctly without a migration. Write one with `createBaseline(findings)` (returns the JSON string) or `writeBaseline(path, findings)`.
+- **`.gitleaksignore`**: pass `gitleaksIgnore: ".gitleaksignore"` to honour gitleaks fingerprints (`file:rule:line`, `commit:file:rule:line`), secret-value entries (`secret:…`, scoped with `rule:`/`path:`) and `*` globs. Paths are matched relative to the ignore file's directory.
+- **Audit**: `reportSuppressed: true` returns suppressed findings with a `suppressedBy` reason from `scanDetailed` / `scanFilesDetailed` / the git scans; `inlineAllow: false` turns the inline markers off.
 - `rules.include` / `rules.exclude` arrays for rule-id level filtering.
 - Use `.gitignore` to exclude paths from scanning (respected by the walker), or `walk.excludePatterns` / `walk.excludeFromFiles` for extra gitignore-syntax filters.
 
@@ -297,6 +311,12 @@ interface ScanOptions {
     baseline?: Finding[] | ReadonlySet<string> | string;
     /** Rayon worker threads. 0 / omit = auto. */
     concurrency?: number;
+    /** Path to a `.gitleaksignore` to honour. Not auto-discovered by the library. */
+    gitleaksIgnore?: string | false;
+    /** Honour inline allow markers. Default true; false audits them. */
+    inlineAllow?: boolean;
+    /** Return suppressed findings from the *Detailed scans. Default false. */
+    reportSuppressed?: boolean;
 
     config?: {
         /** Layer the user's rules on top of the bundled ruleset. Default: true. */
@@ -321,6 +341,18 @@ interface ScanOptions {
         /** Host allowlist for HTTP validators — off-allowlist hosts are skipped, not contacted. */
         validateAllowedHosts?: string[];
     };
+
+    /**
+     * Decode base64 / hex / percent-encoded segments and rescan them, recursively up to
+     * this depth (gitleaks `--max-decode-depth`). Default: 2. `0` disables decoding.
+     */
+    maxDecodeDepth?: number;
+
+    /**
+     * Open zip / tar / gzip / tar.gz files (by magic bytes) and scan their entries, nested
+     * archives up to this depth (gitleaks `--max-archive-depth`). Default: 0 (off).
+     */
+    maxArchiveDepth?: number;
 
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;
@@ -389,6 +421,9 @@ interface SkippedRule {
 declare function scan(paths: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanFiles(files: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanString(content: string, file: string, options?: ScanOptions): Promise<Finding[]>;
+// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore entries.
+declare function scanDetailed(paths: string[], options?: ScanOptions): Promise<ScanResult>;
+declare function scanFilesDetailed(files: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function listRules(options?: ScanOptions): Promise<RuleInfo[]>;
 declare function listTags(options?: ScanOptions): { tag: string; count: number }[];
 declare function inspectRuleset(options?: ScanOptions): Promise<SkippedRule[]>;
@@ -397,12 +432,14 @@ declare const bundledConfigPath: string;
 
 // Baseline helpers — write/read suppression lists.
 declare function createBaseline(findings: readonly Finding[]): string;
-declare function writeBaseline(path: string, findings: readonly Finding[]): Promise<void>;
+declare function writeBaseline(path: string, findings: readonly Finding[], options?: { mode?: number }): Promise<void>; // mode defaults to 0o600
 declare function buildBaselineSet(findings: readonly Finding[]): Set<string>;
 declare function loadBaselineSet(path: string | undefined): Promise<Set<string>>;
 
 // Report serializer — SARIF 2.1.0 for GitHub code scanning / SARIF viewers.
 declare function toSarif(findings: readonly Finding[], options?: { toolVersion?: string }): SarifLog;
+// Percent-encodes each segment of a relative path; `file://` URI for absolute ones.
+declare function toSarifUri(path: string): string;
 
 // Heuristic helpers — the same predicates the pipeline applies. Exported so
 // custom pre-filters (editor plugins, CI gates) can reuse the logic.

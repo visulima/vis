@@ -38,11 +38,16 @@ export interface RuleMeta {
     validation?: unknown;
 }
 
-export interface PreparedScan {
+/** The config-derived part of a prepared scan; memoised across calls. */
+interface PreparedConfig {
+    config: GitleaksConfig;
     excludeIds?: string[];
     includeIds?: string[];
-    nativeOptions: Native.ScanOptions;
     ruleMeta: Map<string, RuleMeta>;
+}
+
+export interface PreparedScan extends PreparedConfig {
+    nativeOptions: Native.ScanOptions;
 }
 
 /**
@@ -109,31 +114,27 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
     return map;
 };
 
-// Memoise prepared scans by the subset of options that actually shape the
-// native config + rule meta. An editor integration calling `scanString` per
-// save re-runs `resolveConfig` + `gateOptInRules` + `buildRuleMeta` over
-// ~1,058 rules on every keystroke otherwise. Inline configs are *not* cached
-// (their identity is the object reference, which we can't cheaply serialise and
-// which callers often rebuild) — the key includes a marker that forces a miss.
-const preparedScanCache = new Map<string, PreparedScan>();
+// Memoise the resolved config by the options that shape it. An editor
+// integration calling `scanString` per save re-runs `resolveConfig` +
+// `gateOptInRules` + `buildRuleMeta` over ~1,390 rules on every keystroke
+// otherwise. Inline configs are *not* cached (their identity is the object
+// reference, which we can't cheaply serialise and which callers often rebuild).
+const preparedConfigCache = new Map<string, PreparedConfig>();
 const PREPARED_CACHE_LIMIT = 32;
 
 /** Test-only: drop the prepared-scan memo so config-fixture mutations don't leak across tests. */
 export const resetPrepareScanCacheForTests = (): void => {
-    preparedScanCache.clear();
+    preparedConfigCache.clear();
 };
 
 const preparedCacheKey = (options: ScanOptions | undefined): string | undefined => {
-    // Inline configs carry an object whose contents drive the result; we don't
-    // serialise it (could be large / non-deterministic ordering), so skip the
-    // cache for that path.
     if (options?.config?.inline !== undefined) {
         return undefined;
     }
 
     // Fold the config file's mtime+size into the key so editing the file at
     // `config.path` busts this memo too — otherwise a long-lived host keeps
-    // serving a prepared scan built from the pre-edit ruleset even after
+    // serving a config built from the pre-edit ruleset even after
     // `resolveConfig`'s own cache has been invalidated.
     let configStat: { mtimeMs: number; size: number } | undefined;
 
@@ -148,23 +149,15 @@ const preparedCacheKey = (options: ScanOptions | undefined): string | undefined 
     }
 
     return JSON.stringify({
-        concurrency: options?.concurrency,
         configMtimeMs: configStat?.mtimeMs,
         configSize: configStat?.size,
         extendBundled: options?.config?.extendBundled,
-        includeHidden: options?.walk?.includeHidden,
-        maxFileSize: options?.walk?.maxFileSize,
-        minConfidence: options?.config?.minConfidence,
         path: options?.config?.path,
-        redact: options?.redact,
-        respectGitignore: options?.walk?.gitignore,
         rules: options?.rules,
-        walkExcludeFromFiles: options?.walk?.excludeFromFiles,
-        walkExcludePatterns: options?.walk?.excludePatterns,
     });
 };
 
-const buildPreparedScan = (options: ScanOptions | undefined): PreparedScan => {
+const buildPreparedConfig = (options: ScanOptions | undefined): PreparedConfig => {
     const base = resolveConfig({
         config: options?.config?.inline,
         configPath: options?.config?.path,
@@ -180,21 +173,57 @@ const buildPreparedScan = (options: ScanOptions | undefined): PreparedScan => {
     const enabledSet = new Set<string>([...(enableIds ?? []), ...(includeIds ?? [])]);
     const config = gateOptInRules(base, enabledSet);
 
+    return { config, excludeIds, includeIds, ruleMeta: buildRuleMeta(config) };
+};
+
+const preparedConfig = (options: ScanOptions | undefined): PreparedConfig => {
+    const cacheKey = preparedCacheKey(options);
+
+    if (cacheKey === undefined) {
+        return buildPreparedConfig(options);
+    }
+
+    const cached = preparedConfigCache.get(cacheKey);
+
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    const prepared = buildPreparedConfig(options);
+
+    // Bounded LRU-ish: evict the oldest entry when over the limit so a
+    // long-lived process scanning many distinct configs doesn't grow unbounded.
+    if (preparedConfigCache.size >= PREPARED_CACHE_LIMIT) {
+        const oldest = preparedConfigCache.keys().next().value;
+
+        if (oldest !== undefined) {
+            preparedConfigCache.delete(oldest);
+        }
+    }
+
+    preparedConfigCache.set(cacheKey, prepared);
+
+    return prepared;
+};
+
+/**
+ * Flatten the user's grouped options into the shape the native binding
+ * expects. `redact` is not passed on: the pipeline masks (see `mask.ts`).
+ */
+const toNativeOptions = (options: ScanOptions | undefined, config: GitleaksConfig): Native.ScanOptions => {
     return {
-        excludeIds,
-        includeIds,
-        nativeOptions: {
-            concurrency: options?.concurrency,
-            config,
-            extraIgnores: options?.walk?.excludePatterns,
-            ignoreFiles: options?.walk?.excludeFromFiles,
-            includeHidden: options?.walk?.includeHidden,
-            maxFileSize: options?.walk?.maxFileSize,
-            minConfidence: options?.config?.minConfidence,
-            redact: options?.redact,
-            respectGitignore: options?.walk?.gitignore,
-        },
-        ruleMeta: buildRuleMeta(config),
+        concurrency: options?.concurrency,
+        config,
+        extraIgnores: options?.walk?.excludePatterns,
+        ignoreFiles: options?.walk?.excludeFromFiles,
+        includeHidden: options?.walk?.includeHidden,
+        inlineAllow: options?.inlineAllow,
+        maxArchiveDepth: options?.maxArchiveDepth,
+        maxDecodeDepth: options?.maxDecodeDepth,
+        maxFileSize: options?.walk?.maxFileSize,
+        minConfidence: options?.config?.minConfidence,
+        reportSuppressed: options?.reportSuppressed,
+        respectGitignore: options?.walk?.gitignore,
     };
 };
 
@@ -202,40 +231,16 @@ const buildPreparedScan = (options: ScanOptions | undefined): PreparedScan => {
  * Resolve the effective ruleset, expand `tag:` selectors in
  * `rules.enable`/`include`/`exclude` against the loaded rules (throws on
  * unknown tags — typos surface early), union enable + include into the
- * enablement set, gate `defaultEnabled: false` rules, and flatten the
- * user's grouped options into the shape the native binding expects.
+ * enablement set, gate `defaultEnabled: false` rules, and build the native
+ * options.
  *
- * Results are memoised by the config-shaping subset of `options` (inline
+ * The resolved config is memoised by the options that shape it (inline
  * configs excepted) so repeated `scanString`/`scan` calls with the same config
- * skip the O(rules) resolve + rule-meta rebuild.
+ * skip the O(rules) resolve + rule-meta rebuild. Native options are built
+ * fresh on every call.
  */
 export const prepareScan = (options: ScanOptions | undefined): PreparedScan => {
-    const cacheKey = preparedCacheKey(options);
+    const prepared = preparedConfig(options);
 
-    if (cacheKey !== undefined) {
-        const cached = preparedScanCache.get(cacheKey);
-
-        if (cached !== undefined) {
-            return cached;
-        }
-    }
-
-    const prepared = buildPreparedScan(options);
-
-    if (cacheKey !== undefined) {
-        // Bounded LRU-ish: evict the oldest entry when over the limit so a
-        // long-lived process scanning many distinct configs doesn't grow
-        // unbounded.
-        if (preparedScanCache.size >= PREPARED_CACHE_LIMIT) {
-            const oldest = preparedScanCache.keys().next().value;
-
-            if (oldest !== undefined) {
-                preparedScanCache.delete(oldest);
-            }
-        }
-
-        preparedScanCache.set(cacheKey, prepared);
-    }
-
-    return prepared;
+    return { ...prepared, nativeOptions: toNativeOptions(options, prepared.config) };
 };

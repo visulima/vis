@@ -47,6 +47,9 @@ export default createConfig(
         rules: {
             // Extra parens are sometimes needed for clarity
             "@stylistic/no-extra-parens": "off",
+            // Prettier picks single quotes for a string that holds a double quote;
+            // accept that instead of fighting it over an escape.
+            "@stylistic/quotes": ["error", "double", { allowTemplateLiterals: "always", avoidEscape: true }],
             // Explicit member accessibility not required for internal CLI code
             "@typescript-eslint/explicit-member-accessibility": "off",
             // Explicit module boundary types not required

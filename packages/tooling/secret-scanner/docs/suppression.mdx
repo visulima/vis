@@ -85,7 +85,11 @@ const findings = await scan([process.cwd()], { baseline: ".secrets-baseline.json
 
 The fingerprint used for matching is a **content hash** — SHA-256 over `(secret, ruleId, file)` truncated to 16 hex chars. This means moving a secret up or down the file doesn't invalidate its baseline entry; edits only invalidate the entry if the secret itself, the rule that matched, or the file path changes. Legacy `<file>:<ruleID>:<startLine>` baselines are still accepted on read, so older gitleaks-style baselines keep suppressing correctly while you migrate.
 
+**Secret-group change.** A rule without `secretGroup` now reports its first non-empty capture group as the secret, as gitleaks does, instead of the whole match (which could include the key name and quotes). This changes the `secret` and the content-hash fingerprint of findings from those rules (163 bundled gitleaks rules; Kingfisher and Visulima rules all set `secretGroup`). Baseline entries written before the change still suppress: the fingerprint is also checked with `match` as the secret (`wholeMatchFingerprint`), and `vis secrets --update-baseline` replaces such entries with the new form. `.gitleaksignore` `secret:` entries written with the whole match as the value no longer match; update them to the captured value.
+
 Malformed baselines log a stderr warning and are treated as empty — scans never fail because of a broken file.
+
+`writeBaseline(path, findings)` writes the file with mode `0600` (and tightens an existing file to it), because a baseline holds every triaged secret in clear text. Pass `{ mode }` to override.
 
 ### Baseline workflow
 
@@ -95,9 +99,35 @@ Malformed baselines log a stderr warning and are treated as empty — scans neve
 4. CI and pre-commit hooks now only flag _new_ findings; triaged ones are silent.
 5. Update with `vis secrets --update-baseline` when more noise surfaces, or `--replace-baseline` to rewrite wholesale.
 
-### Why not `.gitleaksignore`?
+## 5. `.gitleaksignore`
 
-`.gitleaksignore` stores only fingerprints (`file:rule:line`). Baselines store full `Finding` objects — same suppression semantics but enough context to see _what_ was triaged, by whom, and which rule. The runtime only supports baseline JSON; the `vis migrate gitleaks` command converts legacy `.gitleaksignore` entries into the richer format.
+A gitleaks ignore file is read at scan time when you pass its path as `gitleaksIgnore` (`vis secrets` picks up `<root>/.gitleaksignore` automatically). One entry per line; `#` starts a comment.
+
+```text
+# gitleaks fingerprints
+src/config.ts:generic-api-key:12
+3f2a9c1e0b7d4a6f8e2c1b0a9d8e7f6a5b4c3d2e:src/old.ts:github-pat:4   # history findings
+# glob any component with *
+src/generated/*:generic-api-key:*
+# secret-value entries (gitleaks #2101), optionally scoped
+secret:not-a-real-token-1234
+rule:generic-api-key:secret:not-a-real-token-1234
+path:test/fixtures/*:secret:not-a-real-token-1234
+path:test/a.ts:rule:generic-api-key:secret:not-a-real-token-1234
+```
+
+- Paths are relative to the directory that holds the ignore file, whatever spelling the scan root had (`.`, an absolute path, a subdirectory, a symlinked path).
+- Commit fingerprints only match findings from `scanGitHistory`; the commit may be abbreviated (7+ hex characters) or `*`. Plain `file:rule:line` entries match history findings too.
+- `*` matches any run of characters, `/` included.
+- Secret-value entries need the real secret, so with `redact: true` the scan runs unredacted internally and masks the output afterwards.
+- Entries that matched nothing come back as `unusedIgnores` from the `*Detailed` scans (gitleaks #2130); lines that can't be parsed are ignored.
+- The ignore file itself is never reported, even when a scoped secret entry puts a real secret in it (staged and history scans read dotfiles).
+
+Fingerprints break when a line moves; prefer baselines (content-hashed) or secret-value entries for long-lived suppressions.
+
+## Auditing suppressions
+
+Pass `reportSuppressed: true` to a `*Detailed` scan to get every suppressed finding back in `suppressed`, tagged with `suppressedBy`: `"inline-allow"`, `"allowlist"` (config or commit allowlist), `"baseline"` or `"gitleaksignore"`. They never appear in `findings`. Set `inlineAllow: false` to ignore all three inline markers (same-line, block and next-line) so findings developers suppressed in code fail the scan, which is useful in CI (gitleaks #1246).
 
 ## What about path exclusion?
 

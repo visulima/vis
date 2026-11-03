@@ -63,9 +63,65 @@ const getBundledConfig = (): GitleaksConfig => {
     return bundledCache;
 };
 
+const asArray = (value: unknown): unknown[] => {
+    if (value === undefined) {
+        return [];
+    }
+
+    return Array.isArray(value) ? value : [value];
+};
+
+/**
+ * A user rule with the id of a bundled rule but without its own `regex` or `path`
+ * extends that rule instead of replacing it (gitleaks `extend` semantics, #2024):
+ * the user's fields win, `keywords`/`tags` are unioned and allowlists concatenated.
+ * That's how a gitleaks config adds `[[rules.required]]` or `skipReport` to a default
+ * rule. A user rule that brings its own `regex` or `path` still replaces the bundled one.
+ */
+const extendRule = (base: GitleaksRule, overlay: GitleaksRule): GitleaksRule => {
+    const union = (key: "keywords" | "tags"): unknown[] | undefined => {
+        const merged = [...new Set([...asArray(base[key]), ...asArray(overlay[key])])];
+
+        return merged.length > 0 ? merged : undefined;
+    };
+    const allowlists = [...asArray(base.allowlists), ...asArray(base.allowlist), ...asArray(overlay.allowlists), ...asArray(overlay.allowlist)];
+    const merged: GitleaksRule = { ...base, ...overlay, keywords: union("keywords"), tags: union("tags") as string[] | undefined };
+
+    delete merged.allowlist;
+    merged.allowlists = allowlists.length > 0 ? allowlists : undefined;
+
+    return merged;
+};
+
+const isPartialRule = (rule: GitleaksRule): boolean => rule.regex === undefined && rule.path === undefined;
+
 const mergeConfigs = (base: GitleaksConfig, overlay: GitleaksConfig): GitleaksConfig => {
-    const overlayRuleIds = new Set((overlay.rules ?? []).filter((r): r is GitleaksRule & { id: string } => typeof r?.id === "string").map((r) => r.id));
-    const baseRules = (base.rules ?? []).filter((r) => typeof r?.id !== "string" || !overlayRuleIds.has(r.id));
+    const overlayRules = new Map<string, GitleaksRule>();
+
+    for (const rule of overlay.rules ?? []) {
+        if (typeof rule?.id === "string") {
+            overlayRules.set(rule.id, rule);
+        }
+    }
+
+    const extendedIds = new Set<string>();
+    const baseRules = (base.rules ?? []).flatMap((rule) => {
+        const id = rule?.id;
+        const override = typeof id === "string" ? overlayRules.get(id) : undefined;
+
+        if (id === undefined || override === undefined) {
+            return [rule];
+        }
+
+        if (isPartialRule(override)) {
+            extendedIds.add(id);
+
+            return [extendRule(rule, override)];
+        }
+
+        return [];
+    });
+    const userRules = (overlay.rules ?? []).filter((rule) => typeof rule?.id !== "string" || !extendedIds.has(rule.id));
 
     // Allowlists *extend* rather than replace — gitleaks `extend` semantics. The
     // bundled ruleset ships several top-level global allowlists; replacing them
@@ -84,7 +140,7 @@ const mergeConfigs = (base: GitleaksConfig, overlay: GitleaksConfig): GitleaksCo
         allowlists: mergedAllowlists.length > 0 ? mergedAllowlists : undefined,
         description: overlay.description ?? base.description,
         extend: overlay.extend ?? base.extend,
-        rules: [...baseRules, ...(overlay.rules ?? [])],
+        rules: [...baseRules, ...userRules],
     };
 };
 

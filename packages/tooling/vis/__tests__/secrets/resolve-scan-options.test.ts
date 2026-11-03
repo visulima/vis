@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { SecretsFlags, VisSecretsConfig } from "../../src/commands/secrets/handler";
-import { resolveScanOptions } from "../../src/commands/secrets/handler";
+import type { SecretsFlags, VisSecretsConfig } from "../../src/commands/secrets/flags";
+import { resolveScanOptions, validateFormat } from "../../src/commands/secrets/flags";
 
 const NO_FLAGS: SecretsFlags = {};
 const ROOT = "/workspace";
@@ -81,5 +81,55 @@ describe("resolveScanOptions presets shorthand", () => {
         const opts = resolveScanOptions(NO_FLAGS, undefined, ROOT);
 
         expect(opts.baseline).toBeUndefined();
+    });
+});
+
+describe("resolveScanOptions decode and archive depth", () => {
+    it("passes --max-decode-depth and --max-archive-depth to the scanner", () => {
+        expect.assertions(2);
+
+        const opts = resolveScanOptions({ maxArchiveDepth: 2, maxDecodeDepth: 0 }, undefined, ROOT);
+
+        expect(opts.maxDecodeDepth).toBe(0);
+        expect(opts.maxArchiveDepth).toBe(2);
+    });
+
+    it("leaves the library defaults in place when the flags are absent", () => {
+        expect.assertions(2);
+
+        const opts = resolveScanOptions(NO_FLAGS, undefined, ROOT);
+
+        expect(opts.maxDecodeDepth).toBeUndefined();
+        expect(opts.maxArchiveDepth).toBeUndefined();
+    });
+
+    it("rejects negative, fractional and out-of-range depths", () => {
+        expect.assertions(4);
+
+        expect(() => resolveScanOptions({ maxDecodeDepth: -1 }, undefined, ROOT)).toThrow(/--max-decode-depth must be a non-negative integer/);
+        expect(() => resolveScanOptions({ maxDecodeDepth: Number.NaN }, undefined, ROOT)).toThrow(/--max-decode-depth/);
+        expect(() => resolveScanOptions({ maxArchiveDepth: 1.5 }, undefined, ROOT)).toThrow(/--max-archive-depth must be an integer from 0 to 8/);
+        expect(() => resolveScanOptions({ maxArchiveDepth: 9 }, undefined, ROOT)).toThrow(/--max-archive-depth/);
+    });
+
+    it("rejects an unknown --min-confidence and a non-positive --max-size as user errors", () => {
+        expect.assertions(2);
+
+        expect(() => resolveScanOptions({ minConfidence: "certain" }, undefined, ROOT)).toThrow(
+            expect.objectContaining({ isVisUserError: true, message: '--min-confidence must be one of: low, medium, high (got "certain")' }),
+        );
+        expect(() => resolveScanOptions({ maxSize: 0 }, undefined, ROOT)).toThrow(
+            expect.objectContaining({ isVisUserError: true, message: expect.stringMatching(/--max-size must be a positive number of bytes/) }),
+        );
+    });
+});
+
+describe(validateFormat, () => {
+    it("rejects an unknown --format as a user error", () => {
+        expect.assertions(1);
+
+        expect(() => validateFormat("xml")).toThrow(
+            expect.objectContaining({ isVisUserError: true, message: expect.stringMatching(/^--format must be one of/) }),
+        );
     });
 });

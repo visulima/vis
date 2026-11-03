@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { postProcess, resetPipelineWarningsForTests } from "../src/pipeline";
+import { createSuppressionContext, postProcessDetailed, resetPipelineWarningsForTests } from "../src/pipeline";
 import type { PreparedScan, RuleMeta } from "../src/prepare-scan";
 import type { Finding, ScanOptions } from "../src/types";
 
@@ -32,11 +32,20 @@ const sampleFinding = (overrides: Partial<Finding> = {}): Finding => {
 
 const preparedScan = (ruleMeta: Map<string, RuleMeta> = new Map(), include?: string[], exclude?: string[]): PreparedScan => {
     return {
+        config: {},
         excludeIds: exclude,
         includeIds: include,
         nativeOptions: {},
         ruleMeta,
     };
+};
+
+/** Run the pipeline over active findings only and return what it reports. */
+const postProcess = async (findings: Finding[], prepared: PreparedScan, options: ScanOptions | undefined): Promise<Finding[]> => {
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const result = await postProcessDetailed({ findings, suppressed: [] }, prepared, options, context);
+
+    return result.findings;
 };
 
 let tmp: string;
@@ -432,6 +441,28 @@ describe("postProcess — validation host allowlist + cancellation", () => {
             ],
         ]);
 
+    it("suppresses a commit-allowlisted finding before it reaches the validator", async () => {
+        expect.assertions(3);
+
+        let requests = 0;
+
+        server.on("request", () => {
+            requests += 1;
+        });
+
+        const options: ScanOptions = { config: { validate: true }, reportSuppressed: true };
+        const context = await createSuppressionContext(options, [process.cwd()]);
+        const finding = { ...sampleFinding({ ruleId: "rule.http" }), commit: { sha: "abc" } };
+        const result = await postProcessDetailed({ findings: [finding], suppressed: [] }, preparedScan(httpMeta()), options, {
+            ...context,
+            isCommitAllowlisted: (candidate) => candidate.commit?.sha === "abc",
+        });
+
+        expect(result.findings).toStrictEqual([]);
+        expect(result.suppressed).toStrictEqual([{ ...finding, suppressedBy: "allowlist" }]);
+        expect(requests).toBe(0);
+    });
+
     it("skips findings whose validator host is not in `validateAllowedHosts`", async () => {
         expect.assertions(1);
 
@@ -487,7 +518,15 @@ describe("postProcess — redact interactions", () => {
         // would resolve to "error". The redact guard skips it, leaving
         // `validation` untouched, and no garbage request is fired.
         const meta = new Map<string, RuleMeta>([
-            ["rule.http", { validation: { content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } }, type: "Http" } }],
+            [
+                "rule.http",
+                {
+                    validation: {
+                        content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } },
+                        type: "Http",
+                    },
+                },
+            ],
         ]);
         const findings = [sampleFinding({ ruleId: "rule.http", secret: "abc***xyz" })];
 
@@ -566,5 +605,16 @@ describe("postProcess — suppressions", () => {
         const out = await postProcess([suppressed, fresh], preparedScan(), { baseline: baselinePath });
 
         expect(out.map((f) => f.ruleId)).toStrictEqual(["fresh-leak"]);
+    });
+
+    it("accepts baseline entries that recorded the whole match as the secret", async () => {
+        expect.assertions(1);
+
+        // Written before secret-group parity: the secret was the whole match.
+        const old = sampleFinding({ match: `token = "abc123"`, ruleId: "moved", secret: `token = "abc123"`, startLine: 1 });
+        const current = { ...old, secret: "abc123", startLine: 7 };
+        const out = await postProcess([current], preparedScan(), { baseline: [old] });
+
+        expect(out).toStrictEqual([]);
     });
 });

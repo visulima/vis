@@ -38,6 +38,28 @@ const findings = await scanFiles(["src/app.ts", "src/db.ts"], {
 
 `walk.excludePatterns` / `walk.excludeFromFiles` still apply — the JS wrapper runs them through the `ignore` npm package to match the walker's semantics.
 
+### `scanDetailed(paths, options?)` / `scanFilesDetailed(files, options?)`
+
+Same scans, but they return a `ScanResult` instead of a bare array, so a caller can tell a clean scan from one that didn't read everything:
+
+```typescript
+import { scanDetailed } from "@visulima/secret-scanner";
+
+const { findings, skipped, suppressed, unusedIgnores } = await scanDetailed([process.cwd()], {
+    gitleaksIgnore: ".gitleaksignore",
+    reportSuppressed: true,
+});
+```
+
+| Field           | Contents                                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findings`      | What `scan` / `scanFiles` return.                                                                                                                                                                                                                                                                                                                         |
+| `skipped`       | `{ path, reason }` for every file or directory that was not read: `"permission-denied"` (an unreadable directory drops its whole subtree), `"not-found"` (a missing file or broken symlink passed to `scanFiles`), `"too-large"` (over `walk.maxFileSize`), `"symlink-loop"` or `"io-error"`. The walker never follows symlinks, so those are not listed. |
+| `suppressed`    | With `reportSuppressed: true`, every finding a baseline, config allowlist, inline pragma or `.gitleaksignore` hid, with `suppressedBy` (`"baseline"`, `"allowlist"`, `"inline-allow"`, `"gitleaksignore"`) and, for the last, `suppressedByEntry`. Empty otherwise.                                                                                       |
+| `unusedIgnores` | `.gitleaksignore` entries that matched nothing (`{ line, raw, kind }`). Commit-scoped entries are only checked by history scans. A scan of a subset of files (`scanFiles`) reports entries for files outside that subset as unused.                                                                                                                       |
+
+`scan` and `scanFiles` are thin wrappers that return `findings`.
+
 ### `scanString(content, file, options?)`
 
 Scan an in-memory buffer as if it lived at `file`. Useful for editor integrations and LSPs.
@@ -49,6 +71,53 @@ const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 ```
 
 Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency.
+
+## Git
+
+All git helpers shell out to the `git` binary with array arguments (no shell). Every call overrides config that changes output shape (`core.quotepath=off`, `color.ui=never`, `--no-textconv`, `--no-ext-diff`, `--no-color`), and blobs are read by object id through `git cat-file --batch`, so textconv and smudge filters (sops, git-crypt, LFS) never run. Binary blobs (a NUL in the first 8 KiB), blobs larger than `walk.maxFileSize` (10 MiB by default) and blobs missing from the object store are skipped and reported. Any other git failure, such as a corrupt object or a permission error, throws.
+
+### `scanGitHistory(options?)`
+
+Scan commit history (gitleaks `git` mode). Finds secrets that were committed and later removed. Each finding carries the commit that introduced it in `finding.commit` (`sha`, `authorName`, `authorEmail`, `date`, `message`); `file` is the path at that commit.
+
+```typescript
+import { scanGitHistory } from "@visulima/secret-scanner";
+
+const leaked = await scanGitHistory({ cwd: process.cwd(), range: "main..HEAD" });
+const everywhere = await scanGitHistory({ all: true, maxCommits: 500 });
+```
+
+| Option               | Description                                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `cwd`                | Repository directory. Defaults to `process.cwd()`.                                                                   |
+| `range`              | Raw rev-list argument (`main..feature`, `HEAD~10..HEAD`, a ref). Takes precedence over `since`/`until`.              |
+| `since` / `until`    | Produce `since..until` (`until` defaults to `HEAD`).                                                                 |
+| `all`                | Walk every ref (branches, tags, remotes) like `git rev-list --all`. Cannot be combined with `range`/`since`/`until`. |
+| `maxCommits`         | Cap the number of commits walked, newest first.                                                                      |
+| …every `ScanOptions` | Rules, heuristics, baseline, redact and validate apply per blob.                                                     |
+
+How commits are read:
+
+- **Each finding is reported once.** Every changed blob is scanned in full, so a value added to an existing multi-line block is still caught. A finding is kept only when the same rule and secret were not in the parent's version of that blob. A secret in a long-lived file is reported at the commit that introduced it, not again on every later commit that touches the file. Renames are followed: the parent version is read from the old path. With `range`, `since`/`until` or `maxCommits`, a secret introduced before the first walked commit is therefore not reported, even when a commit in range edits its file; scan the full history (or that commit) to find it.
+- **Merge commits are scanned.** A merge is diffed against its first parent, and a finding is kept only when none of its parents had it. A secret added while resolving a conflict is reported at the merge commit. A secret merged cleanly from a side branch is reported only at the side-branch commit.
+- **Commit allowlists apply.** A global `allowlists[].commits` entry skips those commits entirely. With `targetRules`, or inside a rule's own allowlist, it drops only that rule's findings in those commits. SHAs must be the full 40 characters and are compared case-insensitively. An allowlist with `condition = "AND"` that also lists `paths`, `regexes` or `stopwords` applies only to findings in a listed commit that also match those criteria.
+- Submodule pointers and deleted files are not scanned.
+
+### `scanGitHistoryDetailed(options?)`
+
+Same as `scanGitHistory`, but returns `{ findings, skipped, suppressed, unusedIgnores }` (see [`scanDetailed`](#scandetailedpaths-options--scanfilesdetailedfiles-options); a commit-allowlisted finding is reported as `suppressedBy: "allowlist"`). `skipped` lists every blob that was not inspected, as `{ path, sha, commit, reason }` with `reason` one of `"binary"`, `"too-large"` or `"missing"`. Use it to tell a clean history from one that was only partly read.
+
+### `scanGitStaged(options?)`
+
+Scan the content staged in the git index, which is what the next commit will contain, rather than the working-tree files. A staged secret is found even after it was deleted from the working tree, and unstaged edits are ignored. Inside a `pre-commit` hook, the index git passes to the hook (`GIT_INDEX_FILE`) is the one read.
+
+```typescript
+import { scanGitStaged } from "@visulima/secret-scanner";
+
+const { findings, skipped, suppressed, unusedIgnores } = await scanGitStaged({ cwd: process.cwd() });
+```
+
+Findings carry the absolute working-tree path, like `scanFiles`. `walk.excludePatterns` / `walk.excludeFromFiles` apply relative to `cwd`.
 
 ## Introspection
 
@@ -68,7 +137,7 @@ for (const rule of rules) {
 
 ### `inspectRuleset(options?)`
 
-Return the rules that failed to compile (invalid regex, bad allowlist, etc.). Rules that compile are silently skipped otherwise, which makes this the canonical way to validate a config before scanning.
+Return the rules that failed to compile (invalid regex, bad allowlist, etc.) or were dropped because a `required` rule id isn't loaded. Rules that compile are silently skipped otherwise, which makes this the canonical way to validate a config before scanning.
 
 ```typescript
 import { inspectRuleset } from "@visulima/secret-scanner";
@@ -181,15 +250,30 @@ interface Finding {
     tags: string[];
     confidence: Confidence;
     alternateMatches: string[];
+    decoded?: string[];
+    requiredFindings?: RequiredFinding[];
     source?: string;
     validation?: ValidationStatus;
 }
+
+interface RequiredFinding {
+    ruleId: string;
+    startLine: number;
+    endLine: number;
+    startColumn: number;
+    endColumn: number;
+    match: string;
+    secret: string;
+    decoded?: string[];
+}
 ```
 
-- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory.
+- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory. A finding inside an archive (see `maxArchiveDepth`) uses the virtual path `<archive>!<entry>`, e.g. `bundle.zip!config/app.env`.
 - Columns are **1-based and count Unicode code points**, not bytes — consumable by editor/LSP tooling.
 - `confidence` resolves to `"low"` when the rule declares none (every bundled gitleaks rule). Use it alongside `config.minConfidence` to filter.
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.
+- `decoded` is present only when the secret was found inside encoded text (see `maxDecodeDepth`). It lists the encoding chain, outermost first, e.g. `["base64"]` or `["base64", "hex"]`. `match` and `secret` hold the decoded value; line and column point at the original encoded span.
+- `requiredFindings` is present only on findings of composite rules (`required` in the rule config, see [Composite rules](./configuration#composite-rules-required-skipreport)). It holds, for each required rule id, the nearest finding in the same file that satisfied the rule. `match` and `secret` are redacted with `redact: true`.
 - `source` tags the rule's provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or whatever the user declared.
 - `validation` is set only when `config.validate: true`. See [`ValidationStatus`](#validationstatus) below.
 

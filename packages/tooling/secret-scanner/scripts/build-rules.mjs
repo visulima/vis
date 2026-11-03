@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 
 import { analyzeOverlap } from "./analyze-overlap.mjs";
 import { convertKingfisherRule } from "./kingfisher-converter.mjs";
+import { readRefFile } from "./ref-file.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(here, "..");
@@ -95,6 +96,56 @@ const patchUpstreamRegexes = (config) => {
     };
 };
 
+// Field-level fixes for individual upstream rules, from `ruleOverrides` in
+// `data/gitleaks.patches.json`. Unlike a full rule in the overlay's `rules`, an
+// override only names the fields it changes, so the rest of the rule keeps
+// tracking upstream across ref bumps. Each entry carries an `upstream` link to
+// the gitleaks PR it applies. An override for a rule that no longer exists
+// fails the build; one that upstream has already applied prints a warning so
+// it can be dropped. `allowlists` is appended to the rule's own allowlists
+// (rule-level, so path-only entries work); every other field replaces.
+const OVERRIDABLE_FIELDS = new Set(["allowlists", "description", "entropy", "keywords", "path", "priority", "regex", "secretGroup"]);
+const OVERRIDE_META_FIELDS = new Set(["id", "upstream"]);
+
+const applyRuleOverrides = (config, overrides) => {
+    if (!Array.isArray(overrides) || overrides.length === 0) {
+        return config;
+    }
+
+    const rules = [...config.rules];
+
+    for (const override of overrides) {
+        const index = rules.findIndex((rule) => rule?.id === override?.id);
+
+        if (index === -1) {
+            throw new Error(`gitleaks.patches.json: ruleOverrides entry for unknown rule "${override?.id}" — upstream removed or renamed it`);
+        }
+
+        const fields = Object.keys(override).filter((key) => !OVERRIDE_META_FIELDS.has(key));
+        const unknown = fields.filter((key) => !OVERRIDABLE_FIELDS.has(key));
+
+        if (unknown.length > 0) {
+            throw new Error(`gitleaks.patches.json: ruleOverrides "${override.id}" sets unsupported field(s): ${unknown.join(", ")}`);
+        }
+
+        const current = rules[index];
+        const replaced = fields.filter((key) => key !== "allowlists");
+
+        if (replaced.length > 0 && replaced.every((key) => JSON.stringify(current[key]) === JSON.stringify(override[key]))) {
+            // eslint-disable-next-line no-console -- build-time hint
+            console.warn(`secret-scanner: ruleOverrides "${override.id}" matches upstream already (${override.upstream ?? "no link"}); drop it`);
+        }
+
+        rules[index] = {
+            ...current,
+            ...Object.fromEntries(replaced.map((key) => [key, override[key]])),
+            ...(Array.isArray(override.allowlists) ? { allowlists: [...(current.allowlists ?? []), ...override.allowlists] } : {}),
+        };
+    }
+
+    return { ...config, rules };
+};
+
 // `--minify` (or `SECRET_SCANNER_MINIFY=1`) is set by the prod/native release build
 // scripts. It only applies to the shipped `ruleset.json`; the gitleaks/kingfisher
 // intermediates stay pretty-printed so ref bumps produce reviewable diffs.
@@ -135,35 +186,6 @@ const tagRuleSource = (config, source) => {
 // ---------------------------------------------------------------------------
 // Shared: pinned upstream checkouts
 // ---------------------------------------------------------------------------
-
-const LINE_SPLIT_PATTERN = /\r?\n/;
-
-const readRefFile = (path) => {
-    const raw = readText(path);
-    const entries = {};
-
-    for (const line of raw.split(LINE_SPLIT_PATTERN)) {
-        const trimmed = line.trim();
-
-        if (!trimmed || trimmed.startsWith("#")) {
-            continue;
-        }
-
-        const eq = trimmed.indexOf("=");
-
-        if (eq === -1) {
-            continue;
-        }
-
-        entries[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-    }
-
-    if (!entries.ref || !entries.sha) {
-        throw new Error(`invalid ref file (${path}): expected ref=... and sha=... lines`);
-    }
-
-    return entries;
-};
 
 const ensureCheckout = ({ cacheDir, expectedSha, label, ref, repo }) => {
     const headFile = resolve(cacheDir, ".git", "HEAD");
@@ -226,7 +248,8 @@ const copyLicenseArtifacts = ({ cacheDir, outputs }) => {
 // The gitleaks project (MIT) publishes its canonical rule config at
 // `config/gitleaks.toml`. We fetch it at build time from a pinned commit (see
 // `scripts/gitleaks.ref`), merge it with `data/gitleaks.patches.json` (our additive
-// overlay for FP fixes), apply surgical upstream-regex fixes, tag every rule with
+// overlay for FP fixes plus per-rule `ruleOverrides` backporting open upstream PRs),
+// apply surgical upstream-regex fixes, tag every rule with
 // `source: "gitleaks"`, and emit `data/gitleaks.json`. The checkout lands in
 // `node_modules/.cache/gitleaks-<sha>/` and is reused across builds.
 // Set `SECRET_SCANNER_SKIP_GITLEAKS_FETCH=1` to reuse the previously generated
@@ -292,7 +315,7 @@ const buildGitleaks = (patchesOverlay) => {
 
     const upstream = { ...upstreamRest, provenance };
 
-    return tagRuleSource(patchUpstreamRegexes(mergeOverlay(upstream, patchesOverlay)), "gitleaks");
+    return tagRuleSource(applyRuleOverrides(patchUpstreamRegexes(mergeOverlay(upstream, patchesOverlay)), patchesOverlay?.ruleOverrides), "gitleaks");
 };
 
 // ---------------------------------------------------------------------------
@@ -458,6 +481,16 @@ for (const entry of readdirSync(presetsSourceDir)) {
     }
 }
 
+// 1b. Visulima default rules from scripts/visulima-rules.toml: providers and
+//     credential shapes neither upstream covers. Unlike presets they keep
+//     `defaultEnabled` (on unless a rule says otherwise) and carry no preset tag.
+//     They only go into the shipped ruleset, never the upstream intermediates.
+const visulimaRulesPath = resolve(here, "visulima-rules.toml");
+const visulimaRuleSource = existsSync(visulimaRulesPath) ? (readToml(visulimaRulesPath).rules ?? []) : [];
+const visulimaRules = visulimaRuleSource.map((rule) => {
+    return { ...rule, source: rule.source ?? "visulima" };
+});
+
 // Strip preset rules from cached intermediates. When `SECRET_SCANNER_SKIP_*_FETCH=1`
 // reuses a previous build's `gitleaks.json` / `kingfisher.json`, those files already
 // have presets baked in — re-appending below would duplicate them on every rebuild.
@@ -490,7 +523,7 @@ if (kingfisherCore) {
 }
 
 // 4. The one ruleset we actually ship to consumers. Union of gitleaks + kingfisher
-//    + opt-in presets, gitleaks allowlists preserved. Hit dedup between sources
+//    + Visulima default rules + opt-in presets, gitleaks allowlists preserved. Hit dedup between sources
 //    happens at scan time via span+priority, not here.
 if (kingfisherCore) {
     const ruleset = {
@@ -499,7 +532,7 @@ if (kingfisherCore) {
         provenance: {
             sources: [gitleaksCore.provenance, kingfisherCore.provenance].filter(Boolean),
         },
-        rules: [...gitleaksCoreRules, ...kingfisherCoreRules, ...presetRules],
+        rules: [...gitleaksCoreRules, ...kingfisherCoreRules, ...visulimaRules, ...presetRules],
     };
 
     writeJson(resolve(dataDir, "ruleset.json"), ruleset, { minify: minifyShipped });

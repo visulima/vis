@@ -32,3 +32,30 @@ export const fingerprint = (finding: Finding): string => {
  * `vis secrets --update-baseline`.
  */
 export const legacyFingerprint = (finding: Finding): string => `${finding.file}:${finding.ruleId}:${String(finding.startLine)}`;
+
+/**
+ * Content-hash fingerprint computed with the whole `match` as the secret. Before
+ * gitleaks secret-group parity, a rule without `secretGroup` reported the whole
+ * match as its secret; it now reports the first non-empty capture group, as
+ * gitleaks does. Baselines written before that change hold the old secret, so
+ * suppression and baseline diffs also accept this form. Equal to
+ * {@link fingerprint} when the secret is the whole match.
+ */
+export const wholeMatchFingerprint = (finding: Finding): string => fingerprint({ ...finding, secret: finding.match });
+
+/**
+ * Every key a baseline entry may be stored under for `finding`: the content
+ * hash, the legacy line-based form and the whole-match content hash. A finding
+ * is baselined when the baseline holds any of them.
+ */
+export const baselineKeys = (finding: Finding): string[] => [fingerprint(finding), legacyFingerprint(finding), wholeMatchFingerprint(finding)];
+
+/**
+ * The gitleaks fingerprint of a finding as `.gitleaksignore` accepts it:
+ * `file:rule:line`, prefixed with the full commit SHA for git history findings.
+ */
+export const gitleaksIgnoreFingerprint = (finding: Finding & { commit?: { sha: string } }): string => {
+    const base = legacyFingerprint(finding);
+
+    return finding.commit === undefined ? base : `${finding.commit.sha}:${base}`;
+};

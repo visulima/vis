@@ -5,6 +5,9 @@
 // projection — feed the output straight to GitHub code-scanning upload, or any
 // SARIF-aware viewer.
 
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { fingerprint, legacyFingerprint } from "./fingerprint";
 import type { Finding } from "./types";
 
@@ -64,6 +67,25 @@ export interface ToSarifOptions {
 }
 
 /**
+ * Turn a finding path into a SARIF `artifactLocation.uri` (a URI reference,
+ * SARIF §3.4.3). Absolute paths become `file://` URIs; relative paths keep
+ * their shape with forward slashes and each segment percent-encoded, so a
+ * space, `#`, `%` or `?` can't break consumers such as GitHub code scanning
+ * (gitleaks #1827). Plain ASCII paths come out unchanged.
+ */
+export const toSarifUri = (path: string): string => {
+    if (isAbsolute(path)) {
+        return pathToFileURL(path).href;
+    }
+
+    return path
+        .replaceAll("\\", "/")
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
+};
+
+/**
  * Convert findings into a SARIF 2.1.0 log. Every finding becomes a
  * `level: "error"` result; the rule catalogue (`tool.driver.rules`) is deduped
  * from the findings so viewers can group by rule. `partialFingerprints` carries
@@ -95,7 +117,7 @@ export const toSarif = (findings: ReadonlyArray<Finding>, options: ToSarifOption
             locations: [
                 {
                     physicalLocation: {
-                        artifactLocation: { uri: finding.file },
+                        artifactLocation: { uri: toSarifUri(finding.file) },
                         region: {
                             endColumn: finding.endColumn,
                             endLine: finding.endLine,

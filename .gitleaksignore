@@ -1,0 +1,4 @@
+# @visulima/secret-scanner's bundled rule data: regexes, examples and (with
+# decoding on) base64 PEM-header fragments inside Kingfisher regexes. Rule
+# definitions, not secrets. Read by `vis secrets` at the workspace root.
+packages/tooling/secret-scanner/data/*:*:*

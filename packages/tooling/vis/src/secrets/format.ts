@@ -3,7 +3,8 @@ import { pathToFileURL } from "node:url";
 import { cyan, dim, green, red, yellow } from "@visulima/colorize";
 import { readFileSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding, GitFinding, RuleInfo } from "@visulima/secret-scanner";
+import type { Finding, GitFinding, GitSkippedBlob, RuleInfo, SkippedFile } from "@visulima/secret-scanner";
+import { toSarifUri as toRelativeSarifUri } from "@visulima/secret-scanner";
 
 const CONTEXT_RADIUS = 1;
 
@@ -38,21 +39,24 @@ const caretFor = (line: string, col: number, len: number): string => {
     return `${prefix}${"^".repeat(Math.max(1, len))}`;
 };
 
+const plain = (text: string): string => text;
+
+/** The colours the text views use, or pass-throughs when colour is off. */
+const palette = (useColor: boolean): Record<"cyan" | "dim" | "green" | "red" | "yellow", (text: string) => string> => {
+    if (useColor) {
+        return { cyan, dim, green, red, yellow };
+    }
+
+    return { cyan: plain, dim: plain, green: plain, red: plain, yellow: plain };
+};
+
 /** Pretty grouped text output with file headers, context lines, and carets. */
 export const formatText = (findings: Finding[], root: string, useColor: boolean, options: { redact?: boolean } = {}): string => {
     if (findings.length === 0) {
         return useColor ? dim("No secrets detected.") : "No secrets detected.";
     }
 
-    const color = useColor
-        ? { cyan, dim, green, red, yellow }
-        : {
-            cyan: (s: string) => s,
-            dim: (s: string) => s,
-            green: (s: string) => s,
-            red: (s: string) => s,
-            yellow: (s: string) => s,
-        };
+    const color = palette(useColor);
     const lines: string[] = [];
     const byFile = groupByFile(findings);
 
@@ -147,15 +151,7 @@ export const formatHistoryText = (findings: GitFinding[], useColor: boolean, opt
         return useColor ? dim("No secrets detected in git history.") : "No secrets detected in git history.";
     }
 
-    const color = useColor
-        ? { cyan, dim, green, red, yellow }
-        : {
-            cyan: (s: string) => s,
-            dim: (s: string) => s,
-            green: (s: string) => s,
-            red: (s: string) => s,
-            yellow: (s: string) => s,
-        };
+    const color = palette(useColor);
 
     // Group by commit, preserving first-seen (newest-first) order.
     const byCommit = new Map<string, GitFinding[]>();
@@ -195,13 +191,46 @@ export const formatHistoryText = (findings: GitFinding[], useColor: boolean, opt
 };
 
 /**
- * Convert an absolute path to a `file://` URI (SARIF-compliant) or keep a relative
- * path with forward-slash separators. Windows drive letters are handled by
- * `url.pathToFileURL`.
+ * Summary of files or git blobs a scan did not inspect, grouped by reason.
+ * With `verbose`, every entry is listed (blobs with their commit and object id).
  */
-const toSarifUri = (path: string, root: string): string => {
+export const formatSkipped = (
+    skipped: ReadonlyArray<GitSkippedBlob | SkippedFile>,
+    unit: "blob" | "file",
+    useColor: boolean,
+    options: { verbose?: boolean } = {},
+): string => {
+    const counts = new Map<string, number>();
+
+    for (const entry of skipped) {
+        counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+    }
+
+    const breakdown = [...counts].map(([reason, count]) => `${reason}: ${String(count)}`).join(", ");
+    const summary = `${String(skipped.length)} ${unit}(s) not scanned (${breakdown})${options.verbose ? "" : "; use --verbose to list them"}`;
+    const lines = [useColor ? yellow(summary) : summary];
+
+    if (options.verbose) {
+        for (const entry of skipped) {
+            const where = "sha" in entry ? ` ${entry.commit === undefined ? "" : `${entry.commit.slice(0, 10)} `}${entry.sha.slice(0, 10)}` : "";
+            const detail = `  - ${entry.path} [${entry.reason}]${where}`;
+
+            lines.push(useColor ? dim(detail) : detail);
+        }
+    }
+
+    return lines.join("\n");
+};
+
+/**
+ * Convert an absolute path to a `file://` URI (SARIF-compliant) or a relative
+ * path to a URI reference with forward slashes and each segment
+ * percent-encoded, so spaces, `#` and `%` don't break GitHub's SARIF upload.
+ * Windows drive letters are handled by `url.pathToFileURL`.
+ */
+export const toSarifUri = (path: string, root: string): string => {
     if (!isAbsolute(path)) {
-        return path.replaceAll("\\", "/");
+        return toRelativeSarifUri(path);
     }
 
     try {
