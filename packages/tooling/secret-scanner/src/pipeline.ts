@@ -39,7 +39,7 @@ const VALIDATOR_CONCURRENCY = 8;
  * - `potentialUuid` — skip standard UUID-shaped secrets
  * - `notAlphanumericString` — skip `*****` / `------` / `//////`
  */
-const applyHeuristicFilters = (findings: Finding[], options: ScanOptions | undefined): Finding[] => {
+const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOptions | undefined): F[] => {
     const redact = options?.redact === true;
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
@@ -101,7 +101,7 @@ const overlaps = (a: Finding, b: Finding): boolean =>
  * two never share a span. Compares match positions rather than secrets so it
  * also works when `redact` has masked them.
  */
-const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
+const dropShadowedGenericFindings = <F extends Finding>(findings: F[]): F[] => {
     const othersByFile = new Map<string, Finding[]>();
 
     for (const finding of findings) {
@@ -122,7 +122,7 @@ const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
     return findings.filter((finding) => finding.ruleId !== GENERIC_RULE_ID || !isShadowed(finding));
 };
 
-const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, excludeIds: string[] | undefined): Finding[] => {
+const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] | undefined, excludeIds: string[] | undefined): F[] => {
     const hasInclude = includeIds && includeIds.length > 0;
     const hasExclude = excludeIds && excludeIds.length > 0;
 
@@ -154,7 +154,7 @@ const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, 
  * means we couldn't evaluate the template — those findings stay (conservative),
  * mirroring Kingfisher's `skip_if_missing: true` default.
  */
-const applyChecksumFilter = (findings: Finding[], ruleMeta: Map<string, RuleMeta>, redact: boolean): Finding[] => {
+const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>, redact: boolean): F[] => {
     // The checksum verdict is computed from `finding.match`; under `redact: true`
     // the match is masked before the pipeline runs, so `checkChecksum` would
     // evaluate garbage and drop valid findings. Skip the filter when redacting.
@@ -438,33 +438,21 @@ export interface ProcessedFindings {
     suppressed: SuppressedFinding[];
 }
 
-/** Allowlisted / inline-allowed match the native layer returned under `reportSuppressed`. */
-export const isNativeSuppressed = (finding: Finding): boolean => (finding as Native.Finding).suppressedBy !== undefined;
-
 /**
- * Shared post-processing pipeline for every scan variant. Takes the raw
- * native findings plus the prepared-scan bundle and returns the findings to
- * report, and (with `reportSuppressed`) the ones that were suppressed.
+ * Shared post-processing pipeline for every scan variant. Takes the native
+ * report (active findings, plus the allowlisted / inline-allowed ones under
+ * `reportSuppressed`) and the prepared-scan bundle, and returns the findings
+ * to report and (with `reportSuppressed`) the ones that were suppressed.
  */
 export const postProcessDetailed = async (
-    raw: Finding[],
+    report: ProcessedFindings,
     prepared: PreparedScan,
     options: ScanOptions | undefined,
     context?: SuppressionContext,
 ): Promise<ProcessedFindings> => {
     const suppression = context ?? (await createSuppressionContext(options, [process.cwd()]));
-    const active: Finding[] = [];
-    const nativeSuppressed: Finding[] = [];
 
-    for (const finding of raw) {
-        if (isNativeSuppressed(finding)) {
-            nativeSuppressed.push(finding);
-        } else {
-            active.push(finding);
-        }
-    }
-
-    const preValidation = (findings: Finding[]): Finding[] => {
+    const preValidation = <F extends Finding>(findings: F[]): F[] => {
         const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
         const heuristicsFiltered = applyHeuristicFilters(filtered, options);
 
@@ -474,8 +462,11 @@ export const postProcessDetailed = async (
     // Active findings shadow generic ones among themselves only, so turning on
     // `reportSuppressed` never changes `findings`. A suppressed generic finding is
     // also dropped when any finding overlaps it.
-    const shadowFree = dropShadowedGenericFindings(active);
-    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...nativeSuppressed]).filter((finding) => isNativeSuppressed(finding));
+    const shadowFree = dropShadowedGenericFindings(report.findings);
+    const nativeSuppressed = new Set<Finding>(report.suppressed);
+    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...report.suppressed]).filter((finding): finding is SuppressedFinding =>
+        nativeSuppressed.has(finding),
+    );
 
     const validated = await applyValidation(preValidation(shadowFree), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
@@ -496,9 +487,7 @@ export const postProcessDetailed = async (
         // Mark matching ignore entries used; the native reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
-        const { suppressedBy, ...rest } = finding as Native.Finding;
-
-        suppressed.push(toSuppressed(rest as Finding, suppressedBy as SuppressionReason));
+        suppressed.push(finding);
     }
 
     const mask = suppression.maskSecrets ? maskFinding : <F extends Finding>(finding: F): F => finding;
@@ -511,16 +500,16 @@ export const postProcessDetailed = async (
 
 /**
  * Shared post-processing pipeline for every scan variant. Consumers pass the
- * raw native findings plus the prepared-scan bundle; this returns the final
+ * native report plus the prepared-scan bundle; this returns the final
  * filtered list ready for return to the caller.
  */
 export const postProcess = async (
-    raw: Finding[],
+    report: ProcessedFindings,
     prepared: PreparedScan,
     options: ScanOptions | undefined,
     context?: SuppressionContext,
 ): Promise<Finding[]> => {
-    const result = await postProcessDetailed(raw, prepared, options, context);
+    const result = await postProcessDetailed(report, prepared, options, context);
 
     return result.findings;
 };

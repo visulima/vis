@@ -33,7 +33,7 @@ import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
-import { createSuppressionContext, isNativeSuppressed, nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { prepareScan } from "./prepare-scan";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
@@ -240,17 +240,26 @@ const blobAt = async (commit: string, path: string, cwd: string): Promise<string
 
 const presenceKey = (finding: Finding): string => `${finding.ruleId}\0${finding.secret}`;
 
-/** Key under which a parent's match is remembered: suppressed matches are kept apart. */
-const parentKey = (finding: Finding): string => (isNativeSuppressed(finding) ? `suppressed\0${presenceKey(finding)}` : presenceKey(finding));
+const suppressedKey = (finding: Finding): string => `suppressed\0${presenceKey(finding)}`;
+
+/** Keys under which a parent's matches are remembered: suppressed matches are kept apart. */
+const parentKeys = (report: ProcessedFindings): Set<string> =>
+    new Set([...report.findings.map((finding) => presenceKey(finding)), ...report.suppressed.map((finding) => suppressedKey(finding))]);
 
 /**
- * Whether `finding` was already in a parent blob. A real finding only counts
- * as present when the parent had it as a real finding too: a secret whose
- * allow comment was removed must be reported. A suppressed one (only returned
- * under `reportSuppressed`) was present either way.
+ * Drop the matches a parent blob already had. A real finding only counts as
+ * present when the parent had it as a real finding too: a secret whose allow
+ * comment was removed must be reported. A suppressed one (only returned under
+ * `reportSuppressed`) was present either way.
  */
-const wasPresent = (finding: Finding, parent: ReadonlySet<string>): boolean =>
-    parent.has(presenceKey(finding)) || (isNativeSuppressed(finding) && parent.has(`suppressed\0${presenceKey(finding)}`));
+const withoutPresent = (report: ProcessedFindings, parent: ReadonlySet<string>): ProcessedFindings => {
+    return {
+        findings: report.findings.filter((finding) => !parent.has(presenceKey(finding))),
+        suppressed: report.suppressed.filter((finding) => !parent.has(presenceKey(finding)) && !parent.has(suppressedKey(finding))),
+    };
+};
+
+const isEmpty = (report: ProcessedFindings): boolean => report.findings.length === 0 && report.suppressed.length === 0;
 
 const spanKey = (finding: Finding): string =>
     `${finding.ruleId}\0${String(finding.startLine)}:${String(finding.startColumn)}:${String(finding.endLine)}:${String(finding.endColumn)}`;
@@ -311,8 +320,8 @@ class BlobScanner {
      * Native detection with real (unredacted) secrets and no post-processing.
      * `commit` lets AND allowlists that list `commits` match.
      */
-    public detectRaw(content: string, path: string, commit?: string): Finding[] {
-        return binding.scanTextSync(content, path, { ...this.#rawNativeOptions, commit }) as Finding[];
+    public detectRaw(content: string, path: string, commit?: string): ProcessedFindings {
+        return binding.scanTextSync(content, path, { ...this.#rawNativeOptions, commit });
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */
@@ -325,7 +334,7 @@ class BlobScanner {
         }
 
         const content = await this.readText(oid, path, undefined, false);
-        const keys = new Set(content === undefined || content === "" ? [] : this.detectRaw(content, path).map((finding) => parentKey(finding)));
+        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detectRaw(content, path));
 
         this.#remember(cacheKey, keys);
 
@@ -338,25 +347,32 @@ class BlobScanner {
      * are kept, so masking stays the native layer's job. `commit` is attached
      * before suppression so commit-scoped `.gitleaksignore` entries can match.
      */
-    public async finish(content: string, path: string, selected: Finding[], commit?: GitCommitInfo): Promise<ProcessedFindings> {
-        let findings = selected;
+    public async finish(content: string, path: string, selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
+        let report = selected;
         const nativeOptions = nativeOptionsFor(this.#prepared, this.#context);
 
         if (nativeOptions.redact === true) {
-            const keep = new Set(selected.map((finding) => spanKey(finding)));
+            const keep = new Set([...selected.findings, ...selected.suppressed].map((finding) => spanKey(finding)));
+            const redacted = binding.scanTextSync(content, path, { ...nativeOptions, commit: commit?.sha });
 
-            findings = (binding.scanTextSync(content, path, { ...nativeOptions, commit: commit?.sha }) as Finding[]).filter((finding) =>
-                keep.has(spanKey(finding)),
-            );
+            report = {
+                findings: redacted.findings.filter((finding) => keep.has(spanKey(finding))),
+                suppressed: redacted.suppressed.filter((finding) => keep.has(spanKey(finding))),
+            };
         }
 
         if (commit !== undefined) {
-            findings = findings.map((finding) => {
-                return { ...finding, commit };
-            });
+            report = {
+                findings: report.findings.map((finding) => {
+                    return { ...finding, commit };
+                }),
+                suppressed: report.suppressed.map((finding) => {
+                    return { ...finding, commit };
+                }),
+            };
         }
 
-        return postProcessDetailed(findings, this.#prepared, this.#options, this.#context);
+        return postProcessDetailed(report, this.#prepared, this.#options, this.#context);
     }
 
     #remember(cacheKey: string, keys: Set<string>): void {
@@ -389,24 +405,23 @@ const scanChangedBlob = async (
         return none;
     }
 
-    const raw = scanner.detectRaw(content, path, commit.info.sha);
+    let fresh = scanner.detectRaw(content, path, commit.info.sha);
 
-    if (raw.length === 0) {
+    if (isEmpty(fresh)) {
         return none;
     }
 
-    let fresh = raw;
     const [firstParent, ...otherParents] = commit.parents;
 
     if (firstParent !== undefined && !NULL_OID.test(entry.oldOid) && (entry.status === "M" || entry.status === "R" || entry.status === "T")) {
         const before = await scanner.presentIn(entry.oldOid, entry.oldPath);
 
-        fresh = fresh.filter((finding) => !wasPresent(finding, before));
+        fresh = withoutPresent(fresh, before);
     }
 
     // A merge only introduces what none of its parents had.
     for (const parent of otherParents) {
-        if (fresh.length === 0) {
+        if (isEmpty(fresh)) {
             break;
         }
 
@@ -417,11 +432,11 @@ const scanChangedBlob = async (
             // eslint-disable-next-line no-await-in-loop -- Same: sequential reads through the single cat-file process.
             const before = await scanner.presentIn(oid, path);
 
-            fresh = fresh.filter((finding) => !wasPresent(finding, before));
+            fresh = withoutPresent(fresh, before);
         }
     }
 
-    if (fresh.length === 0) {
+    if (isEmpty(fresh)) {
         return none;
     }
 
@@ -571,7 +586,7 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             const raw = scanner.detectRaw(content, file);
 
-            if (raw.length > 0) {
+            if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
                 const processed = await scanner.finish(content, file, raw);
 

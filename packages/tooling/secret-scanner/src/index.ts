@@ -20,7 +20,7 @@ import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from 
 import { prepareScan } from "./prepare-scan";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
-import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedFile, SkippedRule } from "./types";
+import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedRule } from "./types";
 
 /** Return any rules from the given config that failed to compile, with the reason. */
 export const inspectRuleset = async (options?: ScanOptions): Promise<SkippedRule[]> => {
@@ -120,9 +120,9 @@ export const scanDetailed = async (paths: string[], options?: ScanOptions): Prom
         paths.map((path) => resolve(path)),
     );
     const report = await binding.scanDetailed(paths, nativeOptionsFor(prepared, context));
-    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
+    const { findings, suppressed } = await postProcessDetailed(report, prepared, options, context);
 
-    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+    return { findings, skipped: report.skipped, suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -147,9 +147,9 @@ export const scanFilesDetailed = async (files: string[], options?: ScanOptions):
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
     const context = await createSuppressionContext(options, [process.cwd()]);
     const report = await binding.scanFilesDetailed(filteredFiles, nativeOptionsFor(prepared, context));
-    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
+    const { findings, suppressed } = await postProcessDetailed(report, prepared, options, context);
 
-    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+    return { findings, skipped: report.skipped, suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
 };
 
 /**

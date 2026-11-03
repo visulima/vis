@@ -22,7 +22,7 @@ import type { Finding, ScanOptions } from "./types";
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
     const prepared = prepareScan(options);
     const context = await createSuppressionContext(options, [process.cwd()]);
-    const raw = binding.scanTextSync(content, file, nativeOptionsFor(prepared, context)) as Finding[];
+    const report = binding.scanTextSync(content, file, nativeOptionsFor(prepared, context));
 
-    return postProcess(raw, prepared, options, context);
+    return postProcess(report, prepared, options, context);
 };

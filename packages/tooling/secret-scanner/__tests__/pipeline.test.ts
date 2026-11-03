@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { postProcess, resetPipelineWarningsForTests } from "../src/pipeline";
+import { createSuppressionContext, postProcessDetailed, resetPipelineWarningsForTests } from "../src/pipeline";
 import type { PreparedScan, RuleMeta } from "../src/prepare-scan";
 import type { Finding, ScanOptions } from "../src/types";
 
@@ -38,6 +38,14 @@ const preparedScan = (ruleMeta: Map<string, RuleMeta> = new Map(), include?: str
         nativeOptions: {},
         ruleMeta,
     };
+};
+
+/** Run the pipeline over active findings only and return what it reports. */
+const postProcess = async (findings: Finding[], prepared: PreparedScan, options: ScanOptions | undefined): Promise<Finding[]> => {
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const result = await postProcessDetailed({ findings, suppressed: [] }, prepared, options, context);
+
+    return result.findings;
 };
 
 let tmp: string;
