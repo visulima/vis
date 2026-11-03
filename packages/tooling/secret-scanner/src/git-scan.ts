@@ -22,7 +22,8 @@
 //     Binary (NUL in the first 8 KiB), oversized and missing blobs are skipped
 //     and reported in `skipped`; any other git failure throws.
 
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { binding } from "./binding";
 import { DEFAULT_MAX_FILE_SIZE } from "./constants";
@@ -269,6 +270,26 @@ const withoutPresent = (report: ProcessedFindings, parent: ReadonlySet<string>):
 
 const isEmpty = (report: ProcessedFindings): boolean => report.findings.length === 0 && report.suppressed.length === 0;
 
+/** Set `fields` on every finding of a report, suppressed ones included. */
+const withFields = (report: ProcessedFindings, fields: Partial<GitFinding>): ProcessedFindings => {
+    return {
+        findings: report.findings.map((finding) => {
+            return { ...finding, ...fields };
+        }),
+        suppressed: report.suppressed.map((finding) => {
+            return { ...finding, ...fields };
+        }),
+    };
+};
+
+const realOrSelf = (path: string): string => {
+    try {
+        return realpathSync(path);
+    } catch {
+        return path;
+    }
+};
+
 /** Shared per-scan state: prepared options, the blob reader and the skip log. */
 class BlobScanner {
     public readonly skipped: GitSkippedBlob[] = [];
@@ -349,18 +370,7 @@ class BlobScanner {
      * entries can match.
      */
     public async finish(selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
-        let report = selected;
-
-        if (commit !== undefined) {
-            report = {
-                findings: report.findings.map((finding) => {
-                    return { ...finding, commit };
-                }),
-                suppressed: report.suppressed.map((finding) => {
-                    return { ...finding, commit };
-                }),
-            };
-        }
+        const report = commit === undefined ? selected : withFields(selected, { commit });
 
         return postProcessDetailed(report, this.#prepared, this.#options, this.#context);
     }
@@ -516,9 +526,11 @@ export const scanGitHistory = async (options?: GitScanOptions): Promise<GitFindi
  * tree. Inside a `pre-commit` hook, the index git hands the hook
  * (`GIT_INDEX_FILE`) is the one read.
  *
- * Findings carry the absolute path of the file in the working tree, the same
- * shape `scanFiles` reports. `walk.excludePatterns` /
- * `walk.excludeFromFiles` apply as they do for `scanFiles`, relative to `cwd`.
+ * Findings carry the path of the file in the working tree relative to
+ * `process.cwd()` (absolute when the file lies outside it), the same shape
+ * `scanFiles` reports, so a baseline written by `scanFiles` matches.
+ * `walk.excludePatterns` / `walk.excludeFromFiles` apply as they do for
+ * `scanFiles`, relative to `cwd`.
  * @throws if `git` is not on PATH, `cwd` is not inside a git work tree, or git
  * fails to read an object that exists.
  */
@@ -526,10 +538,24 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     const cwd = options?.cwd ?? process.cwd();
     const environment = gitEnvironment(true);
     const toplevel = await repositoryRoot(cwd, environment);
-    const { context, prepared } = await beginScan(options, [toplevel, cwd]);
+    // Findings are reported relative to the process cwd, like native `scanFiles`.
+    const { context, prepared } = await beginScan(options, [process.cwd()]);
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
     const absolute = (path: string): string => resolve(toplevel, path);
+    // Realpaths on both sides, as native `scanFiles` relativises: on macOS the
+    // process cwd is `/private/var/…` while `toplevel` keeps the caller's spelling.
+    const realToplevel = realOrSelf(toplevel);
+    const realCwd = realOrSelf(process.cwd());
+    const reportedPath = (path: string): string => {
+        const relativePath = relative(realCwd, resolve(realToplevel, path));
+
+        if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+            return absolute(path);
+        }
+
+        return relativePath.replaceAll("\\", "/");
+    };
     const kept = new Set(
         filterIgnoredFiles(
             entries.map((entry) => absolute(entry.newPath)),
@@ -556,11 +582,13 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
                 continue;
             }
 
+            // Detection sees the absolute path, as native `scanFiles` does; the
+            // reported path is rewritten afterwards.
             const raw = scanner.detectRaw(content, file);
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
-                const processed = await scanner.finish(raw);
+                const processed = await scanner.finish(withFields(raw, { file: reportedPath(entry.newPath) }));
 
                 findings.push(...processed.findings);
                 suppressed.push(...processed.suppressed);

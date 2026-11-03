@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { scanGitHistory, scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
-import { scanString } from "../src/index";
+import { scanFiles, scanString } from "../src/index";
+import type { ScanOptions } from "../src/types";
 
 // Fake GitHub PATs (`ghp_` + 36 base62 chars) matching the bundled `github-pat` rule.
 const SECRET_A = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
@@ -366,5 +367,32 @@ describe(scanGitStaged, () => {
         const result = await scanGitStaged({ cwd: repo, walk: { excludePatterns: ["staged.ts"] } });
 
         expect(result.findings).toHaveLength(0);
+    });
+
+    it("reports paths relative to the process cwd, so a scanFiles baseline suppresses them", async () => {
+        expect.assertions(3);
+
+        const { git, repo, write } = createRepo();
+        const options: ScanOptions = { config: { extendBundled: false, inline: { rules: [{ id: "tok", keywords: ["tok_"], regex: "tok_[a-z0-9]{12}" }] } } };
+        const content = "KEY=tok_abcdef123456\n";
+        const baselinePath = join(repo, "baseline.json");
+        const cwd = process.cwd();
+
+        write("a.env", content);
+        git("add", "a.env");
+
+        try {
+            process.chdir(repo);
+            writeFileSync(baselinePath, JSON.stringify(await scanFiles([join(repo, "a.env")], options)));
+
+            const unfiltered = await scanGitStaged({ ...options, cwd: repo });
+            const result = await scanGitStaged({ ...options, baseline: baselinePath, cwd: repo, reportSuppressed: true });
+
+            expect(unfiltered.findings.map((finding) => finding.file)).toStrictEqual(["a.env"]);
+            expect(result.findings).toStrictEqual([]);
+            expect(result.suppressed.map((finding) => finding.suppressedBy)).toStrictEqual(["baseline"]);
+        } finally {
+            process.chdir(cwd);
+        }
     });
 });
