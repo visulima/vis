@@ -489,7 +489,6 @@ fn emit_match(
     if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
         span.secret_end -= 1;
     }
-    span.secret_end = span.secret_end.max(span.secret_start);
 
     let match_str = &text_ref[span.match_start..span.match_end];
     let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {

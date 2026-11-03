@@ -81,7 +81,11 @@ mod tests {
             }
             e
         }
-        for s in [concat!("ghp_aB3dE4fG5hI6jK7l", "M8nO9pQ0rS1tU2vW3xY4zA5b"), concat!("sk_live_4eC39HqL", "yjWDarjtT1zdp7dc"), "abcabc"] {
+        for s in [
+            concat!("ghp_aB3dE4fG5hI6jK7l", "M8nO9pQ0rS1tU2vW3xY4zA5b"),
+            concat!("sk_live_4eC39HqL", "yjWDarjtT1zdp7dc"),
+            "abcabc",
+        ] {
             assert_eq!(shannon(s).to_bits(), byte_shannon(s).to_bits(), "{s}");
         }
     }

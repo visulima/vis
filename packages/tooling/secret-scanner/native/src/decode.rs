@@ -130,8 +130,6 @@ pub fn scan_text_with_decoding(
     for depth in 1..=opts.max_depth {
         // Inline markers are checked against the original line in `map_finding`; in the
         // joined fragment buffer a nextline pragma would leak into the next fragment.
-        // Inline markers are checked against the original line in `map_finding`; in the
-        // joined fragment buffer a nextline pragma would leak into the next fragment.
         let raw = detector::scan_text_decoded(ruleset, path, &buf, DetectOptions { inline_allow: false, ..detect });
         for finding in raw {
             let Some(mapped) = map_finding(finding, &fragments, &original) else { continue };

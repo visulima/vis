@@ -163,12 +163,11 @@ fn walk_zip(ctx: &mut Ctx<'_>, bytes: &[u8], prefix: &str, depth: u32) -> bool {
             break;
         }
         // Encrypted entries and unsupported compression methods fail here; skip them.
-        if zip.by_index(i).is_err() {
+        let Ok(mut file) = zip.by_index(i) else {
             let name = zip.name_for_index(i).and_then(Result::ok).map(|n| sanitize_entry_name(&n));
             ctx.skip(&format!("{prefix}!{}", name.as_deref().unwrap_or("unnamed")), "io-error");
             continue;
-        }
-        let Ok(mut file) = zip.by_index(i) else { continue };
+        };
         if !file.is_file() {
             continue;
         }
