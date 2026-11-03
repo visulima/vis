@@ -1,3 +1,13 @@
+## @visulima/vis [6.5.1](https://github.com/visulima/vis/compare/@visulima/vis@6.5.0...@visulima/vis@6.5.1) (2026-11-03)
+
+### Bug Fixes
+
+* **vis:** fail release when npm cannot do trusted publishing ([#84](https://github.com/visulima/vis/issues/84)) ([b88a085](https://github.com/visulima/vis/commit/b88a0852d9aee4c057a8c5455c3ee7b0a0982b11))
+
+### Miscellaneous Chores
+
+* **vis:** make prettier --check pass ([#83](https://github.com/visulima/vis/issues/83)) ([64cd5f5](https://github.com/visulima/vis/commit/64cd5f5ee7c41d0ca2ee17ca2979eee935b879b3))
+
 ## @visulima/vis [6.5.0](https://github.com/visulima/vis/compare/@visulima/vis@6.4.4...@visulima/vis@6.5.0) (2026-11-03)
 
 ### Features
