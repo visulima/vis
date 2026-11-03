@@ -781,12 +781,15 @@ const queryToolVersion = (tool: RuntimeTool): string | undefined => {
 
     for (const candidate of lookup.binaries) {
         const binary = isOnPath(candidate);
+        const version = binary === undefined ? undefined : queryManagerVersion(binary, lookup.args);
 
-        if (binary) {
-            return queryManagerVersion(binary, lookup.args);
+        if (version !== undefined) {
+            return version;
         }
     }
 
+    // A `node` on PATH that times out or fails to report must not read as a
+    // version mismatch: the runtime executing vis is a real answer.
     if (tool === "node") {
         return process.versions.node;
     }
@@ -1561,6 +1564,22 @@ export interface EnsureToolchainLogger {
 }
 
 /**
+ * Says which check failed when nvm cannot activate a pin from a child process: the pin and where it
+ * comes from, and the version (and binary) that was found instead.
+ */
+const describeNvmMismatch = (expected: ToolSpec, active: string | undefined): string => {
+    const pin = `pinned in ${expected.source}`;
+
+    if (active === undefined) {
+        return `${pin}, but no ${expected.tool} version could be read from PATH. Run \`nvm install\` / \`nvm use\` in your shell.`;
+    }
+
+    const binary = isOnPath(expected.tool) ?? process.execPath;
+
+    return `${pin}, but the active ${expected.tool} is ${active} (${binary}). nvm is a shell function, so run \`nvm install\` / \`nvm use\` in your shell.`;
+};
+
+/**
  * Pre-flight check for `vis run` / `vis ci`. Compares actual vs expected
  * tool versions; if `config.autoInstall` is true (default when a manager
  * is detected) and any pin is unsatisfied, runs the appropriate
@@ -1687,10 +1706,8 @@ export const ensureToolchain = async (
                     continue;
                 }
 
-                logger.warn(
-                    `toolchain: nvm requires a shell-side activation for ${expected.tool} ${expected.version}. Run \`nvm install\` / \`nvm use\` manually.`,
-                );
-                failed.push({ error: "nvm requires shell-side activation", spec: expected });
+                // runToolchainPreflight logs every failure; warning here too printed it twice.
+                failed.push({ error: describeNvmMismatch(expected, active), spec: expected });
                 continue;
             }
 

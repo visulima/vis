@@ -379,6 +379,21 @@ const NON_JS_ECOSYSTEMS: ReadonlyArray<NonJsEcosystem> = [
 const NON_JS_DETECTORS: ReadonlySet<Detector> = new Set(NON_JS_ECOSYSTEMS.map((ecosystem) => ecosystem.detector));
 
 /**
+ * The workspace patterns plus the workspace root itself when the root has a
+ * `project.json` next to its `package.json`. Package managers never list the
+ * root as a package, so without this a root `project.json` (and the root's
+ * scripts) would be ignored. Applied only to vis project discovery, never to
+ * the patterns the package-manager-facing commands read.
+ */
+const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): string[] => {
+    if (!isAccessibleSync(join(workspaceRoot, "project.json")) || !hasPackageJson(workspaceRoot)) {
+        return workspacePatterns;
+    }
+
+    return [".", ...workspacePatterns];
+};
+
+/**
  * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
  * discovery drops those directories exactly as it drops pnpm `!` entries.
  */
@@ -1122,7 +1137,7 @@ const discoverWorkspace = (
 
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        withProjectIgnore(workspacePatterns, config),
+        withProjectIgnore(withRootProject(workspaceRoot, workspacePatterns), config),
         nonJsDiscoverOptions(config),
     );
 
@@ -1451,7 +1466,7 @@ const loadVisTaskConfigsForWorkspace = async (workspaceRoot: string, config: Vis
     // that is not discovered could fail to load and reject the whole workspace.
     const { directories: projectDirectories, nonJsEcosystems } = resolveProjectDirectories(
         workspaceRoot,
-        withProjectIgnore(workspacePatterns, config),
+        withProjectIgnore(withRootProject(workspaceRoot, workspacePatterns), config),
         nonJsDiscoverOptions(config),
     );
     const result: VisTaskConfigIndex = new Map();
