@@ -33,6 +33,7 @@ use crate::finalize::build_report;
 use crate::rules::{CompiledRuleset, Confidence};
 use crate::scanner::{scan_file, scan_text_full, TextScanOptions};
 use crate::skip::{SkipReason, Skipped};
+use crate::suppression::SuppressionReason;
 use crate::walker::{walk_paths_reporting, WalkOptions};
 
 /// Capacity of the compiled-ruleset cache. Four is enough to cover the
@@ -105,7 +106,7 @@ pub struct ScanOptions {
     /// `pragma: allowlist secret`, allow-start/end blocks, nextline pragma).
     /// Default `true`; `false` lets CI audit them.
     pub inline_allow: Option<bool>,
-    /// Return allowlisted / inline-allowed matches with `suppressedBy` set
+    /// Return allowlisted / inline-allowed matches in `ScanReport.suppressed`
     /// instead of dropping them. Default `false`.
     pub report_suppressed: Option<bool>,
     /// Commit SHA the scanned content belongs to (git-history scans). Lets allowlists
@@ -143,9 +144,66 @@ pub struct Finding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
-    /// `"allowlist"` or `"inline-allow"` when the match was suppressed and
-    /// `reportSuppressed` is on. Absent on real findings.
-    pub suppressed_by: Option<String>,
+}
+
+/// A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
+/// Only returned with `reportSuppressed`. NAPI objects can't flatten, so the fields
+/// are repeated; keep them in sync with [`Finding`].
+#[napi(object)]
+pub struct SuppressedFinding {
+    pub rule_id: String,
+    pub description: String,
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+    pub r#match: String,
+    pub secret: String,
+    pub entropy: f64,
+    pub tags: Vec<String>,
+    /// Rule provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or a user string.
+    /// `None` for legacy rules that don't declare a source.
+    pub source: Option<String>,
+    /// Author-declared quality signal: `"low"`, `"medium"`, or `"high"`. Always set —
+    /// rules that don't declare confidence resolve to `"low"`.
+    pub confidence: String,
+    /// Rule ids that matched the same byte span and were collapsed by the dedup
+    /// pass. Lets reporters surface "also: X, Y" without emitting duplicate findings.
+    pub alternate_matches: Vec<String>,
+    /// Set when the secret was found inside encoded text: the encoding chain, outermost
+    /// first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
+    /// original encoded span while `match` / `secret` hold the decoded text.
+    pub decoded: Option<Vec<String>>,
+    /// Composite rules only: the findings of the rule's `required` dependencies that
+    /// satisfied it, one per required id (the nearest), in declaration order.
+    pub required_findings: Option<Vec<RequiredFinding>>,
+    /// `"allowlist"` or `"inline-allow"`.
+    pub suppressed_by: String,
+}
+
+impl Finding {
+    fn suppressed(self, reason: SuppressionReason) -> SuppressedFinding {
+        SuppressedFinding {
+            rule_id: self.rule_id,
+            description: self.description,
+            file: self.file,
+            start_line: self.start_line,
+            end_line: self.end_line,
+            start_column: self.start_column,
+            end_column: self.end_column,
+            r#match: self.r#match,
+            secret: self.secret,
+            entropy: self.entropy,
+            tags: self.tags,
+            source: self.source,
+            confidence: self.confidence,
+            alternate_matches: self.alternate_matches,
+            decoded: self.decoded,
+            required_findings: self.required_findings,
+            suppressed_by: reason.as_str().to_string(),
+        }
+    }
 }
 
 /// A dependency finding attached to a composite-rule finding. Same file as its primary.
@@ -172,9 +230,15 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
+/// Result of every scan entry point.
 #[napi(object)]
+#[derive(Default)]
 pub struct ScanReport {
+    /// Active findings.
     pub findings: Vec<Finding>,
+    /// Allowlisted / inline-allowed matches. Empty unless `reportSuppressed`.
+    pub suppressed: Vec<SuppressedFinding>,
+    /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
 }
 
@@ -310,7 +374,7 @@ fn scan_paths(
 fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     let roots: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     if roots.is_empty() {
-        return Ok(ScanReport { findings: Vec::new(), skipped: Vec::new() });
+        return Ok(ScanReport::default());
     }
     let ruleset = load_ruleset(&opts)?;
     let redact_secrets = opts.redact.unwrap_or(false);
@@ -331,13 +395,9 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     Ok(build_report(findings, skipped, &roots, redact_secrets))
 }
 
-#[napi]
-pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
-    Ok(scan_detailed(paths, options).await?.findings)
-}
-
-/// Like `scan`, but also returns the files that could not be read (permission
-/// denied, unreadable directory, I/O error, larger than `maxFileSize`).
+/// Walk `paths` and scan every file on the rayon pool. `skipped` lists what could not
+/// be read (permission denied, unreadable directory, I/O error, larger than
+/// `maxFileSize`).
 #[napi]
 pub async fn scan_detailed(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
@@ -346,20 +406,28 @@ pub async fn scan_detailed(paths: Vec<String>, options: Option<ScanOptions>) -> 
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
 }
 
+/// Same as `scanDetailed`. Kept as the plain name the native-binding smoke test loads.
 #[napi]
-pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
-    Ok(scan_impl(paths, options.unwrap_or_default())?.findings)
+pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
+    scan_detailed(paths, options).await
 }
 
+/// `scanDetailed` on the calling thread.
 #[napi]
-pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
+pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
+    scan_impl(paths, options.unwrap_or_default())
+}
+
+/// Scan an in-memory string as if it lived at `file`. Paths are kept as given.
+#[napi]
+pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
     let raw = scan_text_full(&ruleset, &path, &content, text_scan_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
-    Ok(build_report(raw, Vec::new(), &[], redact_secrets).findings)
+    Ok(build_report(raw, Vec::new(), &[], redact_secrets))
 }
 
 /// Compile a ruleset and return rules that failed to compile, with their reason.
@@ -396,13 +464,8 @@ pub fn list_rules(options: Option<ScanOptions>) -> Result<Vec<RuleInfo>> {
         .collect())
 }
 
-/// Scan a fixed list of files (e.g. from `git diff --name-only`). Bypasses the walker.
-#[napi]
-pub async fn scan_files(files: Vec<String>, options: Option<ScanOptions>) -> Result<Vec<Finding>> {
-    Ok(scan_files_detailed(files, options).await?.findings)
-}
-
-/// Like `scanFiles`, but also returns the files that could not be read.
+/// Scan a fixed list of files (e.g. from `git diff --name-only`), bypassing the walker.
+/// A listed file that can't be read lands in `skipped`.
 #[napi]
 pub async fn scan_files_detailed(files: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
     let opts = options.unwrap_or_default();
@@ -413,7 +476,7 @@ pub async fn scan_files_detailed(files: Vec<String>, options: Option<ScanOptions
 
 fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     if files.is_empty() {
-        return Ok(ScanReport { findings: Vec::new(), skipped: Vec::new() });
+        return Ok(ScanReport::default());
     }
     let ruleset = load_ruleset(&opts)?;
     let redact_secrets = opts.redact.unwrap_or(false);

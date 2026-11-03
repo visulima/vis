@@ -27,28 +27,31 @@ pub fn build_report(
         .collect();
     skipped.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let (active, suppressed) = finalize_findings(findings, &canon_roots);
     ScanReport {
-        findings: finalize_findings(findings, &canon_roots)
+        findings: active.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect(),
+        // Every finding of the suppressed group carries its reason.
+        suppressed: suppressed
             .into_iter()
-            .map(|f| to_napi_finding(f, redact_secrets))
+            .filter_map(|f| {
+                let reason = f.suppressed_by?;
+                Some(to_napi_finding(f, redact_secrets).suppressed(reason))
+            })
             .collect(),
         skipped,
     }
 }
 
 /// Post-process raw findings: relative paths, priority-based span dedup, exact-duplicate
-/// collapse, stable ordering. `canon_roots` come from [`canonicalize_roots`].
-fn finalize_findings(findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec<RawFinding> {
+/// collapse, stable ordering. `canon_roots` come from [`canonicalize_roots`]. Returns the
+/// active and the suppressed findings.
+fn finalize_findings(findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> (Vec<RawFinding>, Vec<RawFinding>) {
     // Suppressed findings (only present with `reportSuppressed`) are deduped
     // separately: a suppressed higher-priority match must never swallow a real
     // finding at the same span.
     let (suppressed, active): (Vec<RawFinding>, Vec<RawFinding>) =
         findings.into_iter().partition(|f| f.suppressed_by.is_some());
-    let mut out = finalize_group(active, canon_roots);
-    if !suppressed.is_empty() {
-        out.extend(finalize_group(suppressed, canon_roots));
-    }
-    out
+    (finalize_group(active, canon_roots), finalize_group(suppressed, canon_roots))
 }
 
 fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec<RawFinding> {
@@ -217,7 +220,6 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
                 })
                 .collect()
         }),
-        suppressed_by: f.suppressed_by.map(|r| r.as_str().to_string()),
     }
 }
 
@@ -267,7 +269,7 @@ mod tests {
         let winner = raw_finding("kingfisher.aws.1", 2, 10, 30);
         let loser = raw_finding("aws-access-token", 1, 10, 30);
 
-        let out = finalize_findings(vec![winner, loser], &[]);
+        let (out, _) = finalize_findings(vec![winner, loser], &[]);
 
         assert_eq!(out.len(), 1, "same-span findings should collapse to one");
         assert_eq!(out[0].rule_id, "kingfisher.aws.1");
@@ -279,7 +281,7 @@ mod tests {
         let a = raw_finding("rule.a", 0, 10, 30);
         let b = raw_finding("rule.b", 0, 40, 60);
 
-        let out = finalize_findings(vec![a, b], &[]);
+        let (out, _) = finalize_findings(vec![a, b], &[]);
 
         assert_eq!(out.len(), 2);
         assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
@@ -297,7 +299,7 @@ mod tests {
         second.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], inner_start: 40, inner_end: 60 });
         second.secret = "other".into();
 
-        let out = finalize_findings(vec![second, decoded, plain], &[]);
+        let (out, _) = finalize_findings(vec![second, decoded, plain], &[]);
 
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].rule_id, "generic");
@@ -312,7 +314,7 @@ mod tests {
         let b = raw_finding("rule.b", 2, 10, 30);
         let c = raw_finding("rule.c", 1, 10, 30);
 
-        let out = finalize_findings(vec![c, a, b], &[]);
+        let (out, _) = finalize_findings(vec![c, a, b], &[]);
 
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].rule_id, "rule.a");
@@ -327,7 +329,7 @@ mod tests {
         let mut composite = raw_finding("rule.composite", 0, 10, 30);
         composite.required_findings = Some(vec![raw_finding("rule.dep", 0, 40, 50)]);
 
-        let out = finalize_findings(vec![high, composite], &[]);
+        let (out, _) = finalize_findings(vec![high, composite], &[]);
 
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].rule_id, "rule.composite");
@@ -340,11 +342,11 @@ mod tests {
         suppressed.suppressed_by = Some(crate::suppression::SuppressionReason::Allowlist);
         let active = raw_finding("rule.low", 1, 10, 30);
 
-        let out = finalize_findings(vec![suppressed, active], &[]);
+        let (active, suppressed) = finalize_findings(vec![suppressed, active], &[]);
 
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].rule_id, "rule.low");
-        assert!(out[0].suppressed_by.is_none());
-        assert_eq!(out[1].suppressed_by, Some(crate::suppression::SuppressionReason::Allowlist));
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].rule_id, "rule.low");
+        assert_eq!(suppressed.len(), 1);
+        assert_eq!(suppressed[0].suppressed_by, Some(crate::suppression::SuppressionReason::Allowlist));
     }
 }
