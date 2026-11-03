@@ -44,9 +44,11 @@ import {
     toRepoRelativePath,
 } from "../../../../release/core/git";
 import { applyContext, buildContext, publishContext, publishMissing, syncLockfile } from "../../../../release/core/orchestrator";
+import { npmCliPackageNames } from "../../../../release/core/orchestrator/context";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
+import { assertOidcPublishable } from "../../../../release/core/version-actions/auth";
 import { mergeProtectedContent } from "../../../../release/core/version-pr-merge";
 import { logError, logWarning, reportPublishResult, reportWarnings } from "../../publish-report";
 import type { ReleaseCiReleaseOptions } from "./index";
@@ -436,6 +438,18 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
         }
 
         logger.info(`Auto-publish mode — versioning + publishing ${ctx.plan.releases.length} package(s).`);
+
+        // Checked before the version commit exists, so a missing trusted publisher leaves nothing to undo.
+        try {
+            await assertOidcPublishable(await npmCliPackageNames(ctx), process.env, ctx.config);
+        } catch (error) {
+            const { hint } = error as { hint?: string };
+
+            logger.error(`The OIDC check failed, nothing was published: ${(error as Error).message}${hint ? ` ${hint}` : ""}`);
+            process.exitCode = 1;
+
+            return;
+        }
 
         // A recovery publish above may have left a bookkeeping commit on HEAD
         // that never reached the remote; the trailer must name the commit the

@@ -11,7 +11,12 @@
  * itself (async) and has no `preferStaticToken` escape hatch, so it has a
  * genuinely different shape.
  */
+import { VisReleaseError } from "../../errors";
 import type { VisReleaseConfig } from "../../types";
+
+export const OFFICIAL_REGISTRY = "https://registry.npmjs.org/";
+
+const OIDC_AUDIENCE = "npm:registry.npmjs.org";
 
 /** GitHub Actions CI signal that `permissions: id-token: write` was granted. */
 const OIDC_ENV_SIGNAL = "ACTIONS_ID_TOKEN_REQUEST_URL";
@@ -56,4 +61,90 @@ export const resolveAuthMode = (options: ResolveAuthModeOptions): AuthMode => {
     }
 
     return "missing";
+};
+
+/**
+ * Whether npm authenticates this publish with OIDC: GitHub Actions, or GitLab through `NPM_ID_TOKEN`.
+ * `NPM_ID_TOKEN` is checked here rather than in `resolveAuthMode`, which Python and Cargo share.
+ */
+export const npmUsesOidc = (env: NodeJS.ProcessEnv, config?: VisReleaseConfig): boolean =>
+    resolveAuthMode({ env, staticTokenVar: "NPM_TOKEN", workspaceConfig: config }) === "oidc" || (!env["NPM_TOKEN"] && Boolean(env["NPM_ID_TOKEN"]));
+
+export const getGithubActionsIdToken = async (env: NodeJS.ProcessEnv): Promise<string | undefined> => {
+    const requestUrl = env["ACTIONS_ID_TOKEN_REQUEST_URL"];
+    const requestToken = env["ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
+
+    if (!requestUrl || !requestToken) {
+        return undefined;
+    }
+
+    const url = `${requestUrl}${requestUrl.includes("?") ? "&" : "?"}audience=${encodeURIComponent(OIDC_AUDIENCE)}`;
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${requestToken}` } });
+
+    if (!response.ok) {
+        return undefined;
+    }
+
+    const body = (await response.json().catch(() => {
+        return {};
+    })) as { value?: string };
+
+    return typeof body.value === "string" ? body.value : undefined;
+};
+
+export const exchangeOidcTokenForPackage = async (packageName: string, idToken: string): Promise<string | undefined> => {
+    const response = await fetch(`${OFFICIAL_REGISTRY}-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(packageName)}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+        method: "POST",
+    });
+
+    if (!response.ok) {
+        return undefined;
+    }
+
+    const body = (await response.json().catch(() => {
+        return {};
+    })) as { token?: string };
+
+    return typeof body.token === "string" ? body.token : undefined;
+};
+
+/**
+ * Ask npm, before anything is pushed, whether it accepts this run's OIDC token for every package
+ * about to publish. A package without a trusted publisher then fails here instead of after the
+ * version commit has landed. Skipped when the static token wins (see `npmUsesOidc`).
+ * @param packageNames packages the release is about to publish.
+ * @param env process environment.
+ */
+export const assertOidcPublishable = async (packageNames: ReadonlyArray<string>, env: NodeJS.ProcessEnv, config: VisReleaseConfig): Promise<void> => {
+    // The exchange below is GitHub-only; npm checks GitLab's NPM_ID_TOKEN itself.
+    if (packageNames.length === 0 || !env["ACTIONS_ID_TOKEN_REQUEST_URL"] || !npmUsesOidc(env, config)) {
+        return;
+    }
+
+    const idToken = await getGithubActionsIdToken(env);
+
+    if (!idToken) {
+        throw new VisReleaseError({
+            code: "AUTH_MISSING",
+            hint: "Grant `permissions: id-token: write` to the publish job.",
+            message: "The publish job did not receive a GitHub OIDC token, so npm cannot be asked for a publish token.",
+        });
+    }
+
+    const rejected: string[] = [];
+
+    for (const name of packageNames) {
+        if (!(await exchangeOidcTokenForPackage(name, idToken))) {
+            rejected.push(name);
+        }
+    }
+
+    if (rejected.length > 0) {
+        throw new VisReleaseError({
+            code: "AUTH_MISSING",
+            hint: "Add a trusted publisher on npm for each package: this repository, the release workflow, and its environment.",
+            message: `npm rejected the OIDC token for ${rejected.length} package(s), so nothing was pushed: ${rejected.join(", ")}.`,
+        });
+    }
 };

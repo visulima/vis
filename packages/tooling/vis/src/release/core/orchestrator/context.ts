@@ -9,6 +9,9 @@ import { createAdapter, detectPackageManager } from "../package-managers/detect"
 import type { PackageManagerAdapter } from "../package-managers/interface";
 import { assembleReleasePlan } from "../release-plan";
 import { createShellRunner } from "../shell-runner";
+import { npmUsesOidc } from "../version-actions/auth";
+import { getPlatformDirs } from "../version-actions/native-addon";
+import { resolveVersionActionsId } from "../workspace";
 import { detectCatalogConsumers } from "./context-catalog";
 import { loadReleaseConfig } from "./context-config";
 import { discoverReleasePackages } from "./context-packages";
@@ -250,6 +253,29 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
         }
     }
 
+    // Only packages published through the npm CLI need its OIDC support. Read-only commands
+    // (plan, status, ...) never publish, so they must not fail on a publisher they do not use.
+    const npmNames = await npmCliPackageNames({ packages, perPackageConfig, plan });
+
+    if (
+        !options.skipRegistryLookup
+        && config.publish?.publishStrategy !== "native"
+        && pmId !== "npm"
+        && npmNames.length > 0
+        && npmUsesOidc(process.env, config)
+    ) {
+        const npm = createAdapter("npm", runner);
+        const npmVersion = await npm.detectVersion(cwd);
+
+        if (npmVersion && !supportsMinVersion(npmVersion, npm.minVersion)) {
+            throw new VisReleaseError({
+                code: "PM_VERSION_TOO_LOW",
+                hint: "Upgrade npm in the publish job (npm install -g npm@latest), or set NPM_TOKEN and release.publish.preferStaticToken: true.",
+                message: `npm ${npmVersion} is below ${npm.minVersion}, the minimum for trusted publishing (OIDC); npm publishes the tarball here.`,
+            });
+        }
+    }
+
     return {
         branch,
         channel: resolved ? { mode: resolved.mode, prerelease: resolved.prerelease, tag: resolved.tag } : undefined,
@@ -283,4 +309,35 @@ const supportsMinVersion = (detected: string, minimum: string): boolean => {
         // exotic PM forks).
         return true;
     }
+};
+
+/**
+ * Names of the planned releases that publish through the npm CLI: the default `npm` actions, and
+ * `native-addon` packages without platform packages, which fall back to them. A `native-addon`
+ * with platform packages exchanges its own OIDC tokens and never reaches the npm CLI.
+ */
+export const npmCliPackageNames = async (state: {
+    packages: WorkspacePackage[];
+    perPackageConfig: Map<string, PerPackageReleaseConfig>;
+    plan: ReleasePlan;
+}): Promise<string[]> => {
+    const names: string[] = [];
+
+    for (const release of state.plan.releases) {
+        const pkg = state.packages.find((candidate) => candidate.name === release.name);
+
+        if (!pkg) {
+            continue;
+        }
+
+        const actionsId = resolveVersionActionsId(pkg, state.perPackageConfig.get(release.name) ?? {});
+
+        const platformDirs = actionsId === "native-addon" ? await getPlatformDirs(pkg.dir) : [];
+
+        if (actionsId === "npm" || (actionsId === "native-addon" && platformDirs.length === 0)) {
+            names.push(release.name);
+        }
+    }
+
+    return names;
 };
