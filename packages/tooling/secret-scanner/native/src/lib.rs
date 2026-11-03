@@ -6,8 +6,10 @@ mod config;
 mod decode;
 mod detector;
 mod entropy;
+mod lines;
 mod rules;
 mod scanner;
+mod suppression;
 mod walker;
 
 use std::collections::hash_map::DefaultHasher;
@@ -249,7 +251,7 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
                 })
                 .collect()
         }),
-        suppressed_by: f.suppressed_by.map(str::to_string),
+        suppressed_by: f.suppressed_by.map(|r| r.as_str().to_string()),
     }
 }
 
@@ -766,7 +768,7 @@ mod tests {
     #[test]
     fn finalize_never_collapses_a_real_finding_into_a_suppressed_one() {
         let mut suppressed = raw_finding("rule.high", 5, 10, 30);
-        suppressed.suppressed_by = Some(crate::detector::SUPPRESSED_ALLOWLIST);
+        suppressed.suppressed_by = Some(crate::suppression::SuppressionReason::Allowlist);
         let active = raw_finding("rule.low", 1, 10, 30);
 
         let out = finalize_findings(vec![suppressed, active], &[]);
@@ -774,6 +776,6 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].rule_id, "rule.low");
         assert!(out[0].suppressed_by.is_none());
-        assert_eq!(out[1].suppressed_by, Some("allowlist"));
+        assert_eq!(out[1].suppressed_by, Some(crate::suppression::SuppressionReason::Allowlist));
     }
 }

@@ -220,9 +220,9 @@ mod tests {
     fn suppressed_findings_never_satisfy_a_requirement() {
         let rs = rules_with(serde_json::json!([{ "id": "dep" }]));
         let mut dep = finding("dep", 1, 10);
-        dep.suppressed_by = Some(crate::detector::SUPPRESSED_ALLOWLIST);
+        dep.suppressed_by = Some(crate::suppression::SuppressionReason::Allowlist);
         let mut primary = finding("primary", 1, 1);
-        primary.suppressed_by = Some(crate::detector::SUPPRESSED_INLINE);
+        primary.suppressed_by = Some(crate::suppression::SuppressionReason::InlineAllow);
 
         // The primary is dropped; the suppressed dependency itself is passed through.
         let out = apply(&rs, vec![finding("primary", 1, 1), dep]);
@@ -231,7 +231,7 @@ mod tests {
         // A suppressed primary is still a composite: kept (as suppressed) only when satisfied.
         let out = apply(&rs, vec![primary, finding("dep", 1, 10)]);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].suppressed_by, Some("inline-allow"));
+        assert_eq!(out[0].suppressed_by, Some(crate::suppression::SuppressionReason::InlineAllow));
     }
 
     #[test]

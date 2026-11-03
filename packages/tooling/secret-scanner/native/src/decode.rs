@@ -18,7 +18,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::detector::{self, DetectOptions, RawFinding};
+use crate::lines::{compute_line_offsets, offset_to_line_col};
 use crate::rules::CompiledRuleset;
+use crate::suppression::{find_allow_regions, inline_suppressed, SuppressionReason};
 
 /// Default recursion depth. 2 covers "base64 in a k8s Secret" and one extra wrapping
 /// layer without the blow-up of deeper recursion.
@@ -122,8 +124,8 @@ pub fn scan_text_with_decoding(
         return out;
     }
 
-    let line_offsets = detector::compute_line_offsets(content);
-    let allow_regions = if detect.inline_allow { detector::find_allow_regions(content) } else { Vec::new() };
+    let line_offsets = compute_line_offsets(content);
+    let allow_regions = if detect.inline_allow { find_allow_regions(content) } else { Vec::new() };
     let original = Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect };
 
     let (mut buf, mut fragments) = first_level(content, segments);
@@ -512,22 +514,14 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
 
     // Suppression markers live on the original line, which the decoded buffer may not
     // fully contain — re-check them against the original content.
-    let (sl, sc, el, ec) = detector::offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
-    let line = detector::line_slice(original.content, original.line_offsets, sl);
+    let (sl, sc, el, ec) = offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
     let inline_allowed = original.detect.inline_allow
-        && (detector::has_allow_comment(line)
-            || detector::is_in_allow_region(original.allow_regions, orig_start)
-            || (sl > 1
-                && detector::has_nextline_pragma(detector::line_slice(
-                    original.content,
-                    original.line_offsets,
-                    sl - 1,
-                ))));
+        && inline_suppressed(original.content, original.line_offsets, original.allow_regions, sl, orig_start);
     if inline_allowed {
         if !original.detect.report_suppressed {
             return None;
         }
-        f.suppressed_by = Some(detector::SUPPRESSED_INLINE);
+        f.suppressed_by = Some(SuppressionReason::InlineAllow);
     }
 
     f.inner_start = (s - frag.start) as u32;

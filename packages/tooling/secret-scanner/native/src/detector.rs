@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use crate::entropy::shannon;
-use crate::rules::{
-    AllowlistTarget, CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine,
-};
+use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
+use crate::rules::{CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
+use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, SuppressionReason};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
 /// windowed scanning kicks in. Covers the entire span of every kingfisher +
@@ -76,9 +76,9 @@ pub struct RawFinding {
     /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
     /// it to relativise just the on-disk part.
     pub archive_entry: Option<String>,
-    /// Why the finding was suppressed (`"allowlist"` or `"inline-allow"`). Only set
-    /// when [`DetectOptions::report_suppressed`] is on; `None` for real findings.
-    pub suppressed_by: Option<&'static str>,
+    /// Why the finding was suppressed. Only set when
+    /// [`DetectOptions::report_suppressed`] is on; `None` for real findings.
+    pub suppressed_by: Option<SuppressionReason>,
 }
 
 /// Per-scan detection switches. Kept off [`CompiledRuleset`] on purpose: the
@@ -102,50 +102,6 @@ impl Default for DetectOptions<'_> {
     fn default() -> Self {
         Self { inline_allow: true, report_suppressed: false, commit: None }
     }
-}
-
-pub const SUPPRESSED_ALLOWLIST: &str = "allowlist";
-pub const SUPPRESSED_INLINE: &str = "inline-allow";
-
-/// Byte ranges inside `content` marked by `gitleaks:allow-start` ... `gitleaks:allow-end`
-/// or `secret-scanner:allow-start` ... `:allow-end` pairs. Any finding whose match falls
-/// inside one of these ranges is suppressed.
-pub(crate) fn find_allow_regions(content: &str) -> Vec<(usize, usize)> {
-    let lc = content.to_ascii_lowercase();
-    let mut regions = Vec::new();
-    let mut cursor = 0;
-
-    while cursor < lc.len() {
-        let rest = &lc[cursor..];
-        let start_off =
-            [rest.find("gitleaks:allow-start"), rest.find("secret-scanner:allow-start")].into_iter().flatten().min();
-
-        let Some(start_rel) = start_off else { break };
-        let start_abs = cursor + start_rel;
-        let after_start = start_abs + "gitleaks:allow-start".len().min("secret-scanner:allow-start".len());
-
-        let remaining = &lc[after_start..];
-        let end_rel = [remaining.find("gitleaks:allow-end"), remaining.find("secret-scanner:allow-end")]
-            .into_iter()
-            .flatten()
-            .min();
-
-        match end_rel {
-            Some(end_rel) => {
-                let end_abs = after_start + end_rel;
-
-                regions.push((start_abs, end_abs));
-                cursor = end_abs + "gitleaks:allow-end".len().min("secret-scanner:allow-end".len());
-            }
-            None => break,
-        }
-    }
-
-    regions
-}
-
-pub(crate) fn is_in_allow_region(regions: &[(usize, usize)], offset: usize) -> bool {
-    regions.iter().any(|&(start, end)| offset >= start && offset <= end)
 }
 
 #[cfg(test)]
@@ -322,7 +278,7 @@ fn scan_text_inner(
                 inner_end: 0,
                 required_findings: None,
                 archive_entry: None,
-                suppressed_by: path_suppressed.then_some(SUPPRESSED_ALLOWLIST),
+                suppressed_by: path_suppressed.then_some(SuppressionReason::Allowlist),
             });
             continue;
         }
@@ -528,18 +484,16 @@ fn emit_match(
     // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
     // `pragma: allowlist nextline secret` on the line preceding the match.
     // `inline_allow: false` disables all three so CI can audit them.
-    let inline_allowed = opts.inline_allow
-        && (has_allow_comment(line)
-            || is_in_allow_region(allow_regions, span.match_start)
-            || (sl > 1 && has_nextline_pragma(line_slice(text_ref, offsets_ref, sl - 1))));
+    let inline_allowed =
+        opts.inline_allow && inline_suppressed(text_ref, offsets_ref, allow_regions, sl, span.match_start);
 
     // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
     let suppressed_by = if inline_allowed {
-        Some(SUPPRESSED_INLINE)
+        Some(SuppressionReason::InlineAllow)
     } else if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
         || is_allowlisted(&ruleset.global_allowlists, &rule.id, path_str, match_str, secret_slice, line, opts.commit)
     {
-        Some(SUPPRESSED_ALLOWLIST)
+        Some(SuppressionReason::Allowlist)
     } else {
         None
     };
@@ -573,107 +527,6 @@ fn emit_match(
         archive_entry: None,
         suppressed_by,
     });
-}
-
-/// Returns true if the line contains a recognised inline allow-comment.
-/// Matching is case-insensitive. We accept `gitleaks:allow` (upstream compat),
-/// `secret-scanner:allow` (our own), and `pragma: allowlist secret`
-/// (detect-secrets compat). All three work regardless of the comment syntax
-/// used by the host language (`#`, `//`, `/* */`, `--`, `<!-- -->`, …) — we
-/// look for the marker text itself, not the comment delimiters.
-pub(crate) fn has_allow_comment(line: &str) -> bool {
-    const MARKERS: [&str; 3] = ["gitleaks:allow", "secret-scanner:allow", "pragma: allowlist secret"];
-    // Shortest marker bounds the cheap-path length check.
-    if line.len() < "gitleaks:allow".len() {
-        return false;
-    }
-    let lc = line.to_ascii_lowercase();
-    MARKERS.iter().any(|m| lc.contains(m))
-}
-
-/// Returns true when the line carries a `pragma: allowlist nextline secret`
-/// marker (detect-secrets compat) — the scanner checks this on the line
-/// *before* a potential match, suppressing findings on the line below.
-/// Useful for multi-line block-scalar cases where an inline comment on the
-/// secret line itself is awkward (YAML) or impossible (PEM body).
-///
-/// Cheap pre-check: scan the raw bytes for `p`/`P` before paying the
-/// `to_ascii_lowercase()` allocation. The vast majority of source lines
-/// contain neither, so the allocation only fires on ~1% of lookups.
-pub(crate) fn has_nextline_pragma(line: &str) -> bool {
-    const MARKER: &str = "pragma: allowlist nextline secret";
-    if line.len() < MARKER.len() {
-        return false;
-    }
-    if !line.bytes().any(|b| b == b'p' || b == b'P') {
-        return false;
-    }
-    line.to_ascii_lowercase().contains(MARKER)
-}
-
-/// `commits` is only evaluated here for `condition = "AND"` allowlists that also list
-/// paths / regexes / stopwords. A commit list on its own, or under OR, is applied by the
-/// git-history scan in TypeScript (`git-commit-allowlist.ts`), which can skip a whole
-/// commit before reading it.
-fn is_allowlisted(
-    lists: &[CompiledAllowlist],
-    rule_id: &str,
-    path: &str,
-    m: &str,
-    secret: &str,
-    line: &str,
-    commit: Option<&str>,
-) -> bool {
-    for a in lists {
-        // #1919 — an allowlist with a non-empty `targetRules` only applies to those rules.
-        if !a.target_rules.is_empty() && !a.target_rules.iter().any(|r| r == rule_id) {
-            continue;
-        }
-
-        let mut matched_any = false;
-        let mut matched_all = true;
-
-        let check_paths = !a.paths.is_empty();
-        let check_regexes = !a.regexes.is_empty();
-        let check_stopwords = !a.stopwords_lower.is_empty();
-
-        let target = match a.regex_target {
-            AllowlistTarget::Match => m,
-            AllowlistTarget::Secret => secret,
-            AllowlistTarget::Line => line,
-        };
-
-        let path_hit = check_paths && a.paths.iter().any(|r| r.is_match(path).unwrap_or(false));
-        let regex_hit = check_regexes && a.regexes.iter().any(|r| r.is_match(target).unwrap_or(false));
-        let stopword_hit = check_stopwords && {
-            let lc = secret.to_lowercase();
-            a.stopwords_lower.iter().any(|s| lc.contains(s))
-        };
-
-        if check_paths {
-            matched_any |= path_hit;
-            matched_all &= path_hit;
-        }
-        if check_regexes {
-            matched_any |= regex_hit;
-            matched_all &= regex_hit;
-        }
-        if check_stopwords {
-            matched_any |= stopword_hit;
-            matched_all &= stopword_hit;
-        }
-        if !check_paths && !check_regexes && !check_stopwords {
-            continue;
-        }
-        if a.condition_and && !a.commits.is_empty() {
-            matched_all &= commit.is_some_and(|c| a.commits.iter().any(|listed| listed.eq_ignore_ascii_case(c.trim())));
-        }
-
-        if (a.condition_and && matched_all) || (!a.condition_and && matched_any) {
-            return true;
-        }
-    }
-    false
 }
 
 /// Returns `true` when the captured secret passes every declared requirement.
@@ -714,50 +567,6 @@ fn check_pattern_requirements(secret: &str, req: &CompiledPatternRequirements) -
     }
 
     true
-}
-
-pub(crate) fn compute_line_offsets(s: &str) -> Vec<usize> {
-    let mut v = vec![0usize];
-    for (i, b) in s.bytes().enumerate() {
-        if b == b'\n' {
-            v.push(i + 1);
-        }
-    }
-    v
-}
-
-/// Byte offsets → 1-based line + codepoint column. Columns count **characters**, not bytes,
-/// so multi-byte UTF-8 sequences line up with what editors/LSPs expect.
-///
-/// The `.get(…).copied().unwrap_or(0)` guards are belt-and-braces — `compute_line_offsets`
-/// always pushes `0` first, so `partition_point` returns ≥ 1 for any valid byte offset. We
-/// still avoid bare `[idx]` here: the offsets slice may come from a future caller that
-/// forgets the invariant, and a corrupt index on user-controlled content is not worth a
-/// panic when emitting `1` is a correct fallback.
-pub(crate) fn offset_to_line_col(offsets: &[usize], start: usize, end: usize, content: &str) -> (u32, u32, u32, u32) {
-    let sl = offsets.partition_point(|&o| o <= start);
-    let el = offsets.partition_point(|&o| o <= end);
-    let start_line_offset = offsets.get(sl.saturating_sub(1)).copied().unwrap_or(0);
-    let end_line_offset = offsets.get(el.saturating_sub(1)).copied().unwrap_or(0);
-    let sc = codepoint_col(content, start_line_offset, start);
-    let ec = codepoint_col(content, end_line_offset, end);
-    (sl.max(1) as u32, sc, el.max(1) as u32, ec)
-}
-
-fn codepoint_col(content: &str, line_start: usize, offset: usize) -> u32 {
-    let end = offset.min(content.len());
-    if line_start >= end {
-        return 1;
-    }
-    // Character count of the slice `[line_start..offset]`, +1 for 1-based columns.
-    (content[line_start..end].chars().count() as u32) + 1
-}
-
-pub(crate) fn line_slice<'a>(content: &'a str, offsets: &[usize], line: u32) -> &'a str {
-    let idx = (line as usize).saturating_sub(1);
-    let start = offsets.get(idx).copied().unwrap_or(0);
-    let end = offsets.get(idx + 1).copied().unwrap_or(content.len());
-    content[start..end].trim_end_matches('\n')
 }
 
 #[cfg(test)]
@@ -892,59 +701,6 @@ mod tests {
         let findings = scan_text(&rs, Path::new("id_rsa"), &text);
         assert!(findings.iter().any(|f| f.rule_id == "private-key"), "no private-key finding");
         assert_eq!(findings[0].end_line as usize, text.lines().count());
-    }
-
-    #[test]
-    fn allow_comment_gitleaks() {
-        assert!(has_allow_comment("let x = \"ghp_...\"; // gitleaks:allow"));
-        assert!(has_allow_comment("token = \"...\"  # gitleaks:allow"));
-    }
-
-    #[test]
-    fn allow_comment_our_marker() {
-        assert!(has_allow_comment("key = \"...\" // secret-scanner:allow"));
-        assert!(has_allow_comment("# SECRET-SCANNER:ALLOW"));
-    }
-
-    #[test]
-    fn allow_comment_absent() {
-        assert!(!has_allow_comment("normal line"));
-        assert!(!has_allow_comment("// just a comment"));
-        assert!(!has_allow_comment("allow")); // too short
-    }
-
-    #[test]
-    fn allow_comment_pragma() {
-        // detect-secrets compat — same-line marker across comment syntaxes.
-        assert!(has_allow_comment("token = \"abc123\"  # pragma: allowlist secret"));
-        assert!(has_allow_comment("let x = \"...\"; // PRAGMA: ALLOWLIST SECRET"));
-        assert!(has_allow_comment("/* pragma: allowlist secret */ const k = \"…\";"));
-        assert!(!has_allow_comment("token = \"abc\" # pragma: allow"));
-    }
-
-    #[test]
-    fn nextline_pragma_suppresses_following_line() {
-        assert!(has_nextline_pragma("# pragma: allowlist nextline secret"));
-        assert!(has_nextline_pragma("// PRAGMA: ALLOWLIST NEXTLINE SECRET"));
-        assert!(!has_nextline_pragma("# pragma: allowlist secret"));
-        assert!(!has_nextline_pragma("normal comment"));
-        assert!(!has_nextline_pragma("")); // empty line
-    }
-
-    #[test]
-    fn allow_region_pair() {
-        let src = "head\n# gitleaks:allow-start\nSECRET=abc\n# gitleaks:allow-end\ntail";
-        let regions = find_allow_regions(src);
-        assert_eq!(regions.len(), 1);
-        let secret_off = src.find("SECRET").unwrap();
-        assert!(is_in_allow_region(&regions, secret_off));
-    }
-
-    #[test]
-    fn allow_region_unpaired_is_ignored() {
-        let src = "# gitleaks:allow-start\nonly one marker";
-        let regions = find_allow_regions(src);
-        assert!(regions.is_empty());
     }
 
     fn reqs(min_digits: Option<u32>, min_length: Option<u32>, ignores: &[&str]) -> CompiledPatternRequirements {
