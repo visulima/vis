@@ -19,6 +19,6 @@ export type { BuildContextOptions, OrchestratorContext } from "./orchestrator/co
 export { buildContext } from "./orchestrator/context";
 export { applyReleaseNoteTemplate, composeRelatedReleasesBlock, extractInternalAuthors } from "./orchestrator/notes";
 export { publishContext } from "./orchestrator/publish";
-export type { FindMissingReleasesResult, MissingRelease, PublishMissingOptions, PublishMissingResult, RegistryProbe } from "./orchestrator/publish-missing";
-export { findMissingReleases, publishMissing } from "./orchestrator/publish-missing";
+export type { FindMissingReleasesResult, MissingRelease, PublishMissingOptions, PublishMissingResult, RegistryProbe, StrandedRelease } from "./orchestrator/publish-missing";
+export { findMissingReleases, publishMissing, writeStrandedChangeFiles } from "./orchestrator/publish-missing";
 export type { PublishContextOptions, PublishContextResult } from "./orchestrator/publish-types";

@@ -195,6 +195,7 @@ export const applyReleasePlan = async (
             return {
                 changelogEntry: entry,
                 changelogPath: cl,
+                changelogVersion: release.newVersion,
                 // A non-npm manifest (Cargo.toml, pyproject.toml) is TOML: its version and
                 // requirements are written by the ecosystem plan, never serialized from the synthetic manifest.
                 manifestWrite:
@@ -216,6 +217,7 @@ export const applyReleasePlan = async (
     // Per-package routing falls out of this for free — each package has
     // a unique path and ends up alone in its bucket.
     const changelogBuckets = new Map<string, string[]>();
+    const changelogVersions = new Map<string, string[]>();
 
     for (const result of perReleaseResults) {
         if (!result) {
@@ -233,6 +235,8 @@ export const applyReleasePlan = async (
         } else {
             changelogBuckets.set(result.changelogPath, [result.changelogEntry]);
         }
+
+        changelogVersions.set(result.changelogPath, [...(changelogVersions.get(result.changelogPath) ?? []), result.changelogVersion]);
     }
 
     // Each bucket reads its existing changelog once, then prepends the
@@ -243,7 +247,7 @@ export const applyReleasePlan = async (
         const existingChangelog = options.readChangelog?.(path);
 
         writes.push({
-            content: prependChangelog(aggregated, existingChangelog),
+            content: prependChangelog(aggregated, existingChangelog, changelogVersions.get(path) ?? []),
             path,
         });
     }
@@ -310,12 +314,42 @@ const ENTRY_HEADER_RE = /^## /m;
  *   3. Empty / missing file → create with `# Changelog\n\n` header,
  *      then insert.
  */
-export const prependChangelog = (entry: string, existing: string | undefined): string => {
-    const trimmedEntry = entry.trim();
 
-    if (!existing || existing.trim() === "") {
+/**
+ * Drop the sections of `existing` that head a version being written, so re-releasing a version
+ * replaces its section instead of stacking a second one. A section runs from its `## ` line to the next.
+ */
+const withoutVersionSections = (existing: string, versions: ReadonlyArray<string>): string => {
+    if (versions.length === 0) {
+        return existing;
+    }
+
+    const patterns = versions.map((version) => new RegExp(String.raw`(^|[\s\[@])${version.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}(?![\w.-])`));
+    const kept: string[] = [];
+    let dropping = false;
+
+    for (const line of existing.split(/\r?\n/)) {
+        if (line.startsWith("## ")) {
+            dropping = patterns.some((pattern) => pattern.test(line));
+        }
+
+        if (!dropping) {
+            kept.push(line);
+        }
+    }
+
+    return kept.join("\n");
+};
+
+export const prependChangelog = (entry: string, existing: string | undefined, versions: ReadonlyArray<string> = []): string => {
+    const trimmedEntry = entry.trim();
+    const kept = existing === undefined ? undefined : withoutVersionSections(existing, versions);
+
+    if (!kept || kept.trim() === "") {
         return `# Changelog\n\n${trimmedEntry}\n`;
     }
+
+    existing = kept;
 
     const lines = existing.split(/\r?\n/);
 

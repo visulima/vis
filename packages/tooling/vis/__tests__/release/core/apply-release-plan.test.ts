@@ -147,6 +147,39 @@ describe("updateRangeForVersion — preserve-satisfying", () => {
 });
 
 describe("prependChangelog — handles 3 RFC §17.4 cases", () => {
+    it("replaces the section of a version being written instead of stacking a second one", () => {
+        expect.hasAssertions();
+
+        const existing = [
+            "# Changelog",
+            "",
+            "## @scope/a 1.1.0 (2026-11-03)",
+            "",
+            "- first attempt",
+            "",
+            "## @scope/a 1.0.0 (2026-10-01)",
+            "",
+            "- older",
+            "",
+        ].join("\n");
+
+        const result = prependChangelog("## @scope/a [1.1.0](https://example/compare) (2026-11-03)\n\n- released", existing, ["1.1.0"]);
+
+        expect(result.match(/^## .*1\.1\.0/gm)).toHaveLength(1);
+        expect(result).not.toContain("first attempt");
+        expect(result).toContain("## @scope/a 1.0.0 (2026-10-01)");
+    });
+
+    it("does not treat a longer version as the one being written", () => {
+        expect.hasAssertions();
+
+        const existing = "# Changelog\n\n## @scope/a 1.0.28 (2026-10-01)\n\n- keep\n";
+
+        const result = prependChangelog("## @scope/a 1.0.2 (2026-11-03)\n\n- new", existing, ["1.0.2"]);
+
+        expect(result).toContain("## @scope/a 1.0.28 (2026-10-01)");
+    });
+
     it("inserts after `# Title` when present (bumpy/changesets convention)", () => {
         expect.hasAssertions();
 
