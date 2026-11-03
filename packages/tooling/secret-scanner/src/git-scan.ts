@@ -22,7 +22,7 @@
 //     Binary (NUL in the first 8 KiB), oversized and missing blobs are skipped
 //     and reported in `skipped`; any other git failure throws.
 
-import { join } from "node:path";
+import { resolve } from "node:path";
 
 import type { Native } from "./binding";
 import { binding } from "./binding";
@@ -485,11 +485,14 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         await warnOnSkippedRules(prepared.nativeOptions);
     }
 
-    const toplevelOutput = await runGit(["rev-parse", "--show-toplevel"], cwd, environment);
-    const toplevel = toplevelOutput.trim();
+    // `--show-cdup` rather than `--show-toplevel`: the latter is a realpath
+    // (`/private/var/…` on macOS), which would not line up with a caller's
+    // symlinked spelling of the same directory.
+    const cdup = await runGit(["rev-parse", "--show-cdup"], cwd, environment);
+    const toplevel = resolve(cwd, cdup.trim());
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
-    const absolute = (path: string): string => join(toplevel, path);
+    const absolute = (path: string): string => resolve(toplevel, path);
     const kept = new Set(
         filterIgnoredFiles(
             entries.map((entry) => absolute(entry.newPath)),

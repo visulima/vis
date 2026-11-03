@@ -119,7 +119,7 @@ describe("scanGitHistory dedup", () => {
 
 describe("scanGitHistory merges and refs", () => {
     it("finds a secret introduced while resolving a merge conflict, and reports a merged side-branch secret once", async () => {
-        expect.assertions(4);
+        expect.assertions(5);
 
         const { git, repo, write } = createRepo();
 
@@ -146,6 +146,9 @@ describe("scanGitHistory merges and refs", () => {
         write("app.ts", `export const mode = 'merged';\nexport const token = "${SECRET_B}";\n`);
         git("add", "app.ts");
         git("commit", "-q", "--no-edit", "-m", "merge side");
+
+        // Guard the fixture: HEAD must be a real two-parent merge.
+        expect(git("rev-list", "--parents", "-1", "HEAD").split(" ")).toHaveLength(3);
 
         const findings = await scanGitHistory({ cwd: repo });
         const mergeHit = findings.filter((finding) => finding.secret === SECRET_B);
@@ -313,11 +316,10 @@ describe(scanGitStaged, () => {
         write("base.ts", `t = "${SECRET_B}"\n`);
 
         const result = await scanGitStaged({ cwd: repo });
-        const toplevel = git("rev-parse", "--show-toplevel");
 
         expect(secretsOf(result.findings, SECRET_A)).toBe(1);
         expect(secretsOf(result.findings, SECRET_B)).toBe(0);
-        expect(result.findings[0]!.file).toBe(join(toplevel, "staged.ts"));
+        expect(result.findings[0]!.file).toBe(join(repo, "staged.ts"));
         expect(result.skipped).toHaveLength(0);
     });
 
