@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RegistryProbe } from "../../../src/release/core/orchestrator";
-import { buildContext, findMissingReleases, publishMissing } from "../../../src/release/core/orchestrator";
+import { buildContext, findMissingReleases, publishMissing, writeStrandedChangeFiles } from "../../../src/release/core/orchestrator";
 import type { PublishResult } from "../../../src/release/core/package-managers/interface";
 import { createShellRunner } from "../../../src/release/core/shell-runner";
 import type { PublishContext } from "../../../src/release/core/version-actions/interface";
@@ -267,7 +267,7 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         expect(found.skipped[0]?.reason).toMatch(/could not confirm/);
     });
 
-    it("skips when the package changed after the release commit", async () => {
+    it("hands a version whose package changed after the release commit to the next wave, not to recovery", async () => {
         expect.hasAssertions();
 
         writeFileSync(join(cwd, "packages", "b", "index.js"), "export {};\n");
@@ -277,7 +277,37 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
 
         expect(found.missing).toStrictEqual([]);
-        expect(found.skipped[0]?.reason).toMatch(/changed since/);
+        expect(found.stranded).toStrictEqual([
+            expect.objectContaining({ name: "@scope/b", previousVersion: "1.0.0", version: "1.1.0" }),
+        ]);
+    });
+
+    it("writes a change file pinned to the stranded version that the plan reads back", async () => {
+        expect.hasAssertions();
+
+        writeFileSync(join(cwd, "packages", "b", "index.js"), "export {};\n");
+        commitAll(cwd, "fix: change b");
+
+        const ctx = await buildContext({ cwd });
+        const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
+        const [file] = await writeStrandedChangeFiles(ctx, found.stranded);
+        const replanned = await buildContext({ cwd });
+
+        expect(file).toMatch(/stranded-scope-b-1\.1\.0\.md$/);
+        expect(replanned.plan.releases).toStrictEqual([expect.objectContaining({ name: "@scope/b", newVersion: "1.1.0" })]);
+    });
+
+    it("leaves a changed version alone when the registry already has it", async () => {
+        expect.hasAssertions();
+
+        writeFileSync(join(cwd, "packages", "b", "index.js"), "export {};\n");
+        commitAll(cwd, "fix: change b");
+
+        const ctx = await buildContext({ cwd });
+        const found = await findMissingReleases(ctx, { registryProbe: async () => true });
+
+        expect(found.stranded).toStrictEqual([]);
+        expect(found.skipped[0]?.reason).toMatch(/tag it by hand/);
     });
 
     it("skips a version set by a commit that is not a release commit", async () => {
@@ -344,6 +374,6 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         const ctx = await buildContext({ cwd });
         const found = await findMissingReleases(ctx, { registryProbe: notOnRegistry });
 
-        expect(found).toStrictEqual({ missing: [], skipped: [] });
+        expect(found).toStrictEqual({ missing: [], skipped: [], stranded: [] });
     });
 });

@@ -43,7 +43,15 @@ import {
     stageAndCommit,
     toRepoRelativePath,
 } from "../../../../release/core/git";
-import { applyContext, buildContext, publishContext, publishMissing, syncLockfile } from "../../../../release/core/orchestrator";
+import {
+    applyContext,
+    buildContext,
+    findMissingReleases,
+    publishContext,
+    publishMissing,
+    syncLockfile,
+    writeStrandedChangeFiles,
+} from "../../../../release/core/orchestrator";
 import { npmCliPackageNames } from "../../../../release/core/orchestrator/context";
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
@@ -315,6 +323,14 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
     // Auto-publish only: on a version-PR channel publishing is refused while
     // the release PR is open, which would block maintaining that PR.
     if (mode === "auto-publish" && options.publishMissing) {
+        const { stranded } = await findMissingReleases(ctx);
+
+        if (stranded.length > 0) {
+            await writeStrandedChangeFiles(ctx, stranded);
+            logger.info(`Releasing ${stranded.map((entry) => `${entry.name}@${entry.version}`).join(", ")} from HEAD: set by a release commit, never published.`);
+            ctx = await buildContext({ channel: options.channel, cwd });
+        }
+
         const recovered = await publishMissing(ctx, { noBranchPush: true, tag: ctx.channel?.tag });
 
         // Only what actually landed: a failed entry is reported with the failures below.

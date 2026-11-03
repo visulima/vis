@@ -1,6 +1,11 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import semver from "semver";
 
+import { DEFAULT_CHANGES_DIR } from "../../config";
 import type { PlannedRelease, WorkspacePackage } from "../../types";
+import { formatChangeFile } from "../change-file";
 import { DEFAULT_RELEASE_COMMIT_PATTERNS } from "../generate/conventional-commits";
 import { createTag, defaultTagFor, pushTags, renderTagPattern, resolveReleaseSource } from "../git";
 import type { CommandRunner } from "../package-managers/interface";
@@ -28,10 +33,23 @@ export interface MissingRelease {
     version: string;
 }
 
+/**
+ * A version a release commit set, never published, whose package changed since: the commit's
+ * content can't be rebuilt from HEAD, so the next wave releases the version from HEAD as a patch.
+ */
+export interface StrandedRelease {
+    name: string;
+    previousVersion: string;
+    sha: string;
+    version: string;
+}
+
 export interface FindMissingReleasesResult {
     missing: MissingRelease[];
     /** Packages that looked unreleased but were left alone, and why. */
     skipped: { name: string; reason: string }[];
+    /** Versions to release from HEAD with the next wave, see {@link StrandedRelease}. */
+    stranded: StrandedRelease[];
 }
 
 /** `true` = the registry has the version, `false` = it does not, `undefined` = could not tell. */
@@ -92,7 +110,7 @@ export const findMissingReleases = async (
 ): Promise<FindMissingReleasesResult> => {
     const runner = options.runner ?? createShellRunner();
     const probe = options.registryProbe ?? npmRegistryProbe(runner, context.cwd);
-    const result: FindMissingReleasesResult = { missing: [], skipped: [] };
+    const result: FindMissingReleasesResult = { missing: [], skipped: [], stranded: [] };
     const versionedBy = context.config.versionPr?.title ?? "🚀 Versioned release";
     const isReleaseCommit = (subject: string): boolean =>
         subject.startsWith(versionedBy) || DEFAULT_RELEASE_COMMIT_PATTERNS.some((pattern) => pattern.test(subject));
@@ -139,19 +157,26 @@ export const findMissingReleases = async (
             continue;
         }
 
+        const onRegistry = await probe(pkg, pkg.version, perPkg?.registry);
+
+        if (onRegistry === undefined) {
+            skip("the registry could not confirm whether it is published");
+            continue;
+        }
+
         const diff = await runner.run("git", ["diff", "--quiet", commit.sha, "--", pkg.dir], { cwd: context.cwd, silent: true });
 
         // ponytail: only the package dir is compared; content inlined from outside it (a shared
         // source dir, a catalog version) can drift unnoticed. Compare the packed tarball if that bites.
         if (diff.exitCode !== 0) {
-            skip(`${pkg.dir} changed since ${commit.sha.slice(0, 7)}; the next release covers it`);
-            continue;
-        }
+            // The commit's content is no longer on HEAD, so it can't be published as set. Release the
+            // version from HEAD as the next patch instead. If the registry already has it, tag by hand.
+            if (onRegistry) {
+                skip(`${pkg.dir} changed since ${commit.sha.slice(0, 7)} and the registry has it; tag it by hand`);
+            } else {
+                result.stranded.push({ name: pkg.name, previousVersion: tagged.version, sha: commit.sha, version: pkg.version });
+            }
 
-        const onRegistry = await probe(pkg, pkg.version, perPkg?.registry);
-
-        if (onRegistry === undefined) {
-            skip("the registry could not confirm whether it is published");
             continue;
         }
 
@@ -171,6 +196,27 @@ export const findMissingReleases = async (
     }
 
     return result;
+};
+
+/**
+ * Write one change file per stranded version into the changes directory, pinned with `releaseAs`
+ * so the next plan releases exactly that version from HEAD. The body records which release commit set the version.
+ */
+export const writeStrandedChangeFiles = async (context: OrchestratorContext, stranded: ReadonlyArray<StrandedRelease>): Promise<string[]> => {
+    const dir = join(context.cwd, context.config.changesDir ?? DEFAULT_CHANGES_DIR);
+    const written: string[] = [];
+
+    await mkdir(dir, { recursive: true });
+
+    for (const entry of stranded) {
+        const file = join(dir, `stranded-${entry.name.replaceAll(/[@/]/g, "-").replace(/^-/, "")}-${entry.version}.md`);
+        const body = `Release ${entry.version}. Commit ${entry.sha.slice(0, 7)} set this version and it was never published, so it is released from HEAD.`;
+
+        await writeFile(file, formatChangeFile({ bump: "patch", package: entry.name, releaseAs: entry.version }, body));
+        written.push(file);
+    }
+
+    return written;
 };
 
 /** The release tag of `name@version` under the package's (or workspace's) `releaseTagPattern`. */
