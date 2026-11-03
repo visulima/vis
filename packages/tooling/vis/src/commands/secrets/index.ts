@@ -1,12 +1,20 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../util/negatable-option";
+
 const secretsOptionDefinitions = {
     affected: {
         defaultValue: false,
         description: "Scan only projects affected by the current branch",
         type: Boolean,
     },
+    ...negatable({
+        defaultValue: false,
+        description: "With --history, walk every branch, tag and remote ref (like `git rev-list --all`) instead of only HEAD. Cannot be combined with --history-range.",
+        name: "all",
+        type: Boolean,
+    }),
     baseline: {
         description: "Path to a baseline JSON of previously-triaged findings",
         type: String,
@@ -53,7 +61,7 @@ const secretsOptionDefinitions = {
     history: {
         defaultValue: false,
         description:
-                "Scan the entire git history (every added/modified blob across commits) instead of the working tree. Surfaces secrets that were committed and later removed. Cannot be combined with --staged/--since/--affected.",
+                "Scan git history instead of the working tree. Surfaces secrets that were committed and later removed; each secret is reported once, at the commit that introduced it (merge commits included). Binary, oversized and missing blobs are skipped and counted; a git read failure exits non-zero. Cannot be combined with --staged/--since/--affected.",
         type: Boolean,
     },
     "history-range": {
@@ -135,7 +143,7 @@ const secretsOptionDefinitions = {
     },
     staged: {
         defaultValue: false,
-        description: "Scan only files staged for commit",
+        description: "Scan the content staged for commit (the git index), not the working-tree files",
         type: Boolean,
     },
     "update-baseline": {
@@ -170,6 +178,7 @@ const secrets = defineCommand({
         ["vis secrets --affected", "Scan only projects affected by the current branch"],
         ["vis secrets --history", "Scan the full git history for secrets that were committed then removed"],
         ["vis secrets --history --history-range main..HEAD", "Scan only commits on the current branch since main"],
+        ["vis secrets --history --all", "Scan every branch and tag, including unmerged ones"],
         ["vis secrets --history --max-commits 100 --redact", "Scan the last 100 commits, masking any secret values"],
         ["vis secrets --init", "Write an initial baseline from current findings"],
         ["vis secrets --list-rules", "Print all bundled detection rules"],

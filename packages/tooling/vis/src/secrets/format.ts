@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { cyan, dim, green, red, yellow } from "@visulima/colorize";
 import { readFileSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding, GitFinding, RuleInfo } from "@visulima/secret-scanner";
+import type { Finding, GitFinding, GitSkippedBlob, RuleInfo } from "@visulima/secret-scanner";
 
 const CONTEXT_RADIUS = 1;
 
@@ -192,6 +192,33 @@ export const formatHistoryText = (findings: GitFinding[], useColor: boolean, opt
     }
 
     return lines.join("\n").trimEnd();
+};
+
+/**
+ * Summary of blobs a git scan did not inspect, grouped by reason. With
+ * `verbose`, every blob is listed with its commit and object id.
+ */
+export const formatSkippedBlobs = (skipped: GitSkippedBlob[], useColor: boolean, options: { verbose?: boolean } = {}): string => {
+    const counts = new Map<string, number>();
+
+    for (const blob of skipped) {
+        counts.set(blob.reason, (counts.get(blob.reason) ?? 0) + 1);
+    }
+
+    const breakdown = [...counts].map(([reason, count]) => `${reason}: ${String(count)}`).join(", ");
+    const summary = `${String(skipped.length)} blob(s) not scanned (${breakdown})${options.verbose ? "" : "; use --verbose to list them"}`;
+    const lines = [useColor ? yellow(summary) : summary];
+
+    if (options.verbose) {
+        for (const blob of skipped) {
+            const where = blob.commit === undefined ? blob.sha.slice(0, 10) : `${blob.commit.slice(0, 10)} ${blob.sha.slice(0, 10)}`;
+            const detail = `  - ${blob.path} [${blob.reason}] ${where}`;
+
+            lines.push(useColor ? dim(detail) : detail);
+        }
+    }
+
+    return lines.join("\n");
 };
 
 /**
