@@ -6,8 +6,8 @@ import type { Finding } from "../src/types";
 // `scanFiles`, `listRequiredValidators`) can be exercised without loading the
 // real `.node` addon. We assert the JS orchestration (prepare → binding →
 // postProcess + verbose diagnostics) rather than detection itself.
-const scanMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[] }>>();
-const scanFilesMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[] }>>();
+const scanMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[]; suppressed: unknown[] }>>();
+const scanFilesMock = vi.fn<(...args: unknown[]) => Promise<{ findings: Finding[]; skipped: unknown[]; suppressed: unknown[] }>>();
 const inspectRulesetMock = vi.fn<(...args: unknown[]) => unknown>();
 
 vi.mock(import("../src/binding"), () => {
@@ -24,8 +24,8 @@ beforeEach(() => {
     scanMock.mockReset();
     scanFilesMock.mockReset();
     inspectRulesetMock.mockReset();
-    scanMock.mockResolvedValue({ findings: [], skipped: [] });
-    scanFilesMock.mockResolvedValue({ findings: [], skipped: [] });
+    scanMock.mockResolvedValue({ findings: [], skipped: [], suppressed: [] });
+    scanFilesMock.mockResolvedValue({ findings: [], skipped: [], suppressed: [] });
     inspectRulesetMock.mockReturnValue([]);
 });
 

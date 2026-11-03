@@ -15,5 +15,11 @@ data/LICENSE-KINGFISHER
 data/NOTICE-KINGFISHER
 data/ruleset.json
 
+# Generated: the napi-rs loader and typings, and the bundled-dependency
+# licenses packem writes into LICENSE.md on every build.
+index.js
+index.d.ts
+LICENSE.md
+
 **/tsconfig.json
 **/jsconfig.json

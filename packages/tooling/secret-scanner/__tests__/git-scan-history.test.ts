@@ -1,13 +1,14 @@
 /* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { scanGitHistory, scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
-import { scanString } from "../src/index";
+import { scanFiles, scanString } from "../src/index";
+import type { ScanOptions } from "../src/types";
 
 // Fake GitHub PATs (`ghp_` + 36 base62 chars) matching the bundled `github-pat` rule.
 const SECRET_A = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
@@ -57,6 +58,26 @@ afterEach(() => {
 });
 
 describe("scanGitHistory dedup", () => {
+    it("does not report an old secret again as generic-api-key once a later edit makes the generic rule match", async () => {
+        expect.assertions(1);
+
+        const { git, repo, write } = createRepo();
+        const rules = [
+            { id: "github-pat", keywords: ["ghp_"], regex: "ghp_[0-9a-zA-Z]{36}" },
+            { id: "generic-api-key", keywords: ["token"], regex: String.raw`token\s*=\s*"([0-9a-zA-Z_]{20,})"` },
+        ];
+
+        write("a.ts", `const value = "${SECRET_A}";\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "add token");
+        write("a.ts", `const token = "${SECRET_A}";\n`);
+        git("commit", "-q", "-am", "rename variable");
+
+        const findings = await scanGitHistory({ config: { extendBundled: false, inline: { rules } }, cwd: repo });
+
+        expect(findings.map((finding) => [finding.commit.message, finding.ruleId])).toStrictEqual([["add token", "github-pat"]]);
+    });
+
     it("reports a long-lived secret once, at the commit that introduced it", async () => {
         expect.assertions(2);
 
@@ -119,6 +140,46 @@ describe("scanGitHistory dedup", () => {
 });
 
 describe("scanGitHistory merges and refs", () => {
+    const mergeSide = (file: string): { repo: string } => {
+        const { git, repo, write } = createRepo();
+
+        write("base.ts", "export const a = 1;\n");
+        git("add", ".");
+        git("commit", "-q", "-m", "base");
+        git("checkout", "-q", "-b", "side");
+        write(file, `export const token = "${SECRET_C}";\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "side leak");
+        git("checkout", "-q", "main");
+        write("other.ts", "export const b = 2;\n");
+        git("add", ".");
+        git("commit", "-q", "-m", "main change");
+        git("merge", "-q", "--no-ff", "--no-edit", "side");
+
+        return { repo };
+    };
+
+    it("looks up a merged file whose name reads as pathspec magic literally", async () => {
+        expect.assertions(1);
+
+        const { repo } = mergeSide(":leak.ts");
+        const findings = await scanGitHistory({ cwd: repo });
+
+        expect(findings.map((finding) => finding.commit.message)).toStrictEqual(["side leak"]);
+    });
+
+    it("looks up merge parents from the repository root when cwd is a subdirectory", async () => {
+        expect.assertions(1);
+
+        const { repo } = mergeSide("leak.ts");
+
+        mkdirSync(join(repo, "sub"));
+
+        const findings = await scanGitHistory({ cwd: join(repo, "sub") });
+
+        expect(findings.map((finding) => finding.commit.message)).toStrictEqual(["side leak"]);
+    });
+
     it("finds a secret introduced while resolving a merge conflict, and reports a merged side-branch secret once", async () => {
         expect.assertions(5);
 
@@ -366,5 +427,32 @@ describe(scanGitStaged, () => {
         const result = await scanGitStaged({ cwd: repo, walk: { excludePatterns: ["staged.ts"] } });
 
         expect(result.findings).toHaveLength(0);
+    });
+
+    it("reports paths relative to the process cwd, so a scanFiles baseline suppresses them", async () => {
+        expect.assertions(3);
+
+        const { git, repo, write } = createRepo();
+        const options: ScanOptions = { config: { extendBundled: false, inline: { rules: [{ id: "tok", keywords: ["tok_"], regex: "tok_[a-z0-9]{12}" }] } } };
+        const content = "KEY=tok_abcdef123456\n";
+        const baselinePath = join(repo, "baseline.json");
+        const cwd = process.cwd();
+
+        write("a.env", content);
+        git("add", "a.env");
+
+        try {
+            process.chdir(repo);
+            writeFileSync(baselinePath, JSON.stringify(await scanFiles([join(repo, "a.env")], options)));
+
+            const unfiltered = await scanGitStaged({ ...options, cwd: repo });
+            const result = await scanGitStaged({ ...options, baseline: baselinePath, cwd: repo, reportSuppressed: true });
+
+            expect(unfiltered.findings.map((finding) => finding.file)).toStrictEqual(["a.env"]);
+            expect(result.findings).toStrictEqual([]);
+            expect(result.suppressed.map((finding) => finding.suppressedBy)).toStrictEqual(["baseline"]);
+        } finally {
+            process.chdir(cwd);
+        }
     });
 });

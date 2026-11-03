@@ -5,13 +5,14 @@
 // the module that uses them — they never appear here.
 
 import type { GitleaksConfig } from "./config-loader";
+import type { CONFIDENCE_LEVELS } from "./constants";
 
 /**
  * Author-declared rule quality. Drives the `--min-confidence` filter: unlabeled
  * rules resolve to `"low"` so raising the floor drops them along with explicit
  * low-confidence rules.
  */
-export type Confidence = "high" | "low" | "medium";
+export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
 
 /**
  * Validation status on a finding after the optional HTTP validator runs.
@@ -164,7 +165,7 @@ export interface ScanOptions {
      * tar.gz files are recognised by their magic bytes (not the extension), opened in
      * memory and their entries scanned. Findings use the virtual path
      * `archive.zip!inner/dir/file.env`. `1` opens top-level archives; each extra level
-     * opens one more layer of archives nested inside them (capped at 8). A gzip stream
+     * opens one more layer of archives nested inside them (capped at 8, `MAX_ARCHIVE_DEPTH`). A gzip stream
      * around a tar counts as one level.
      *
      * Limits per top-level archive: each entry obeys `walk.maxFileSize` (and the archive

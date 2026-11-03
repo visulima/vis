@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /** `-c` overrides placed before the subcommand on every git call. */
-const GIT_CONFIG_OVERRIDES = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
+export const GIT_CONFIG_OVERRIDES = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
 
 /**
  * Extra flags for the diff family (`diff`, `diff-tree`). They keep a user's
@@ -35,7 +35,20 @@ const BINARY_SNIFF_BYTES = 8192;
 // Git reads these from the environment and lets them override the repository
 // implied by `cwd`. Inside a git hook an inherited GIT_DIR/GIT_WORK_TREE would
 // silently point our plumbing at the wrong repository.
-const GIT_REPO_ENV_KEYS = new Set(["GIT_COMMON_DIR", "GIT_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE"]);
+// The pathspec switches are scrubbed too: they change how paths we pass are
+// matched, and any of them makes `--literal-pathspecs` a fatal error.
+const GIT_REPO_ENV_KEYS = new Set([
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+    "GIT_INDEX_FILE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_NAMESPACE",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_WORK_TREE",
+]);
 
 /**
  * Build the environment for a git child process.

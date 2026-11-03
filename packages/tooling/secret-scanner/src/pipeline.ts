@@ -12,15 +12,15 @@
 // only returned under `reportSuppressed`) go through the same filters but skip
 // validation, and come back in `suppressed` instead of `findings`.
 //
-// Each stage is pure + testable in isolation; `postProcess` is the orchestrator.
+// Each stage is pure + testable in isolation; `postProcessDetailed` is the orchestrator.
 /* eslint-enable no-secrets/no-secrets */
 
 import { resolveBaselineSet } from "./baseline";
-import type { Native } from "./binding";
 import { checkChecksum } from "./checksum";
-import { fingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
-import { GitleaksIgnore, maskSecret } from "./gitleaks-ignore";
+import { baselineKeys } from "./fingerprint";
+import { GitleaksIgnore } from "./gitleaks-ignore";
 import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
+import { maskFinding } from "./mask";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
 import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from "./types";
 import { PerHostLimiter, validateFinding } from "./validator";
@@ -39,17 +39,15 @@ const VALIDATOR_CONCURRENCY = 8;
  * - `potentialUuid` — skip standard UUID-shaped secrets
  * - `notAlphanumericString` — skip `*****` / `------` / `//////`
  */
-const applyHeuristicFilters = (findings: Finding[], options: ScanOptions | undefined): Finding[] => {
+const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOptions | undefined): F[] => {
     const redact = options?.redact === true;
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
-    // The content-shape heuristics judge `finding.secret`. Under `redact: true`
-    // the native layer masks the secret before the pipeline sees it (`abc***xyz`,
-    // or `******` for ≤6-char secrets), so these can no longer read the real
-    // token — running them would silently drop legitimate findings (a short
-    // secret masks to `******`, which `notAlphanumericString` then discards).
-    // Disable them when redacting; the file-based `lockFile` heuristic reads
-    // `finding.file` and is unaffected.
+    // The content-shape heuristics judge `finding.secret`. They stay off under
+    // `redact: true`, as they were when the native layer masked the secret
+    // before the pipeline saw it, so a redacted scan reports the same findings
+    // it always did. The file-based `lockFile` heuristic reads `finding.file`
+    // and is unaffected.
     const skipSequential = !redact && heuristics?.sequentialString !== false;
     const skipUuid = !redact && heuristics?.potentialUuid !== false;
     const skipNonAlnum = !redact && heuristics?.notAlphanumericString !== false;
@@ -94,17 +92,13 @@ const overlaps = (a: Finding, b: Finding): boolean =>
     comparePosition(a.startLine, a.startColumn, b.endLine, b.endColumn) < 0 && comparePosition(b.startLine, b.startColumn, a.endLine, a.endColumn) < 0;
 
 /**
- * Gitleaks parity (`detect.filter`): the catch-all `generic-api-key` rule only
- * reports text no other rule matched. `token = "ghp_…"` is a `github-pat`
- * finding, not also a generic one. The native span dedup only collapses
- * identical spans, and the generic match also covers the variable name, so the
- * two never share a span. Compares match positions rather than secrets so it
- * also works when `redact` has masked them.
+ * Drop the `generic-api-key` findings among `findings` that one of `shadowers`
+ * (any non-generic finding) overlaps.
  */
-const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
+const dropShadowedBy = <F extends Finding>(findings: F[], shadowers: ReadonlyArray<Finding>): F[] => {
     const othersByFile = new Map<string, Finding[]>();
 
-    for (const finding of findings) {
+    for (const finding of shadowers) {
         if (finding.ruleId !== GENERIC_RULE_ID) {
             othersByFile.set(finding.file, [...(othersByFile.get(finding.file) ?? []), finding]);
         }
@@ -122,7 +116,7 @@ const dropShadowedGenericFindings = (findings: Finding[]): Finding[] => {
     return findings.filter((finding) => finding.ruleId !== GENERIC_RULE_ID || !isShadowed(finding));
 };
 
-const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, excludeIds: string[] | undefined): Finding[] => {
+const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] | undefined, excludeIds: string[] | undefined): F[] => {
     const hasInclude = includeIds && includeIds.length > 0;
     const hasExclude = excludeIds && excludeIds.length > 0;
 
@@ -154,10 +148,9 @@ const applyRuleFilter = (findings: Finding[], includeIds: string[] | undefined, 
  * means we couldn't evaluate the template — those findings stay (conservative),
  * mirroring Kingfisher's `skip_if_missing: true` default.
  */
-const applyChecksumFilter = (findings: Finding[], ruleMeta: Map<string, RuleMeta>, redact: boolean): Finding[] => {
-    // The checksum verdict is computed from `finding.match`; under `redact: true`
-    // the match is masked before the pipeline runs, so `checkChecksum` would
-    // evaluate garbage and drop valid findings. Skip the filter when redacting.
+const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>, redact: boolean): F[] => {
+    // Skipped under `redact: true`, as it was when the native layer masked
+    // `finding.match` before the pipeline ran, so redacted results don't change.
     if (redact || ruleMeta.size === 0) {
         return findings;
     }
@@ -232,12 +225,10 @@ const applyValidation = async (findings: Finding[], options: ScanOptions | undef
         return findings;
     }
 
-    // `redact: true` masks `finding.secret` in the native layer before the
-    // pipeline runs, so every validator would fire live provider requests with
-    // placeholder strings (`abc***xyz`) — wasted outbound traffic that some
-    // providers page their security team over, and which always comes back
-    // rejected/error. Skip validation entirely and warn once; the caller can
-    // re-run with `redact: false` to verify, then mask at output time.
+    // `redact: true` promises the secret is not used beyond detection, and a
+    // validator sends it to a provider. Skip validation entirely and warn once;
+    // the caller can re-run with `redact: false` to verify, then mask at
+    // output time.
     if (options.redact === true) {
         if (!warnedRedactWithValidate) {
             warnedRedactWithValidate = true;
@@ -357,6 +348,36 @@ export const resetPipelineWarningsForTests = (): void => {
     warnedRedactWithValidate = false;
 };
 
+/** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
+const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined): F[] => {
+    const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
+    const heuristicsFiltered = applyHeuristicFilters(filtered, options);
+
+    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
+};
+
+/**
+ * Gitleaks parity (`detect.filter`): the catch-all `generic-api-key` rule only
+ * reports text no other rule matched. `token = "ghp_…"` is a `github-pat`
+ * finding, not also a generic one. The native span dedup only collapses
+ * identical spans, and the generic match also covers the variable name, so the
+ * two never share a span.
+ *
+ * Only a finding the scan would report shadows: one that survives the rule
+ * filter, heuristics and checksum, so excluding `github-pat` brings the
+ * generic finding back. Active findings shadow active generic ones only, so
+ * turning on `reportSuppressed` never changes `findings`; a suppressed generic
+ * finding is dropped when any finding overlaps it.
+ */
+export const dropShadowedGenericFindings = (report: ProcessedFindings, prepared: PreparedScan, options: ScanOptions | undefined): ProcessedFindings => {
+    const activeShadowers = preValidation(report.findings, prepared, options);
+
+    return {
+        findings: dropShadowedBy(report.findings, activeShadowers),
+        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options)]),
+    };
+};
+
 /**
  * Per-scan suppression state. Build it once per scan (not per file / blob):
  * the `.gitleaksignore` matcher records which entries were used.
@@ -368,10 +389,13 @@ export interface SuppressionContext {
     ignore?: GitleaksIgnore;
 
     /**
-     * `redact` is on but the ignore file has secret-value entries: the native
-     * scan runs unredacted and the pipeline masks at the end.
+     * Commit allowlist of a git history scan (`allowlists[].commits`): true
+     * when the finding's rule is allowlisted for its commit. Checked before
+     * any other suppression, and before validation.
      */
-    maskSecrets: boolean;
+    isCommitAllowlisted?: (finding: Finding & { commit?: { sha: string } }) => boolean;
+    /** `redact` is on: reported findings are masked, and the baseline is matched against the masked form. */
+    redact: boolean;
 }
 
 export const createSuppressionContext = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>): Promise<SuppressionContext> => {
@@ -382,30 +406,22 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
         baseline: await resolveBaselineSet(options?.baseline),
         bases,
         ignore,
-        maskSecrets: options?.redact === true && ignore?.hasSecretEntries === true,
+        redact: options?.redact === true,
     };
-};
-
-/** Native options for this scan: unredacted when the pipeline masks instead. */
-export const nativeOptionsFor = (prepared: PreparedScan, context: SuppressionContext): Native.ScanOptions => {
-    if (context.maskSecrets) {
-        return { ...prepared.nativeOptions, redact: false };
-    }
-
-    return prepared.nativeOptions;
-};
-
-const maskFinding = <F extends Finding>(finding: F): F => {
-    return { ...finding, match: maskSecret(finding.match), secret: maskSecret(finding.secret) };
 };
 
 /**
  * First suppressor for a finding, or `undefined`. Every `.gitleaksignore`
  * entry that matches is marked used, even when the baseline wins, so an
  * entry shadowed by the baseline isn't reported as stale.
+ *
+ * `.gitleaksignore` secret entries match the real secret; the baseline is
+ * matched against `shown`, the finding as reported (masked under `redact`), so
+ * a baseline written from redacted output keeps matching.
  */
 const suppressionFor = (
     finding: Finding,
+    shown: Finding,
     context: SuppressionContext,
 ): { entry?: SuppressedFinding["suppressedByEntry"]; reason: SuppressionReason } | undefined => {
     if (context.ignore?.isIgnoreFile(finding, context.bases)) {
@@ -414,7 +430,7 @@ const suppressionFor = (
 
     const entry = context.ignore?.match(finding, context.bases);
 
-    if (context.baseline.size > 0 && [fingerprint, legacyFingerprint, wholeMatchFingerprint].some((key) => context.baseline.has(key(finding)))) {
+    if (context.baseline.size > 0 && baselineKeys(shown).some((key) => context.baseline.has(key))) {
         return { reason: "baseline" };
     }
 
@@ -438,89 +454,56 @@ export interface ProcessedFindings {
     suppressed: SuppressedFinding[];
 }
 
-/** Allowlisted / inline-allowed match the native layer returned under `reportSuppressed`. */
-export const isNativeSuppressed = (finding: Finding): boolean => (finding as Native.Finding).suppressedBy !== undefined;
-
 /**
- * Shared post-processing pipeline for every scan variant. Takes the raw
- * native findings plus the prepared-scan bundle and returns the findings to
- * report, and (with `reportSuppressed`) the ones that were suppressed.
+ * Shared post-processing pipeline for every scan variant. Takes the native
+ * report (active findings, plus the allowlisted / inline-allowed ones under
+ * `reportSuppressed`) and the prepared-scan bundle, and returns the findings
+ * to report and (with `reportSuppressed`) the ones that were suppressed.
  */
 export const postProcessDetailed = async (
-    raw: Finding[],
+    report: ProcessedFindings,
     prepared: PreparedScan,
     options: ScanOptions | undefined,
-    context?: SuppressionContext,
+    suppression: SuppressionContext,
 ): Promise<ProcessedFindings> => {
-    const suppression = context ?? (await createSuppressionContext(options, [process.cwd()]));
+    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options);
+    // Commit-allowlisted findings are suppressed first, like the native
+    // allowlist: they skip validation and join the native suppressed ones.
     const active: Finding[] = [];
-    const nativeSuppressed: Finding[] = [];
+    const preSuppressed: SuppressedFinding[] = [...suppressedShadowFree];
 
-    for (const finding of raw) {
-        if (isNativeSuppressed(finding)) {
-            nativeSuppressed.push(finding);
+    for (const finding of shadowFree) {
+        if (suppression.isCommitAllowlisted?.(finding) === true) {
+            preSuppressed.push(toSuppressed(finding, "allowlist"));
         } else {
             active.push(finding);
         }
     }
 
-    const preValidation = (findings: Finding[]): Finding[] => {
-        const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
-        const heuristicsFiltered = applyHeuristicFilters(filtered, options);
-
-        return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
-    };
-
-    // Active findings shadow generic ones among themselves only, so turning on
-    // `reportSuppressed` never changes `findings`. A suppressed generic finding is
-    // also dropped when any finding overlaps it.
-    const shadowFree = dropShadowedGenericFindings(active);
-    const suppressedShadowFree = dropShadowedGenericFindings([...shadowFree, ...nativeSuppressed]).filter((finding) => isNativeSuppressed(finding));
-
-    const validated = await applyValidation(preValidation(shadowFree), options, prepared.ruleMeta);
+    const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
+    // The single masking point for `redact`: the native scan returns real values.
+    const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
 
     for (const finding of verifiedOnly) {
-        const hit = suppressionFor(finding, suppression);
+        const shown = mask(finding);
+        const hit = suppressionFor(finding, shown, suppression);
 
         if (hit === undefined) {
-            findings.push(finding);
+            findings.push(shown);
         } else {
-            suppressed.push(toSuppressed(finding, hit.reason, hit.entry));
+            suppressed.push(toSuppressed(shown, hit.reason, hit.entry));
         }
     }
 
-    for (const finding of preValidation(suppressedShadowFree)) {
-        // Mark matching ignore entries used; the native reason wins.
+    for (const finding of preValidation(preSuppressed, prepared, options)) {
+        // Mark matching ignore entries used; the allowlist reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
-        const { suppressedBy, ...rest } = finding as Native.Finding;
-
-        suppressed.push(toSuppressed(rest as Finding, suppressedBy as SuppressionReason));
+        suppressed.push(mask(finding));
     }
 
-    const mask = suppression.maskSecrets ? maskFinding : <F extends Finding>(finding: F): F => finding;
-
-    return {
-        findings: findings.map((finding) => mask(finding)),
-        suppressed: options?.reportSuppressed === true ? suppressed.map((finding) => mask(finding)) : [],
-    };
-};
-
-/**
- * Shared post-processing pipeline for every scan variant. Consumers pass the
- * raw native findings plus the prepared-scan bundle; this returns the final
- * filtered list ready for return to the caller.
- */
-export const postProcess = async (
-    raw: Finding[],
-    prepared: PreparedScan,
-    options: ScanOptions | undefined,
-    context?: SuppressionContext,
-): Promise<Finding[]> => {
-    const result = await postProcessDetailed(raw, prepared, options, context);
-
-    return result.findings;
+    return { findings, suppressed: options?.reportSuppressed === true ? suppressed : [] };
 };

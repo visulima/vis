@@ -93,6 +93,12 @@ describe(scanGitHistory, () => {
         expect(findings.some((f) => f.secret === SECRET)).toBe(false);
     });
 
+    it("rejects maxCommits 0 instead of scanning every commit", async () => {
+        expect.assertions(1);
+
+        await expect(scanGitHistory({ cwd: repo, maxCommits: 0 })).rejects.toThrow(/maxCommits/);
+    });
+
     it("scans a bounded range via since/until", async () => {
         expect.assertions(1);
 

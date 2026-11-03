@@ -176,22 +176,6 @@ const parseFingerprint = (raw: string, entry: GitleaksIgnoreEntry): FingerprintR
 };
 
 /**
- * Mask a secret the way the native layer does (`abc***xyz`, `******` for six
- * characters or fewer), counting characters rather than bytes.
- */
-export const maskSecret = (value: string): string => {
-    // Code points, like Rust `chars()`; grapheme clusters aren't needed for a mask.
-    // eslint-disable-next-line @typescript-eslint/no-misused-spread -- See above.
-    const chars = [...value];
-
-    if (chars.length <= 6) {
-        return "******";
-    }
-
-    return `${chars.slice(0, 3).join("")}${"*".repeat(chars.length - 6)}${chars.slice(-3).join("")}`;
-};
-
-/**
  * A loaded `.gitleaksignore`. Create one per scan: it records which entries
  * matched so {@link GitleaksIgnore.unused} can report stale ones.
  */
@@ -249,11 +233,6 @@ export class GitleaksIgnore {
         }
     }
 
-    /** True when any entry matches on the secret value (needs unredacted findings). */
-    public get hasSecretEntries(): boolean {
-        return this.#secrets.length > 0;
-    }
-
     /**
      * Return the first entry matching `finding`, marking **every** matching
      * entry as used. `bases` are the directories a relative `finding.file` may
@@ -303,10 +282,10 @@ export class GitleaksIgnore {
 
     /**
      * Entries that matched nothing so far. Commit-scoped fingerprints are only
-     * meaningful for git history scans; pass `includeCommitEntries: false` for
+     * meaningful for git history scans; leave `includeCommitEntries` off for
      * working-tree scans so they aren't reported as stale.
      */
-    public unused(includeCommitEntries: boolean): GitleaksIgnoreEntry[] {
+    public unused({ includeCommitEntries = false }: { includeCommitEntries?: boolean } = {}): GitleaksIgnoreEntry[] {
         const unused = [
             ...this.#fingerprints.filter((rule) => includeCommitEntries || rule.commit === undefined).map((rule) => rule.entry),
             ...this.#secrets.map((rule) => rule.entry),

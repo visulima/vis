@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fingerprint, legacyFingerprint } from "../src/fingerprint";
+import { baselineKeys, fingerprint, gitleaksIgnoreFingerprint, legacyFingerprint, wholeMatchFingerprint } from "../src/fingerprint";
 import type { Finding } from "../src/types";
 
 const baseFinding = (overrides: Partial<Finding> = {}): Finding => {
@@ -100,5 +100,31 @@ describe(legacyFingerprint, () => {
         const b = legacyFingerprint(baseFinding({ secret: "two" }));
 
         expect(a).toBe(b);
+    });
+});
+
+describe(baselineKeys, () => {
+    it("lists the content hash, the legacy form and the whole-match hash", () => {
+        expect.assertions(1);
+
+        const finding = baseFinding({ match: "token = ghp_x", secret: "ghp_x" });
+
+        expect(baselineKeys(finding)).toStrictEqual([fingerprint(finding), legacyFingerprint(finding), wholeMatchFingerprint(finding)]);
+    });
+});
+
+describe(gitleaksIgnoreFingerprint, () => {
+    it("formats a working-tree finding as file:rule:line", () => {
+        expect.assertions(1);
+
+        expect(gitleaksIgnoreFingerprint(baseFinding({ startLine: 7 }))).toBe("src/app.ts:github-pat:7");
+    });
+
+    it("prefixes the full commit sha for a history finding", () => {
+        expect.assertions(1);
+
+        const sha = "0123456789abcdef0123456789abcdef01234567";
+
+        expect(gitleaksIgnoreFingerprint({ ...baseFinding({ startLine: 7 }), commit: { sha } })).toBe(`${sha}:src/app.ts:github-pat:7`);
     });
 });

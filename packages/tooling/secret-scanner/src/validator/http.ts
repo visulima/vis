@@ -15,7 +15,6 @@ export interface HttpRequestTemplate {
     url: string;
 }
 
-// eslint-disable-next-line @stylistic/operator-linebreak -- prettier places `=` at end-of-line for union type declarations; honour its formatting.
 export type ResponseMatcher =
     | { expected: string[] | string; header: string; type: "HeaderMatch" }
     | { match_all_words?: boolean; type: "WordMatch"; words: string[] }

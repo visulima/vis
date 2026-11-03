@@ -4,7 +4,7 @@
 //   1. Public surface re-exports (types, fingerprint, ruleset helpers, …).
 //   2. The three top-level scan orchestrators — `scan`, `scanFiles`,
 //      `scanString` — that thread `prepareScan` → native binding →
-//      `postProcess`.
+//      `postProcessDetailed`.
 //
 // Everything else lives in a dedicated module. Keep this file thin so
 // consumers see the public surface at a glance and contributors know where
@@ -14,13 +14,13 @@ import { resolve } from "node:path";
 
 import { binding } from "./binding";
 import { resolveConfig } from "./config-loader";
-import { warnOnSkippedRules } from "./diagnostics";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
-import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
+import { postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
+import { beginScan, finishResult } from "./scan-session";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
-import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedFile, SkippedRule } from "./types";
+import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedRule } from "./types";
 
 /** Return any rules from the given config that failed to compile, with the reason. */
 export const inspectRuleset = async (options?: ScanOptions): Promise<SkippedRule[]> => {
@@ -109,20 +109,13 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
  * `unusedIgnores` the `.gitleaksignore` entries nothing matched.
  */
 export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const prepared = prepareScan(options);
-
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
-
-    const context = await createSuppressionContext(
+    const { context, prepared } = await beginScan(
         options,
         paths.map((path) => resolve(path)),
     );
-    const report = await binding.scanDetailed(paths, nativeOptionsFor(prepared, context));
-    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
+    const report = await binding.scanDetailed(paths, prepared.nativeOptions);
 
-    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -137,19 +130,12 @@ export const scan = async (paths: string[], options?: ScanOptions): Promise<Find
  * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
  */
 export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const prepared = prepareScan(options);
-
-    if (options?.verbose) {
-        await warnOnSkippedRules(prepared.nativeOptions);
-    }
-
+    const { context, prepared } = await beginScan(options, [process.cwd()]);
     const matcher = buildIgnoreMatcher(options);
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
-    const context = await createSuppressionContext(options, [process.cwd()]);
-    const report = await binding.scanFilesDetailed(filteredFiles, nativeOptionsFor(prepared, context));
-    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
+    const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
-    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
 };
 
 /**
@@ -165,7 +151,9 @@ export const scanFiles = async (files: string[], options?: ScanOptions): Promise
 
 export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline, type WriteBaselineOptions } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
-export { fingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+export { CONFIDENCE_LEVELS, DEFAULT_MAX_FILE_SIZE, MAX_ARCHIVE_DEPTH } from "./constants";
+export { baselineKeys, fingerprint, gitleaksIgnoreFingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+export { DIFF_HARDENING_FLAGS, GIT_CONFIG_OVERRIDES } from "./git-command";
 export {
     type GitCommitInfo,
     type GitFinding,
