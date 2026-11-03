@@ -122,7 +122,10 @@ pub(crate) fn scan_text_decoded(ruleset: &CompiledRuleset, path: &Path, content:
     scan_text_inner(ruleset, path, content, false)
 }
 
-fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, include_path_only: bool) -> Vec<RawFinding> {
+/// `plain == false` is the decode pass: path-only rules don't refire, and `preRegexReplace`
+/// rules are skipped because their offsets index the rewritten text, which the decode
+/// layer can't map back to the original content.
+fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain: bool) -> Vec<RawFinding> {
     // Normalise to forward slashes so user-authored path regexes (rule `path`
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
@@ -230,7 +233,7 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, includ
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
         if rule.engine.is_none() && rule.path_regex.is_some() {
-            if !include_path_only {
+            if !plain {
                 continue;
             }
             if is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "") {
@@ -263,6 +266,9 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, includ
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
+        if !plain && !rule.pre_regex_replace.is_empty() {
+            continue;
+        }
 
         // Per-rule pre-regex text replacement. When a rule declares replacements we build a
         // new scratch `String` and rewrite line offsets for it; otherwise we scan the original

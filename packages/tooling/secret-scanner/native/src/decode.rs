@@ -129,9 +129,15 @@ pub fn scan_text_with_decoding(
     for depth in 1..=opts.max_depth {
         let raw = detector::scan_text_decoded(ruleset, path, &buf);
         for finding in raw {
-            if let Some(mapped) = map_finding(finding, &fragments, &original) {
-                out.push(mapped);
+            let Some(mapped) = map_finding(finding, &fragments, &original) else { continue };
+            // A percent run keeps the literal text between its escapes, so a plain secret
+            // inside it is "decoded" again; likewise a shallower depth may already have
+            // reported it. Drop the repeat: same rule + secret already reported inside
+            // this encoded span.
+            if already_reported(&out, &mapped) {
+                continue;
             }
+            out.push(mapped);
         }
 
         if depth == opts.max_depth || budget == 0 {
@@ -147,6 +153,15 @@ pub fn scan_text_with_decoding(
     }
 
     out
+}
+
+fn already_reported(out: &[RawFinding], f: &RawFinding) -> bool {
+    out.iter().any(|p| {
+        p.rule_id == f.rule_id
+            && p.secret == f.secret
+            && p.start_offset >= f.start_offset
+            && p.end_offset <= f.end_offset
+    })
 }
 
 struct Original<'a> {
@@ -483,6 +498,14 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
     };
     let chain = overlapping.iter().filter_map(|p| p.chain.as_ref()).max_by_key(|c| c.len())?;
 
+    // Defensive: never hand a non-boundary offset to the line/column helpers, which slice.
+    if !original.content.is_char_boundary(orig_start)
+        || !original.content.is_char_boundary(orig_end)
+        || orig_start > orig_end
+    {
+        return None;
+    }
+
     // Suppression markers live on the original line, which the decoded buffer may not
     // fully contain — re-check them against the original content.
     let (sl, sc, el, ec) = detector::offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
@@ -648,6 +671,37 @@ mod tests {
     #[test]
     fn allow_comment_on_original_line_suppresses_decoded_finding() {
         assert!(scan(&format!("value: {} # gitleaks:allow\n", b64(KEY)), 2).is_empty());
+    }
+
+    #[test]
+    fn percent_run_does_not_duplicate_plain_secret() {
+        let text = format!("url=https://x.test/?r=%2Fhome&token={KEY}&x=%20\n");
+        let findings = scan(&text, 2);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].decoded.is_none());
+    }
+
+    #[test]
+    fn percent_escape_that_completes_a_match_is_found() {
+        let rs = ruleset(
+            r#"{"rules":[{"id":"pw","regex":"password=(hunter2[a-z]+)","secretGroup":1,"keywords":["password"]}]}"#,
+        );
+        let text = "q=password%3Dhunter2secret&x=%20\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, DecodeOptions::default());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].secret, "hunter2secret");
+        assert_eq!(findings[0].decoded.as_deref(), Some(&["percent".to_string()][..]));
+    }
+
+    #[test]
+    fn pre_regex_replace_rules_do_not_panic_on_decoded_text() {
+        // Length-changing replace + multibyte context on the same line as a segment.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"r","regex":"sk-or-v1-[0-9a-f]{64}","keywords":["sk-or"],"preRegexReplace":[{"from":"ä","to":""}]}]}"#,
+        );
+        let text = format!("ääää ääää {} ääää sk-or-v1-{}\n", b64(KEY), "0123456789abcdef".repeat(4));
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), &text, DecodeOptions::default());
+        assert!(findings.iter().all(|f| f.decoded.is_none()));
     }
 
     #[test]
