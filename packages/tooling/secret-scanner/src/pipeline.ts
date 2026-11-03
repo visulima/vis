@@ -5,17 +5,23 @@
 //   2. `applyChecksumFilter`  — drops findings whose CRC-style checksum fails.
 //   3. `applyValidation`      — populates `finding.validation` via HTTP / transport validators.
 //   4. `applyOnlyVerified`    — keeps only `"verified"` when `config.onlyVerified`.
-//   5. `applySuppressions`    — baseline file suppression.
+//   5. `applySuppressions`    — baseline and `.gitleaksignore` suppression.
+//
+// Findings the native layer already suppressed (allowlist / inline pragma,
+// only returned under `reportSuppressed`) go through the same filters but skip
+// validation, and come back in `suppressed` instead of `findings`.
 //
 // Each stage is pure + testable in isolation; `postProcess` is the orchestrator.
 /* eslint-enable no-secrets/no-secrets */
 
 import { resolveBaselineSet } from "./baseline";
+import type { Native } from "./binding";
 import { checkChecksum } from "./checksum";
 import { fingerprint, legacyFingerprint } from "./fingerprint";
+import { GitleaksIgnore, maskSecret } from "./gitleaks-ignore";
 import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
-import type { Finding, ScanOptions } from "./types";
+import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from "./types";
 import { PerHostLimiter, validateFinding } from "./validator";
 
 const VALIDATOR_CONCURRENCY = 8;
@@ -314,17 +320,147 @@ export const resetPipelineWarningsForTests = (): void => {
     warnedRedactWithValidate = false;
 };
 
-const applySuppressions = async (findings: Finding[], options: ScanOptions | undefined): Promise<Finding[]> => {
-    const baseline = await resolveBaselineSet(options?.baseline);
+/**
+ * Per-scan suppression state. Build it once per scan (not per file / blob):
+ * the `.gitleaksignore` matcher records which entries were used.
+ */
+export interface SuppressionContext {
+    baseline: ReadonlySet<string>;
+    /** Directories a relative `finding.file` may be relative to. */
+    bases: ReadonlyArray<string>;
+    ignore?: GitleaksIgnore;
 
-    if (baseline.size === 0) {
-        return findings;
+    /**
+     * `redact` is on but the ignore file has secret-value entries: the native
+     * scan runs unredacted and the pipeline masks at the end.
+     */
+    maskSecrets: boolean;
+}
+
+export const createSuppressionContext = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>): Promise<SuppressionContext> => {
+    const ignorePath = options?.gitleaksIgnore;
+    const ignore = typeof ignorePath === "string" && ignorePath !== "" ? GitleaksIgnore.load(ignorePath) : undefined;
+
+    return {
+        baseline: await resolveBaselineSet(options?.baseline),
+        bases,
+        ignore,
+        maskSecrets: options?.redact === true && ignore?.hasSecretEntries === true,
+    };
+};
+
+/** Native options for this scan: unredacted when the pipeline masks instead. */
+export const nativeOptionsFor = (prepared: PreparedScan, context: SuppressionContext): Native.ScanOptions => {
+    if (context.maskSecrets) {
+        return { ...prepared.nativeOptions, redact: false };
     }
 
-    // Suppress when either the content-hash OR the legacy line-based
-    // fingerprint is in the baseline — handles both freshly-written and
-    // legacy baselines without a migration pass.
-    return findings.filter((finding) => !baseline.has(fingerprint(finding)) && !baseline.has(legacyFingerprint(finding)));
+    return prepared.nativeOptions;
+};
+
+const maskFinding = <F extends Finding>(finding: F): F => {
+    return { ...finding, match: maskSecret(finding.match), secret: maskSecret(finding.secret) };
+};
+
+/**
+ * First suppressor for a finding, or `undefined`. Every `.gitleaksignore`
+ * entry that matches is marked used, even when the baseline wins, so an
+ * entry shadowed by the baseline isn't reported as stale.
+ */
+const suppressionFor = (
+    finding: Finding,
+    context: SuppressionContext,
+): { entry?: SuppressedFinding["suppressedByEntry"]; reason: SuppressionReason } | undefined => {
+    if (context.ignore?.isIgnoreFile(finding, context.bases)) {
+        return { reason: "gitleaksignore" };
+    }
+
+    const entry = context.ignore?.match(finding, context.bases);
+
+    if (context.baseline.size > 0 && (context.baseline.has(fingerprint(finding)) || context.baseline.has(legacyFingerprint(finding)))) {
+        return { reason: "baseline" };
+    }
+
+    return entry === undefined ? undefined : { entry, reason: "gitleaksignore" };
+};
+
+const toSuppressed = <F extends Finding>(finding: F, reason: SuppressionReason, entry?: SuppressedFinding["suppressedByEntry"]): SuppressedFinding<F> => {
+    const suppressed = { ...finding, suppressedBy: reason } as SuppressedFinding<F>;
+
+    if (entry !== undefined) {
+        suppressed.suppressedByEntry = entry;
+    }
+
+    return suppressed;
+};
+
+/** Output of {@link postProcessDetailed}. */
+export interface ProcessedFindings {
+    findings: Finding[];
+    /** Empty unless `options.reportSuppressed`. */
+    suppressed: SuppressedFinding[];
+}
+
+/**
+ * Shared post-processing pipeline for every scan variant. Takes the raw
+ * native findings plus the prepared-scan bundle and returns the findings to
+ * report, and (with `reportSuppressed`) the ones that were suppressed.
+ */
+export const postProcessDetailed = async (
+    raw: Finding[],
+    prepared: PreparedScan,
+    options: ScanOptions | undefined,
+    context?: SuppressionContext,
+): Promise<ProcessedFindings> => {
+    const suppression = context ?? (await createSuppressionContext(options, [process.cwd()]));
+    const active: Finding[] = [];
+    const nativeSuppressed: Finding[] = [];
+
+    for (const finding of raw) {
+        if ((finding as Native.Finding).suppressedBy === undefined) {
+            active.push(finding);
+        } else {
+            nativeSuppressed.push(finding);
+        }
+    }
+
+    const preValidation = (findings: Finding[]): Finding[] => {
+        const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
+        const heuristicsFiltered = applyHeuristicFilters(filtered, options);
+
+        return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
+    };
+
+    const validated = await applyValidation(preValidation(active), options, prepared.ruleMeta);
+    const verifiedOnly = applyOnlyVerified(validated, options);
+    const findings: Finding[] = [];
+    const suppressed: SuppressedFinding[] = [];
+
+    for (const finding of verifiedOnly) {
+        const hit = suppressionFor(finding, suppression);
+
+        if (hit === undefined) {
+            findings.push(finding);
+        } else {
+            suppressed.push(toSuppressed(finding, hit.reason, hit.entry));
+        }
+    }
+
+    for (const finding of preValidation(nativeSuppressed)) {
+        // Mark matching ignore entries used; the native reason wins.
+        suppression.ignore?.match(finding, suppression.bases);
+
+        const { suppressedBy, ...rest } = finding as Native.Finding;
+
+        suppressed.push(toSuppressed(rest as Finding, suppressedBy as SuppressionReason));
+    }
+
+    const mask = suppression.maskSecrets ? maskFinding : <F extends Finding>(finding: F): F => finding;
+
+    return {
+        findings: findings.map((finding) => mask(finding)),
+        suppressed: options?.reportSuppressed === true ? suppressed.map((finding) => mask(finding)) : [],
+    };
 };
 
 /**
@@ -332,12 +468,13 @@ const applySuppressions = async (findings: Finding[], options: ScanOptions | und
  * raw native findings plus the prepared-scan bundle; this returns the final
  * filtered list ready for return to the caller.
  */
-export const postProcess = async (raw: Finding[], prepared: PreparedScan, options: ScanOptions | undefined): Promise<Finding[]> => {
-    const filtered = applyRuleFilter(raw, prepared.includeIds, prepared.excludeIds);
-    const heuristicsFiltered = applyHeuristicFilters(filtered, options);
-    const checksumed = applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
-    const validated = await applyValidation(checksumed, options, prepared.ruleMeta);
-    const verifiedOnly = applyOnlyVerified(validated, options);
+export const postProcess = async (
+    raw: Finding[],
+    prepared: PreparedScan,
+    options: ScanOptions | undefined,
+    context?: SuppressionContext,
+): Promise<Finding[]> => {
+    const result = await postProcessDetailed(raw, prepared, options, context);
 
-    return applySuppressions(verifiedOnly, options);
+    return result.findings;
 };

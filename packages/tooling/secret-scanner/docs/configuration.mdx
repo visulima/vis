@@ -51,12 +51,15 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option        | Type      | Default | Description                                                                       |
-| ------------- | --------- | ------- | --------------------------------------------------------------------------------- |
-| `baseline`    | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint. |
-| `concurrency` | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                |
-| `redact`      | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                   |
-| `verbose`     | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                       |
+| Option             | Type              | Default | Description                                                                                   |
+| ------------------ | ----------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.             |
+| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                            |
+| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore). |
+| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                   |
+| `redact`           | `boolean`         | `false` | Mask the `match` and `secret` strings in every emitted finding.                               |
+| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                        |
+| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                   |
 
 ## `config` — rule source + validation
 

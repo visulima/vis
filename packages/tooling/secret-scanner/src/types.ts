@@ -134,8 +134,41 @@ export interface ScanOptions {
         validateAllowedHosts?: string[];
     };
 
+    /**
+     * Path to a gitleaks `.gitleaksignore` file. Each line is one of:
+     *
+     * - a fingerprint `file:rule:line`, or `commit:file:rule:line` for git history findings;
+     * - a secret-value entry `secret:&lt;value>`, optionally scoped as
+     * `rule:&lt;id>:secret:&lt;value>`, `path:&lt;file>:secret:&lt;value>` or
+     * `path:&lt;file>:rule:&lt;id>:secret:&lt;value>`.
+     *
+     * `*` in any component matches any run of characters (`src/gen/*:generic-api-key:*`).
+     * `#` starts a comment. Paths are matched relative to the directory that holds
+     * the file, however the scan root was spelled. Not auto-discovered by the
+     * library; `false` or omitted disables it. Matching findings are suppressed
+     * with `suppressedBy: "gitleaksignore"`; entries that matched nothing are
+     * returned as `unusedIgnores` by the `*Detailed` scans.
+     */
+    gitleaksIgnore?: string | false;
+
+    /**
+     * Honour inline suppressions — `gitleaks:allow`, `secret-scanner:allow`,
+     * `pragma: allowlist secret`, `pragma: allowlist nextline secret` and
+     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Default `true`.
+     * Set `false` in CI to audit what developers suppressed in code.
+     */
+    inlineAllow?: boolean;
+
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;
+
+    /**
+     * Have the `*Detailed` scans return the findings that were suppressed —
+     * by the baseline, a config allowlist, an inline pragma or
+     * `.gitleaksignore` — in `suppressed`, each with a `suppressedBy` reason.
+     * They never appear in `findings`. Default `false`.
+     */
+    reportSuppressed?: boolean;
 
     /**
      * Rule id + tag filters. Entries are either literal rule ids (e.g.
@@ -214,6 +247,50 @@ export interface Finding {
      * {@link ValidationStatus} for the meaning of each value.
      */
     validation?: ValidationStatus;
+}
+
+/** Why a finding was suppressed. */
+export type SuppressionReason = "allowlist" | "baseline" | "gitleaksignore" | "inline-allow";
+
+/** A finding that matched but was suppressed (see `ScanOptions.reportSuppressed`). */
+export type SuppressedFinding<F extends Finding = Finding> = F & {
+    suppressedBy: SuppressionReason;
+    /** The `.gitleaksignore` line that suppressed it, when `suppressedBy` is `"gitleaksignore"`. */
+    suppressedByEntry?: GitleaksIgnoreEntry;
+};
+
+/** One parsed `.gitleaksignore` line. */
+export interface GitleaksIgnoreEntry {
+    /** `fingerprint` for `[commit:]file:rule:line`, `secret` for secret-value entries. */
+    kind: "fingerprint" | "secret";
+    /** 1-based line number in the ignore file. */
+    line: number;
+    /** The line as written (trimmed). Secret entries contain the secret value. */
+    raw: string;
+}
+
+/** Why a working-tree file was not scanned. */
+export type SkipReason = "io-error" | "not-found" | "permission-denied" | "symlink-loop" | "too-large";
+
+/** A working-tree file (or directory) the scan could not read. */
+export interface SkippedFile {
+    /** Path, relative to the scan root like `Finding.file` when possible. */
+    path: string;
+    reason: SkipReason;
+}
+
+/**
+ * Result of `scanDetailed` / `scanFilesDetailed`: the findings plus everything
+ * needed to tell a clean scan from one that didn't look at everything.
+ */
+export interface ScanResult {
+    findings: Finding[];
+    /** Files that could not be read. A scan with entries here is not proof of "no secrets". */
+    skipped: SkippedFile[];
+    /** Suppressed findings; empty unless `reportSuppressed` is on. */
+    suppressed: SuppressedFinding[];
+    /** `.gitleaksignore` entries that matched no finding in this scan. */
+    unusedIgnores: GitleaksIgnoreEntry[];
 }
 
 export interface SkippedRule {

@@ -10,15 +10,17 @@
 // consumers see the public surface at a glance and contributors know where
 // to go for each concern (`baseline.ts`, `pipeline.ts`, `validator/`, …).
 
+import { resolve } from "node:path";
+
 import { binding } from "./binding";
 import { resolveConfig } from "./config-loader";
 import { warnOnSkippedRules } from "./diagnostics";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
-import { postProcess } from "./pipeline";
+import { createSuppressionContext, nativeOptionsFor, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
-import type { Finding, RuleInfo, ScanOptions, SkippedRule } from "./types";
+import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedFile, SkippedRule } from "./types";
 
 /** Return any rules from the given config that failed to compile, with the reason. */
 export const inspectRuleset = async (options?: ScanOptions): Promise<SkippedRule[]> => {
@@ -98,25 +100,43 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
     return reportValidators(rulesArray);
 };
 
-/** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
-export const scan = async (paths: string[], options?: ScanOptions): Promise<Finding[]> => {
+/**
+ * Scan the given paths for secrets and report everything a caller needs to
+ * tell a clean scan from an incomplete one: `skipped` lists files and
+ * directories that could not be read (permission denied, I/O error, larger
+ * than `walk.maxFileSize`), `suppressed` the findings a baseline, allowlist,
+ * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`), and
+ * `unusedIgnores` the `.gitleaksignore` entries nothing matched.
+ */
+export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
     const prepared = prepareScan(options);
 
     if (options?.verbose) {
         await warnOnSkippedRules(prepared.nativeOptions);
     }
 
-    const raw = (await binding.scan(paths, prepared.nativeOptions)) as Finding[];
+    const context = await createSuppressionContext(
+        options,
+        paths.map((path) => resolve(path)),
+    );
+    const report = await binding.scanDetailed(paths, nativeOptionsFor(prepared, context));
+    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
 
-    return postProcess(raw, prepared, options);
+    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
+};
+
+/** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
+export const scan = async (paths: string[], options?: ScanOptions): Promise<Finding[]> => {
+    const result = await scanDetailed(paths, options);
+
+    return result.findings;
 };
 
 /**
- * Scan a fixed list of files (e.g. output of `git diff --name-only`). Bypasses
- * the native walker, so `walk.excludePatterns` / `walk.excludeFromFiles` are
- * honoured here in JS via the `ignore` package.
+ * Like {@link scanFiles}, with the diagnostics of {@link scanDetailed}. A listed
+ * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
  */
-export const scanFiles = async (files: string[], options?: ScanOptions): Promise<Finding[]> => {
+export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
     const prepared = prepareScan(options);
 
     if (options?.verbose) {
@@ -125,13 +145,25 @@ export const scanFiles = async (files: string[], options?: ScanOptions): Promise
 
     const matcher = buildIgnoreMatcher(options);
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const report = await binding.scanFilesDetailed(filteredFiles, nativeOptionsFor(prepared, context));
+    const { findings, suppressed } = await postProcessDetailed(report.findings as Finding[], prepared, options, context);
 
-    const raw = (await binding.scanFiles(filteredFiles, prepared.nativeOptions)) as Finding[];
-
-    return postProcess(raw, prepared, options);
+    return { findings, skipped: report.skipped as SkippedFile[], suppressed, unusedIgnores: context.ignore?.unused(false) ?? [] };
 };
 
-export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline } from "./baseline";
+/**
+ * Scan a fixed list of files (e.g. output of `git diff --name-only`). Bypasses
+ * the native walker, so `walk.excludePatterns` / `walk.excludeFromFiles` are
+ * honoured here in JS via the `ignore` package.
+ */
+export const scanFiles = async (files: string[], options?: ScanOptions): Promise<Finding[]> => {
+    const result = await scanFilesDetailed(files, options);
+
+    return result.findings;
+};
+
+export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline, type WriteBaselineOptions } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
 export { fingerprint, legacyFingerprint } from "./fingerprint";
 export {
@@ -147,8 +179,21 @@ export {
     scanGitStaged,
 } from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
-export { type SarifLog, toSarif, type ToSarifOptions } from "./sarif";
+export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
 export { scanString } from "./scan-string";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
-export type { Confidence, Finding, RuleInfo, ScanOptions, SkippedRule, ValidationStatus } from "./types";
+export type {
+    Confidence,
+    Finding,
+    GitleaksIgnoreEntry,
+    RuleInfo,
+    ScanOptions,
+    ScanResult,
+    SkippedFile,
+    SkippedRule,
+    SkipReason,
+    SuppressedFinding,
+    SuppressionReason,
+    ValidationStatus,
+} from "./types";
