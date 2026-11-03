@@ -1,3 +1,4 @@
+/* eslint-disable no-template-curly-in-string -- fixtures quote literal `${VAR}` references from config files */
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { inspectRuleset, scanString } from "../src";
@@ -299,6 +300,239 @@ describe("generic-api-key yields to overlapping findings", () => {
 
         expect(ids).toContain("github-pat");
         expect(ids).not.toContain("generic-api-key");
+    });
+});
+
+const VISULIMA_TRUE_POSITIVES: RuleCase[] = [
+    { content: "Open https://claude.ai/code/sess" + "ion_017xU2zXCot2PoPUtg3SUunW to continue\n", name: "session URL", ruleId: "claude-code-session-url" },
+    { content: "LANGSMITH_TRACING_KEY=lsv2_tr_7c9e2ed829af48d9d" + "59ce6ca6b0b9658_d7dbc03609\n", name: "lsv2_tr_ key", ruleId: "langsmith-tracing-key" },
+    {
+        content: "const bot = 'MTIwMTE0MDk0MDQ2Nzg3MTc1NA.GIA1aR.l4" + "cyaDp557_lJ_AV_wFHanBKwFJlB1KOxfKG6I';\n",
+        name: "token with a 19-digit user id",
+        ruleId: "discord-bot-token",
+    },
+    {
+        content: "client.login('MTE5ODc2NTQzMjEwOTg3NjU0Mw.Gx7Kq2.VL" + "ymYZwH6Qqq5X1wUGAJ7Wx98vjE6boQ-jQaJb')\n",
+        name: "token with a 38-char HMAC",
+        ruleId: "discord-bot-token",
+    },
+    {
+        content: "MP_ACCESS_TOKEN=TEST-9564229060058384-270633-3f588b" + "265b2344421c5b75a1ad69534f-803613979\n",
+        name: "TEST- sandbox token",
+        ruleId: "mercadopago-test-access-token",
+    },
+    {
+        content: "BRAINTREE_ACCESS_TOKEN=access_token$production$fkk2xquczbtk" + "ias9$993fd21b5aaa1c87409cd75d167853d0\n",
+        name: "production access token",
+        ruleId: "braintree-production-access-token",
+    },
+    { content: 'pagbank_api_key: "EV5pl1RqkPHRZG63' + '2IeppHoRTAzHJepq"\n', name: "32-char key next to pagbank", ruleId: "pagseguro-api-key" },
+    {
+        content: "NUNTIQ_API_KEY=nuntiq_ck_live_1787e770_Cx3BT1zw4XhB" + "mOwTNnTzqXVssmZWnD8n-XosQLWqXJI0fil7C\n",
+        name: "customer API key",
+        ruleId: "nuntiq-api-key",
+    },
+    { content: "SUPABASE_ACCESS_TOKEN=sbp_v0_aaf6301d1a619588" + "096b35bc4986e10b742c0bac\n", name: "sbp_v0_ token", ruleId: "supabase-versioned-access-token" },
+    { content: "ACTIONGATE_TOKEN=prov_live_74200567a82" + "0d3d2bfdc8ab3872178a3\n", name: "prove token", ruleId: "actiongate-prove-token" },
+    {
+        content: "SEALED_ENV_TOKEN=sealed_env_b_8976_44cHjXpcK-42PEnKYAiJ6" + "_Rkcgkq0y2ccpPBAnb3KxrKw1nNx1XmjIMGuJpe\n",
+        name: "credential token",
+        ruleId: "sealed-env-credential-token",
+    },
+    {
+        content:
+            "token: usl_iG8YqL9BN5GGx6KtyQqDTjD3saRZkb2l26nkaylEMyosHNwy.loPdBMZQf4G9SBSqfPDA28uSwNccStq3fiOLUwQmLeR" + "2zufwl8Y2WVWHnATriHmaVXOEpLJ0qrqKdHsF0qHM3XlSd_D9i-ME.eq6iTqTfibBb5z6-aBfCt3xq6KceMheFYV-rKSteQVz\n",
+        name: "unseal token",
+        ruleId: "sealed-env-unseal-token",
+    },
+    { content: "SEALED_ENV_KEY=d858f2cd89f05087505798acbc58b504" + "ee8fa5a41c4e63cadaa62277c57d7a25\n", name: "master key", ruleId: "sealed-env-key" },
+    { content: "SEALED_ENV_TOTP_SECRET=DDF6YNQ4VAL33URK" + "J6XI645L57T45G6C\n", name: "TOTP seed", ruleId: "sealed-env-totp-secret" },
+    {
+        content: '"Redis": "contoso.redis.cache.windows.net:6380,password=ZWzwDFrlGXl+z1BVXBt7wRkl8OZfIa2AUk7z7gTqBu4=,ssl=True,abortConnect=False"\n',
+        name: "StackExchange.Redis connection string",
+        ruleId: "azure-redis-cache-password",
+    },
+    {
+        content:
+            "AUTH_KEY=IR@e63bf0cd-a164-3d03-4647-80b116167660@contoso-adf@ServiceEndpoint=contoso-ad" + "f.westeurope.datafactory.azure.net@ZWzwDFrlGXl+z1BVXBt7wRkl8OZfIa2AUk7z7gTqBu4=\n",
+        name: "SHIR authentication key",
+        ruleId: "azure-data-factory-shir-key",
+    },
+    {
+        content: `PuTTY-User-Key-File-3: ssh-ed25519
+Encryption: none
+Comment: deploy
+Public-Lines: 2
+x7H8TUSRFLc5nvfBZKVRx8QM9/b8dGlQnd2VawVTURIOHXvDNkl9jkzoSXPCFgqG
+ZJzk
+Private-Lines: 1
+wweocv81k2lsNaWQrZzhB4GZqT8hqt0pmpsLww0sAO/DGpUxjKbgRBWZRZX1Vlxe
+Private-MAC: 0aa6c8f5501419bf4149b87a7178d32506afcb476de8d6e7916ae6315168d022
+`,
+        file: "deploy.ppk",
+        name: "unencrypted .ppk",
+        ruleId: "putty-private-key",
+    },
+    { content: "ALTER USER scott IDENTIFIED BY Qw7rT2zP9x;\n", file: "grant.sql", name: "ALTER USER ... IDENTIFIED BY", ruleId: "sql-identified-by-password" },
+    {
+        content: "GRANT ALL ON app.* TO 'app'@'%' IDENTIFIED BY 'Qw7rT2zP9x';\n",
+        file: "grant.sql",
+        name: "GRANT ... IDENTIFIED BY",
+        ruleId: "sql-identified-by-password",
+    },
+    {
+        content: 'nuget.exe sources Add -Name "Repo" -Source "https://pkgs.example.com/nuget" -Username "builder" -Password "Xk29vLq7Pz3wRt"\n',
+        file: "build.ps1",
+        name: "nuget.exe sources add -Password",
+        ruleId: "nuget-cli-password",
+    },
+    {
+        content: "dotnet nuget add source https://pkgs.example.com/v3/index.json --name corp --username builder --password Xk29vLq7Pz3wRt\n",
+        file: "ci.sh",
+        name: "dotnet nuget add source --password",
+        ruleId: "nuget-cli-password",
+    },
+    {
+        content: 'qlogin -u "contoso\\username"  -ps "2s044v1212a73bbc348d25e514c728d5' + '96a3e50ae69fca9a78a10ddc5f32b0289"\n',
+        file: "backup.sh",
+        name: "qlogin -ps",
+        ruleId: "commvault-qlogin-password",
+    },
+    {
+        content: `export OS_AUTH_URL=https://keystone.example.com:5000/v3
+export OS_USERNAME=admin
+export OS_PASSWORD=Xk29vLq7Pz3wRt
+`,
+        file: "openrc.sh",
+        name: "export OS_PASSWORD=",
+        ruleId: "openstack-rc-password",
+    },
+    {
+        content: `registry=https://registry.example.com/
+_auth=ZGVwbG95OlN1cDNy` + `LVMzY3IzdC1QYXNz
+always-auth=true
+`,
+        file: ".npmrc",
+        name: "_auth in .npmrc",
+        ruleId: "npmrc-legacy-auth",
+    },
+    {
+        content: `spring:
+  datasource:
+    password: \${DB_PASSWORD:Xk29vLq7` + `Pz3wRtYb}
+`,
+        file: "application.yml",
+        name: "password default in application.yml",
+        ruleId: "spring-placeholder-default-secret",
+    },
+];
+
+const VISULIMA_FALSE_POSITIVES: RuleCase[] = [
+    { content: "See https://claude.ai/code for details\n", name: "docs link without a session id", ruleId: "claude-code-session-url" },
+    { content: "key = lsv2_tr_5e68de96039211d9\n", name: "truncated lsv2_tr_ key", ruleId: "langsmith-tracing-key" },
+    { content: "const id = 'Nodejs.module.resolution_strategy_for_packages_v2';\n", name: "dotted version-like identifier", ruleId: "discord-bot-token" },
+    { content: "describe('TEST-1234 regression', () => {});\n", name: "test- prefixed identifier", ruleId: "mercadopago-test-access-token" },
+    { content: "access_token$production$<merchant_id>$<token>\n", name: "truncated example in docs", ruleId: "braintree-production-access-token" },
+    { content: 'pagseguro_env: "sandbox"\n', name: "provider name with a short value", ruleId: "pagseguro-api-key" },
+    { content: "nuntiq_xk_live_1787e770_Cx3BT1zw4XhBmOwTNnTzqXVssmZWnD8n-XosQLWqXJI0fil7C\n", name: "unknown key type", ruleId: "nuntiq-api-key" },
+    { content: "sbp_v0_abc\n", name: "short sbp_v0_ value", ruleId: "supabase-versioned-access-token" },
+    { content: "prov_live_zzzaaaxyz0123456789abcdef0123456\n", name: "non-hex body", ruleId: "actiongate-prove-token" },
+    { content: "sealed_env_x_1a2b_short\n", name: "unknown mode letter", ruleId: "sealed-env-credential-token" },
+    { content: "const usl_config = load();\n", name: "short usl_ identifier", ruleId: "sealed-env-unseal-token" },
+    { content: "SEALED_ENV_KEY=${SEALED_ENV_KEY}\n", name: "non-hex master key", ruleId: "sealed-env-key" },
+    { content: "SEALED_ENV_TOTP_SECRET=$TOTP\n", name: "variable reference", ruleId: "sealed-env-totp-secret" },
+    {
+        content: '"Redis": "contoso.redis.cache.windows.net:6380,ssl=True,abortConnect=False"\n',
+        name: "connection string without a password",
+        ruleId: "azure-redis-cache-password",
+    },
+    { content: "Contact IR@example.com for investor relations\n", name: "email-like IR@ text", ruleId: "azure-data-factory-shir-key" },
+    {
+        content: `PuTTY-User-Key-File-3: ssh-ed25519
+Encryption: aes256-cbc
+Key-Derivation: Argon2id
+Comment: deploy
+Public-Lines: 2
+x7H8TUSRFLc5nvfBZKVRx8QM9/b8dGlQnd2VawVTURIOHXvDNkl9jkzoSXPCFgqG
+ZJzk
+Private-Lines: 1
+wweocv81k2lsNaWQrZzhB4GZqT8hqt0pmpsLww0sAO/DGpUxjKbgRBWZRZX1Vlxe
+Private-MAC: 0aa6c8f5501419bf4149b87a7178d32506afcb476de8d6e7916ae6315168d022
+`,
+        file: "deploy.ppk",
+        name: "encrypted .ppk",
+        ruleId: "putty-private-key",
+    },
+    {
+        content: "ALTER USER 'app'@'%' IDENTIFIED BY PASSWORD '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';\n",
+        file: "grant.sql",
+        name: "IDENTIFIED BY PASSWORD '<hash>'",
+        ruleId: "sql-identified-by-password",
+    },
+    { content: "ALTER USER app IDENTIFIED BY :new_password;\n", file: "grant.sql", name: "bind parameter", ruleId: "sql-identified-by-password" },
+    {
+        content: 'nuget sources add -Name corp -Source https://pkgs.example.com -Password "$env:NUGET_PASSWORD"\n',
+        file: "build.ps1",
+        name: "password from an environment variable",
+        ruleId: "nuget-cli-password",
+    },
+    { content: 'qlogin -u "$CV_USER" -ps "$CV_PASS"\n', file: "backup.sh", name: "qlogin with a variable", ruleId: "commvault-qlogin-password" },
+    {
+        content: `read -sr OS_PASSWORD_INPUT
+export OS_PASSWORD=$OS_PASSWORD_INPUT
+`,
+        file: "openrc.sh",
+        name: "stock openrc prompt",
+        ruleId: "openstack-rc-password",
+    },
+    {
+        content: "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n",
+        file: ".npmrc",
+        name: "_authToken from an environment variable",
+        ruleId: "npmrc-legacy-auth",
+    },
+    {
+        content: `spring:
+  datasource:
+    password: \${DB_PASSWORD}
+`,
+        file: "application.yml",
+        name: "placeholder without a default",
+        ruleId: "spring-placeholder-default-secret",
+    },
+    {
+        content: `server:
+  port: \${SERVER_PORT:8080}
+`,
+        file: "application.yml",
+        name: "non-secret placeholder default",
+        ruleId: "spring-placeholder-default-secret",
+    },
+    {
+        content: "//npm.example.com/:_authToken=${NPM_TOKEN:-fallback-token-value}\n",
+        file: ".npmrc",
+        name: "shell ${VAR:-default} expansion",
+        ruleId: "spring-placeholder-default-secret",
+    },
+    {
+        content: "Run `qlogin -u <user> -ps <encrypted password>` first.\n",
+        file: "README.md",
+        name: "usage text with a <placeholder>",
+        ruleId: "commvault-qlogin-password",
+    },
+];
+
+describe("visulima default rules (scripts/visulima-rules.toml)", () => {
+    it.each(VISULIMA_TRUE_POSITIVES)("$ruleId detects $name", async ({ content, file, ruleId }) => {
+        expect.assertions(1);
+
+        await expect(ruleIdsFor(content, file)).resolves.toContain(ruleId);
+    });
+
+    it.each(VISULIMA_FALSE_POSITIVES)("$ruleId ignores $name", async ({ content, file, ruleId }) => {
+        expect.assertions(1);
+
+        await expect(ruleIdsFor(content, file)).resolves.not.toContain(ruleId);
     });
 });
 

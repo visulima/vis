@@ -1,0 +1,251 @@
+title = "visulima-rules"
+description = """
+Default-on rules for providers and credential shapes that neither gitleaks nor
+Kingfisher covers at the pinned refs. Each rule names its source (vendor docs
+or the open gitleaks issue/PR that documents the format). Drop a rule once an
+upstream ref bump covers it. Regexes use ASCII classes: the native engine's
+Unicode `\\w` can exceed the regex size limit.
+"""
+
+# --- AI tooling ---------------------------------------------------------------
+
+[[rules]]
+id = "claude-code-session-url"
+description = "Claude Code remote-control session URL. Opening it lands in a live Claude Code session; treat it as a credential (gitleaks#2094, #2095)."
+regex = '''(?i)\bhttps?://claude\.ai/code/session_[A-Za-z0-9]{16,}\b'''
+keywords = ["claude.ai/code/session_"]
+confidence = "low"
+tags = ["anthropic", "claude", "session"]
+
+[[rules]]
+id = "langsmith-tracing-key"
+description = "LangSmith tracing key (lsv2_tr_). Personal and service keys are covered by kingfisher.langchain.* (gitleaks#2315)."
+regex = '''\b(lsv2_tr_[0-9a-f]{32}_[0-9a-f]{10})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["lsv2_tr_"]
+confidence = "medium"
+tags = ["langsmith", "langchain", "ai"]
+
+# --- Chat ---------------------------------------------------------------------
+
+[[rules]]
+id = "discord-bot-token"
+description = "Discord bot token, current format: 19-digit user ids give a 26-char first segment and newer HMACs run to 38 chars, which kingfisher.discord.2 (24/27) misses (gitleaks#1447)."
+regex = '''\b([MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38})\b'''
+secretGroup = 1
+entropy = 4
+confidence = "medium"
+tags = ["discord", "chat"]
+
+[rules.patternRequirements]
+minDigits = 2
+
+# --- Payments -----------------------------------------------------------------
+
+[[rules]]
+id = "mercadopago-test-access-token"
+description = "Mercado Pago sandbox access token (TEST-). Production APP_USR- tokens are covered by kingfisher.mercadopago.1 (gitleaks#2303, #2078)."
+regex = '''\b(TEST-[0-9]{10,20}-[0-9]{6}-[0-9a-f]{32}-[0-9]{6,12})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["test-"]
+confidence = "medium"
+tags = ["mercadopago", "payments"]
+
+[[rules]]
+id = "braintree-production-access-token"
+description = "Braintree production OAuth access token (access_token$production$<merchant>$<token>) (gitleaks#2078)."
+regex = '''\b(access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["access_token$production$"]
+confidence = "high"
+tags = ["braintree", "payments"]
+
+[[rules]]
+id = "pagseguro-api-key"
+description = "PagSeguro / PagBank API key next to the provider name (gitleaks#2119). The UUID-shaped PagSeguro token from the same PR is left out: the potentialUuid heuristic drops every UUID-shaped secret."
+regex = '''(?i)[0-9a-z_.-]{0,50}?(?:pagseguro|pagbank)(?:[ \t0-9a-z_.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([a-z0-9]{32})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["pagseguro", "pagbank"]
+confidence = "medium"
+tags = ["pagseguro", "payments"]
+
+[[rules]]
+id = "nuntiq-api-key"
+description = "Nuntiq customer/partner API key or rotation secret (gitleaks#2333)."
+regex = '''\b(nuntiq_(?:ck|pk|rs)_(?:live|test|dev)_[0-9a-f]{8}_[A-Za-z0-9_-]{43}[0-9A-Za-z]{6})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["nuntiq_ck_", "nuntiq_pk_", "nuntiq_rs_"]
+confidence = "high"
+tags = ["nuntiq", "payments"]
+
+# --- Developer platforms ------------------------------------------------------
+
+[[rules]]
+id = "supabase-versioned-access-token"
+description = "Supabase personal access token in the versioned sbp_v<N>_ form. Plain sbp_ tokens are covered by kingfisher.supabase.1 (gitleaks#2259)."
+regex = '''\b(sbp_v[0-9]+_[0-9a-f]{40})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["sbp_v"]
+confidence = "high"
+tags = ["supabase"]
+
+[[rules]]
+id = "actiongate-prove-token"
+description = "ActionGate prove token (gitleaks#2242)."
+regex = '''\b(prov_(?:live|test)_[0-9a-f]{32})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["prov_live_", "prov_test_"]
+confidence = "high"
+tags = ["actiongate"]
+
+[[rules]]
+id = "sealed-env-credential-token"
+description = "sealed-env credential token (sealed_env_<mode>_<checksum>_<payload>) (gitleaks#2132)."
+regex = '''(?i)\b(sealed_env_[btued]_[0-9a-f]{4}_[A-Za-z0-9_-]{20,500})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["sealed_env_"]
+confidence = "high"
+tags = ["sealed-env"]
+
+[[rules]]
+id = "sealed-env-unseal-token"
+description = "sealed-env unseal token (usl_<header>.<payload>.<signature>) (gitleaks#2132)."
+regex = '''\b(usl_[A-Za-z0-9_-]{40,200}\.[A-Za-z0-9_-]{40,400}\.[A-Za-z0-9_-]{40,100})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["usl_"]
+confidence = "high"
+tags = ["sealed-env"]
+
+[[rules]]
+id = "sealed-env-key"
+description = "sealed-env master or signing key (SEALED_ENV_KEY / SEALED_ENV_SIGNING_KEY = 64 hex) (gitleaks#2132)."
+regex = '''(?i)\bSEALED_ENV_(?:SIGNING_)?KEY[\s'"]{0,3}(?:=|:{1,3}=|:|=>)[\x60'"\s=]{0,5}([0-9a-f]{64})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ["sealed_env_key", "sealed_env_signing_key"]
+confidence = "high"
+tags = ["sealed-env"]
+
+[[rules]]
+id = "sealed-env-totp-secret"
+description = "sealed-env TOTP seed (SEALED_ENV_TOTP_SECRET = base32) (gitleaks#2132)."
+regex = '''(?i)\bSEALED_ENV_TOTP_SECRET[\s'"]{0,3}(?:=|:{1,3}=|:|=>)[\x60'"\s=]{0,5}([A-Z2-7]{16,64}={0,6})(?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3
+keywords = ["sealed_env_totp_secret"]
+confidence = "high"
+tags = ["sealed-env", "totp"]
+
+# --- Azure --------------------------------------------------------------------
+
+[[rules]]
+id = "azure-redis-cache-password"
+description = "Azure Cache for Redis access key in a StackExchange.Redis connection string (<name>.redis.cache.windows.net:6380,password=...) (gitleaks#2254)."
+regex = '''(?i)\b[a-z0-9-]{1,63}\.redis\.cache\.windows\.net(?::[0-9]{2,5})?,(?:[^,\s"']*,){0,8}?password=([A-Za-z0-9+/]{40,60}={0,2})'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["redis.cache.windows.net"]
+confidence = "high"
+tags = ["azure", "redis"]
+
+[[rules]]
+id = "azure-data-factory-shir-key"
+description = "Azure Data Factory self-hosted integration runtime authentication key (IR@<guid>@<factory>@<endpoint>@<key>) (gitleaks#1327)."
+regex = '''\b(IR@[0-9a-fA-F-]{36}@[^@\s]{1,100}@[^@\s]{1,200}@[A-Za-z0-9+/]{43}=)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["ir@"]
+confidence = "high"
+tags = ["azure", "datafactory"]
+
+# --- Private keys -------------------------------------------------------------
+
+[[rules]]
+id = "putty-private-key"
+description = "Unencrypted PuTTY private key (.ppk, `Encryption: none`). Encrypted keys are not reported (gitleaks#1373)."
+regex = '''PuTTY-User-Key-File-[23]: [a-z0-9@.-]+\r?\nEncryption: none\r?\n(?:[^\r\n]*\r?\n){1,40}?Private-Lines: [0-9]+\r?\n([A-Za-z0-9+/=]+(?:\r?\n[A-Za-z0-9+/=]+)*)'''
+secretGroup = 1
+keywords = ["putty-user-key-file-"]
+confidence = "high"
+tags = ["private-key", "putty", "ssh"]
+
+# --- Credentials in commands and config ---------------------------------------
+
+[[rules]]
+id = "sql-identified-by-password"
+description = "Cleartext password in ALTER USER/ROLE/LOGIN, CREATE ROLE or GRANT ... IDENTIFIED BY. CREATE USER/LOGIN is covered by kingfisher.sqlddl.1 (gitleaks#1228)."
+regex = '''(?i)\b(?:ALTER[ \t]+(?:USER|ROLE|LOGIN)|CREATE[ \t]+ROLE|GRANT)\b[^;\r\n]{1,200}?\bIDENTIFIED[ \t]+BY[ \t]+['"]?([^'";\s$%:?&@<][^'";\s]{3,127})'''
+secretGroup = 1
+keywords = ["identified"]
+confidence = "medium"
+tags = ["sql", "password"]
+
+[[rules.allowlists]]
+description = "`IDENTIFIED BY PASSWORD '<hash>'` / `IDENTIFIED BY VALUES '<hash>'` carry a hash, and placeholders aren't passwords."
+regexTarget = "secret"
+regexes = ['''(?i)^(?:password|values)$''']
+stopwords = ["changeme", "placeholder", "your_password", "your-password", "<password>"]
+
+[[rules]]
+id = "nuget-cli-password"
+description = "Password passed to `nuget sources add|update` or `dotnet nuget add|update source` on the command line (gitleaks#1147)."
+regex = '''(?i)\b(?:nuget(?:\.exe)?[ \t]+sources?[ \t]+(?:add|update)|dotnet[ \t]+nuget[ \t]+(?:add|update)[ \t]+source)\b[^\r\n]*?[ \t]--?password[ \t]+["']?([^\s"'$%<][^\s"']{3,127})'''
+secretGroup = 1
+keywords = ["nuget"]
+confidence = "high"
+tags = ["nuget", "dotnet", "password"]
+
+[[rules]]
+id = "commvault-qlogin-password"
+description = "Commvault `qlogin -ps <encrypted password>` / `-clp <password>`; both log in as the user (gitleaks#1114)."
+regex = '''(?i)\bqlogin\b[^\r\n]*?[ \t]-(?:ps|clp)[ \t]+["']?([^\s"'$%<][^\s"']{3,255})'''
+secretGroup = 1
+keywords = ["qlogin"]
+confidence = "high"
+tags = ["commvault", "password"]
+
+[[rules]]
+id = "openstack-rc-password"
+description = "OS_PASSWORD hard-coded in an OpenStack RC file or shell script. The stock openrc reads it from a prompt (`$OS_PASSWORD_INPUT`), which is not reported (gitleaks#955)."
+regex = '''(?m)^[ \t]*(?:export[ \t]+)?OS_PASSWORD[ \t]*=[ \t]*["']?([^\s"'$<][^\s"']{3,127})'''
+secretGroup = 1
+keywords = ["os_password"]
+confidence = "medium"
+tags = ["openstack", "password"]
+
+[[rules.allowlists]]
+regexTarget = "secret"
+stopwords = ["changeme", "placeholder", "your_password", "your-password", "<password>", "xxxx"]
+
+[[rules]]
+id = "npmrc-legacy-auth"
+description = "Legacy npm `_auth` setting: base64 of user:password, usually in .npmrc (gitleaks#1326)."
+regex = '''(?m)(?:^|[\s:])_auth[ \t]*=[ \t]*["']?([A-Za-z0-9+/]{8,}={0,2})(?:["']|\s|$)'''
+secretGroup = 1
+entropy = 3
+keywords = ["_auth"]
+confidence = "medium"
+tags = ["npm", "password"]
+
+[[rules]]
+id = "spring-placeholder-default-secret"
+description = "Secret hard-coded as the default of a Spring property placeholder, e.g. `${DB_PASSWORD:hunter2}`; the default ships whenever the variable is unset. Shell `${VAR:-default}` is not matched (gitleaks#2077)."
+regex = '''(?i)\$\{[a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|credentials?)[a-z0-9_.-]*:([^}\s$-][^}\s$]{5,199})\}'''
+secretGroup = 1
+entropy = 3
+keywords = ["password", "passwd", "secret", "token", "api", "private", "credential"]
+confidence = "medium"
+tags = ["spring", "java", "password"]
+
+[[rules.allowlists]]
+regexTarget = "secret"
+stopwords = ["changeme", "placeholder", "your_password", "your-password", "xxxx"]

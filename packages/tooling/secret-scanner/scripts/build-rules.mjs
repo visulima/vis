@@ -510,6 +510,16 @@ for (const entry of readdirSync(presetsSourceDir)) {
     }
 }
 
+// 1b. Visulima default rules from scripts/visulima-rules.toml: providers and
+//     credential shapes neither upstream covers. Unlike presets they keep
+//     `defaultEnabled` (on unless a rule says otherwise) and carry no preset tag.
+//     They only go into the shipped ruleset, never the upstream intermediates.
+const visulimaRulesPath = resolve(here, "visulima-rules.toml");
+const visulimaRuleSource = existsSync(visulimaRulesPath) ? (readToml(visulimaRulesPath).rules ?? []) : [];
+const visulimaRules = visulimaRuleSource.map((rule) => {
+    return { ...rule, source: rule.source ?? "visulima" };
+});
+
 // Strip preset rules from cached intermediates. When `SECRET_SCANNER_SKIP_*_FETCH=1`
 // reuses a previous build's `gitleaks.json` / `kingfisher.json`, those files already
 // have presets baked in — re-appending below would duplicate them on every rebuild.
@@ -542,7 +552,7 @@ if (kingfisherCore) {
 }
 
 // 4. The one ruleset we actually ship to consumers. Union of gitleaks + kingfisher
-//    + opt-in presets, gitleaks allowlists preserved. Hit dedup between sources
+//    + Visulima default rules + opt-in presets, gitleaks allowlists preserved. Hit dedup between sources
 //    happens at scan time via span+priority, not here.
 if (kingfisherCore) {
     const ruleset = {
@@ -551,7 +561,7 @@ if (kingfisherCore) {
         provenance: {
             sources: [gitleaksCore.provenance, kingfisherCore.provenance].filter(Boolean),
         },
-        rules: [...gitleaksCoreRules, ...kingfisherCoreRules, ...presetRules],
+        rules: [...gitleaksCoreRules, ...kingfisherCoreRules, ...visulimaRules, ...presetRules],
     };
 
     writeJson(resolve(dataDir, "ruleset.json"), ruleset, { minify: minifyShipped });
