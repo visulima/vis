@@ -236,14 +236,39 @@ const listChangedBlobs = async (commit: CommitRecord, cwd: string): Promise<RawD
     return parseRawDiff(stdout).filter((entry) => entry.status !== "D" && entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
 };
 
-/** Object id of `path` in `commit`, or `undefined` when it isn't a blob there. */
-const blobAt = async (commit: string, path: string, cwd: string): Promise<string | undefined> => {
-    const stdout = await runGit(["ls-tree", "-z", commit, "--", path], cwd);
-    // `<mode> SP <type> SP <oid> TAB <path>`
-    const [meta] = stdout.split("\t");
-    const [, type, oid] = (meta ?? "").split(" ");
+/** Paths passed to one `ls-tree` call, keeping the command line short. */
+const LS_TREE_BATCH = 512;
 
-    return type === "blob" && isSet(oid) ? oid : undefined;
+/**
+ * Object ids of the blobs at `paths` in `commit`, keyed by path; paths that
+ * aren't a blob there are absent. Paths are matched literally (a file named
+ * `:x` or `a*` is not pathspec magic or a glob) and from the repository root,
+ * whatever subdirectory `cwd` is.
+ */
+const blobsAt = async (commit: string, paths: ReadonlyArray<string>, cwd: string): Promise<Map<string, string>> => {
+    const wanted = new Set(paths);
+    const blobs = new Map<string, string>();
+
+    for (let start = 0; start < paths.length; start += LS_TREE_BATCH) {
+        // eslint-disable-next-line no-await-in-loop -- Batches run one after another; most merges need a single call.
+        const stdout = await runGit(
+            ["--literal-pathspecs", "ls-tree", "--full-tree", "-r", "-z", commit, "--", ...paths.slice(start, start + LS_TREE_BATCH)],
+            cwd,
+        );
+
+        for (const record of stdout.split("\0")) {
+            // `<mode> SP <type> SP <oid> TAB <path>`
+            const tab = record.indexOf("\t");
+            const [, type, oid] = record.slice(0, Math.max(tab, 0)).split(" ");
+            const path = record.slice(tab + 1);
+
+            if (tab !== -1 && type === "blob" && isSet(oid) && wanted.has(path)) {
+                blobs.set(path, oid);
+            }
+        }
+    }
+
+    return blobs;
 };
 
 const presenceKey = (finding: Finding): string => `${finding.ruleId}\0${finding.secret}`;
@@ -397,7 +422,7 @@ const scanChangedBlob = async (
     entry: RawDiffEntry,
     commit: CommitRecord,
     scanner: BlobScanner,
-    cwd: string,
+    mergedBlobs: ReadonlyArray<ReadonlyMap<string, string>>,
 ): Promise<{ findings: GitFinding[]; suppressed: SuppressedFinding<GitFinding>[] }> => {
     const path = entry.newPath;
     const content = await scanner.readText(entry.newOid, path, commit.info.sha);
@@ -413,7 +438,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    const [firstParent, ...otherParents] = commit.parents;
+    const [firstParent] = commit.parents;
 
     if (firstParent !== undefined && !NULL_OID.test(entry.oldOid) && (entry.status === "M" || entry.status === "R" || entry.status === "T")) {
         const before = await scanner.presentIn(entry.oldOid, entry.oldPath);
@@ -422,13 +447,12 @@ const scanChangedBlob = async (
     }
 
     // A merge only introduces what none of its parents had.
-    for (const parent of otherParents) {
+    for (const blobs of mergedBlobs) {
         if (isEmpty(fresh)) {
             break;
         }
 
-        // eslint-disable-next-line no-await-in-loop -- One parent at a time; merges rarely have more than two.
-        const oid = await blobAt(parent, path, cwd);
+        const oid = blobs.get(path);
 
         if (oid !== undefined) {
             // eslint-disable-next-line no-await-in-loop -- Same: sequential reads through the single cat-file process.
@@ -476,9 +500,14 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
             // eslint-disable-next-line no-await-in-loop -- Sequential by design: git plumbing is the bottleneck and serialising keeps memory bounded over long histories.
             const entries = await listChangedBlobs(commit, cwd);
 
+            const paths = entries.map((entry) => entry.newPath);
+            // The blobs of every merged-in parent (all but the first), looked up once per commit.
+            // eslint-disable-next-line no-await-in-loop -- Same: sequential per commit.
+            const mergedBlobs = await Promise.all(commit.parents.slice(1).map(async (parent) => blobsAt(parent, paths, cwd)));
+
             for (const entry of entries) {
                 // eslint-disable-next-line no-await-in-loop -- One blob at a time through the shared cat-file process.
-                const result = await scanChangedBlob(entry, commit, scanner, cwd);
+                const result = await scanChangedBlob(entry, commit, scanner, mergedBlobs);
 
                 findings.push(...result.findings);
                 suppressed.push(...result.suppressed);

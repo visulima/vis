@@ -1,6 +1,6 @@
 /* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -140,6 +140,46 @@ describe("scanGitHistory dedup", () => {
 });
 
 describe("scanGitHistory merges and refs", () => {
+    const mergeSide = (file: string): { repo: string } => {
+        const { git, repo, write } = createRepo();
+
+        write("base.ts", "export const a = 1;\n");
+        git("add", ".");
+        git("commit", "-q", "-m", "base");
+        git("checkout", "-q", "-b", "side");
+        write(file, `export const token = "${SECRET_C}";\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "side leak");
+        git("checkout", "-q", "main");
+        write("other.ts", "export const b = 2;\n");
+        git("add", ".");
+        git("commit", "-q", "-m", "main change");
+        git("merge", "-q", "--no-ff", "--no-edit", "side");
+
+        return { repo };
+    };
+
+    it("looks up a merged file whose name reads as pathspec magic literally", async () => {
+        expect.assertions(1);
+
+        const { repo } = mergeSide(":leak.ts");
+        const findings = await scanGitHistory({ cwd: repo });
+
+        expect(findings.map((finding) => finding.commit.message)).toStrictEqual(["side leak"]);
+    });
+
+    it("looks up merge parents from the repository root when cwd is a subdirectory", async () => {
+        expect.assertions(1);
+
+        const { repo } = mergeSide("leak.ts");
+
+        mkdirSync(join(repo, "sub"));
+
+        const findings = await scanGitHistory({ cwd: join(repo, "sub") });
+
+        expect(findings.map((finding) => finding.commit.message)).toStrictEqual(["side leak"]);
+    });
+
     it("finds a secret introduced while resolving a merge conflict, and reports a merged side-branch secret once", async () => {
         expect.assertions(5);
 
