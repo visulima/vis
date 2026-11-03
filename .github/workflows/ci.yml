@@ -23,7 +23,7 @@ jobs:
         timeout-minutes: 45
         steps:
             - name: "Checkout"
-              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
               with:
                   # Full history, so pnpm can compare the pull request against its base.
                   fetch-depth: 0
@@ -53,7 +53,7 @@ jobs:
 
             - name: "Derive appropriate SHAs for base and head for `nx affected` commands"
               id: "setSHAs"
-              uses: "nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1" # v5.0.1
+              uses: "nrwl/nx-set-shas@e602fada7ad5987b0f7b1905e7a99ea1c661514c" # v5.1.0
 
             - name: "Restore Nx cache"
               id: "nx-cache"
