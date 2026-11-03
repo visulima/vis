@@ -1278,7 +1278,7 @@ importers:
         specifier: 4.1.0
         version: 4.1.0
       '@visulima/task-runner':
-        specifier: 3.0.2
+        specifier: 3.0.3
         version: link:../task-runner
       '@visulima/tui':
         specifier: 5.0.1
@@ -1625,7 +1625,7 @@ importers:
         specifier: 5.0.0
         version: 5.0.0
       '@visulima/vis':
-        specifier: 6.4.3
+        specifier: 6.4.4
         version: link:../vis
       zod:
         specifier: catalog:utils
