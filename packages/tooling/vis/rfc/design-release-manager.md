@@ -1146,9 +1146,7 @@ A failed wave can be resumed by re-running the same `vis release publish` invoca
     "version": 1,
     "startedAt": "2026-05-02T10:15:00Z",
     "channel": "alpha",
-    "plan": [
-        /* full release plan */
-    ],
+    "plan": [/* full release plan */],
     "applied": ["@scope/pkg-a@1.2.0", "@scope/pkg-b@2.0.1"], // versions written to disk
     "published": ["@scope/pkg-a@1.2.0"], // tarballs uploaded
     "tagged": ["@scope/pkg-a@1.2.0"], // local tags created
