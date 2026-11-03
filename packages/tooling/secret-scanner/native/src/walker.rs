@@ -19,15 +19,6 @@ pub struct WalkOptions {
     pub threads: usize,
 }
 
-/// Synchronously walk `roots` and return every file path discovered, respecting
-/// ignore rules. `build_parallel` handles concurrency internally, so no extra
-/// orchestration thread is spawned — a panic inside the walker propagates to
-/// the caller instead of deadlocking the channel.
-#[allow(dead_code)] // default-options entry point, kept for callers that need no switches
-pub fn walk_paths(roots: &[PathBuf], opts: &WalkOptions) -> Vec<PathBuf> {
-    walk_paths_reporting(roots, opts).0
-}
-
 /// An entry the walker could not read (an unreadable directory drops its whole
 /// subtree, so callers must not treat it as clean).
 #[derive(Debug, Clone)]
@@ -56,7 +47,10 @@ fn walk_error(err: &ignore::Error, path: Option<&std::path::Path>) -> Option<Wal
     }
 }
 
-/// [`walk_paths`] that also returns the entries it failed to read.
+/// Synchronously walk `roots` and return every file path discovered, respecting
+/// ignore rules, plus the entries it failed to read. `build_parallel` handles
+/// concurrency internally, so no extra orchestration thread is spawned — a panic
+/// inside the walker propagates to the caller instead of deadlocking the channel.
 pub fn walk_paths_reporting(roots: &[PathBuf], opts: &WalkOptions) -> (Vec<PathBuf>, Vec<WalkError>) {
     if roots.is_empty() {
         return (Vec::new(), Vec::new());

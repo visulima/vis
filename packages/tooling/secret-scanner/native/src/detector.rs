@@ -148,7 +148,7 @@ pub(crate) fn is_in_allow_region(regions: &[(usize, usize)], offset: usize) -> b
     regions.iter().any(|&(start, end)| offset >= start && offset <= end)
 }
 
-#[allow(dead_code)] // default-options entry point, kept for callers that need no switches
+#[cfg(test)]
 pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
     scan_text_with(ruleset, path, content, DetectOptions::default())
 }
