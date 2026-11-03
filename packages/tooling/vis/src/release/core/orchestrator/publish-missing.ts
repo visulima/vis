@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve } from "node:path";
 
 import semver from "semver";
 
@@ -203,17 +203,26 @@ export const findMissingReleases = async (
  * so the next plan releases exactly that version from HEAD. The body records which release commit set the version.
  */
 export const writeStrandedChangeFiles = async (context: OrchestratorContext, stranded: ReadonlyArray<StrandedRelease>): Promise<string[]> => {
-    const dir = join(context.cwd, context.config.changesDir ?? DEFAULT_CHANGES_DIR);
+    const dir = resolve(context.cwd, context.config.changesDir ?? DEFAULT_CHANGES_DIR);
+    const runner = createShellRunner();
     const written: string[] = [];
 
     await mkdir(dir, { recursive: true });
 
     for (const entry of stranded) {
-        const file = join(dir, `stranded-${entry.name.replaceAll(/[@/]/g, "-").replace(/^-/, "")}-${entry.version}.md`);
+        const file = resolve(dir, `stranded-${encodeURIComponent(entry.name)}-${entry.version}.md`);
         const body = `Release ${entry.version}. Commit ${entry.sha.slice(0, 7)} set this version and it was never published, so it is released from HEAD.`;
 
         await writeFile(file, formatChangeFile({ bump: "patch", package: entry.name, releaseAs: entry.version }, body));
         written.push(file);
+    }
+
+    // Staged, as the `--generate` path stages its files: applying the plan deletes these change files,
+    // and git can only stage that deletion of a path it tracks.
+    const staged = await runner.run("git", ["add", "--", ...written], { cwd: context.cwd, silent: true });
+
+    if (staged.exitCode !== 0) {
+        throw new Error(`could not stage the stranded change files: ${staged.stderr.trim() || `exit ${staged.exitCode}`}`);
     }
 
     return written;
@@ -238,6 +247,11 @@ const bumpLevelOf = (from: string, to: string): PlannedRelease["type"] => {
 };
 
 export interface PublishMissingOptions extends PublishContextOptions {
+    /**
+     * Publish nothing this run: the missing versions are reported as skipped. Used while stranded versions
+     * of the same release are about to publish, so a dependent is never published ahead of its dependency.
+     */
+    deferRecovery?: boolean;
     /** Limit to packages matching these globs. */
     projects?: string[];
     /** Test-only override of the npm registry lookup. */
@@ -268,6 +282,14 @@ export interface PublishMissingResult extends PublishContextResult {
 export const publishMissing = async (context: OrchestratorContext, options: PublishMissingOptions = {}): Promise<PublishMissingResult> => {
     const runner = createShellRunner();
     const found = await findMissingReleases(context, { projects: options.projects, registryProbe: options.registryProbe, runner });
+
+    if (options.deferRecovery) {
+        for (const entry of found.missing) {
+            found.skipped.push({ name: entry.name, reason: `${entry.version} waits until the stranded versions of this release are published` });
+        }
+        found.missing = [];
+    }
+
     const result: PublishMissingResult = {
         completed: [],
         failed: [],

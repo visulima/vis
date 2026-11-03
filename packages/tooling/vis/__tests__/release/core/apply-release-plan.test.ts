@@ -163,11 +163,41 @@ describe("prependChangelog — handles 3 RFC §17.4 cases", () => {
             "",
         ].join("\n");
 
-        const result = prependChangelog("## @scope/a [1.1.0](https://example/compare) (2026-11-03)\n\n- released", existing, ["1.1.0"]);
+        const result = prependChangelog("## @scope/a [1.1.0](https://example/compare) (2026-11-03)\n\n- released", existing, [{ name: "@scope/a", version: "1.1.0" }]);
 
         expect(result.match(/^## .*1\.1\.0/gm)).toHaveLength(1);
         expect(result).not.toContain("first attempt");
         expect(result).toContain("## @scope/a 1.0.0 (2026-10-01)");
+    });
+
+    it("recognises a version heading with a v prefix", () => {
+        expect.hasAssertions();
+
+        const existing = "# Changelog\n\n## [v1.1.0](https://example/compare) (2026-11-01)\n\n- first attempt\n";
+
+        const result = prependChangelog("## @scope/a 1.1.0 (2026-11-03)\n\n- released", existing, [{ name: "@scope/a", version: "1.1.0" }]);
+
+        expect(result).not.toContain("first attempt");
+    });
+
+    it("keeps another package's section in a shared changelog when a version is rewritten", () => {
+        expect.hasAssertions();
+
+        const existing = "# Changelog\n\n## @scope/b [1.1.0](https://example/compare) (2026-11-01)\n\n- b notes\n";
+
+        const result = prependChangelog("## @scope/a [1.1.0](https://example/compare) (2026-11-03)\n\n- a notes", existing, [{ name: "@scope/a", version: "1.1.0" }]);
+
+        expect(result).toContain("- b notes");
+    });
+
+    it("keeps the existing sections when the entry is empty", () => {
+        expect.hasAssertions();
+
+        const existing = "# Changelog\n\n## @scope/a 1.1.0 (2026-11-01)\n\n- keep\n";
+
+        const result = prependChangelog("", existing, [{ name: "@scope/a", version: "1.1.0" }]);
+
+        expect(result).toContain("- keep");
     });
 
     it("does not treat a longer version as the one being written", () => {
@@ -175,7 +205,7 @@ describe("prependChangelog — handles 3 RFC §17.4 cases", () => {
 
         const existing = "# Changelog\n\n## @scope/a 1.0.28 (2026-10-01)\n\n- keep\n";
 
-        const result = prependChangelog("## @scope/a 1.0.2 (2026-11-03)\n\n- new", existing, ["1.0.2"]);
+        const result = prependChangelog("## @scope/a 1.0.2 (2026-11-03)\n\n- new", existing, [{ name: "@scope/a", version: "1.0.2" }]);
 
         expect(result).toContain("## @scope/a 1.0.28 (2026-10-01)");
     });

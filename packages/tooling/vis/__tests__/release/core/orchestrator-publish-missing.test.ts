@@ -293,8 +293,19 @@ describe.skipIf(process.platform === "win32")("publishMissing: recover a partly 
         const [file] = await writeStrandedChangeFiles(ctx, found.stranded);
         const replanned = await buildContext({ cwd });
 
-        expect(file).toMatch(/stranded-scope-b-1\.1\.0\.md$/);
+        expect(file).toMatch(/stranded-%40scope%2Fb-1\.1\.0\.md$/);
+        expect(git(cwd, "diff", "--cached", "--name-only")).toContain("stranded-%40scope%2Fb-1.1.0.md");
         expect(replanned.plan.releases).toStrictEqual([expect.objectContaining({ name: "@scope/b", newVersion: "1.1.0" })]);
+    });
+
+    it("defers recovery while stranded versions publish, so a dependent never goes first", async () => {
+        expect.hasAssertions();
+
+        const ctx = await buildContext({ cwd });
+        const found = await publishMissing(ctx, { deferRecovery: true, noBranchPush: true, registryProbe: notOnRegistry });
+
+        expect(found.completed).toStrictEqual([]);
+        expect(found.skipped.some((entry) => /waits until the stranded versions/.test(entry.reason))).toBe(true);
     });
 
     it("leaves a changed version alone when the registry already has it", async () => {
