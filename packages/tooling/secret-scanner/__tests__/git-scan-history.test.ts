@@ -58,6 +58,26 @@ afterEach(() => {
 });
 
 describe("scanGitHistory dedup", () => {
+    it("does not report an old secret again as generic-api-key once a later edit makes the generic rule match", async () => {
+        expect.assertions(1);
+
+        const { git, repo, write } = createRepo();
+        const rules = [
+            { id: "github-pat", keywords: ["ghp_"], regex: "ghp_[0-9a-zA-Z]{36}" },
+            { id: "generic-api-key", keywords: ["token"], regex: String.raw`token\s*=\s*"([0-9a-zA-Z_]{20,})"` },
+        ];
+
+        write("a.ts", `const value = "${SECRET_A}";\n`);
+        git("add", ".");
+        git("commit", "-q", "-m", "add token");
+        write("a.ts", `const token = "${SECRET_A}";\n`);
+        git("commit", "-q", "-am", "rename variable");
+
+        const findings = await scanGitHistory({ config: { extendBundled: false, inline: { rules } }, cwd: repo });
+
+        expect(findings.map((finding) => [finding.commit.message, finding.ruleId])).toStrictEqual([["add token", "github-pat"]]);
+    });
+
     it("reports a long-lived secret once, at the commit that introduced it", async () => {
         expect.assertions(2);
 

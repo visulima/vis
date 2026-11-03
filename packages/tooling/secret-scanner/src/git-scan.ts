@@ -33,7 +33,7 @@ import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
-import { postProcessDetailed } from "./pipeline";
+import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { beginScan, finishResult } from "./scan-session";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
@@ -338,13 +338,18 @@ class BlobScanner {
     }
 
     /**
-     * Native detection with no post-processing. Secrets are real even under
-     * `redact` (the pipeline masks), so parent comparisons never confuse two
-     * secrets that mask alike (`ghp***xY4`). `commit` lets AND allowlists that
-     * list `commits` match.
+     * Native detection, with generic findings shadowed over the whole blob.
+     * Shadowing runs here rather than only in the pipeline so it sees every
+     * match, before parent dedupe removes some: an old secret now also
+     * matched by generic-api-key is not reported again. Secrets are real even
+     * under `redact` (the pipeline masks), so parent comparisons never
+     * confuse two secrets that mask alike (`ghp***xY4`). `commit` lets AND
+     * allowlists that list `commits` match.
      */
-    public detectRaw(content: string, path: string, commit?: string): ProcessedFindings {
-        return binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
+    public detect(content: string, path: string, commit?: string): ProcessedFindings {
+        const report = binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
+
+        return dropShadowedGenericFindings(report, this.#prepared, this.#options);
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */
@@ -357,7 +362,7 @@ class BlobScanner {
         }
 
         const content = await this.readText(oid, path, undefined, false);
-        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detectRaw(content, path));
+        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detect(content, path));
 
         this.#remember(cacheKey, keys);
 
@@ -405,7 +410,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    let fresh = scanner.detectRaw(content, path, commit.info.sha);
+    let fresh = scanner.detect(content, path, commit.info.sha);
 
     if (isEmpty(fresh)) {
         return none;
@@ -584,7 +589,7 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             // Detection sees the absolute path, as native `scanFiles` does; the
             // reported path is rewritten afterwards.
-            const raw = scanner.detectRaw(content, file);
+            const raw = scanner.detect(content, file);
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
