@@ -122,16 +122,16 @@ export default defineConfig({
 
 ## Manager compatibility
 
-| Manager       | Handles                                          | `install` command                               | `use` command                                  | Config file touched                   |
-| ------------- | ------------------------------------------------ | ----------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
-| proto         | node, bun, go, python, ruby, rust, all PMs       | `proto install`                                 | `proto pin <tool> <ver>`                       | `.prototools`                         |
-| mise          | everything                                       | `mise install`                                  | `mise use -- <tool>@<ver>`                     | `.mise.toml`                          |
-| fnm           | node only                                        | `fnm install [<ver>]`                           | `fnm use <ver>` (Node only)                    | `.nvmrc` / `.node-version`            |
-| volta         | node, npm, pnpm, yarn                            | `volta install <tool>@<ver>`                    | `volta pin <tool>@<ver>`                       | `package.json` (`volta.<tool>` field) |
-| asdf          | node, bun, go, python, ruby, rust                | `asdf install`                                  | `asdf local <tool> <ver>`                      | `.tool-versions`                      |
-| nvm           | node only                                        | (manual — shell function, run `nvm install`)    | writes `.nvmrc`, then prompts to run `nvm use` | `.nvmrc`                              |
-| corepack      | npm, pnpm, yarn                                  | `corepack prepare <tool>@<ver> --activate`      | `corepack use <tool>@<ver>`                    | `package.json` (`packageManager`)     |
-| self-activate | pnpm 10+, yarn berry                             | (no-op — runs on next `pnpm`/`yarn` invocation) | edit `packageManager` field                    | `package.json` (`packageManager`)     |
+| Manager       | Handles                                    | `install` command                               | `use` command                                  | Config file touched                   |
+| ------------- | ------------------------------------------ | ----------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
+| proto         | node, bun, go, python, ruby, rust, all PMs | `proto install`                                 | `proto pin <tool> <ver>`                       | `.prototools`                         |
+| mise          | everything                                 | `mise install`                                  | `mise use -- <tool>@<ver>`                     | `.mise.toml`                          |
+| fnm           | node only                                  | `fnm install [<ver>]`                           | `fnm use <ver>` (Node only)                    | `.nvmrc` / `.node-version`            |
+| volta         | node, npm, pnpm, yarn                      | `volta install <tool>@<ver>`                    | `volta pin <tool>@<ver>`                       | `package.json` (`volta.<tool>` field) |
+| asdf          | node, bun, go, python, ruby, rust          | `asdf install`                                  | `asdf local <tool> <ver>`                      | `.tool-versions`                      |
+| nvm           | node only                                  | (manual — shell function, run `nvm install`)    | writes `.nvmrc`, then prompts to run `nvm use` | `.nvmrc`                              |
+| corepack      | npm, pnpm, yarn                            | `corepack prepare <tool>@<ver> --activate`      | `corepack use <tool>@<ver>`                    | `package.json` (`packageManager`)     |
+| self-activate | pnpm 10+, yarn berry                       | (no-op — runs on next `pnpm`/`yarn` invocation) | edit `packageManager` field                    | `package.json` (`packageManager`)     |
 
 For most managers vis shells out to the manager itself (`proto pin`, `volta pin`, `mise use`, etc.) so the change integrates with shell hooks and caches the way each manager expects. The exceptions are **nvm** (a shell function — vis writes `.nvmrc` directly and prompts you to run `nvm use`) and **self-activate** (vis writes the `packageManager` field directly so pnpm/yarn pick it up on next invocation).
 

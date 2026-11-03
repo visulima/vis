@@ -45,13 +45,13 @@ vis view react
 
 `vis info` detects the active package manager (pnpm, npm, yarn v1, yarn berry, or bun) and forwards the query using the correct command shape for that tool:
 
-| Package manager | Command emitted               |
-| --------------- | ----------------------------- |
-| npm             | `npm view <pkg> [field…]`     |
-| pnpm            | `pnpm view <pkg> [field…]`    |
-| yarn v1         | `yarn info <pkg> [field]`     |
-| yarn ≥ 2        | `yarn npm info <pkg>`         |
-| bun             | `bun pm view <pkg> [field…]`  |
+| Package manager | Command emitted              |
+| --------------- | ---------------------------- |
+| npm             | `npm view <pkg> [field…]`    |
+| pnpm            | `pnpm view <pkg> [field…]`   |
+| yarn v1         | `yarn info <pkg> [field]`    |
+| yarn ≥ 2        | `yarn npm info <pkg>`        |
+| bun             | `bun pm view <pkg> [field…]` |
 
 ### Limitations
 

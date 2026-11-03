@@ -138,7 +138,7 @@ export default defineConfig({
         order: ["biome", "eslint"],
         adapters: {
             // Skip an adapter even when its config is detected.
-            "stylelint": { enabled: false },
+            stylelint: { enabled: false },
             // Append flags verbatim to every eslint invocation.
             eslint: { extraArgs: ["--rulesdir", "./eslint-rules"] },
         },
