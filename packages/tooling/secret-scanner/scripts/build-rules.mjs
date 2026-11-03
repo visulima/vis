@@ -128,7 +128,6 @@ const applyRuleOverrides = (config, overrides) => {
         }
 
         const current = rules[index];
-
         const replaced = fields.filter((key) => key !== "allowlists");
 
         if (replaced.length > 0 && replaced.every((key) => JSON.stringify(current[key]) === JSON.stringify(override[key]))) {

@@ -106,14 +106,15 @@ const mergeConfigs = (base: GitleaksConfig, overlay: GitleaksConfig): GitleaksCo
 
     const extendedIds = new Set<string>();
     const baseRules = (base.rules ?? []).flatMap((rule) => {
-        const override = typeof rule?.id === "string" ? overlayRules.get(rule.id) : undefined;
+        const id = rule?.id;
+        const override = typeof id === "string" ? overlayRules.get(id) : undefined;
 
-        if (override === undefined) {
+        if (id === undefined || override === undefined) {
             return [rule];
         }
 
         if (isPartialRule(override)) {
-            extendedIds.add(override.id as string);
+            extendedIds.add(id);
 
             return [extendRule(rule, override)];
         }

@@ -27,12 +27,6 @@ interface RawAllowlist {
     targetRules?: unknown;
 }
 
-interface RuleWithAllowlists {
-    allowlist?: unknown;
-    allowlists?: unknown;
-    id?: unknown;
-}
-
 export interface CommitAllowlist {
     /** Should the whole commit be skipped before any blob is read? */
     isCommitSkipped: (sha: string) => boolean;
@@ -83,7 +77,7 @@ const collectGrants = (config: GitleaksConfig | undefined): { commits: Set<strin
         }
     }
 
-    for (const rule of (config?.rules ?? []) as RuleWithAllowlists[]) {
+    for (const rule of config?.rules ?? []) {
         const ruleId = rule?.id;
 
         if (typeof ruleId !== "string") {
