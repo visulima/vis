@@ -1,5 +1,5 @@
 /* eslint-disable no-template-curly-in-string -- fixtures quote literal `${VAR}` references from config files */
-/* eslint-disable no-useless-concat, @stylistic/indent-binary-ops -- fake tokens are split so GitHub push protection does not flag the fixtures */
+/* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { inspectRuleset, scanString } from "../src";
@@ -63,7 +63,8 @@ describe("kingfisher rules revived by the named-group keyword fix", () => {
 const GITLEAKS_PATCH_TRUE_POSITIVES: RuleCase[] = [
     {
         content:
-            "GITHUB_TOKEN=ghs_1234567_eyJodJFCrnl2edlBDdz1C5Jau2RJtBRnl.WmTSHf6pWkLUyifDLkDmWJ6UuVTAIjvFu7WICPhDeOZIiBOB-Y6sHrFH2ZU" + "Cr-lgotu2iXW7GboIRoL3u6aHwnMztVuaP_coUNEhEkk_iqq8vH2BzNZV45pF.CiRcDCajhDieQjEJ_Bq8F80ymm3T207gmhZRnFyy5r2\n",
+            "GITHUB_TOKEN=ghs_1234567_eyJodJFCrnl2edlBDdz1C5Jau2RJtBRnl.WmTSHf6pWkLUyifDLkDmWJ6UuVTAIjvFu7WICPhDeOZIiBOB-Y6sHrFH2ZU" +
+            "Cr-lgotu2iXW7GboIRoL3u6aHwnMztVuaP_coUNEhEkk_iqq8vH2BzNZV45pF.CiRcDCajhDieQjEJ_Bq8F80ymm3T207gmhZRnFyy5r2\n",
         name: "ghs_ installation token with app id + JWT",
         ruleId: "github-app-token",
     },
@@ -73,7 +74,8 @@ const GITLEAKS_PATCH_TRUE_POSITIVES: RuleCase[] = [
         ruleId: "openai-api-key",
     },
     {
-        content: 'OPENAI_API_KEY="sk-svcacct-RAH_Ggl2JfaQqHu42bojteVs3qfNUfTAFnT0tEuw0dwQ0FIunWeT3Bl' + 'bkFJ8Cz6SNDCdyZQJiJSZQdoHwHen3SO3oXyGf3azU3iQOpMN0PZLqy"\n',
+        content:
+            'OPENAI_API_KEY="sk-svcacct-RAH_Ggl2JfaQqHu42bojteVs3qfNUfTAFnT0tEuw0dwQ0FIunWeT3Bl' + 'bkFJ8Cz6SNDCdyZQJiJSZQdoHwHen3SO3oXyGf3azU3iQOpMN0PZLqy"\n',
         name: "openai service account key",
         ruleId: "openai-api-key",
     },
@@ -131,8 +133,10 @@ const GITLEAKS_PATCH_FALSE_POSITIVES: RuleCase[] = [
     { content: 'const marker = "sk-abc123T3Bl' + 'bkFJxyz789";\n', name: "short sk- marker string", ruleId: "openai-api-key" },
     { content: 'const pathToConfigFile = "./config.json";\n', name: "pat-prefixed identifier", ruleId: "airtable-personnal-access-token" },
     {
-        content: `# sourcegraph indexer
-commit aa2447c462ddaed16dc0` + `cf0b9cd7f78df0cac5e4
+        content:
+            `# sourcegraph indexer
+commit aa2447c462ddaed16dc0` +
+            `cf0b9cd7f78df0cac5e4
 `,
         name: "git sha next to the word sourcegraph",
         ruleId: "sourcegraph-access-token",
@@ -143,9 +147,11 @@ commit aa2447c462ddaed16dc0` + `cf0b9cd7f78df0cac5e4
         ruleId: "square-access-token",
     },
     {
-        content: `Content-Transfer-Encoding: base64
+        content:
+            `Content-Transfer-Encoding: base64
 
-EAAAfS2ViRb1_n3U6t3wI973IPFlJ5F7` + `WRd-Px_BTHRJJbykE0_E8_5clLCZFNV8
+EAAAfS2ViRb1_n3U6t3wI973IPFlJ5F7` +
+            `WRd-Px_BTHRJJbykE0_E8_5clLCZFNV8
 `,
         file: "message.eml",
         name: "EAAA token in .eml attachment",
@@ -333,7 +339,11 @@ const VISULIMA_TRUE_POSITIVES: RuleCase[] = [
         name: "customer API key",
         ruleId: "nuntiq-api-key",
     },
-    { content: "SUPABASE_ACCESS_TOKEN=sbp_v0_aaf6301d1a619588" + "096b35bc4986e10b742c0bac\n", name: "sbp_v0_ token", ruleId: "supabase-versioned-access-token" },
+    {
+        content: "SUPABASE_ACCESS_TOKEN=sbp_v0_aaf6301d1a619588" + "096b35bc4986e10b742c0bac\n",
+        name: "sbp_v0_ token",
+        ruleId: "supabase-versioned-access-token",
+    },
     { content: "ACTIONGATE_TOKEN=prov_live_74200567a82" + "0d3d2bfdc8ab3872178a3\n", name: "prove token", ruleId: "actiongate-prove-token" },
     {
         content: "SEALED_ENV_TOKEN=sealed_env_b_8976_44cHjXpcK-42PEnKYAiJ6" + "_Rkcgkq0y2ccpPBAnb3KxrKw1nNx1XmjIMGuJpe\n",
@@ -342,7 +352,8 @@ const VISULIMA_TRUE_POSITIVES: RuleCase[] = [
     },
     {
         content:
-            "token: usl_iG8YqL9BN5GGx6KtyQqDTjD3saRZkb2l26nkaylEMyosHNwy.loPdBMZQf4G9SBSqfPDA28uSwNccStq3fiOLUwQmLeR" + "2zufwl8Y2WVWHnATriHmaVXOEpLJ0qrqKdHsF0qHM3XlSd_D9i-ME.eq6iTqTfibBb5z6-aBfCt3xq6KceMheFYV-rKSteQVz\n",
+            "token: usl_iG8YqL9BN5GGx6KtyQqDTjD3saRZkb2l26nkaylEMyosHNwy.loPdBMZQf4G9SBSqfPDA28uSwNccStq3fiOLUwQmLeR" +
+            "2zufwl8Y2WVWHnATriHmaVXOEpLJ0qrqKdHsF0qHM3XlSd_D9i-ME.eq6iTqTfibBb5z6-aBfCt3xq6KceMheFYV-rKSteQVz\n",
         name: "unseal token",
         ruleId: "sealed-env-unseal-token",
     },
@@ -355,7 +366,8 @@ const VISULIMA_TRUE_POSITIVES: RuleCase[] = [
     },
     {
         content:
-            "AUTH_KEY=IR@e63bf0cd-a164-3d03-4647-80b116167660@contoso-adf@ServiceEndpoint=contoso-ad" + "f.westeurope.datafactory.azure.net@ZWzwDFrlGXl+z1BVXBt7wRkl8OZfIa2AUk7z7gTqBu4=\n",
+            "AUTH_KEY=IR@e63bf0cd-a164-3d03-4647-80b116167660@contoso-adf@ServiceEndpoint=contoso-ad" +
+            "f.westeurope.datafactory.azure.net@ZWzwDFrlGXl+z1BVXBt7wRkl8OZfIa2AUk7z7gTqBu4=\n",
         name: "SHIR authentication key",
         ruleId: "azure-data-factory-shir-key",
     },
@@ -410,8 +422,10 @@ export OS_PASSWORD=Xk29vLq7Pz3wRt
         ruleId: "openstack-rc-password",
     },
     {
-        content: `registry=https://registry.example.com/
-_auth=ZGVwbG95OlN1cDNy` + `LVMzY3IzdC1QYXNz
+        content:
+            `registry=https://registry.example.com/
+_auth=ZGVwbG95OlN1cDNy` +
+            `LVMzY3IzdC1QYXNz
 always-auth=true
 `,
         file: ".npmrc",
@@ -419,9 +433,11 @@ always-auth=true
         ruleId: "npmrc-legacy-auth",
     },
     {
-        content: `spring:
+        content:
+            `spring:
   datasource:
-    password: \${DB_PASSWORD:Xk29vLq7` + `Pz3wRtYb}
+    password: \${DB_PASSWORD:Xk29vLq7` +
+            `Pz3wRtYb}
 `,
         file: "application.yml",
         name: "password default in application.yml",

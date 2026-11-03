@@ -37,8 +37,12 @@ export default createConfig(
     {
         rules: {
             // Prettier owns formatting — these stylistic rules conflict with it.
+            // Prettier breaks after a binary operator or `=` and indents the
+            // continuation its own way.
+            "@stylistic/indent-binary-ops": "off",
             "@stylistic/max-statements-per-line": "off",
             "@stylistic/no-extra-parens": "off",
+            "@stylistic/operator-linebreak": "off",
             "@stylistic/quotes": "off",
             // Vitest assertion patterns like `findings[0]!.ruleId` are idiomatic.
             "@typescript-eslint/no-non-null-assertion": "off",

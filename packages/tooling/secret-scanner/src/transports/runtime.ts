@@ -128,27 +128,29 @@ export const hostFromUri = (uri: string): string | undefined => {
  * the allowlist gate. Returns `undefined` when no scheme matches or the URI
  * can't be parsed to a host — fail-closed when an allowlist is active.
  */
-export const createUriHostResolver
-    = (...schemes: [string, ...string[]]): TransportHostResolver =>
-        ({ secret }) => {
-            let uri: string | undefined;
+export const createUriHostResolver = (...schemes: [string, ...string[]]): TransportHostResolver => {
+    const resolveHost: TransportHostResolver = ({ secret }) => {
+        let uri: string | undefined;
 
-            for (const scheme of schemes) {
-                uri = extractUri(secret, scheme);
+        for (const scheme of schemes) {
+            uri = extractUri(secret, scheme);
 
-                if (uri) {
-                    break;
-                }
+            if (uri) {
+                break;
             }
+        }
 
-            if (!uri) {
-                return undefined;
-            }
+        if (!uri) {
+            return undefined;
+        }
 
-            const host = hostFromUri(uri);
+        const host = hostFromUri(uri);
 
-            return host === undefined ? undefined : [host];
-        };
+        return host === undefined ? undefined : [host];
+    };
+
+    return resolveHost;
+};
 
 /** Test-only: reset the warning caches so test ordering doesn't matter. */
 export const resetWarningsForTests = (): void => {
