@@ -383,7 +383,9 @@ fn emit_match(
     // check sees the normalised value.
     let bytes = text_ref.as_bytes();
     if span.match_end > span.match_start && bytes[span.match_end - 1] == b'\r' {
-        if span.secret_end == span.match_end {
+        // Only shrink a non-empty secret: an empty capture sitting at `match_end` would
+        // otherwise end up with `secret_end < secret_start` and panic on the slice below.
+        if span.secret_end == span.match_end && span.secret_end > span.secret_start {
             span.secret_end -= 1;
         }
         span.match_end -= 1;
@@ -391,6 +393,7 @@ fn emit_match(
     if span.secret_end > span.secret_start && bytes[span.secret_end - 1] == b'\r' {
         span.secret_end -= 1;
     }
+    span.secret_end = span.secret_end.max(span.secret_start);
 
     let match_str = &text_ref[span.match_start..span.match_end];
     let secret_slice: &str = if span.secret_start == span.match_start && span.secret_end == span.match_end {
@@ -660,6 +663,26 @@ mod tests {
         assert_eq!(crlf[0].r#match, lf[0].r#match);
         assert_eq!(crlf[0].end_column, lf[0].end_column);
         assert_eq!(crlf[0].entropy.to_bits(), lf[0].entropy.to_bits());
+    }
+
+    #[test]
+    fn crlf_trim_with_empty_capture_at_match_end_does_not_panic() {
+        // The match ends on `\r` and the secret group is empty at `match_end`. Shrinking
+        // the secret end past its start used to panic on the slice.
+        let rs =
+            ruleset(r#"{"rules":[{"id":"tok","regex":"token=[a-z0-9]+\\r()","secretGroup":1,"keywords":["token="]}]}"#);
+        let findings = scan_text(&rs, Path::new("a.env"), "token=abc123\r\nnext\r\n");
+        // Empty secret -> dropped by the whitespace-only guard, but no panic.
+        assert!(findings.is_empty());
+
+        // Optional group that does not participate, match ending on `\r`.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok","regex":"token=([a-z]+)?[0-9]*\\r","secretGroup":1,"keywords":["token="]}]}"#,
+        );
+        let findings = scan_text(&rs, Path::new("a.env"), "token=123\r\n");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].r#match, "token=123");
+        assert_eq!(findings[0].secret, "token=123");
     }
 
     const PRIVATE_KEY_RULE: &str = r#"{"rules":[{"id":"private-key","regex":"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\\s\\S-]{64,}?KEY(?: BLOCK)?-----","keywords":["-----begin"]}]}"#;
