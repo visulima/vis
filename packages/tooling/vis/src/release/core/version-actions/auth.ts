@@ -63,6 +63,13 @@ export const resolveAuthMode = (options: ResolveAuthModeOptions): AuthMode => {
     return "missing";
 };
 
+/**
+ * Whether npm authenticates this publish with OIDC: GitHub Actions, or GitLab through `NPM_ID_TOKEN`.
+ * `NPM_ID_TOKEN` is checked here rather than in `resolveAuthMode`, which Python and Cargo share.
+ */
+export const npmUsesOidc = (env: NodeJS.ProcessEnv, config?: VisReleaseConfig): boolean =>
+    resolveAuthMode({ env, staticTokenVar: "NPM_TOKEN", workspaceConfig: config }) === "oidc" || (!env["NPM_TOKEN"] && Boolean(env["NPM_ID_TOKEN"]));
+
 export const getGithubActionsIdToken = async (env: NodeJS.ProcessEnv): Promise<string | undefined> => {
     const requestUrl = env["ACTIONS_ID_TOKEN_REQUEST_URL"];
     const requestToken = env["ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
@@ -105,12 +112,13 @@ export const exchangeOidcTokenForPackage = async (packageName: string, idToken: 
 /**
  * Ask npm, before anything is pushed, whether it accepts this run's OIDC token for every package
  * about to publish. A package without a trusted publisher then fails here instead of after the
- * version commit has landed. Skipped when `NPM_TOKEN` is set: the static token covers the publish.
+ * version commit has landed. Skipped when the static token wins (see `npmUsesOidc`).
  * @param packageNames packages the release is about to publish.
  * @param env process environment.
  */
-export const assertOidcPublishable = async (packageNames: readonly string[], env: NodeJS.ProcessEnv): Promise<void> => {
-    if (packageNames.length === 0 || env["NPM_TOKEN"] || resolveAuthMode({ env, staticTokenVar: "NPM_TOKEN" }) !== "oidc") {
+export const assertOidcPublishable = async (packageNames: readonly string[], env: NodeJS.ProcessEnv, config: VisReleaseConfig): Promise<void> => {
+    // The exchange below is GitHub-only; npm checks GitLab's NPM_ID_TOKEN itself.
+    if (packageNames.length === 0 || !env["ACTIONS_ID_TOKEN_REQUEST_URL"] || !npmUsesOidc(env, config)) {
         return;
     }
 

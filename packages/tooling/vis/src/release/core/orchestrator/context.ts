@@ -9,10 +9,11 @@ import { createAdapter, detectPackageManager } from "../package-managers/detect"
 import type { PackageManagerAdapter } from "../package-managers/interface";
 import { assembleReleasePlan } from "../release-plan";
 import { createShellRunner } from "../shell-runner";
+import { npmUsesOidc } from "../version-actions/auth";
+import { resolveVersionActionsId } from "../workspace";
 import { detectCatalogConsumers } from "./context-catalog";
 import { loadReleaseConfig } from "./context-config";
 import { discoverReleasePackages } from "./context-packages";
-import { resolveAuthMode } from "../version-actions/auth";
 
 export interface OrchestratorContext {
     branch?: string;
@@ -109,24 +110,6 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     }
 
     const config = await loadReleaseConfig(cwd, options.config);
-
-    // The default publish path hands the tarball to the npm CLI, whatever the project's
-    // package manager is. Trusted publishing needs npm >= its minVersion; an older npm sends
-    // an unauthenticated PUT and gets a 404 for every package, after the version commit has
-    // already been pushed. Only checked when OIDC is the auth path, so static tokens still work.
-    if (config.publish?.publishStrategy !== "native" && pmId !== "npm") {
-        const npm = createAdapter("npm", runner);
-        const npmVersion = await npm.detectVersion(cwd);
-        const auth = resolveAuthMode({ env: process.env, staticTokenVar: "NPM_TOKEN", workspaceConfig: config });
-
-        if (npmVersion && auth === "oidc" && !supportsMinVersion(npmVersion, npm.minVersion)) {
-            throw new VisReleaseError({
-                code: "PM_VERSION_TOO_LOW",
-                hint: "Upgrade npm in the publish job (npm install -g npm@latest), or set NPM_TOKEN.",
-                message: `npm ${npmVersion} is below ${npm.minVersion}, the minimum for trusted publishing (OIDC); npm publishes the tarball here.`,
-            });
-        }
-    }
 
     // Print unstable warning unless suppressed (RFC §21.2).
     if (!config.acknowledgeUnstable && process.env["VIS_RELEASE_SUPPRESS_UNSTABLE"] !== "1") {
@@ -269,6 +252,27 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
         }
     }
 
+    // Only packages published through the npm CLI need its OIDC support. Read-only commands
+    // (plan, status, ...) never publish, so they must not fail on a publisher they do not use.
+    if (
+        !options.skipRegistryLookup
+        && config.publish?.publishStrategy !== "native"
+        && pmId !== "npm"
+        && npmCliPackageNames({ packages, perPackageConfig, plan }).length > 0
+        && npmUsesOidc(process.env, config)
+    ) {
+        const npm = createAdapter("npm", runner);
+        const npmVersion = await npm.detectVersion(cwd);
+
+        if (npmVersion && !supportsMinVersion(npmVersion, npm.minVersion)) {
+            throw new VisReleaseError({
+                code: "PM_VERSION_TOO_LOW",
+                hint: "Upgrade npm in the publish job (npm install -g npm@latest), or set NPM_TOKEN and release.publish.preferStaticToken: true.",
+                message: `npm ${npmVersion} is below ${npm.minVersion}, the minimum for trusted publishing (OIDC); npm publishes the tarball here.`,
+            });
+        }
+    }
+
     return {
         branch,
         channel: resolved ? { mode: resolved.mode, prerelease: resolved.prerelease, tag: resolved.tag } : undefined,
@@ -303,3 +307,26 @@ const supportsMinVersion = (detected: string, minimum: string): boolean => {
         return true;
     }
 };
+
+/**
+ * Names of the planned releases that publish through the npm CLI: the default `npm` actions, and
+ * `native-addon`, whose fallback publishes through them.
+ */
+export const npmCliPackageNames = (state: {
+    packages: WorkspacePackage[];
+    perPackageConfig: Map<string, PerPackageReleaseConfig>;
+    plan: ReleasePlan;
+}): string[] =>
+    state.plan.releases
+        .map((release) => release.name)
+        .filter((name) => {
+            const pkg = state.packages.find((candidate) => candidate.name === name);
+
+            if (!pkg) {
+                return false;
+            }
+
+            const actionsId = resolveVersionActionsId(pkg, state.perPackageConfig.get(name) ?? {});
+
+            return actionsId === "npm" || actionsId === "native-addon";
+        });

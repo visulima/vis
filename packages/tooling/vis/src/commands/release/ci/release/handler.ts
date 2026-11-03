@@ -47,6 +47,7 @@ import { applyContext, buildContext, publishContext, publishMissing, syncLockfil
 import { createShellRunner } from "../../../../release/core/shell-runner";
 import { stateFilePath } from "../../../../release/core/state";
 import { detectRepoSlug } from "../../../../release/core/sticky-comment";
+import { npmCliPackageNames } from "../../../../release/core/orchestrator/context";
 import { assertOidcPublishable } from "../../../../release/core/version-actions/auth";
 import { mergeProtectedContent } from "../../../../release/core/version-pr-merge";
 import { logError, logWarning, reportPublishResult, reportWarnings } from "../../publish-report";
@@ -440,10 +441,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
 
         // Checked before the version commit exists, so a missing trusted publisher leaves nothing to undo.
         try {
-            await assertOidcPublishable(
-                ctx.plan.releases.map((release) => release.name),
-                process.env,
-            );
+            await assertOidcPublishable(npmCliPackageNames(ctx), process.env, ctx.config);
         } catch (error) {
             const { hint } = error as { hint?: string };
 
