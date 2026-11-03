@@ -767,6 +767,11 @@ const TOOL_VERSION_QUERY: Record<RuntimeTool, { args: ReadonlyArray<string>; bin
     yarn: { args: ["--version"], binaries: ["yarn"] },
 };
 
+interface ActiveTool {
+    readonly binary: string;
+    readonly version: string;
+}
+
 /**
  * Returns the version of a runtime tool on PATH. For `node` we prefer
  * `node --version` via the PATH-resolved binary over
@@ -776,7 +781,7 @@ const TOOL_VERSION_QUERY: Record<RuntimeTool, { args: ReadonlyArray<string>; bin
  * invocations will see. `process.versions.node` is only the fallback
  * when there's no `node` on PATH (rare; vis needs one to have booted).
  */
-const locateToolVersion = (tool: RuntimeTool): { binary: string; version: string } | undefined => {
+const locateToolVersion = (tool: RuntimeTool): ActiveTool | undefined => {
     const lookup = TOOL_VERSION_QUERY[tool];
 
     for (const candidate of lookup.binaries) {
@@ -1569,7 +1574,7 @@ export interface EnsureToolchainLogger {
  * Says which check failed when nvm cannot activate a pin from a child process: the pin and where it
  * comes from, and the version (and binary) that was found instead.
  */
-const describeNvmMismatch = (expected: ToolSpec, active: { binary: string; version: string } | undefined): string => {
+const describeNvmMismatch = (expected: ToolSpec, active: ActiveTool | undefined): string => {
     const pin = `pinned in ${expected.source}`;
 
     if (active === undefined) {

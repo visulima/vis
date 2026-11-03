@@ -410,7 +410,7 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
         = additionalChangedFiles && additionalChangedFiles.length > 0 ? [...new Set([...diffedFiles, ...additionalChangedFiles])] : diffedFiles;
 
     // Map changed files to projects
-    const rootProject = Object.keys(projects).find((name) => isWorkspaceRoot(projects[name]!.root));
+    const rootProject = Object.entries(projects).find(([, config]) => isWorkspaceRoot(config.root))?.[0];
     const changedProjects = new Set<string>();
     const ignoredFiles: string[] = [];
     let globalChange = false;
