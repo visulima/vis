@@ -1,3 +1,13 @@
+## @visulima/vis [6.5.3](https://github.com/visulima/vis/compare/@visulima/vis@6.5.2...@visulima/vis@6.5.3) (2026-11-03)
+
+### Bug Fixes
+
+* **vis:** address review on stranded release recovery ([#86](https://github.com/visulima/vis/issues/86)) ([c7c0302](https://github.com/visulima/vis/commit/c7c0302c5d44ca3cf0e14dc03da6f0336da0c08b))
+
+### Miscellaneous Chores
+
+* **vis:** add the blank line the lint rule requires ([#87](https://github.com/visulima/vis/issues/87)) ([4b0e33f](https://github.com/visulima/vis/commit/4b0e33f00f25f8f49c3b22fccfee2f6bc2b429bf))
+
 ## @visulima/vis [6.5.2](https://github.com/visulima/vis/compare/@visulima/vis@6.5.1...@visulima/vis@6.5.2) (2026-11-03)
 
 ### Bug Fixes
