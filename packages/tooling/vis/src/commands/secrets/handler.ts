@@ -666,8 +666,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
                 unusedIgnores: result.unusedIgnores,
             };
         } else {
-            const pending = target.files === undefined ? scanDetailed(target.paths ?? [root], scanOptions) : scanFilesDetailed(target.files, scanOptions);
-            const result = await pending;
+            const result = await (target.files === undefined ? scanDetailed(target.paths ?? [root], scanOptions) : scanFilesDetailed(target.files, scanOptions));
 
             outcome = {
                 findings: result.findings,

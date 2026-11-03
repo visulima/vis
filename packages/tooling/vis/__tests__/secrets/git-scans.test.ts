@@ -11,6 +11,7 @@ import execute, { assertArchiveFlags, assertHistoryFlags } from "../../src/comma
 import { formatSkippedBlobs } from "../../src/secrets/format";
 
 // Fake GitHub PAT matching the bundled `github-pat` rule.
+// eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
 const FAKE_PAT = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
 
 const GIT_REPO_ENV_KEYS = new Set(["GIT_COMMON_DIR", "GIT_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE"]);
@@ -33,7 +34,7 @@ const createRepo = (): { git: (...arguments_: string[]) => string; repo: string 
     return { git, repo };
 };
 
-const runSecrets = async (options: SecretsFlags & { format?: string }, workspaceRoot: string): Promise<void> => {
+const runSecrets = async (options: SecretsFlags, workspaceRoot: string): Promise<void> => {
     await (execute as unknown as (toolbox: Partial<Toolbox>) => Promise<void>)({ argument: [], options, workspaceRoot } as unknown as Partial<Toolbox>);
 };
 

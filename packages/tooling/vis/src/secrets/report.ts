@@ -1,6 +1,7 @@
 import { dim, yellow } from "@visulima/colorize";
 import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
 
+import { VisUserError } from "../errors/vis-user-error";
 import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit, gitleaksFingerprint } from "../report/secrets";
 import { toRelativeFinding } from "./baseline";
 import { formatHistoryText, formatSarif, formatText } from "./format";
@@ -30,15 +31,15 @@ export const parseReportTargets = (values: string[]): ReportTarget[] => {
         const path = separator === -1 ? "" : value.slice(separator + 1);
 
         if (!isReportFormat(format)) {
-            throw new Error(`--report "${value}": format must be one of ${REPORT_FORMATS.join(", ")}, as <format>=<path> (e.g. sarif=secrets.sarif)`);
+            throw new VisUserError(`--report "${value}": format must be one of ${REPORT_FORMATS.join(", ")}, as <format>=<path> (e.g. sarif=secrets.sarif)`);
         }
 
         if (path === "") {
-            throw new Error(`--report "${value}" needs a file path: ${format}=<path>`);
+            throw new VisUserError(`--report "${value}" needs a file path: ${format}=<path>`);
         }
 
         if (seen.has(path)) {
-            throw new Error(`--report writes ${path} twice; give each report its own file.`);
+            throw new VisUserError(`--report writes ${path} twice; give each report its own file.`);
         }
 
         seen.add(path);
@@ -130,16 +131,15 @@ export const formatUnusedIgnores = (entries: GitleaksIgnoreEntry[], ignoreFile: 
 };
 
 /** `--log-ignored`: every suppressed finding with the reason it was suppressed. */
-export const formatSuppressed = (suppressed: SuppressedFinding[], root: string, useColor: boolean): string => {
+export const formatSuppressed = (suppressed: SuppressedFinding<Finding & Partial<Pick<GitFinding, "commit">>>[], root: string, useColor: boolean): string => {
     const summary = `${String(suppressed.length)} finding(s) suppressed:`;
     const lines = [useColor ? yellow(summary) : summary];
 
     for (const finding of suppressed) {
         const relative = toRelativeFinding(finding, root);
-        const { commit } = finding as Partial<GitFinding>;
         const entryLine = finding.suppressedByEntry === undefined ? "" : ` line ${String(finding.suppressedByEntry.line)}`;
         const reason = `${finding.suppressedBy}${entryLine}`;
-        const detail = `  - [${finding.ruleId}] ${gitleaksFingerprint({ ...relative, commit })} (${reason})`;
+        const detail = `  - [${finding.ruleId}] ${gitleaksFingerprint({ ...relative, commit: finding.commit })} (${reason})`;
 
         lines.push(useColor ? dim(detail) : detail);
     }

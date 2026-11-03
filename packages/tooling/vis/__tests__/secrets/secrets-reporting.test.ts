@@ -16,8 +16,10 @@ import { toSarifUri } from "../../src/secrets/format";
 import { formatSuppressed, formatUnusedIgnores, parseReportTargets } from "../../src/secrets/report";
 
 // Fake GitHub PATs matching the bundled `github-pat` rule.
+/* eslint-disable no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens */
 const PAT_A = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
 const PAT_B = "ghp_Zx9Yw8Vu7Ts6Rq5P" + "o4Nm3Lk2Ji1Hg0Fe9Dc8";
+/* eslint-enable no-useless-concat */
 
 const hermeticGitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
 
