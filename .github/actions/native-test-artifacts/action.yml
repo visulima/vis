@@ -34,7 +34,7 @@ runs:
         - name: "Download native build artifacts"
           id: "download_native_artifacts"
           continue-on-error: true
-          uses: "dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151" # v21
+          uses: "dawidd6/action-download-artifact@a92c7ae74cf1df8810783758581e485ac3aaa309" # v28
           with:
               workflow: "build-native.yml"
               commit: "${{ inputs.ref }}"
@@ -56,7 +56,7 @@ runs:
           # No continue-on-error here: if the retry also fails, fail loud
           # rather than silently running native-binding-dependent tests
           # (secret-scanner, task-runner, etc.) against missing bindings.
-          uses: "dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151" # v21
+          uses: "dawidd6/action-download-artifact@a92c7ae74cf1df8810783758581e485ac3aaa309" # v28
           with:
               workflow: "build-native.yml"
               commit: "${{ inputs.ref }}"
