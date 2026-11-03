@@ -26,6 +26,7 @@ import { resolve } from "node:path";
 
 import type { Native } from "./binding";
 import { binding } from "./binding";
+import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
 import type { CommitAllowlist } from "./git-commit-allowlist";
@@ -36,9 +37,6 @@ import { nativeOptionsFor, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { beginScan, finishResult } from "./scan-session";
 import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
-
-/** Default per-blob size cap; matches the working-tree walker. */
-const DEFAULT_MAX_BLOB_BYTES = 10 * 1024 * 1024;
 
 /** Raw detection results kept for parent-blob lookups across commits. */
 const PARENT_CACHE_LIMIT = 256;
@@ -298,7 +296,7 @@ class BlobScanner {
         // Comparisons need real secrets: masked values from two different
         // secrets can be identical (`ghp***xY4`).
         this.#rawNativeOptions = { ...prepared.nativeOptions, redact: false };
-        this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_BLOB_BYTES);
+        this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
     }
 
     public close(): void {

@@ -42,3 +42,20 @@ export const legacyFingerprint = (finding: Finding): string => `${finding.file}:
  * {@link fingerprint} when the secret is the whole match.
  */
 export const wholeMatchFingerprint = (finding: Finding): string => fingerprint({ ...finding, secret: finding.match });
+
+/**
+ * Every key a baseline entry may be stored under for `finding`: the content
+ * hash, the legacy line-based form and the whole-match content hash. A finding
+ * is baselined when the baseline holds any of them.
+ */
+export const baselineKeys = (finding: Finding): string[] => [fingerprint(finding), legacyFingerprint(finding), wholeMatchFingerprint(finding)];
+
+/**
+ * The gitleaks fingerprint of a finding as `.gitleaksignore` accepts it:
+ * `file:rule:line`, prefixed with the full commit SHA for git history findings.
+ */
+export const gitleaksIgnoreFingerprint = (finding: Finding & { commit?: { sha: string } }): string => {
+    const base = legacyFingerprint(finding);
+
+    return finding.commit === undefined ? base : `${finding.commit.sha}:${base}`;
+};

@@ -18,7 +18,7 @@
 import { resolveBaselineSet } from "./baseline";
 import type { Native } from "./binding";
 import { checkChecksum } from "./checksum";
-import { fingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+import { baselineKeys } from "./fingerprint";
 import { GitleaksIgnore, maskSecret } from "./gitleaks-ignore";
 import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
@@ -414,7 +414,7 @@ const suppressionFor = (
 
     const entry = context.ignore?.match(finding, context.bases);
 
-    if (context.baseline.size > 0 && [fingerprint, legacyFingerprint, wholeMatchFingerprint].some((key) => context.baseline.has(key(finding)))) {
+    if (context.baseline.size > 0 && baselineKeys(finding).some((key) => context.baseline.has(key))) {
         return { reason: "baseline" };
     }
 

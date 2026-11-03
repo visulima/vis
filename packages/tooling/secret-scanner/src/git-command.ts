@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /** `-c` overrides placed before the subcommand on every git call. */
-const GIT_CONFIG_OVERRIDES = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
+export const GIT_CONFIG_OVERRIDES = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
 
 /**
  * Extra flags for the diff family (`diff`, `diff-tree`). They keep a user's

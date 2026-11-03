@@ -151,7 +151,9 @@ export const scanFiles = async (files: string[], options?: ScanOptions): Promise
 
 export { buildBaselineSet, createBaseline, loadBaselineSet, resolveBaselineSet, writeBaseline, type WriteBaselineOptions } from "./baseline";
 export { bundledConfigPath, type GitleaksConfig } from "./config-loader";
-export { fingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+export { CONFIDENCE_LEVELS, DEFAULT_MAX_FILE_SIZE, MAX_ARCHIVE_DEPTH } from "./constants";
+export { baselineKeys, fingerprint, gitleaksIgnoreFingerprint, legacyFingerprint, wholeMatchFingerprint } from "./fingerprint";
+export { DIFF_HARDENING_FLAGS, GIT_CONFIG_OVERRIDES } from "./git-command";
 export {
     type GitCommitInfo,
     type GitFinding,
