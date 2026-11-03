@@ -14,7 +14,7 @@ import type { Finding, ScanOptions } from "./types";
  *
  * **Note**: detection runs synchronously on the calling thread (the native
  * binding is sync for string input — scanning ~550 KB takes ~11 ms with the
- * full 1,047-rule set). The `async` signature exists because `postProcess`
+ * full ~1,340-rule set). The `async` signature exists because `postProcess`
  * may await validators. For large buffers on a latency-sensitive event loop
  * (HTTP server request handler, VSCode extension main thread), chunk the
  * input yourself or offload to a worker.

@@ -34,11 +34,11 @@
 
 ---
 
-Production-grade secret and credential scanner for Node.js. Written in Rust, delivered as a NAPI module, and shipped with **1,058 bundled rules** — the union of [gitleaks](https://github.com/gitleaks/gitleaks)' default ruleset (MIT, 222 rules), MongoDB [Kingfisher](https://github.com/mongodb/kingfisher) (Apache-2.0, 825 rules), and 11 opt-in Visulima detectors. Plug it into pre-commit hooks, CI gates, editor extensions, or library code without shelling out to a Go binary.
+Production-grade secret and credential scanner for Node.js. Written in Rust, delivered as a NAPI module, and shipped with **1,387 bundled rules** — the union of [gitleaks](https://github.com/gitleaks/gitleaks)' default ruleset (MIT, 222 rules), MongoDB [Kingfisher](https://github.com/mongodb/kingfisher) (Apache-2.0, 1,095 rules), 22 Visulima rules for providers neither upstream covers, and 48 opt-in Visulima preset detectors. Plug it into pre-commit hooks, CI gates, editor extensions, or library code without shelling out to a Go binary.
 
 ### Detection
 
-- **1,058 rules** covering 350+ providers — gitleaks compatibility for established detectors, Kingfisher for breadth, Visulima opt-ins (`preset:weak-passwords`, `preset:password-manager`) for niches the upstreams don't cover.
+- **1,387 rules** covering 600+ providers — gitleaks compatibility for established detectors, Kingfisher for breadth, Visulima rules for gaps in both, and Visulima opt-ins (`preset:weak-passwords`, `preset:password-manager`, `preset:exposed-files`) for niches the upstreams don't cover.
 - **Confidence floors** — drop low/medium-confidence rules with `config.minConfidence`. Rules without a declared confidence resolve to `"low"` so the floor behaves as expected in CI.
 - **Pattern requirements & stopword filters** — Kingfisher-style `minLength`, `minDigits`, and `ignoreIfContains` reject documentation placeholders (`EXAMPLE`, `YOUR_KEY_HERE`) before entropy is even computed.
 - **Rule priority + dedup** — overlapping matches collapse to the most specific rule; the rest are surfaced on `Finding.alternateMatches`.
@@ -46,8 +46,8 @@ Production-grade secret and credential scanner for Node.js. Written in Rust, del
 
 ### Live validation (opt-in)
 
-- **HTTP validators** for ~493 Kingfisher rules — `StatusMatch`, `WordMatch`, `JsonValid`, and `HeaderMatch` matchers run against the provider's API. Liquid-lite templating (`{{ TOKEN }}`, filters `downcase`/`upcase`/`b64enc`/`b64dec`) builds the request.
-- **Cross-rule chaining** — `dependsOnRule` pairs related secrets (AWS AKID + secret, OAuth id + secret, 106 rules total) before validation.
+- **HTTP validators** for Kingfisher's 646 HTTP-validated rules — `StatusMatch`, `WordMatch`, `JsonValid`, and `HeaderMatch` matchers run against the provider's API. Liquid-lite templating (`{{ TOKEN }}`, filters `downcase`/`upcase`/`b64enc`/`b64dec`) builds the request.
+- **Cross-rule chaining** — `dependsOnRule` pairs related secrets (AWS AKID + secret, OAuth id + secret, 142 rules total) before validation.
 - **Offline checks** — JWT formal-validity and CRC32 checksum filters short-circuit before the network is touched.
 - **Per-host rate limiting** under a global concurrency cap; `Retry-After` honoured on 429 / 503.
 - `config.onlyVerified: true` filters to provider-confirmed leaks for hard CI gating.
@@ -201,13 +201,14 @@ await scan([process.cwd()], {
 | Source                 | Rules     | License    | Default state                                                    |
 | ---------------------- | --------- | ---------- | ---------------------------------------------------------------- |
 | gitleaks               | 222       | MIT        | enabled                                                          |
-| MongoDB Kingfisher     | 825       | Apache-2.0 | enabled                                                          |
-| Visulima preset bundle | 11        | MIT        | **disabled** — enable with `rules.enable: ["tag:preset:<name>"]` |
-| **Total**              | **1,058** |            | 1,047 active by default                                          |
+| MongoDB Kingfisher     | 1,095     | Apache-2.0 | enabled                                                          |
+| Visulima rules         | 22        | MIT        | enabled                                                          |
+| Visulima preset bundle | 48        | MIT        | **disabled** — enable with `rules.enable: ["tag:preset:<name>"]` |
+| **Total**              | **1,387** |            | 1,339 active by default                                          |
 
-The Kingfisher import is regenerated from the pinned upstream commit in `scripts/kingfisher.ref` via `pnpm run build:rules`. Eleven Kingfisher rules with `pattern_requirements.checksum:` are skipped during import (their loose patterns aren't meaningful without CRC verification — see `data/kingfisher.skipped.log`); their `dependsOnRule` metadata is preserved everywhere else for future multi-token chaining.
+The Kingfisher import is regenerated from the pinned upstream commit in `scripts/kingfisher.ref` (v1.113.0, the last 1.x release) via `pnpm run build:rules`. Rules with `pattern_requirements.checksum:` are imported and checked at scan time by the CRC filter. Fixes from open gitleaks PRs are backported through `ruleOverrides` in `data/gitleaks.patches.json`, and the Visulima rules live in `scripts/visulima-rules.toml`. A weekly workflow (`secret-scanner-rules-sync.yml`) opens a pull request when either upstream ships a new release.
 
-The opt-in HTTP validator handles 493 of Kingfisher's 510 validation-carrying rules. Native validators (`AWS`, `GCP`, `MongoDB`, `Postgres`, `Jdbc`, `Grpc`, `Raw`) and a handful of JSON / XML matchers populate `finding.validation = "skipped"` — they belong in plugin packages rather than the core, since each adds a provider SDK for ≤2 rules.
+Kingfisher ships validation metadata on 680 rules, 646 of them HTTP; the opt-in HTTP validator handles those. Native validators (`AWS`, `GCP`, `MongoDB`, `Postgres`, `Jdbc`, `Grpc`, `Raw`) and a handful of JSON / XML matchers populate `finding.validation = "skipped"` — they belong in plugin packages rather than the core, since each adds a provider SDK for ≤2 rules.
 
 ### Suppression
 
@@ -225,9 +226,7 @@ const third = "ghp_..."; // pragma: allowlist secret   # detect-secrets compat
 
 ```ts
 // gitleaks:allow-start
-const testFixtures = {
-    /* ... */
-};
+const testFixtures = {/* ... */};
 // gitleaks:allow-end
 ```
 
