@@ -537,14 +537,17 @@ describe("visulima default rules (scripts/visulima-rules.toml)", () => {
 });
 
 describe("bundled ruleset compiles", () => {
-    it("skips no rule except the two with known Unicode-size regexes", async () => {
+    it("skips no rule beyond the two with known Unicode-size regexes", async () => {
         expect.assertions(1);
 
         const skipped = await inspectRuleset();
 
         // pypi-upload-token and vault-batch-token exceed the native regex size
-        // limit under Unicode `\w`; tracked separately. generic-api-key used
-        // to be in this list and silently never ran.
-        expect(skipped.map((rule) => rule.ruleId).toSorted((a, b) => a.localeCompare(b))).toStrictEqual(["pypi-upload-token", "vault-batch-token"]);
+        // limit under Unicode `\w` (tracked separately; they may start compiling
+        // once that is fixed). generic-api-key used to be in this list and
+        // silently never ran; any other id here means a rule went dead.
+        const known = new Set(["pypi-upload-token", "vault-batch-token"]);
+
+        expect(skipped.map((rule) => rule.ruleId).filter((id) => !known.has(id))).toStrictEqual([]);
     });
 });
