@@ -199,7 +199,7 @@ interface RequiredFinding {
 }
 ```
 
-- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory.
+- `file` is **relative** to the first scan root. When scanning with `scanFiles`, it is relative to the current working directory. A finding inside an archive (see `maxArchiveDepth`) uses the virtual path `<archive>!<entry>`, e.g. `bundle.zip!config/app.env`.
 - Columns are **1-based and count Unicode code points**, not bytes — consumable by editor/LSP tooling.
 - `confidence` resolves to `"low"` when the rule declares none (every bundled gitleaks rule). Use it alongside `config.minConfidence` to filter.
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.

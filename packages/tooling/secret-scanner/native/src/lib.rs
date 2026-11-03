@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+mod archive;
 mod composite;
 mod config;
 mod decode;
@@ -20,6 +21,7 @@ use napi_derive::napi;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 
+use crate::archive::ArchiveOptions;
 use crate::config::Config;
 use crate::decode::DecodeOptions;
 use crate::detector::RawFinding;
@@ -88,6 +90,11 @@ pub struct ScanOptions {
     /// Recursion depth of the decode pass (base64 / hex / percent-encoding). Each level
     /// decodes printable-UTF-8 segments and rescans them. Default 2; 0 disables decoding.
     pub max_decode_depth: Option<u32>,
+    /// Nesting depth for archive scanning (gitleaks `--max-archive-depth`). zip / tar /
+    /// gzip / tar.gz files, detected by magic bytes, are opened and their entries scanned;
+    /// findings use the virtual path `archive.zip!inner/file`. 1 opens top-level archives,
+    /// each extra level one more layer of nested archives (max 8). Default 0 (off).
+    pub max_archive_depth: Option<u32>,
 }
 
 #[napi(object)]
@@ -210,6 +217,14 @@ fn decode_options(opts: &ScanOptions) -> DecodeOptions {
     DecodeOptions { max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH), ..Default::default() }
 }
 
+fn archive_options(opts: &ScanOptions, max_bytes: u64) -> ArchiveOptions {
+    ArchiveOptions {
+        max_depth: opts.max_archive_depth.unwrap_or(archive::DEFAULT_MAX_ARCHIVE_DEPTH),
+        max_entry_bytes: max_bytes,
+        ..Default::default()
+    }
+}
+
 fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
     let Some(value) = opts.config.as_ref() else {
         return Err(Error::from_reason("ScanOptions.config is required (pass a parsed gitleaks-shaped object)"));
@@ -263,6 +278,7 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
     let redact_secrets = opts.redact.unwrap_or(false);
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
     let decode_opts = decode_options(&opts);
+    let archive_opts = archive_options(&opts, max_bytes);
 
     let walk_opts = WalkOptions {
         respect_gitignore: opts.respect_gitignore.unwrap_or(true),
@@ -277,7 +293,7 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>> {
     let do_scan = || -> Vec<RawFinding> {
         files
             .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts) {
+            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts, archive_opts) {
                 Ok(Some(v)) => v.into_iter(),
                 _ => Vec::new().into_iter(),
             })
@@ -307,8 +323,13 @@ fn finalize_findings(mut findings: Vec<RawFinding>, roots: &[PathBuf]) -> Vec<Ra
     if !roots.is_empty() {
         let canon_roots = canonicalize_roots(roots);
         for f in &mut findings {
-            if let Some(rel) = relative_to_root(&f.file, &canon_roots) {
-                f.file = rel;
+            // Archive entries: relativise the archive's own path, then re-attach the
+            // `!entry` suffix (the virtual path doesn't exist on disk, so it can't be
+            // canonicalised as a whole).
+            let suffix = f.archive_entry.as_deref().filter(|s| f.file.ends_with(s)).unwrap_or("");
+            let on_disk = &f.file[..f.file.len() - suffix.len()];
+            if let Some(rel) = relative_to_root(on_disk, &canon_roots) {
+                f.file = format!("{rel}{suffix}");
             }
         }
     }
@@ -494,13 +515,14 @@ fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<Vec<Finding>
     let redact_secrets = opts.redact.unwrap_or(false);
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
     let decode_opts = decode_options(&opts);
+    let archive_opts = archive_options(&opts, max_bytes);
 
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
 
     let do_scan = || -> Vec<RawFinding> {
         paths
             .par_iter()
-            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts) {
+            .flat_map_iter(|p| match scan_file(p, &ruleset, max_bytes, decode_opts, archive_opts) {
                 Ok(Some(v)) => v.into_iter(),
                 _ => Vec::new().into_iter(),
             })
@@ -550,6 +572,7 @@ mod tests {
             inner_start: 0,
             inner_end: 0,
             required_findings: None,
+            archive_entry: None,
         }
     }
 

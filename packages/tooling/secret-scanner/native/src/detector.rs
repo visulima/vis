@@ -72,6 +72,10 @@ pub struct RawFinding {
     /// Findings of the rule's `[[rules.required]]` dependencies that satisfied it, nearest
     /// first, one per required id. Set by the composite pass; `None` for plain rules.
     pub required_findings: Option<Vec<RawFinding>>,
+    /// Archive entries only: the virtual suffix after the archive's own path, e.g.
+    /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
+    /// it to relativise just the on-disk part.
+    pub archive_entry: Option<String>,
 }
 
 /// Byte ranges inside `content` marked by `gitleaks:allow-start` ... `gitleaks:allow-end`
@@ -265,6 +269,7 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain:
                 inner_start: 0,
                 inner_end: 0,
                 required_findings: None,
+                archive_entry: None,
             });
             continue;
         }
@@ -507,6 +512,7 @@ fn emit_match(
         inner_start: 0,
         inner_end: 0,
         required_findings: None,
+        archive_entry: None,
     });
 }
 

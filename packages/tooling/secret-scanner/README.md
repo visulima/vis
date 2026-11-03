@@ -42,6 +42,7 @@ Production-grade secret and credential scanner for Node.js. Written in Rust, del
 - **Confidence floors** — drop low/medium-confidence rules with `config.minConfidence`. Rules without a declared confidence resolve to `"low"` so the floor behaves as expected in CI.
 - **Pattern requirements & stopword filters** — Kingfisher-style `minLength`, `minDigits`, and `ignoreIfContains` reject documentation placeholders (`EXAMPLE`, `YOUR_KEY_HERE`) before entropy is even computed.
 - **Encoded secrets** — base64 (standard and url-safe), hex and percent-encoded values that decode to printable text are decoded and rescanned, two layers deep by default (`maxDecodeDepth`). A base64-wrapped key or a Kubernetes `Secret` `data:` value is reported at its encoded location with `Finding.decoded` naming the encoding chain.
+- **Archives** (opt-in) — with `maxArchiveDepth`, zip, tar, gzip and tar.gz files are recognised by their magic bytes and their entries scanned in memory, nested archives included. Findings report `archive.zip!inner/file.env`. Per-entry size, total-bytes, entry-count and decompression-ratio limits guard against bombs.
 - **Composite rules** — gitleaks 8.28+ `[[rules.required]]` (with `withinLines` / `withinColumns`) and `skipReport` load unchanged. A finding is reported only when its required rules match nearby; the matching dependencies are attached as `Finding.requiredFindings`.
 - **Rule priority + dedup** — overlapping matches collapse to the most specific rule; the rest are surfaced on `Finding.alternateMatches`.
 - **Source provenance** — every finding carries `source: "gitleaks" | "kingfisher" | "visulima" | <user>` so reporters and baselines can route appropriately.
@@ -327,6 +328,12 @@ interface ScanOptions {
      * this depth (gitleaks `--max-decode-depth`). Default: 2. `0` disables decoding.
      */
     maxDecodeDepth?: number;
+
+    /**
+     * Open zip / tar / gzip / tar.gz files (by magic bytes) and scan their entries, nested
+     * archives up to this depth (gitleaks `--max-archive-depth`). Default: 0 (off).
+     */
+    maxArchiveDepth?: number;
 
     /** Mask `match` / `secret` strings in every finding. */
     redact?: boolean;

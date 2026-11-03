@@ -121,6 +121,13 @@ export interface ScanOptions {
      * decodes printable-UTF-8 segments and rescans them. Default 2; 0 disables decoding.
      */
     maxDecodeDepth?: number;
+    /**
+     * Nesting depth for archive scanning (gitleaks `--max-archive-depth`). zip / tar /
+     * gzip / tar.gz files, detected by magic bytes, are opened and their entries scanned;
+     * findings use the virtual path `archive.zip!inner/file`. 1 opens top-level archives,
+     * each extra level one more layer of nested archives (max 8). Default 0 (off).
+     */
+    maxArchiveDepth?: number;
 }
 
 export declare function scanSync(paths: Array<string>, options?: ScanOptions | undefined | null): Array<Finding>;

@@ -140,6 +140,7 @@ mod tests {
             inner_start: 0,
             inner_end: 0,
             required_findings: None,
+            archive_entry: None,
         }
     }
 

@@ -135,6 +135,22 @@ export interface ScanOptions {
     };
 
     /**
+     * Archive scanning depth (gitleaks `--max-archive-depth`). zip, tar, gzip and
+     * tar.gz files are recognised by their magic bytes (not the extension), opened in
+     * memory and their entries scanned. Findings use the virtual path
+     * `archive.zip!inner/dir/file.env`. `1` opens top-level archives; each extra level
+     * opens one more layer of archives nested inside them (capped at 8). A gzip stream
+     * around a tar counts as one level.
+     *
+     * Limits per top-level archive: each entry obeys `walk.maxFileSize` (and the archive
+     * file itself too), 256 MiB decompressed in total, 10,000 entries, and entries or gzip
+     * streams that expand more than 100x past 1 MiB are skipped as decompression bombs.
+     * Binary entries are skipped like binary files. Applies to `scan` and `scanFiles`.
+     * Default: `0` (archives are skipped as binary files).
+     */
+    maxArchiveDepth?: number;
+
+    /**
      * How many layers of encoding to look through (gitleaks `--max-decode-depth`).
      * Base64 (standard and url-safe), hex and percent-encoded segments that decode
      * to printable UTF-8 are decoded and rescanned, recursively, up to this depth.
