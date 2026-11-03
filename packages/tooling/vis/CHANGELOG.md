@@ -1,3 +1,14 @@
+## @visulima/vis [6.5.0](https://github.com/visulima/vis/compare/@visulima/vis@6.4.4...@visulima/vis@6.5.0) (2026-11-03)
+
+### Features
+
+* **secret-scanner:** gitleaks parity (decoding, archives, composite rules, history fixes) ([#82](https://github.com/visulima/vis/issues/82)) ([69cf04a](https://github.com/visulima/vis/commit/69cf04a8f450e2052d7250a6d42ca0966ee98190))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 2.1.0
+
 ## @visulima/vis [6.4.4](https://github.com/visulima/vis/compare/@visulima/vis@6.4.3...@visulima/vis@6.4.4) (2026-11-03)
 
 ### Bug Fixes

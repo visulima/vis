@@ -1,6 +1,6 @@
 {
     "name": "@visulima/vis",
-    "version": "6.4.4",
+    "version": "6.5.0",
     "description": "A monorepo dev toolkit — task runner, remote caching, security scanning, git hooks, and AI agent integrations — powered by @visulima/task-runner",
     "keywords": [
         "build",
@@ -148,7 +148,7 @@
         "@floating-ui/core": "1.8.0",
         "@floating-ui/dom": "1.8.0",
         "@visulima/error": "6.1.0",
-        "@visulima/secret-scanner": "2.0.3",
+        "@visulima/secret-scanner": "2.1.0",
         "@visulima/source-map": "3.0.1",
         "@visulima/tabular": "4.1.0",
         "@visulima/task-runner": "3.0.3",
