@@ -479,6 +479,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "thiserror",

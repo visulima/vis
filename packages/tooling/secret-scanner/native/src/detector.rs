@@ -268,6 +268,8 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
         // that region (±LOOKBACK_WINDOW_BYTES) instead of the whole file. Falls back
         // to the full `text_ref` when:
         //   - the rule has no keywords (always-run, `ac_spans[i] = None`);
+        //   - the rule's regex can span an unbounded multi-line run (`private-key`'s
+        //     `[\s\S-]{64,}?` body), so no fixed window is guaranteed to reach its end;
         //   - the rule uses `preRegexReplace` so offsets from AC hits over the original
         //     `content` don't map cleanly to `text` (the rewritten buffer);
         //   - the computed window spans the whole file anyway.
@@ -275,7 +277,7 @@ pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<R
         // The slice stays at char boundaries via `window_around`, and we translate
         // slice-relative offsets back to absolute via `slice_start` before emission.
         let uses_pre_replace = !rule.pre_regex_replace.is_empty();
-        let window = if uses_pre_replace { None } else { ac_spans[i] };
+        let window = if uses_pre_replace || rule.unbounded_multiline { None } else { ac_spans[i] };
         let (slice_start, slice_end) = match window {
             Some(span) => window_around(text_ref, span),
             None => (0, text_ref.len()),
@@ -658,6 +660,49 @@ mod tests {
         assert_eq!(crlf[0].r#match, lf[0].r#match);
         assert_eq!(crlf[0].end_column, lf[0].end_column);
         assert_eq!(crlf[0].entropy.to_bits(), lf[0].entropy.to_bits());
+    }
+
+    const PRIVATE_KEY_RULE: &str = r#"{"rules":[{"id":"private-key","regex":"(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\\s\\S-]{64,}?KEY(?: BLOCK)?-----","keywords":["-----begin"]}]}"#;
+
+    /// Deterministic pseudo-random base64 body wrapped at 64 columns (xorshift, no deps).
+    fn base64_body(bytes: usize) -> String {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut out = String::with_capacity(bytes + bytes / 64);
+        for i in 0..bytes {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.push(ALPHABET[(state % 64) as usize] as char);
+            if i % 64 == 63 {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn large_pgp_private_key_block_matches_past_window() {
+        let rs = ruleset(PRIVATE_KEY_RULE);
+        let body = base64_body(8 * 1024);
+        let text = format!(
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\n{body}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----\n"
+        );
+        assert!(text.len() > 2 * LOOKBACK_WINDOW_BYTES);
+        let findings = scan_text(&rs, Path::new("key.asc"), &text);
+        assert!(findings.iter().any(|f| f.rule_id == "private-key"), "no private-key finding");
+        assert!(findings[0].r#match.ends_with("-----END PGP PRIVATE KEY BLOCK-----"));
+    }
+
+    #[test]
+    fn large_pem_private_key_matches_past_window() {
+        let rs = ruleset(PRIVATE_KEY_RULE);
+        // ~8192-bit RSA key body is ~6.3 KiB of base64.
+        let body = base64_body(6 * 1024 + 300);
+        let text = format!("config:\n-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----\n");
+        let findings = scan_text(&rs, Path::new("id_rsa"), &text);
+        assert!(findings.iter().any(|f| f.rule_id == "private-key"), "no private-key finding");
+        assert_eq!(findings[0].end_line as usize, text.lines().count());
     }
 
     #[test]
