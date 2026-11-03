@@ -1,6 +1,7 @@
 // Per-file reader that feeds the detector directly, avoiding an intermediate
-// `String` copy for mmap'd files that are already valid UTF-8.
+// `String` copy for file content that is already valid UTF-8.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
@@ -82,20 +83,6 @@ pub fn scan_file(
     let capacity = usize::try_from(size).unwrap_or(0);
     let mut bytes = Vec::with_capacity(capacity);
     file.read_to_end(&mut bytes)?;
-    if archive.max_depth == 0 || archive::detect(&bytes).is_none() {
-        // Plain path: take ownership of the buffer to avoid a copy for valid UTF-8.
-        if is_binary(&bytes) {
-            return Ok(Some(FileScan::default()));
-        }
-        let findings = match String::from_utf8(bytes) {
-            Ok(s) => scan_text_full(ruleset, path, &s, opts),
-            Err(e) => {
-                let (cow, _, _) = encoding_rs::UTF_8.decode(e.as_bytes());
-                scan_text_full(ruleset, path, &cow, opts)
-            }
-        };
-        return Ok(Some(findings.into()));
-    }
     Ok(Some(scan_bytes(ruleset, path, &bytes, opts, archive)))
 }
 
@@ -116,14 +103,16 @@ fn scan_bytes(
     if is_binary(bytes) {
         return FileScan::default();
     }
-    let findings = match std::str::from_utf8(bytes) {
-        Ok(s) => scan_text_full(ruleset, path, s, opts),
-        Err(_) => {
-            let (cow, _, _) = encoding_rs::UTF_8.decode(bytes);
-            scan_text_full(ruleset, path, &cow, opts)
-        }
-    };
-    findings.into()
+    scan_text_full(ruleset, path, &lossy_text(bytes), opts).into()
+}
+
+/// `bytes` as text: borrowed when valid UTF-8, else decoded with replacement characters
+/// (`encoding_rs`, which also drops a leading BOM on that path).
+pub(crate) fn lossy_text(bytes: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(_) => encoding_rs::UTF_8.decode(bytes).0,
+    }
 }
 
 pub(crate) fn is_binary(bytes: &[u8]) -> bool {

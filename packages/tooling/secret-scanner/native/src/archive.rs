@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use flate2::read::MultiGzDecoder;
 
 use crate::rules::CompiledRuleset;
-use crate::scanner::{is_binary, scan_text_full, FileScan, TextScanOptions};
+use crate::scanner::{is_binary, lossy_text, scan_text_full, FileScan, TextScanOptions};
 use crate::skip::{SkipReason, Skipped};
 
 /// Off by default: opening archives costs time and changes results for existing users.
@@ -313,10 +313,7 @@ fn handle_entry(ctx: &mut Ctx<'_>, data: Vec<u8>, prefix: &str, name: &str, dept
         return;
     }
 
-    let text = match String::from_utf8(data) {
-        Ok(s) => s,
-        Err(e) => encoding_rs::UTF_8.decode(e.as_bytes()).0.into_owned(),
-    };
+    let text = lossy_text(&data);
     let virtual_path = format!("{}{suffix}", ctx.outer);
     for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.text) {
         finding.archive_entry = Some(suffix.clone());
