@@ -1,3 +1,9 @@
+## @visulima/secret-scanner [2.1.0](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.3...@visulima/secret-scanner@2.1.0) (2026-11-03)
+
+### Features
+
+* **secret-scanner:** gitleaks parity (decoding, archives, composite rules, history fixes) ([#82](https://github.com/visulima/vis/issues/82)) ([69cf04a](https://github.com/visulima/vis/commit/69cf04a8f450e2052d7250a6d42ca0966ee98190))
+
 ## @visulima/secret-scanner [2.0.3](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.2...@visulima/secret-scanner@2.0.3) (2026-10-17)
 
 ### Bug Fixes
