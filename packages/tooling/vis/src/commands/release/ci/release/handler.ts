@@ -441,7 +441,7 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
 
         // Checked before the version commit exists, so a missing trusted publisher leaves nothing to undo.
         try {
-            await assertOidcPublishable(npmCliPackageNames(ctx), process.env, ctx.config);
+            await assertOidcPublishable(await npmCliPackageNames(ctx), process.env, ctx.config);
         } catch (error) {
             const { hint } = error as { hint?: string };
 

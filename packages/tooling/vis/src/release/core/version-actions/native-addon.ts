@@ -35,7 +35,7 @@ interface AuthToken {
     token: string;
 }
 
-const getPlatformDirs = async (cwd: string): Promise<string[]> => {
+export const getPlatformDirs = async (cwd: string): Promise<string[]> => {
     const npmDir = join(cwd, "npm");
 
     try {
