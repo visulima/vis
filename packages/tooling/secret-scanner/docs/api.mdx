@@ -181,6 +181,7 @@ interface Finding {
     tags: string[];
     confidence: Confidence;
     alternateMatches: string[];
+    decoded?: string[];
     source?: string;
     validation?: ValidationStatus;
 }
@@ -190,6 +191,7 @@ interface Finding {
 - Columns are **1-based and count Unicode code points**, not bytes — consumable by editor/LSP tooling.
 - `confidence` resolves to `"low"` when the rule declares none (every bundled gitleaks rule). Use it alongside `config.minConfidence` to filter.
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.
+- `decoded` is present only when the secret was found inside encoded text (see `maxDecodeDepth`). It lists the encoding chain, outermost first, e.g. `["base64"]` or `["base64", "hex"]`. `match` and `secret` hold the decoded value; line and column point at the original encoded span.
 - `source` tags the rule's provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or whatever the user declared.
 - `validation` is set only when `config.validate: true`. See [`ValidationStatus`](#validationstatus) below.
 
