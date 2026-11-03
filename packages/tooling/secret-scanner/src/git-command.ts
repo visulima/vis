@@ -14,17 +14,17 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /** `-c` overrides placed before the subcommand on every git call. */
-export const GIT_CONFIG_OVERRIDES = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
+export const GIT_CONFIG_OVERRIDES: ReadonlyArray<string> = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
 
 /**
  * Extra flags for the diff family (`diff`, `diff-tree`). They keep a user's
  * textconv driver (sops, git-crypt, …) or external diff tool from rewriting
  * the output we parse.
  */
-export const DIFF_HARDENING_FLAGS = ["--no-color", "--no-textconv", "--no-ext-diff"];
+export const DIFF_HARDENING_FLAGS: ReadonlyArray<string> = ["--no-color", "--no-textconv", "--no-ext-diff"];
 
 /** All-zero object id git prints for the missing side of an add or delete. */
-export const NULL_OID = /^0+$/;
+export const NULL_OID: RegExp = /^0+$/;
 
 /** Mode git uses for a submodule commit pointer (gitlink). */
 export const GITLINK_MODE = "160000";
