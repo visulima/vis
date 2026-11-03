@@ -32,6 +32,7 @@ const sampleFinding = (overrides: Partial<Finding> = {}): Finding => {
 
 const preparedScan = (ruleMeta: Map<string, RuleMeta> = new Map(), include?: string[], exclude?: string[]): PreparedScan => {
     return {
+        config: {},
         excludeIds: exclude,
         includeIds: include,
         nativeOptions: {},

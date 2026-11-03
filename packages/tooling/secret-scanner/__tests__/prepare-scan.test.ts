@@ -8,15 +8,26 @@ afterEach(() => {
 });
 
 describe("prepareScan — memoization", () => {
-    it("returns the same prepared bundle for two calls with equivalent non-inline options", () => {
-        expect.assertions(1);
+    it("reuses the resolved config for two calls with equivalent non-inline options", () => {
+        expect.assertions(2);
 
-        const options = { config: { minConfidence: "medium" as const } };
-        const first = prepareScan(options);
-        const second = prepareScan({ config: { minConfidence: "medium" as const } });
+        const first = prepareScan({ rules: { exclude: ["github-pat"] } });
+        const second = prepareScan({ rules: { exclude: ["github-pat"] } });
 
-        // Cache hit → identical object reference (no re-resolve / re-buildRuleMeta).
-        expect(second).toBe(first);
+        // Cache hit → identical config and rule meta (no re-resolve / re-buildRuleMeta).
+        expect(second.config).toBe(first.config);
+        expect(second.ruleMeta).toBe(first.ruleMeta);
+    });
+
+    it("builds native options per call, even on a cache hit", () => {
+        expect.assertions(3);
+
+        const low = prepareScan({ config: { minConfidence: "low" as const } });
+        const high = prepareScan({ config: { minConfidence: "high" as const }, redact: true });
+
+        expect(high.config).toBe(low.config);
+        expect(high.nativeOptions.minConfidence).toBe("high");
+        expect(high.nativeOptions.redact).toBe(true);
     });
 
     it("does not cache inline configs (rebuilds each call)", () => {
@@ -26,16 +37,16 @@ describe("prepareScan — memoization", () => {
         const first = prepareScan({ config: { extendBundled: false, inline } });
         const second = prepareScan({ config: { extendBundled: false, inline } });
 
-        expect(second).not.toBe(first);
+        expect(second.ruleMeta).not.toBe(first.ruleMeta);
     });
 
     it("misses the cache when a config-shaping option differs", () => {
         expect.assertions(1);
 
-        const a = prepareScan({ config: { minConfidence: "low" as const } });
-        const b = prepareScan({ config: { minConfidence: "high" as const } });
+        const a = prepareScan({ rules: { exclude: ["github-pat"] } });
+        const b = prepareScan({ rules: { exclude: ["aws-access-token"] } });
 
-        expect(b).not.toBe(a);
+        expect(b.config).not.toBe(a.config);
     });
 });
 

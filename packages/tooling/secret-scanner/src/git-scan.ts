@@ -26,7 +26,6 @@ import { resolve } from "node:path";
 
 import type { Native } from "./binding";
 import { binding } from "./binding";
-import type { GitleaksConfig } from "./config-loader";
 import { warnOnSkippedRules } from "./diagnostics";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
@@ -456,7 +455,7 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         await warnOnSkippedRules(prepared.nativeOptions);
     }
 
-    const allowlist = buildCommitAllowlist(prepared.nativeOptions.config as GitleaksConfig | undefined);
+    const allowlist = buildCommitAllowlist(prepared.config);
     const commits = await listCommits(options, cwd);
     // History paths are repository-relative, whatever subdirectory `cwd` is.
     const cdup = await runGit(["rev-parse", "--show-cdup"], cwd);
