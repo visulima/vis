@@ -1,31 +1,48 @@
-// Git-history scan — gitleaks `git` mode parity.
+// Git scans — gitleaks `git` mode parity, plus a staged-index scan.
 //
 // `scan`/`scanFiles`/`scanString` only ever see the working tree. A secret
 // that was committed and later removed is invisible to them, yet it still
-// lives in the repository's history (and in every clone). This module walks a
-// commit range via git plumbing (`git rev-list` → `git diff-tree` →
-// `git show`), feeds every added/modified blob through the existing
-// `scanString` detector, and annotates each finding with the commit it came
-// from.
+// lives in the repository's history (and in every clone). `scanGitHistory`
+// walks a commit range via git plumbing (`git rev-list` → `git diff-tree` →
+// `git cat-file --batch`) and annotates each finding with its commit.
 //
 // Design notes:
-//   - We shell out to the `git` binary via `execFile` with array args (no
-//     shell, no injection surface). Ranges/refs are passed verbatim as args;
-//     a leading `-`/`--` is rejected so a malicious ref can't smuggle a flag.
-//   - Output uses NUL (`-z`) record separators wherever git supports it so
-//     filenames with spaces/newlines parse unambiguously.
-//   - Each historical blob is scanned independently through `scanString`,
-//     reusing the whole post-process pipeline (heuristics, checksum, baseline,
-//     validation). The blob's path at that commit is used as the synthetic
-//     `file`, so fingerprints/baselines line up with a working-tree scan.
+//   - Git runs via `execFile`/`spawn` with array args (no shell). Refs and
+//     ranges starting with `-` are rejected so they can't smuggle a flag.
+//     Every call overrides output-shaping user config (see git-command.ts).
+//   - Each changed blob is scanned in full, so a value added to an existing
+//     multi-line structure is still caught (gitleaks #1647). A finding is only
+//     reported when the same (rule, secret) is absent from the parent's
+//     version of the blob — the old path for a rename, and every parent of a
+//     merge — so a long-lived secret is reported once, at the commit that
+//     introduced it, not on every later commit touching the file.
+//   - Merge commits are diffed against their first parent, so content the
+//     merge itself introduced (conflict resolution, evil merges) is scanned.
+//   - Blobs are read by object id, which bypasses textconv/smudge filters.
+//     Binary (NUL in the first 8 KiB), oversized and missing blobs are skipped
+//     and reported in `skipped`; any other git failure throws.
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { join } from "node:path";
 
-import { scanString } from "./scan-string";
+import type { Native } from "./binding";
+import { binding } from "./binding";
+import type { GitleaksConfig } from "./config-loader";
+import { warnOnSkippedRules } from "./diagnostics";
+import type { RawDiffEntry } from "./git-command";
+import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
+import type { CommitAllowlist } from "./git-commit-allowlist";
+import { buildCommitAllowlist } from "./git-commit-allowlist";
+import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
+import { postProcess } from "./pipeline";
+import type { PreparedScan } from "./prepare-scan";
+import { prepareScan } from "./prepare-scan";
 import type { Finding, ScanOptions } from "./types";
 
-const execFileAsync = promisify(execFile);
+/** Default per-blob size cap; matches the working-tree walker. */
+const DEFAULT_MAX_BLOB_BYTES = 10 * 1024 * 1024;
+
+/** Raw detection results kept for parent-blob lookups across commits. */
+const PARENT_CACHE_LIMIT = 256;
 
 /** Metadata about the commit a historical finding was discovered in. */
 export interface GitCommitInfo {
@@ -49,7 +66,34 @@ export interface GitFinding extends Finding {
     commit: GitCommitInfo;
 }
 
+/** Why a blob was not scanned. */
+export type GitSkipReason = "binary" | "missing" | "too-large";
+
+/** A blob the scan could not or did not inspect. */
+export interface GitSkippedBlob {
+    /** Commit the blob was reached from. Unset for the staged scan. */
+    commit?: string;
+    /** Path of the blob, relative to the repository root. */
+    path: string;
+    reason: GitSkipReason;
+    /** Blob object id. */
+    sha: string;
+}
+
+/** Findings plus the blobs that were skipped, so a caller can tell "clean" from "not looked at". */
+export interface GitScanResult<F extends Finding = Finding> {
+    findings: F[];
+    skipped: GitSkippedBlob[];
+}
+
 export interface GitScanOptions extends ScanOptions {
+    /**
+     * Walk every ref (branches, tags, remotes, stash) like `git rev-list --all`
+     * instead of only `HEAD`. Unmerged branches are where leaks often sit.
+     * Cannot be combined with `range`, `since` or `until`.
+     */
+    all?: boolean;
+
     /** Repository working directory. Defaults to `process.cwd()`. */
     cwd?: string;
 
@@ -81,108 +125,84 @@ export interface GitScanOptions extends ScanOptions {
     until?: string;
 }
 
-const NUL = "\0";
+export interface GitStagedScanOptions extends ScanOptions {
+    /** Directory inside the repository. Defaults to `process.cwd()`. */
+    cwd?: string;
+}
+
+interface CommitRecord {
+    info: GitCommitInfo;
+    parents: string[];
+}
+
+const isSet = (value: string | undefined): value is string => value !== undefined && value !== "";
 
 /**
- * Reject an argument that git would interpret as an option. Refs/ranges are
- * user-supplied; a value starting with `-` could otherwise smuggle a flag
- * (e.g. `--output=…`) into the plumbing call.
+ * Resolve the rev-list range arguments from the option shape: `--all`, a
+ * single range string, or `HEAD` for "all reachable history".
  */
-const assertNotFlag = (value: string, label: string): void => {
-    if (value.startsWith("-")) {
-        throw new Error(`secret-scanner: git ${label} "${value}" looks like a flag; refusing to pass it to git.`);
+const resolveRevisions = (options: GitScanOptions | undefined): string[] => {
+    if (options?.all === true) {
+        if (isSet(options.range) || isSet(options.since) || isSet(options.until)) {
+            throw new Error("secret-scanner: git `all` walks every ref and cannot be combined with `range`, `since` or `until`.");
+        }
+
+        return ["--all"];
     }
-};
 
-/**
- * Resolve the rev-list range argument from the option shape. Returns the
- * single string git understands, or `undefined` for "all reachable history".
- */
-const resolveRange = (options: GitScanOptions | undefined): string | undefined => {
-    if (options?.range !== undefined && options.range !== "") {
+    if (isSet(options?.range)) {
         assertNotFlag(options.range, "range");
 
-        return options.range;
+        return [options.range];
     }
 
-    if (options?.since !== undefined && options.since !== "") {
+    if (isSet(options?.since)) {
         assertNotFlag(options.since, "since");
 
-        const until = options.until !== undefined && options.until !== "" ? options.until : "HEAD";
+        const until = isSet(options.until) ? options.until : "HEAD";
 
         assertNotFlag(until, "until");
 
-        return `${options.since}..${until}`;
+        return [`${options.since}..${until}`];
     }
 
-    if (options?.until !== undefined && options.until !== "") {
+    if (isSet(options?.until)) {
         assertNotFlag(options.until, "until");
 
-        return options.until;
+        return [options.until];
     }
 
-    return undefined;
-};
-
-// Git reads these from the environment and lets them override the repository
-// implied by `cwd`. If the caller runs inside a git hook (or otherwise has them
-// set), an inherited GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE would silently point
-// our plumbing at the wrong repository. Strip them so `cwd` is authoritative.
-const GIT_REPO_ENV_KEYS = new Set(["GIT_COMMON_DIR", "GIT_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE"]);
-
-const scrubbedGitEnv = (): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_REPO_ENV_KEYS.has(key)));
-
-const runGit = async (gitArguments: string[], cwd: string): Promise<string> => {
-    const { stdout } = await execFileAsync("git", gitArguments, {
-        cwd,
-        env: scrubbedGitEnv(),
-        // History blobs can be large; lift the default 1 MiB cap generously.
-        maxBuffer: 256 * 1024 * 1024,
-        windowsHide: true,
-    });
-
-    return stdout;
+    return ["HEAD"];
 };
 
 /**
- * Enumerate the commits in range, newest-first, with their metadata. Uses a
- * NUL-delimited custom format so messages with embedded newlines don't break
- * the parse.
+ * Enumerate the commits in range, newest-first, with metadata and parents.
+ * Fields are NUL-separated; `%s` is a single line, so records split on LF.
+ * An explicit `--format` keeps `format.pretty` and friends out of the parse.
  */
-const listCommits = async (range: string | undefined, options: GitScanOptions | undefined, cwd: string): Promise<GitCommitInfo[]> => {
-    // Field order matches the destructuring below. `%x00` is a literal NUL
-    // between fields; we end each record with a NUL too and split on it.
-    const format = ["%H", "%an", "%ae", "%aI", "%s"].join("%x00");
+const listCommits = async (options: GitScanOptions | undefined, cwd: string): Promise<CommitRecord[]> => {
+    const format = ["%H", "%P", "%an", "%ae", "%aI", "%s"].join("%x00");
     const gitArguments = ["rev-list", "--no-commit-header", `--format=${format}`];
 
     if (options?.maxCommits !== undefined && Number.isInteger(options.maxCommits) && options.maxCommits > 0) {
-        gitArguments.push(`--max-count=${options.maxCommits}`);
+        gitArguments.push(`--max-count=${String(options.maxCommits)}`);
     }
 
-    gitArguments.push(range ?? "HEAD", "--");
+    gitArguments.push(...resolveRevisions(options), "--");
 
     const stdout = await runGit(gitArguments, cwd);
-    const commits: GitCommitInfo[] = [];
+    const commits: CommitRecord[] = [];
 
-    // `--no-commit-header` + `--format` emits one record per commit; records
-    // are newline-separated, fields within a record are NUL-separated.
     for (const record of stdout.split("\n")) {
-        if (record === "") {
-            continue;
-        }
+        const [sha, parents, authorName, authorEmail, date, message] = record.split("\0");
 
-        const [sha, authorName, authorEmail, date, message] = record.split(NUL);
-
-        if (sha === undefined || sha === "") {
+        if (!isSet(sha)) {
             continue;
         }
 
         commits.push({
-            authorEmail: authorEmail ?? "",
-            authorName: authorName ?? "",
-            date: date ?? "",
-            message: message ?? "",
-            sha,
+            info: { authorEmail: authorEmail ?? "", authorName: authorName ?? "", date: date ?? "", message: message ?? "", sha },
+            parents: (parents ?? "").split(" ").filter((parent) => parent !== ""),
         });
     }
 
@@ -190,67 +210,321 @@ const listCommits = async (range: string | undefined, options: GitScanOptions | 
 };
 
 /**
- * List the paths added or modified in a single commit (vs its first parent;
- * root commits diff against the empty tree). Deletions are skipped — there is
- * no post-deletion blob to scan, and the secret was already caught in the
- * commit that introduced it.
+ * Blobs added or modified by a commit. Merges and ordinary commits diff
+ * against their first parent; root commits (and shallow-clone boundaries,
+ * whose parents are unknown) against the empty tree. `-M` reports renames so
+ * the parent version is looked up under the old path. Deletions and
+ * submodule pointers are dropped.
  */
-const listChangedPaths = async (sha: string, cwd: string): Promise<string[]> => {
-    // `diff-tree -r` walks subtrees; `--root` diffs the initial commit against
-    // the empty tree so its files are included. `--diff-filter=AMR` keeps
-    // Added/Modified/Renamed (the rename's new path), drops Deleted.
-    const stdout = await runGit(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "--diff-filter=AMR", "-z", sha], cwd);
+const listChangedBlobs = async (commit: CommitRecord, cwd: string): Promise<RawDiffEntry[]> => {
+    const [firstParent] = commit.parents;
+    const target = firstParent === undefined ? ["--root", commit.info.sha] : [firstParent, commit.info.sha];
+    const stdout = await runGit(["diff-tree", "-r", "-z", "--raw", "-M", ...DIFF_HARDENING_FLAGS, ...target], cwd);
 
-    return stdout.split(NUL).filter((path) => path !== "");
+    return parseRawDiff(stdout).filter((entry) => entry.status !== "D" && entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
 };
 
-/** Read a single blob's content at a commit. Returns `undefined` if it can't be read (e.g. binary/gone). */
-const readBlob = async (sha: string, path: string, cwd: string): Promise<string | undefined> => {
-    try {
-        return await runGit(["show", `${sha}:${path}`], cwd);
-    } catch {
+/** Object id of `path` in `commit`, or `undefined` when it isn't a blob there. */
+const blobAt = async (commit: string, path: string, cwd: string): Promise<string | undefined> => {
+    const stdout = await runGit(["ls-tree", "-z", commit, "--", path], cwd);
+    // `<mode> SP <type> SP <oid> TAB <path>`
+    const [meta] = stdout.split("\t");
+    const [, type, oid] = (meta ?? "").split(" ");
+
+    return type === "blob" && isSet(oid) ? oid : undefined;
+};
+
+const presenceKey = (finding: Finding): string => `${finding.ruleId}\0${finding.secret}`;
+
+const spanKey = (finding: Finding): string =>
+    `${finding.ruleId}\0${String(finding.startLine)}:${String(finding.startColumn)}:${String(finding.endLine)}:${String(finding.endColumn)}`;
+
+/** Shared per-scan state: prepared options, the blob reader and the skip log. */
+class BlobScanner {
+    public readonly skipped: GitSkippedBlob[] = [];
+
+    readonly #options: ScanOptions | undefined;
+
+    readonly #prepared: PreparedScan;
+
+    readonly #rawNativeOptions: Native.ScanOptions;
+
+    readonly #reader: GitBlobReader;
+
+    readonly #parentCache = new Map<string, Set<string>>();
+
+    public constructor(cwd: string, options: ScanOptions | undefined, prepared: PreparedScan) {
+        this.#options = options;
+        this.#prepared = prepared;
+        // Comparisons need real secrets: masked values from two different
+        // secrets can be identical (`ghp***xY4`).
+        this.#rawNativeOptions = { ...prepared.nativeOptions, redact: false };
+        this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_BLOB_BYTES);
+    }
+
+    public close(): void {
+        this.#reader.close();
+    }
+
+    /** Read a blob as text, recording why when it can't be scanned. */
+    public async readText(oid: string, path: string, commit: string | undefined, record = true): Promise<string | undefined> {
+        const result = await this.#reader.read(oid);
+        let reason: GitSkipReason | undefined;
+
+        if (result.kind === "ok") {
+            if (!isBinaryBlob(result.content)) {
+                return result.content.toString("utf8");
+            }
+
+            reason = "binary";
+        } else {
+            reason = result.kind;
+        }
+
+        if (record) {
+            this.skipped.push({ commit, path, reason, sha: oid });
+        }
+
         return undefined;
     }
+
+    /** Native detection with real (unredacted) secrets and no post-processing. */
+    public detectRaw(content: string, path: string): Finding[] {
+        return binding.scanTextSync(content, path, this.#rawNativeOptions) as Finding[];
+    }
+
+    /** Rule and secret pairs present in an earlier version of a blob. */
+    public async presentIn(oid: string, path: string): Promise<Set<string>> {
+        const cacheKey = `${oid}\0${path}`;
+        const cached = this.#parentCache.get(cacheKey);
+
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const content = await this.readText(oid, path, undefined, false);
+        const keys = new Set(content === undefined || content === "" ? [] : this.detectRaw(content, path).map((finding) => presenceKey(finding)));
+
+        this.#remember(cacheKey, keys);
+
+        return keys;
+    }
+
+    /**
+     * Run the user-facing pipeline over the selected raw findings. Under
+     * `redact`, the native scan is repeated with masking on and the same spans
+     * are kept, so masking stays the native layer's job.
+     */
+    public async finish(content: string, path: string, selected: Finding[]): Promise<Finding[]> {
+        let findings = selected;
+
+        if (this.#prepared.nativeOptions.redact === true) {
+            const keep = new Set(selected.map((finding) => spanKey(finding)));
+
+            findings = (binding.scanTextSync(content, path, this.#prepared.nativeOptions) as Finding[]).filter((finding) => keep.has(spanKey(finding)));
+        }
+
+        return postProcess(findings, this.#prepared, this.#options);
+    }
+
+    #remember(cacheKey: string, keys: Set<string>): void {
+        if (this.#parentCache.size >= PARENT_CACHE_LIMIT) {
+            const oldest = this.#parentCache.keys().next().value;
+
+            if (oldest !== undefined) {
+                this.#parentCache.delete(oldest);
+            }
+        }
+
+        this.#parentCache.set(cacheKey, keys);
+    }
+}
+
+/** Scan one changed blob of `commit`, reporting only what its parents didn't already contain. */
+const scanChangedBlob = async (
+    entry: RawDiffEntry,
+    commit: CommitRecord,
+    scanner: BlobScanner,
+    allowlist: CommitAllowlist,
+    cwd: string,
+): Promise<GitFinding[]> => {
+    const path = entry.newPath;
+    const content = await scanner.readText(entry.newOid, path, commit.info.sha);
+
+    if (content === undefined || content === "") {
+        return [];
+    }
+
+    const raw = scanner.detectRaw(content, path);
+
+    if (raw.length === 0) {
+        return [];
+    }
+
+    let fresh = raw;
+    const [firstParent, ...otherParents] = commit.parents;
+
+    if (firstParent !== undefined && !NULL_OID.test(entry.oldOid) && (entry.status === "M" || entry.status === "R" || entry.status === "T")) {
+        const before = await scanner.presentIn(entry.oldOid, entry.oldPath);
+
+        fresh = fresh.filter((finding) => !before.has(presenceKey(finding)));
+    }
+
+    // A merge only introduces what none of its parents had.
+    for (const parent of otherParents) {
+        if (fresh.length === 0) {
+            break;
+        }
+
+        // eslint-disable-next-line no-await-in-loop -- One parent at a time; merges rarely have more than two.
+        const oid = await blobAt(parent, path, cwd);
+
+        if (oid !== undefined) {
+            // eslint-disable-next-line no-await-in-loop -- Same: sequential reads through the single cat-file process.
+            const before = await scanner.presentIn(oid, path);
+
+            fresh = fresh.filter((finding) => !before.has(presenceKey(finding)));
+        }
+    }
+
+    if (fresh.length === 0) {
+        return [];
+    }
+
+    const findings = await scanner.finish(content, path, fresh);
+
+    return findings
+        .filter((finding) => !allowlist.isFindingAllowed(finding.ruleId, commit.info.sha))
+        .map((finding) => {
+            return { ...finding, commit: commit.info };
+        });
+};
+
+/**
+ * Like {@link scanGitHistory}, but also returns the blobs that were skipped
+ * (binary, larger than `walk.maxFileSize`, or missing from the object store)
+ * so a caller can tell a clean history from one that wasn't fully read.
+ * @throws if `git` is not on PATH, `cwd` is not a git repository, or git fails
+ * to read an object that exists (corruption, permissions).
+ */
+export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<GitScanResult<GitFinding>> => {
+    const cwd = options?.cwd ?? process.cwd();
+    const prepared = prepareScan(options);
+
+    if (options?.verbose) {
+        await warnOnSkippedRules(prepared.nativeOptions);
+    }
+
+    const allowlist = buildCommitAllowlist(prepared.nativeOptions.config as GitleaksConfig | undefined);
+    const commits = await listCommits(options, cwd);
+    const scanner = new BlobScanner(cwd, options, prepared);
+    const findings: GitFinding[] = [];
+
+    try {
+        for (const commit of commits) {
+            if (allowlist.isCommitSkipped(commit.info.sha)) {
+                continue;
+            }
+
+            // eslint-disable-next-line no-await-in-loop -- Sequential by design: git plumbing is the bottleneck and serialising keeps memory bounded over long histories.
+            const entries = await listChangedBlobs(commit, cwd);
+
+            for (const entry of entries) {
+                // eslint-disable-next-line no-await-in-loop -- One blob at a time through the shared cat-file process.
+                findings.push(...(await scanChangedBlob(entry, commit, scanner, allowlist, cwd)));
+            }
+        }
+    } finally {
+        scanner.close();
+    }
+
+    return { findings, skipped: scanner.skipped };
 };
 
 /**
  * Scan a range of git history for secrets. Walks each commit, runs the secret
  * detector over every added/modified blob at that commit, and returns the
- * findings annotated with their originating commit.
+ * findings annotated with the commit that introduced them. A secret that
+ * survives later edits to its file is reported once, not once per commit.
  *
  * With no range options the **entire reachable history of `HEAD`** is scanned —
- * use `range`, `since`/`until`, or `maxCommits` to bound it. Scanning is
- * sequential per commit (git plumbing is the bottleneck); the existing
- * `ScanOptions` (rules, heuristics, baseline, redact, validate) all apply per
- * blob via the shared post-process pipeline.
- * @throws if `git` is not on PATH or `cwd` is not a git repository.
+ * use `all`, `range`, `since`/`until`, or `maxCommits` to change it. The
+ * existing `ScanOptions` (rules, heuristics, baseline, redact, validate) all
+ * apply per blob via the shared post-process pipeline, and
+ * `allowlists[].commits` from the config is honoured.
+ *
+ * Skipped blobs are not reported here; use {@link scanGitHistoryDetailed}.
+ * @throws if `git` is not on PATH, `cwd` is not a git repository, or git fails
+ * to read an object that exists (corruption, permissions).
  */
 export const scanGitHistory = async (options?: GitScanOptions): Promise<GitFinding[]> => {
+    const result = await scanGitHistoryDetailed(options);
+
+    return result.findings;
+};
+
+/**
+ * Scan the content staged in the git index — what the next commit will
+ * contain — rather than the working-tree files. Unstaged edits are ignored
+ * and a staged secret is found even after it was removed from the working
+ * tree. Inside a `pre-commit` hook, the index git hands the hook
+ * (`GIT_INDEX_FILE`) is the one read.
+ *
+ * Findings carry the absolute path of the file in the working tree, the same
+ * shape `scanFiles` reports. `walk.excludePatterns` /
+ * `walk.excludeFromFiles` apply as they do for `scanFiles`, relative to `cwd`.
+ * @throws if `git` is not on PATH, `cwd` is not inside a git work tree, or git
+ * fails to read an object that exists.
+ */
+export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<GitScanResult> => {
     const cwd = options?.cwd ?? process.cwd();
-    const range = resolveRange(options);
-    const commits = await listCommits(range, options, cwd);
-    const results: GitFinding[] = [];
+    const environment = gitEnvironment(true);
+    const prepared = prepareScan(options);
 
-    for (const commit of commits) {
-        // eslint-disable-next-line no-await-in-loop -- Sequential by design: git plumbing (rev-list/diff-tree/show) is the bottleneck and serialising keeps memory bounded over long histories.
-        const paths = await listChangedPaths(commit.sha, cwd);
+    if (options?.verbose) {
+        await warnOnSkippedRules(prepared.nativeOptions);
+    }
 
-        for (const path of paths) {
-            // eslint-disable-next-line no-await-in-loop -- Same rationale: one blob at a time keeps a deep history from buffering every revision in memory at once.
-            const content = await readBlob(commit.sha, path, cwd);
+    const toplevelOutput = await runGit(["rev-parse", "--show-toplevel"], cwd, environment);
+    const toplevel = toplevelOutput.trim();
+    const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
+    const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
+    const absolute = (path: string): string => join(toplevel, path);
+    const kept = new Set(
+        filterIgnoredFiles(
+            entries.map((entry) => absolute(entry.newPath)),
+            buildIgnoreMatcher(options),
+            cwd,
+        ),
+    );
+    const scanner = new BlobScanner(toplevel, options, prepared);
+    const findings: Finding[] = [];
+
+    try {
+        for (const entry of entries) {
+            const file = absolute(entry.newPath);
+
+            if (!kept.has(file)) {
+                continue;
+            }
+
+            // eslint-disable-next-line no-await-in-loop -- One blob at a time through the shared cat-file process.
+            const content = await scanner.readText(entry.newOid, entry.newPath, undefined);
 
             if (content === undefined || content === "") {
                 continue;
             }
 
-            // eslint-disable-next-line no-await-in-loop -- Detection is sync for string input; the await is for the optional validator stage and we intentionally process blobs serially.
-            const findings = await scanString(content, path, options);
+            const raw = scanner.detectRaw(content, file);
 
-            for (const finding of findings) {
-                results.push({ ...finding, commit });
+            if (raw.length > 0) {
+                // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
+                findings.push(...(await scanner.finish(content, file, raw)));
             }
         }
+    } finally {
+        scanner.close();
     }
 
-    return results;
+    return { findings, skipped: scanner.skipped };
 };
