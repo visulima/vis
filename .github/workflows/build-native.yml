@@ -43,17 +43,17 @@ jobs:
             any-changed: "${{ steps.changes.outputs.task-runner == 'true' || steps.changes.outputs.tui == 'true' || steps.changes.outputs.vis == 'true' || steps.changes.outputs.secret-scanner == 'true' }}"
         steps:
             - name: "Harden Runner"
-              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              uses: "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43" # v2.22.3
               with:
                   egress-policy: "audit"
 
             - name: "Git checkout"
-              uses: "anolilab/workflows/step/checkout-with-retry@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              uses: "anolilab/workflows/step/checkout-with-retry@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
               with:
                   fetch-depth: 0
 
             - name: "Check for native file changes"
-              uses: "dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706" # v4.0.2
+              uses: "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d" # v4.0.3
               id: "changes"
               with:
                   filters: |
@@ -126,12 +126,12 @@ jobs:
 
         steps:
             - name: "Harden Runner"
-              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              uses: "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43" # v2.22.3
               with:
                   egress-policy: "audit"
 
             - name: "Git checkout"
-              uses: "anolilab/workflows/step/checkout-with-retry@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              uses: "anolilab/workflows/step/checkout-with-retry@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
 
             # --- Cache per package ---
             # Caches always restore (keyed by source hash) so test.yml can download
@@ -211,7 +211,7 @@ jobs:
 
             - name: "Install Rust toolchain"
               if: "steps.need-build.outputs.any == 'true'"
-              uses: "anolilab/workflows/step/rust@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # v19.0.4 # main
+              uses: "anolilab/workflows/step/rust@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
               with:
                   cache-key: "build-native"
                   save-cache: "${{ github.ref_name == 'main' }}"
@@ -251,7 +251,7 @@ jobs:
             # `cargo install` would add multiple minutes per CI run).
             - name: "Install cargo-zigbuild (Linux only)"
               if: "contains(matrix.settings.target, 'linux') && (steps.cache-task-runner.outputs.cache-hit != 'true' || steps.cache-vis.outputs.cache-hit != 'true')"
-              uses: "taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853" # v2.83.2
+              uses: "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941" # v2.89.1
               with:
                   tool: "cargo-zigbuild"
 
@@ -464,7 +464,7 @@ jobs:
 
             # --- Upload artifacts per package ---
             - name: "Upload task-runner artifact"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "bindings-task-runner-${{ matrix.settings.target }}"
                   path: |
@@ -475,14 +475,14 @@ jobs:
                   if-no-files-found: "error"
 
             - name: "Upload tui artifact"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "bindings-tui-${{ matrix.settings.target }}"
                   path: "packages/terminal/tui/*.node"
                   if-no-files-found: "error"
 
             - name: "Upload vis artifact"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "bindings-vis-${{ matrix.settings.target }}"
                   path: |
@@ -492,7 +492,7 @@ jobs:
                   if-no-files-found: "error"
 
             - name: "Upload secret-scanner artifact"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "bindings-secret-scanner-${{ matrix.settings.target }}"
                   path: "packages/tooling/secret-scanner/*.node"
@@ -506,7 +506,7 @@ jobs:
             # published .d.ts matches the Rust signatures of the .node binaries.
             - name: "Upload task-runner loader"
               if: "matrix.settings.target == 'x86_64-unknown-linux-gnu'"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "loader-task-runner"
                   path: |
@@ -516,7 +516,7 @@ jobs:
 
             - name: "Upload tui loader"
               if: "matrix.settings.target == 'x86_64-unknown-linux-gnu'"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "loader-tui"
                   path: |
@@ -526,7 +526,7 @@ jobs:
 
             - name: "Upload vis loader"
               if: "matrix.settings.target == 'x86_64-unknown-linux-gnu'"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "loader-vis"
                   path: |
@@ -536,7 +536,7 @@ jobs:
 
             - name: "Upload secret-scanner loader"
               if: "matrix.settings.target == 'x86_64-unknown-linux-gnu'"
-              uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+              uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
               with:
                   name: "loader-secret-scanner"
                   path: |
@@ -574,7 +574,7 @@ jobs:
         timeout-minutes: 30
         steps:
             - name: "Harden Runner"
-              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              uses: "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43" # v2.22.3
               with:
                   egress-policy: "audit"
 

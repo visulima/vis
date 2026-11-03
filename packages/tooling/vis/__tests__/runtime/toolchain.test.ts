@@ -1011,6 +1011,79 @@ describe("toolchain", () => {
             /* eslint-enable vitest/no-conditional-in-test, vitest/no-conditional-expect */
         });
 
+        describe.skipIf(process.platform === "win32")("nvm pins", () => {
+            let originalPath: string | undefined;
+            let originalNvmDirectory: string | undefined;
+            let binDirectory: string;
+
+            beforeEach(() => {
+                originalPath = process.env["PATH"];
+                originalNvmDirectory = process.env["NVM_DIR"];
+                binDirectory = join(tmpDirectory, "bin");
+                mkdirSync(binDirectory, { recursive: true });
+                process.env["PATH"] = binDirectory;
+                process.env["NVM_DIR"] = tmpDirectory;
+                clearToolchainCache();
+            });
+
+            afterEach(() => {
+                if (originalPath === undefined) {
+                    delete process.env["PATH"];
+                } else {
+                    process.env["PATH"] = originalPath;
+                }
+
+                if (originalNvmDirectory === undefined) {
+                    delete process.env["NVM_DIR"];
+                } else {
+                    process.env["NVM_DIR"] = originalNvmDirectory;
+                }
+
+                clearToolchainCache();
+            });
+
+            it("should treat the running node as active when the node on PATH cannot report a version", async () => {
+                expect.assertions(3);
+
+                writeFileSync(join(binDirectory, "node"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+                writeFileSync(join(tmpDirectory, ".nvmrc"), `v${process.versions.node}\n`);
+
+                const logger = collectingLogger();
+                const result = await ensureToolchain(tmpDirectory, undefined, logger);
+
+                expect(result.upToDate).toBe(true);
+                expect(result.failed).toHaveLength(0);
+                expect(logger.messages.filter((m) => m.kind === "warn")).toHaveLength(0);
+            });
+
+            it("should name the running node, not the failing PATH binary, when the fallback supplied the version", async () => {
+                expect.assertions(1);
+
+                writeFileSync(join(binDirectory, "node"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+                writeFileSync(join(tmpDirectory, ".nvmrc"), "1.2\n");
+
+                const result = await ensureToolchain(tmpDirectory, undefined, collectingLogger());
+
+                expect(result.failed[0]?.error).toContain(`active node is ${process.versions.node} (${process.execPath})`);
+            });
+
+            it("should report one failure that names the pin, its source and the active version", async () => {
+                expect.assertions(4);
+
+                writeFileSync(join(binDirectory, "node"), "#!/bin/sh\necho v1.2.3\n", { mode: 0o755 });
+                writeFileSync(join(tmpDirectory, ".nvmrc"), "24.16\n");
+
+                const logger = collectingLogger();
+                const result = await ensureToolchain(tmpDirectory, undefined, logger);
+
+                expect(result.failed).toHaveLength(1);
+                expect(result.failed[0]?.error).toContain("pinned in .nvmrc");
+                expect(result.failed[0]?.error).toContain(`active node is 1.2.3 (${join(binDirectory, "node")})`);
+                // The preflight wrapper prints failures; ensureToolchain itself stays quiet so it is not logged twice.
+                expect(logger.messages.filter((m) => m.kind === "warn")).toHaveLength(0);
+            });
+        });
+
         it("should respect autoInstall=false (no install, no failures recorded)", async () => {
             expect.assertions(3);
 

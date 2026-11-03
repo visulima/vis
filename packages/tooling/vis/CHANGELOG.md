@@ -1,3 +1,14 @@
+## @visulima/vis [6.4.4](https://github.com/visulima/vis/compare/@visulima/vis@6.4.3...@visulima/vis@6.4.4) (2026-11-03)
+
+### Bug Fixes
+
+* **vis:** discover a root project.json and name the failed nvm check ([#81](https://github.com/visulima/vis/issues/81)) ([6c47e7d](https://github.com/visulima/vis/commit/6c47e7dff965a2ebfceb040afb1b067e389711ce))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 3.0.3
+
 ## @visulima/vis [6.4.3](https://github.com/visulima/vis/compare/@visulima/vis@6.4.2...@visulima/vis@6.4.3) (2026-11-03)
 
 ### Bug Fixes

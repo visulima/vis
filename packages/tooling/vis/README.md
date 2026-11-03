@@ -58,7 +58,7 @@
 
 ### Workspace orchestration
 
-- **Workspace-aware** — discovers projects from `pnpm-workspace.yaml`, `package.json` workspaces, and bun
+- **Workspace-aware** — discovers projects from `pnpm-workspace.yaml`, `package.json` workspaces, and bun. The workspace root is a project only when it has a `project.json`
 - **Topological scheduling** with configurable parallelism and runner-tag filtering
 - **Affected detection** — `vis affected <target>`, plus `${affected.files}` / `$AFFECTED_FILES` token forwarding to the underlying script
 - **Conditional + finally tasks** — `when:` (os/env/branch/ci) and top-level `always: true`

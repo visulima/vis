@@ -1,3 +1,9 @@
+## @visulima/task-runner [3.0.3](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.2...@visulima/task-runner@3.0.3) (2026-11-03)
+
+### Bug Fixes
+
+* **vis:** discover a root project.json and name the failed nvm check ([#81](https://github.com/visulima/vis/issues/81)) ([6c47e7d](https://github.com/visulima/vis/commit/6c47e7dff965a2ebfceb040afb1b067e389711ce))
+
 ## @visulima/task-runner [3.0.2](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.1...@visulima/task-runner@3.0.2) (2026-10-26)
 
 ### Bug Fixes

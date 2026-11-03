@@ -88,8 +88,8 @@ interface AffectedOptions {
      * of these patterns is skipped instead. The patterns are only checked
      * for files that belong to NO project: a file inside a project root is
      * never filtered, so a broad pattern like `*.md` cannot hide a real
-     * package change. In a workspace with a root project (`root: "."`)
-     * every file has an owner, so this option has no effect there.
+     * package change. A workspace-root project (`root: "."`) does not count
+     * as an owner here: a matching file marks only the root project affected.
      *
      * `*` does not cross `/`: `*.md` matches `README.md` but not
      * `docs/guide.md`; use `docs/**` for a whole folder.
@@ -142,26 +142,25 @@ interface AffectedResult {
     upstreamProjects: string[];
 }
 
+const isWorkspaceRoot = (root: string): boolean => root === "" || root === ".";
+
 /**
  * Determines which project owns a given file path (relative to workspace root).
  * Returns undefined if the file is outside all projects (global file).
+ *
+ * A workspace-root project (`root: "."`) never owns a file here. A file outside
+ * every other project — a root `tsconfig.json`, the lockfile — is shared by the
+ * whole workspace, so it stays a global change instead of affecting only the
+ * root project.
  */
 const findProjectForFile = (filePath: string, projects: Record<string, ProjectConfiguration>): string | undefined => {
     let bestMatch: string | undefined;
     let bestLength = 0;
-    // Workspace-root project (root: "." or root: "") matches any file
-    // not claimed by a more specific project. Without this special-case,
-    // `${root}/` becomes `./` and `filePath.startsWith("./")` is false for
-    // git-relative paths like `package.json` — every changed file then
-    // falls through to "outside all projects" and the caller marks the
-    // whole workspace as affected, defeating affected detection.
-    let rootProject: string | undefined;
 
     for (const [name, config] of Object.entries(projects)) {
         const { root } = config;
 
-        if (root === "" || root === ".") {
-            rootProject = name;
+        if (isWorkspaceRoot(root)) {
             continue;
         }
 
@@ -175,7 +174,7 @@ const findProjectForFile = (filePath: string, projects: Record<string, ProjectCo
         }
     }
 
-    return bestMatch ?? rootProject;
+    return bestMatch;
 };
 
 /**
@@ -411,6 +410,7 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
         = additionalChangedFiles && additionalChangedFiles.length > 0 ? [...new Set([...diffedFiles, ...additionalChangedFiles])] : diffedFiles;
 
     // Map changed files to projects
+    const rootProject = Object.entries(projects).find(([, config]) => isWorkspaceRoot(config.root))?.[0];
     const changedProjects = new Set<string>();
     const ignoredFiles: string[] = [];
     let globalChange = false;
@@ -432,6 +432,10 @@ const getAffectedProjects = async (options: AffectedOptions): Promise<AffectedRe
             changedProjects.add(project);
         } else if (ignoredPatterns?.some((pattern) => matchesGlob(file, pattern))) {
             ignoredFiles.push(file);
+
+            if (rootProject !== undefined) {
+                changedProjects.add(rootProject);
+            }
         } else {
             // File is outside all projects (e.g., root tsconfig.json, package.json)
             // This is a global change — mark all projects as affected
