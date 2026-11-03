@@ -17,7 +17,7 @@ import {
 import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
-import { diffBaseline, writeBaseline } from "../../secrets/baseline";
+import { diffBaseline, rebaseBaseline, rebaseFinding, writeBaseline } from "../../secrets/baseline";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
 import { pathExists } from "../../util/toolbox-fs";
@@ -164,9 +164,24 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         return { ...result, skippedUnit: "file" };
     }
 
-    const result = mode.kind === "staged" ? await scanGitStaged({ ...scanOptions, cwd: root }) : await scanFilesDetailed(mode.files, scanOptions);
+    // The scanner reports staged and file-list findings relative to the real
+    // process cwd (not `toolbox.process.cwd`), which differs from `root` when vis
+    // runs from a subdirectory. Hand it the baseline under those paths too, then
+    // report root-relative paths like every other mode.
+    const base = process.cwd();
+    const options = {
+        ...scanOptions,
+        baseline: typeof scanOptions.baseline === "string" ? rebaseBaseline(scanOptions.baseline, root, base) : scanOptions.baseline,
+    };
+    const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, options);
 
-    return { ...result, skippedUnit: mode.kind === "staged" ? "blob" : "file" };
+    return {
+        findings: result.findings.map((finding) => rebaseFinding(finding, base, root)),
+        skipped: result.skipped,
+        skippedUnit: mode.kind === "staged" ? "blob" : "file",
+        suppressed: result.suppressed.map((finding) => rebaseFinding(finding, base, root)),
+        unusedIgnores: result.unusedIgnores,
+    };
 };
 
 const printRulesetDiagnostics = async (scanOptions: ScanOptions): Promise<void> => {

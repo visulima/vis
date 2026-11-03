@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,8 @@ import { formatSkipped } from "../../src/secrets/format";
 // Fake GitHub PAT matching the bundled `github-pat` rule.
 // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
 const FAKE_PAT = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
+// eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
+const OTHER_PAT = "ghp_Zx9Yw8Vu7Ts6Rq5P" + "o4Nm3Lk2Ji1Hg0Fe9Dc8";
 
 const GIT_REPO_ENV_KEYS = new Set(["GIT_COMMON_DIR", "GIT_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE"]);
 const hermeticGitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_REPO_ENV_KEYS.has(key)));
@@ -170,6 +172,44 @@ describe("vis secrets git modes", () => {
 
         expect(findings.map((finding) => finding.file)).toStrictEqual(["staged.ts"]);
         expect(process.exitCode).toBe(1);
+    });
+
+    it("--staged from a subdirectory matches the root baseline and .gitleaksignore and reports root-relative paths", async () => {
+        expect.assertions(3);
+
+        const { git, repo } = createRepo();
+
+        mkdirSync(join(repo, "sub"));
+        writeFileSync(join(repo, "sub", "known.ts"), `t = "${FAKE_PAT}"\n`);
+        git("add", ".");
+
+        const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+        // Seed the baseline from the repository root: it records `sub/known.ts`.
+        await runSecrets({ baseline: ".secrets-baseline.json", quiet: true, staged: true, updateBaseline: true }, repo);
+
+        writeFileSync(join(repo, "sub", "ignored.ts"), `t = "${OTHER_PAT}"\n`);
+        writeFileSync(join(repo, "sub", "fresh.ts"), `u = "${OTHER_PAT}"\n`);
+        writeFileSync(join(repo, ".gitleaksignore"), "sub/ignored.ts:github-pat:1\n");
+        git("add", "sub");
+        stdout.mockClear();
+        // The scanner reports staged paths relative to the process cwd.
+        vi.spyOn(process, "cwd").mockReturnValue(join(repo, "sub"));
+
+        await runSecrets({ baseline: ".secrets-baseline.json", format: "json", quiet: true, staged: true }, repo);
+
+        const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+        const findings = JSON.parse(output) as { file: string }[];
+
+        expect(findings.map((finding) => finding.file)).toStrictEqual(["sub/fresh.ts"]);
+        expect(process.exitCode).toBe(1);
+
+        stdout.mockClear();
+        process.exitCode = undefined;
+        git("rm", "-q", "--cached", "sub/fresh.ts");
+        await runSecrets({ baseline: ".secrets-baseline.json", format: "json", quiet: true, staged: true }, repo);
+
+        expect(process.exitCode).toBeUndefined();
     });
 
     it("--history fails when git cannot read an object", async () => {
