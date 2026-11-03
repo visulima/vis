@@ -166,3 +166,20 @@ The config shape mirrors gitleaks' TOML schema. A few fields are ours (safe addi
 | `priority`        | Rule      | Integer (default `0`). When two rules match the same byte span, the higher priority wins (`#1997`).             |
 | `preRegexReplace` | Rule      | Ordered `[{ from, to }, …]` regex replacements applied to the scan buffer before the rule's main regex runs.    |
 | `targetRules`     | Allowlist | When non-empty, the allowlist only applies to findings whose rule id is in this list (gitleaks schema `#1919`). |
+
+### Commit allowlists
+
+`allowlists[].commits` (gitleaks schema) applies only to git-history scans (`scanGitHistory`, `vis secrets --history`). List full 40-character SHAs; case is ignored.
+
+```json
+{
+    "allowlists": [
+        { "description": "rotated in INC-123", "commits": ["9f1c2e4b7a0d3c5e8f6a1b2c3d4e5f60718293a4"] },
+        { "commits": ["0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3"], "targetRules": ["generic-api-key"] }
+    ]
+}
+```
+
+- A global allowlist without `targetRules` skips the listed commits entirely.
+- A global allowlist with `targetRules`, or a rule's own allowlist, drops only those rules' findings in the listed commits.
+- With `condition = "AND"`, an allowlist that also lists `paths`, `regexes` or `stopwords` is not matched against commits.
