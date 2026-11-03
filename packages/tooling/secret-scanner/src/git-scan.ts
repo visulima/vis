@@ -423,7 +423,7 @@ const scanChangedBlob = async (
     entry: RawDiffEntry,
     commit: CommitRecord,
     scanner: BlobScanner,
-    mergedBlobs: ReadonlyArray<ReadonlyMap<string, string>>,
+    mergedBlobs: () => Promise<ReadonlyArray<ReadonlyMap<string, string>>>,
 ): Promise<{ findings: GitFinding[]; suppressed: SuppressedFinding<GitFinding>[] }> => {
     const path = entry.newPath;
     const content = await scanner.readText(entry.newOid, path, commit.info.sha);
@@ -448,7 +448,7 @@ const scanChangedBlob = async (
     }
 
     // A merge only introduces what none of its parents had.
-    for (const blobs of mergedBlobs) {
+    for (const blobs of isEmpty(fresh) ? [] : await mergedBlobs()) {
         if (isEmpty(fresh)) {
             break;
         }
@@ -506,9 +506,14 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
             const entries = await listChangedBlobs(commit, cwd);
 
             const paths = entries.map((entry) => entry.newPath);
-            // The blobs of every merged-in parent (all but the first), looked up once per commit.
-            // eslint-disable-next-line no-await-in-loop -- Same: sequential per commit.
-            const mergedBlobs = await Promise.all(commit.parents.slice(1).map(async (parent) => blobsAt(parent, paths, cwd)));
+            let merged: Promise<Map<string, string>[]> | undefined;
+            // The blobs of every merged-in parent (all but the first), looked up at most
+            // once per commit and only when a blob still has findings to compare.
+            const mergedBlobs = async (): Promise<Map<string, string>[]> => {
+                merged ??= Promise.all(commit.parents.slice(1).map(async (parent) => blobsAt(parent, paths, cwd)));
+
+                return merged;
+            };
 
             for (const entry of entries) {
                 // eslint-disable-next-line no-await-in-loop -- One blob at a time through the shared cat-file process.
