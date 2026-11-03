@@ -9,6 +9,12 @@ use crate::decode::{scan_text_with_decoding, DecodeOptions};
 use crate::detector::RawFinding;
 use crate::rules::CompiledRuleset;
 
+/// Everything the detector does for one unit of text: plain scan, decode pass, then the
+/// composite-rule pass. Shared by files, archive entries and `scanTextSync`.
+pub fn scan_text_full(ruleset: &CompiledRuleset, path: &Path, content: &str, decode: DecodeOptions) -> Vec<RawFinding> {
+    crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, decode))
+}
+
 const MMAP_THRESHOLD: u64 = 1 << 20; // 1 MiB
 const BINARY_SNIFF_LEN: usize = 8192;
 
@@ -40,11 +46,11 @@ pub fn scan_file(
                 return Ok(Some(Vec::new()));
             }
             if let Ok(s) = std::str::from_utf8(&map) {
-                return Ok(Some(scan_text_with_decoding(ruleset, path, s, decode)));
+                return Ok(Some(scan_text_full(ruleset, path, s, decode)));
             }
             // Fall through to lossy decode for non-UTF-8 large files.
             let (cow, _, _) = encoding_rs::UTF_8.decode(&map);
-            return Ok(Some(scan_text_with_decoding(ruleset, path, &cow, decode)));
+            return Ok(Some(scan_text_full(ruleset, path, &cow, decode)));
         }
     }
 
@@ -57,10 +63,10 @@ pub fn scan_file(
         return Ok(Some(Vec::new()));
     }
     match String::from_utf8(bytes) {
-        Ok(s) => Ok(Some(scan_text_with_decoding(ruleset, path, &s, decode))),
+        Ok(s) => Ok(Some(scan_text_full(ruleset, path, &s, decode))),
         Err(e) => {
             let (cow, _, _) = encoding_rs::UTF_8.decode(e.as_bytes());
-            Ok(Some(scan_text_with_decoding(ruleset, path, &cow, decode)))
+            Ok(Some(scan_text_full(ruleset, path, &cow, decode)))
         }
     }
 }

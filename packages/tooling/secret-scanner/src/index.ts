@@ -140,4 +140,4 @@ export { type SarifLog, toSarif, type ToSarifOptions } from "./sarif";
 export { scanString } from "./scan-string";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
-export type { Confidence, Finding, RuleInfo, ScanOptions, SkippedRule, ValidationStatus } from "./types";
+export type { Confidence, Finding, RequiredFinding, RuleInfo, ScanOptions, SkippedRule, ValidationStatus } from "./types";

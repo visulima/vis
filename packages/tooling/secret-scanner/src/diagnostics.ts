@@ -26,7 +26,7 @@ export const warnOnSkippedRules = async (resolved: Native.ScanOptions): Promise<
         }
 
         /* eslint-disable no-console -- Diagnostic output; stderr is the intended channel for library warnings. */
-        console.error(`secret-scanner: ${String(skipped.length)} rule(s) skipped due to invalid regex:`);
+        console.error(`secret-scanner: ${String(skipped.length)} rule(s) skipped (invalid regex or unsatisfiable "required"):`);
 
         for (const entry of skipped.slice(0, 10)) {
             console.error(`  - ${entry.ruleId}: ${entry.reason}`);

@@ -74,6 +74,28 @@ pub struct RawRule {
     pub pattern_requirements: Option<RawPatternRequirements>,
     #[serde(default, rename = "allowlist", alias = "allowlists")]
     pub allowlist: Allowlists,
+    /// Gitleaks 8.28+ composite rules (`[[rules.required]]`): a finding of this rule is
+    /// reported only when every listed rule also has a finding in the same file, within
+    /// the optional proximity bounds.
+    #[serde(default)]
+    pub required: Vec<RawRequired>,
+    /// Gitleaks `skipReport`: the rule still runs (so other rules can require it) but its
+    /// own findings are never emitted.
+    #[serde(default, rename = "skipReport", alias = "skip_report", alias = "skipreport")]
+    pub skip_report: bool,
+}
+
+/// One `[[rules.required]]` entry. Key names match gitleaks so its configs load unchanged.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct RawRequired {
+    pub id: String,
+    /// Max line distance between the start lines of the primary and required findings.
+    #[serde(default, rename = "withinLines", alias = "within_lines", alias = "withinlines")]
+    pub within_lines: Option<u32>,
+    /// Max column distance between the start columns. Only compared when both findings
+    /// start on the same line.
+    #[serde(default, rename = "withinColumns", alias = "within_columns", alias = "withincolumns")]
+    pub within_columns: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]

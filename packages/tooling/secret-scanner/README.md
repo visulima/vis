@@ -42,6 +42,7 @@ Production-grade secret and credential scanner for Node.js. Written in Rust, del
 - **Confidence floors** — drop low/medium-confidence rules with `config.minConfidence`. Rules without a declared confidence resolve to `"low"` so the floor behaves as expected in CI.
 - **Pattern requirements & stopword filters** — Kingfisher-style `minLength`, `minDigits`, and `ignoreIfContains` reject documentation placeholders (`EXAMPLE`, `YOUR_KEY_HERE`) before entropy is even computed.
 - **Encoded secrets** — base64 (standard and url-safe), hex and percent-encoded values that decode to printable text are decoded and rescanned, two layers deep by default (`maxDecodeDepth`). A base64-wrapped key or a Kubernetes `Secret` `data:` value is reported at its encoded location with `Finding.decoded` naming the encoding chain.
+- **Composite rules** — gitleaks 8.28+ `[[rules.required]]` (with `withinLines` / `withinColumns`) and `skipReport` load unchanged. A finding is reported only when its required rules match nearby; the matching dependencies are attached as `Finding.requiredFindings`.
 - **Rule priority + dedup** — overlapping matches collapse to the most specific rule; the rest are surfaced on `Finding.alternateMatches`.
 - **Source provenance** — every finding carries `source: "gitleaks" | "kingfisher" | "visulima" | <user>` so reporters and baselines can route appropriately.
 
@@ -226,9 +227,7 @@ const third = "ghp_..."; // pragma: allowlist secret   # detect-secrets compat
 
 ```ts
 // gitleaks:allow-start
-const testFixtures = {
-    /* ... */
-};
+const testFixtures = {/* ... */};
 // gitleaks:allow-end
 ```
 

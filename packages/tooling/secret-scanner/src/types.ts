@@ -217,6 +217,13 @@ export interface Finding {
     entropy: number;
     file: string;
     match: string;
+
+    /**
+     * Composite rules only (`required` in the rule config): the findings of the rule's
+     * required dependencies that satisfied it, the nearest one per required id, in the
+     * order the rule declares them. Redacted along with `secret` when `redact` is on.
+     */
+    requiredFindings?: RequiredFinding[];
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */
@@ -231,6 +238,19 @@ export interface Finding {
      * {@link ValidationStatus} for the meaning of each value.
      */
     validation?: ValidationStatus;
+}
+
+/** A dependency finding attached to a composite-rule {@link Finding}. Same file as its primary. */
+export interface RequiredFinding {
+    /** Encoding chain when the dependency was found in decoded text. */
+    decoded?: string[];
+    endColumn: number;
+    endLine: number;
+    match: string;
+    ruleId: string;
+    secret: string;
+    startColumn: number;
+    startLine: number;
 }
 
 export interface SkippedRule {

@@ -129,6 +129,18 @@ pub struct CompiledRule {
     /// keyword window — otherwise a >4 KiB PEM/PGP body never reaches its `KEY-----`
     /// terminator (gitleaks #1651).
     pub unbounded_multiline: bool,
+    /// Composite-rule dependencies (gitleaks `[[rules.required]]`). Every id is checked
+    /// against the compiled ruleset at load time.
+    pub required: Vec<RequiredRule>,
+    /// Gitleaks `skipReport`: evaluated as a dependency, never emitted.
+    pub skip_report: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequiredRule {
+    pub rule_id: String,
+    pub within_lines: Option<u32>,
+    pub within_columns: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -169,6 +181,9 @@ pub struct CompiledRuleset {
     pub global_allowlists: Vec<CompiledAllowlist>,
     /// Rules that failed to compile (id -> reason). Kept for diagnostics.
     pub skipped_rules: Vec<(String, String)>,
+    /// `true` when any rule declares `required` or `skipReport`. Lets the composite pass
+    /// return straight away for the (default) rulesets that use neither.
+    pub has_composite: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -253,6 +268,8 @@ impl CompiledRuleset {
                 Err(e) => skipped.push((raw.id.clone(), e.to_string())),
             }
         }
+        drop_unsatisfiable_composites(&mut rules, &mut skipped);
+        let has_composite = rules.iter().any(|r| r.skip_report || !r.required.is_empty());
 
         // Build global keyword AC
         let mut patterns: Vec<String> = Vec::new();
@@ -327,7 +344,42 @@ impl CompiledRuleset {
             regex_set_pattern_to_rule,
             global_allowlists,
             skipped_rules: skipped,
+            has_composite,
         })
+    }
+}
+
+/// Drop every rule whose `required` list names a rule that isn't loaded: it could never
+/// be reported, so say why in `skipped` (surfaced by `inspectRuleset`) instead of letting
+/// it sit silently dead (gitleaks #1932). Repeats until stable, since dropping a rule can
+/// strand another rule that requires it.
+fn drop_unsatisfiable_composites(rules: &mut Vec<CompiledRule>, skipped: &mut Vec<(String, String)>) {
+    loop {
+        let loaded: std::collections::HashSet<&str> = rules.iter().map(|r| r.id.as_str()).collect();
+        let mut dropped: Vec<(usize, String)> = Vec::new();
+
+        for (i, rule) in rules.iter().enumerate() {
+            let Some(missing) = rule.required.iter().find(|req| !loaded.contains(req.rule_id.as_str())) else {
+                continue;
+            };
+            let reason = match skipped.iter().find(|(id, _)| *id == missing.rule_id) {
+                Some(_) => format!("required rule '{}' was skipped, so this rule can never match", missing.rule_id),
+                None => format!(
+                    "required rule '{}' is not defined (unknown id, or filtered out by minConfidence / opt-in gating)",
+                    missing.rule_id
+                ),
+            };
+            dropped.push((i, reason));
+        }
+
+        if dropped.is_empty() {
+            return;
+        }
+
+        for (i, reason) in dropped.into_iter().rev() {
+            let rule = rules.remove(i);
+            skipped.push((rule.id, reason));
+        }
     }
 }
 
@@ -431,6 +483,16 @@ fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
         pattern_requirements,
         allowlists,
         unbounded_multiline: raw.regex.as_deref().is_some_and(is_unbounded_multiline),
+        required: raw
+            .required
+            .iter()
+            .map(|r| RequiredRule {
+                rule_id: r.id.clone(),
+                within_lines: r.within_lines,
+                within_columns: r.within_columns,
+            })
+            .collect(),
+        skip_report: raw.skip_report,
     })
 }
 

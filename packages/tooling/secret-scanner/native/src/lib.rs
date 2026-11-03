@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 
+mod composite;
 mod config;
 mod decode;
 mod detector;
@@ -23,7 +24,7 @@ use crate::config::Config;
 use crate::decode::DecodeOptions;
 use crate::detector::RawFinding;
 use crate::rules::{CompiledRuleset, Confidence};
-use crate::scanner::scan_file;
+use crate::scanner::{scan_file, scan_text_full};
 use crate::walker::{walk_paths, WalkOptions};
 
 /// Capacity of the compiled-ruleset cache. Four is enough to cover the
@@ -115,6 +116,22 @@ pub struct Finding {
     /// first (e.g. `["base64"]`, `["base64", "hex"]`). Line/column then point at the
     /// original encoded span while `match` / `secret` hold the decoded text.
     pub decoded: Option<Vec<String>>,
+    /// Composite rules only: the findings of the rule's `required` dependencies that
+    /// satisfied it, one per required id (the nearest), in declaration order.
+    pub required_findings: Option<Vec<RequiredFinding>>,
+}
+
+/// A dependency finding attached to a composite-rule finding. Same file as its primary.
+#[napi(object)]
+pub struct RequiredFinding {
+    pub rule_id: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
+    pub r#match: String,
+    pub secret: String,
+    pub decoded: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -172,6 +189,20 @@ fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         confidence: f.confidence.to_string(),
         alternate_matches: f.alternate_matches,
         decoded: f.decoded,
+        required_findings: f.required_findings.map(|list| {
+            list.into_iter()
+                .map(|r| RequiredFinding {
+                    rule_id: r.rule_id,
+                    start_line: r.start_line,
+                    end_line: r.end_line,
+                    start_column: r.start_column,
+                    end_column: r.end_column,
+                    r#match: if redact_secrets { redact(&r.r#match) } else { r.r#match },
+                    secret: if redact_secrets { redact(&r.secret) } else { r.secret },
+                    decoded: r.decoded,
+                })
+                .collect()
+        }),
     }
 }
 
@@ -405,7 +436,7 @@ pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions
     let redact_secrets = opts.redact.unwrap_or(false);
     let ruleset = load_ruleset(&opts)?;
     let path = PathBuf::from(&file);
-    let raw = crate::decode::scan_text_with_decoding(&ruleset, &path, &content, decode_options(&opts));
+    let raw = scan_text_full(&ruleset, &path, &content, decode_options(&opts));
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
     let finalized = finalize_findings(raw, &[]);
     Ok(finalized.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect())
@@ -518,6 +549,7 @@ mod tests {
             decoded: None,
             inner_start: 0,
             inner_end: 0,
+            required_findings: None,
         }
     }
 
