@@ -1,14 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Toolbox } from "@visulima/cerebro";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SecretsFlags } from "../../src/commands/secrets/handler";
-import execute, { assertArchiveFlags, assertHistoryFlags } from "../../src/commands/secrets/handler";
-import { formatSkippedBlobs } from "../../src/secrets/format";
+import type { SecretsFlags } from "../../src/commands/secrets/flags";
+import { assertArchiveFlags, assertHistoryFlags } from "../../src/commands/secrets/flags";
+import execute from "../../src/commands/secrets/handler";
+import { formatSkipped } from "../../src/secrets/format";
 
 // Fake GitHub PAT matching the bundled `github-pat` rule.
 // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
@@ -35,7 +37,12 @@ const createRepo = (): { git: (...arguments_: string[]) => string; repo: string 
 };
 
 const runSecrets = async (options: SecretsFlags, workspaceRoot: string): Promise<void> => {
-    await (execute as unknown as (toolbox: Partial<Toolbox>) => Promise<void>)({ argument: [], options, workspaceRoot } as unknown as Partial<Toolbox>);
+    await (execute as unknown as (toolbox: Partial<Toolbox>) => Promise<void>)({
+        argument: [],
+        fs: { access, mkdir, readdir, readFile, rm, stat, writeFile },
+        options,
+        workspaceRoot,
+    } as unknown as Partial<Toolbox>);
 };
 
 describe(assertArchiveFlags, () => {
@@ -74,6 +81,31 @@ describe(assertHistoryFlags, () => {
         }).toThrow(/can't be combined with --history-range/);
     });
 
+    it("rejects --max-commits below 1 and --update-baseline with --history", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertHistoryFlags({ history: true, maxCommits: 0 });
+        }).toThrow(/--max-commits must be a positive integer \(got 0\)/);
+        expect(() => {
+            assertHistoryFlags({ history: true, maxCommits: 1.5 });
+        }).toThrow(/--max-commits/);
+        expect(() => {
+            assertHistoryFlags({ history: true, updateBaseline: true });
+        }).toThrow(/--update-baseline .* can't be combined with --history/);
+    });
+
+    it("rejects two scan targets at once", () => {
+        expect.assertions(2);
+
+        expect(() => {
+            assertHistoryFlags({ history: true, staged: true });
+        }).toThrow(/--history, --staged each pick what to scan/);
+        expect(() => {
+            assertHistoryFlags({ affected: true, since: "main" });
+        }).toThrow(/--since, --affected/);
+    });
+
     it("accepts --all with --history", () => {
         expect.assertions(1);
 
@@ -83,7 +115,7 @@ describe(assertHistoryFlags, () => {
     });
 });
 
-describe(formatSkippedBlobs, () => {
+describe(formatSkipped, () => {
     it("summarises by reason and lists blobs with --verbose", () => {
         expect.assertions(2);
 
@@ -92,8 +124,17 @@ describe(formatSkippedBlobs, () => {
             { commit: "a".repeat(40), path: "gone.ts", reason: "missing" as const, sha: "c".repeat(40) },
         ];
 
-        expect(formatSkippedBlobs(skipped, false)).toBe("2 blob(s) not scanned (binary: 1, missing: 1); use --verbose to list them");
-        expect(formatSkippedBlobs(skipped, false, { verbose: true })).toContain("  - gone.ts [missing] aaaaaaaaaa cccccccccc");
+        expect(formatSkipped(skipped, "blob", false)).toBe("2 blob(s) not scanned (binary: 1, missing: 1); use --verbose to list them");
+        expect(formatSkipped(skipped, "blob", false, { verbose: true })).toContain("  - gone.ts [missing] aaaaaaaaaa cccccccccc");
+    });
+
+    it("lists files without a commit or object id", () => {
+        expect.assertions(2);
+
+        const skipped = [{ path: "locked.ts", reason: "permission-denied" as const }];
+
+        expect(formatSkipped(skipped, "file", false)).toBe("1 file(s) not scanned (permission-denied: 1); use --verbose to list them");
+        expect(formatSkipped(skipped, "file", false, { verbose: true }).split("\n")[1]).toBe("  - locked.ts [permission-denied]");
     });
 });
 

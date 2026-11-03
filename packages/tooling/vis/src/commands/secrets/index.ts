@@ -135,7 +135,7 @@ const secretsOptionDefinitions = {
         type: Number,
     },
     "max-commits": {
-        description: "With --history, cap the number of commits walked (most-recent first)",
+        description: "With --history, cap the number of commits walked (most-recent first); at least 1",
         type: Number,
     },
     "max-decode-depth": {

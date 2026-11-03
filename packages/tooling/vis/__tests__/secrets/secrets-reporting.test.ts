@@ -8,8 +8,9 @@ import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SecretsFlags } from "../../src/commands/secrets/handler";
-import execute, { assertReportingFlags } from "../../src/commands/secrets/handler";
+import type { SecretsFlags } from "../../src/commands/secrets/flags";
+import { assertReportingFlags } from "../../src/commands/secrets/flags";
+import execute from "../../src/commands/secrets/handler";
 import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
@@ -170,6 +171,20 @@ describe(assertReportingFlags, () => {
         expect(() => {
             assertReportingFlags({ logIgnored: true, updateBaseline: true }, false);
         }).toThrow(/--update-baseline/);
+    });
+
+    it("rejects scan targets in modes that don't scan them", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertReportingFlags({ init: true, staged: true }, false);
+        }).toThrow(/--staged picks what to scan and can't be combined with --init/);
+        expect(() => {
+            assertReportingFlags({ listRules: true }, true);
+        }).toThrow(/explicit paths/);
+        expect(() => {
+            assertReportingFlags({ staged: true, updateBaseline: true }, false);
+        }).not.toThrow();
     });
 
     it("rejects --fail-on-unused-ignores on partial scans and without the ignore file", () => {

@@ -1,20 +1,13 @@
 import { execFileSync } from "node:child_process";
 
 import { isAbsolute, join, resolve } from "@visulima/path";
+import { DIFF_HARDENING_FLAGS, GIT_CONFIG_OVERRIDES } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../errors/vis-user-error";
 
-/**
- * Overrides for user config that changes git's output shape: quoted
- * non-ASCII paths, forced colour, paths relative to the cwd, textconv
- * drivers and external diff tools.
- */
-const GIT_HARDENING = ["-c", "core.quotepath=off", "-c", "color.ui=never", "-c", "diff.relative=false"];
-const DIFF_HARDENING = ["--no-color", "--no-textconv", "--no-ext-diff"];
-
 const runGit = (root: string, args: string[]): string => {
     try {
-        return execFileSync("git", [...GIT_HARDENING, ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        return execFileSync("git", [...GIT_CONFIG_OVERRIDES, ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     } catch {
         return "";
     }
@@ -32,7 +25,8 @@ export const filesSince = (root: string, ref: string): string[] => {
     // `--show-cdup` keeps the caller's spelling of `root`; `--show-toplevel` is a
     // realpath and would not match a symlinked workspace path.
     const base = resolve(root, runGit(root, ["rev-parse", "--show-cdup"]).trim());
-    const diff = (range: string): string[] => splitFiles(runGit(root, ["diff", "-z", "--name-only", "--diff-filter=ACMR", ...DIFF_HARDENING, range, "--"]));
+    const diff = (range: string): string[] =>
+        splitFiles(runGit(root, ["diff", "-z", "--name-only", "--diff-filter=ACMR", ...DIFF_HARDENING_FLAGS, range, "--"]));
     let list = diff(`${ref}...HEAD`);
 
     // Fallback for the common case where the user hasn't set up a merge-base yet.
