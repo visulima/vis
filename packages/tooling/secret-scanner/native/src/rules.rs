@@ -248,7 +248,9 @@ fn compile_allowlists(rule_id: &str, lists: &[Allowlist]) -> Result<Vec<Compiled
             Some("line") => AllowlistTarget::Line,
             _ => AllowlistTarget::Secret, // gitleaks default
         };
-        let condition_and = matches!(a.condition.as_deref(), Some("AND") | Some("and"));
+        // gitleaks reads the condition case-insensitively and accepts `&&` for AND.
+        let condition_and =
+            a.condition.as_deref().is_some_and(|c| c.trim().eq_ignore_ascii_case("AND") || c.trim() == "&&");
         out.push(CompiledAllowlist {
             paths,
             regexes,

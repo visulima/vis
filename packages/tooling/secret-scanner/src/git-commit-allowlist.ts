@@ -60,7 +60,7 @@ const standaloneCommits = (allowlist: RawAllowlist): Set<string> | undefined => 
         return undefined;
     }
 
-    const isAnd = typeof allowlist.condition === "string" && allowlist.condition.toUpperCase() === "AND";
+    const isAnd = typeof allowlist.condition === "string" && ["&&", "AND"].includes(allowlist.condition.trim().toUpperCase());
     const hasOtherCriteria = hasEntries(allowlist.paths) || hasEntries(allowlist.regexes) || hasEntries(allowlist.stopwords);
 
     if (isAnd && hasOtherCriteria) {

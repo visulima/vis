@@ -824,6 +824,18 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_condition_is_read_like_gitleaks() {
+        for condition in ["AND", "and", "And", "&&"] {
+            let rs = ruleset(&format!(
+                r#"{{"rules":[{{"id":"tok","regex":"tok_[a-z0-9]{{8}}","keywords":["tok_"]}}],
+                    "allowlists":[{{"condition":"{condition}","paths":["^fixtures/"],"regexes":["nomatch"]}}]}}"#
+            ));
+            // AND: the path matches but the regex doesn't, so nothing is allowlisted.
+            assert_eq!(scan_text(&rs, Path::new("fixtures/a.env"), "tok_abcd1234\n").len(), 1, "{condition}");
+        }
+    }
+
+    #[test]
     fn without_secret_group_the_first_non_empty_group_is_the_secret() {
         // gitleaks: `secretGroup` unset -> first non-empty capture group, not the whole match.
         let rs = ruleset(
