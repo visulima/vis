@@ -29,7 +29,6 @@ import { binding } from "./binding";
 import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
-import type { CommitAllowlist } from "./git-commit-allowlist";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
@@ -398,9 +397,7 @@ const scanChangedBlob = async (
     entry: RawDiffEntry,
     commit: CommitRecord,
     scanner: BlobScanner,
-    allowlist: CommitAllowlist,
     cwd: string,
-    reportSuppressed: boolean,
 ): Promise<{ findings: GitFinding[]; suppressed: SuppressedFinding<GitFinding>[] }> => {
     const path = entry.newPath;
     const content = await scanner.readText(entry.newOid, path, commit.info.sha);
@@ -446,18 +443,8 @@ const scanChangedBlob = async (
     }
 
     const processed = await scanner.finish(fresh, commit.info);
-    const findings: GitFinding[] = [];
-    const suppressed = processed.suppressed as SuppressedFinding<GitFinding>[];
 
-    for (const finding of processed.findings as GitFinding[]) {
-        if (!allowlist.isFindingAllowed(finding.ruleId, commit.info.sha)) {
-            findings.push(finding);
-        } else if (reportSuppressed) {
-            suppressed.push({ ...finding, suppressedBy: "allowlist" });
-        }
-    }
-
-    return { findings, suppressed };
+    return { findings: processed.findings as GitFinding[], suppressed: processed.suppressed as SuppressedFinding<GitFinding>[] };
 };
 
 /**
@@ -473,10 +460,12 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
     const { context, prepared } = await beginScan(options, [await repositoryRoot(cwd)]);
     const allowlist = buildCommitAllowlist(prepared.config);
     const commits = await listCommits(options, cwd);
-    const scanner = new BlobScanner(cwd, options, prepared, context);
+    const scanner = new BlobScanner(cwd, options, prepared, {
+        ...context,
+        isCommitAllowlisted: (finding) => finding.commit !== undefined && allowlist.isFindingAllowed(finding.ruleId, finding.commit.sha),
+    });
     const findings: GitFinding[] = [];
     const suppressed: SuppressedFinding<GitFinding>[] = [];
-    const reportSuppressed = options?.reportSuppressed === true;
 
     try {
         for (const commit of commits) {
@@ -489,7 +478,7 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
 
             for (const entry of entries) {
                 // eslint-disable-next-line no-await-in-loop -- One blob at a time through the shared cat-file process.
-                const result = await scanChangedBlob(entry, commit, scanner, allowlist, cwd, reportSuppressed);
+                const result = await scanChangedBlob(entry, commit, scanner, cwd);
 
                 findings.push(...result.findings);
                 suppressed.push(...result.suppressed);

@@ -387,6 +387,13 @@ export interface SuppressionContext {
     /** Directories a relative `finding.file` may be relative to. */
     bases: ReadonlyArray<string>;
     ignore?: GitleaksIgnore;
+
+    /**
+     * Commit allowlist of a git history scan (`allowlists[].commits`): true
+     * when the finding's rule is allowlisted for its commit. Checked before
+     * any other suppression, and before validation.
+     */
+    isCommitAllowlisted?: (finding: Finding & { commit?: { sha: string } }) => boolean;
     /** `redact` is on: reported findings are masked, and the baseline is matched against the masked form. */
     redact: boolean;
 }
@@ -460,7 +467,20 @@ export const postProcessDetailed = async (
     suppression: SuppressionContext,
 ): Promise<ProcessedFindings> => {
     const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options);
-    const validated = await applyValidation(preValidation(shadowFree, prepared, options), options, prepared.ruleMeta);
+    // Commit-allowlisted findings are suppressed first, like the native
+    // allowlist: they skip validation and join the native suppressed ones.
+    const active: Finding[] = [];
+    const preSuppressed: SuppressedFinding[] = [...suppressedShadowFree];
+
+    for (const finding of shadowFree) {
+        if (suppression.isCommitAllowlisted?.(finding) === true) {
+            preSuppressed.push(toSuppressed(finding, "allowlist"));
+        } else {
+            active.push(finding);
+        }
+    }
+
+    const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
     const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
@@ -478,8 +498,8 @@ export const postProcessDetailed = async (
         }
     }
 
-    for (const finding of preValidation(suppressedShadowFree, prepared, options)) {
-        // Mark matching ignore entries used; the native reason wins.
+    for (const finding of preValidation(preSuppressed, prepared, options)) {
+        // Mark matching ignore entries used; the allowlist reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
         suppressed.push(mask(finding));

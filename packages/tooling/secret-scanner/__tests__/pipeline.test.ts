@@ -441,6 +441,28 @@ describe("postProcess — validation host allowlist + cancellation", () => {
             ],
         ]);
 
+    it("suppresses a commit-allowlisted finding before it reaches the validator", async () => {
+        expect.assertions(3);
+
+        let requests = 0;
+
+        server.on("request", () => {
+            requests += 1;
+        });
+
+        const options: ScanOptions = { config: { validate: true }, reportSuppressed: true };
+        const context = await createSuppressionContext(options, [process.cwd()]);
+        const finding = { ...sampleFinding({ ruleId: "rule.http" }), commit: { sha: "abc" } };
+        const result = await postProcessDetailed({ findings: [finding], suppressed: [] }, preparedScan(httpMeta()), options, {
+            ...context,
+            isCommitAllowlisted: (candidate) => candidate.commit?.sha === "abc",
+        });
+
+        expect(result.findings).toStrictEqual([]);
+        expect(result.suppressed).toStrictEqual([{ ...finding, suppressedBy: "allowlist" }]);
+        expect(requests).toBe(0);
+    });
+
     it("skips findings whose validator host is not in `validateAllowedHosts`", async () => {
         expect.assertions(1);
 
