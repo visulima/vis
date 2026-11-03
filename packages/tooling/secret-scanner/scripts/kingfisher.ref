@@ -2,5 +2,5 @@
 # Bump by editing both lines and running: pnpm --filter @visulima/secret-scanner run build:rules
 # Review the resulting diff on data/kingfisher.json before committing.
 # Upstream: https://github.com/mongodb/kingfisher
-ref=v1.95.0
-sha=be0ce3bae0b14240bb2781ab6ee2b5c65e02144b
+ref=v1.113.0
+sha=82d050530cdef9af070b8f9a75701c9c27a948c3
