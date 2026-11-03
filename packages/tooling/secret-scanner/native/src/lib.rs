@@ -131,16 +131,18 @@ pub struct RuleInfo {
     pub confidence: String,
 }
 
+/// Mask all but the first and last three **characters**. Works on `chars()` rather than
+/// bytes so a multibyte secret (`pässwört`) never slices through a UTF-8 sequence (#2261).
+/// For ASCII input the output is byte-identical to the previous byte-based mask.
 fn redact(s: &str) -> String {
-    if s.len() <= 6 {
+    let len = s.chars().count();
+    if len <= 6 {
         return "******".into();
     }
     let mut out = String::with_capacity(s.len());
-    out.push_str(&s[..3]);
-    for _ in 0..(s.len() - 6) {
-        out.push('*');
-    }
-    out.push_str(&s[s.len() - 3..]);
+    out.extend(s.chars().take(3));
+    out.extend(std::iter::repeat_n('*', len - 6));
+    out.extend(s.chars().skip(len - 3));
     out
 }
 
@@ -476,6 +478,21 @@ mod tests {
             confidence: "low",
             alternate_matches: Vec::new(),
         }
+    }
+
+    #[test]
+    fn redact_masks_ascii_by_position() {
+        assert_eq!(redact("abcdefghij"), "abc****hij");
+        assert_eq!(redact("abcdef"), "******");
+    }
+
+    #[test]
+    fn redact_handles_multibyte_secrets() {
+        // Byte slicing would panic here: `ä` is two bytes, so byte 3 is mid-sequence.
+        assert_eq!(redact("pässwört"), "päs**ört");
+        assert_eq!(redact("€€€€€€€€"), "€€€**€€€");
+        assert_eq!(redact("äöü"), "******");
+        assert_eq!(redact("äöüäöü"), "******");
     }
 
     #[test]
