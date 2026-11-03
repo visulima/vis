@@ -39,6 +39,11 @@ export interface Finding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
+    /**
+     * `"allowlist"` or `"inline-allow"` when the match was suppressed and
+     * `reportSuppressed` is on. Absent on real findings.
+     */
+    suppressedBy?: string;
 }
 
 /**
@@ -82,8 +87,17 @@ export interface RuleInfo {
 
 export declare function scan(paths: Array<string>, options?: ScanOptions | undefined | null): Promise<Array<Finding>>;
 
+/**
+ * Like `scan`, but also returns the files that could not be read (permission
+ * denied, unreadable directory, I/O error, larger than `maxFileSize`).
+ */
+export declare function scanDetailed(paths: Array<string>, options?: ScanOptions | undefined | null): Promise<ScanReport>;
+
 /** Scan a fixed list of files (e.g. from `git diff --name-only`). Bypasses the walker. */
 export declare function scanFiles(files: Array<string>, options?: ScanOptions | undefined | null): Promise<Array<Finding>>;
+
+/** Like `scanFiles`, but also returns the files that could not be read. */
+export declare function scanFilesDetailed(files: Array<string>, options?: ScanOptions | undefined | null): Promise<ScanReport>;
 
 export interface ScanOptions {
     /**
@@ -128,11 +142,39 @@ export interface ScanOptions {
      * each extra level one more layer of nested archives (max 8). Default 0 (off).
      */
     maxArchiveDepth?: number;
+    /**
+     * Honour inline suppressions (`gitleaks:allow`, `secret-scanner:allow`,
+     * `pragma: allowlist secret`, allow-start/end blocks, nextline pragma).
+     * Default `true`; `false` lets CI audit them.
+     */
+    inlineAllow?: boolean;
+    /**
+     * Return allowlisted / inline-allowed matches with `suppressedBy` set
+     * instead of dropping them. Default `false`.
+     */
+    reportSuppressed?: boolean;
+}
+
+export interface ScanReport {
+    findings: Array<Finding>;
+    skipped: Array<SkippedFile>;
 }
 
 export declare function scanSync(paths: Array<string>, options?: ScanOptions | undefined | null): Array<Finding>;
 
 export declare function scanTextSync(content: string, file: string, options?: ScanOptions | undefined | null): Array<Finding>;
+
+/**
+ * A file the scan could not read. `reason` is `"permission-denied"`,
+ * `"not-found"` (e.g. a broken symlink passed to `scanFiles`), `"too-large"`,
+ * `"symlink-loop"` or `"io-error"`. Archive entries that could not be scanned use
+ * their virtual path (`a.zip!dir/file.env`); an archive whose walk stopped at the
+ * byte / entry budget is listed under its own path as `"too-large"`.
+ */
+export interface SkippedFile {
+    path: string;
+    reason: string;
+}
 
 export interface SkippedRule {
     ruleId: string;

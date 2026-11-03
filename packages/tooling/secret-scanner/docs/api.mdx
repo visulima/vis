@@ -38,6 +38,28 @@ const findings = await scanFiles(["src/app.ts", "src/db.ts"], {
 
 `walk.excludePatterns` / `walk.excludeFromFiles` still apply — the JS wrapper runs them through the `ignore` npm package to match the walker's semantics.
 
+### `scanDetailed(paths, options?)` / `scanFilesDetailed(files, options?)`
+
+Same scans, but they return a `ScanResult` instead of a bare array, so a caller can tell a clean scan from one that didn't read everything:
+
+```typescript
+import { scanDetailed } from "@visulima/secret-scanner";
+
+const { findings, skipped, suppressed, unusedIgnores } = await scanDetailed([process.cwd()], {
+    gitleaksIgnore: ".gitleaksignore",
+    reportSuppressed: true,
+});
+```
+
+| Field           | Contents                                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findings`      | What `scan` / `scanFiles` return.                                                                                                                                                                                                                                                                                                                         |
+| `skipped`       | `{ path, reason }` for every file or directory that was not read: `"permission-denied"` (an unreadable directory drops its whole subtree), `"not-found"` (a missing file or broken symlink passed to `scanFiles`), `"too-large"` (over `walk.maxFileSize`), `"symlink-loop"` or `"io-error"`. The walker never follows symlinks, so those are not listed. |
+| `suppressed`    | With `reportSuppressed: true`, every finding a baseline, config allowlist, inline pragma or `.gitleaksignore` hid, with `suppressedBy` (`"baseline"`, `"allowlist"`, `"inline-allow"`, `"gitleaksignore"`) and, for the last, `suppressedByEntry`. Empty otherwise.                                                                                       |
+| `unusedIgnores` | `.gitleaksignore` entries that matched nothing (`{ line, raw, kind }`). Commit-scoped entries are only checked by history scans. A scan of a subset of files (`scanFiles`) reports entries for files outside that subset as unused.                                                                                                                       |
+
+`scan` and `scanFiles` are thin wrappers that return `findings`.
+
 ### `scanString(content, file, options?)`
 
 Scan an in-memory buffer as if it lived at `file`. Useful for editor integrations and LSPs.
@@ -83,7 +105,7 @@ How commits are read:
 
 ### `scanGitHistoryDetailed(options?)`
 
-Same as `scanGitHistory`, but returns `{ findings, skipped }`. `skipped` lists every blob that was not inspected, as `{ path, sha, commit, reason }` with `reason` one of `"binary"`, `"too-large"` or `"missing"`. Use it to tell a clean history from one that was only partly read.
+Same as `scanGitHistory`, but returns `{ findings, skipped, suppressed, unusedIgnores }` (see [`scanDetailed`](#scandetailedpaths-options--scanfilesdetailedfiles-options); a commit-allowlisted finding is reported as `suppressedBy: "allowlist"`). `skipped` lists every blob that was not inspected, as `{ path, sha, commit, reason }` with `reason` one of `"binary"`, `"too-large"` or `"missing"`. Use it to tell a clean history from one that was only partly read.
 
 ### `scanGitStaged(options?)`
 
@@ -92,7 +114,7 @@ Scan the content staged in the git index, which is what the next commit will con
 ```typescript
 import { scanGitStaged } from "@visulima/secret-scanner";
 
-const { findings, skipped } = await scanGitStaged({ cwd: process.cwd() });
+const { findings, skipped, suppressed, unusedIgnores } = await scanGitStaged({ cwd: process.cwd() });
 ```
 
 Findings carry the absolute working-tree path, like `scanFiles`. `walk.excludePatterns` / `walk.excludeFromFiles` apply relative to `cwd`.

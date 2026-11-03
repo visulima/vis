@@ -30,16 +30,23 @@ export interface JUnitAuditEmitOptions {
     suiteName?: string;
 }
 
+// Characters XML 1.0 forbids anywhere, even escaped or inside CDATA.
+// eslint-disable-next-line no-control-regex -- Matching control characters is the point.
+const INVALID_XML_CHARS = /[\u0000-\u0008\v\f\u000E-\u001F\uFFFE\uFFFF]/g;
+
+/** Drop characters XML 1.0 can't represent (they would make the report unparseable). */
+const stripInvalidXml = (value: string): string => value.replaceAll(INVALID_XML_CHARS, "");
+
 /**
  * Escapes the five XML predefined entities for attribute values and
  * element text. CDATA blocks handle the long descriptions where naive
  * escaping would explode the line count.
  */
-const escapeAttribute = (value: string): string =>
-    value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
+export const escapeAttribute = (value: string): string =>
+    stripInvalidXml(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
 
 /** Wraps text in CDATA, defensively splitting any embedded `]]>` sequences. */
-const cdata = (value: string): string => `<![CDATA[${value.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+export const cdata = (value: string): string => `<![CDATA[${stripInvalidXml(value).replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
 
 type TestCaseStatus = "failure" | "passing" | "skipped";
 

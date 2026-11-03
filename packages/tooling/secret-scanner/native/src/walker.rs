@@ -23,9 +23,43 @@ pub struct WalkOptions {
 /// ignore rules. `build_parallel` handles concurrency internally, so no extra
 /// orchestration thread is spawned — a panic inside the walker propagates to
 /// the caller instead of deadlocking the channel.
+#[allow(dead_code)] // default-options entry point, kept for callers that need no switches
 pub fn walk_paths(roots: &[PathBuf], opts: &WalkOptions) -> Vec<PathBuf> {
+    walk_paths_reporting(roots, opts).0
+}
+
+/// An entry the walker could not read (an unreadable directory drops its whole
+/// subtree, so callers must not treat it as clean).
+#[derive(Debug, Clone)]
+pub struct WalkError {
+    pub path: PathBuf,
+    pub reason: &'static str,
+}
+
+/// Map an I/O error to the reason string surfaced in `skipped`.
+pub fn io_reason(err: &std::io::Error) -> &'static str {
+    match err.kind() {
+        std::io::ErrorKind::PermissionDenied => "permission-denied",
+        std::io::ErrorKind::NotFound => "not-found",
+        _ => "io-error",
+    }
+}
+
+/// Only I/O failures count: glob / ignore-file syntax errors are not unread content.
+fn walk_error(err: &ignore::Error, path: Option<&std::path::Path>) -> Option<WalkError> {
+    match err {
+        ignore::Error::WithPath { path, err } => walk_error(err, Some(path)),
+        ignore::Error::WithDepth { err, .. } | ignore::Error::WithLineNumber { err, .. } => walk_error(err, path),
+        ignore::Error::Loop { child, .. } => Some(WalkError { path: child.clone(), reason: "symlink-loop" }),
+        ignore::Error::Io(io_err) => path.map(|p| WalkError { path: p.to_path_buf(), reason: io_reason(io_err) }),
+        _ => None,
+    }
+}
+
+/// [`walk_paths`] that also returns the entries it failed to read.
+pub fn walk_paths_reporting(roots: &[PathBuf], opts: &WalkOptions) -> (Vec<PathBuf>, Vec<WalkError>) {
     if roots.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let mut builder = WalkBuilder::new(&roots[0]);
@@ -73,31 +107,41 @@ pub fn walk_paths(roots: &[PathBuf], opts: &WalkOptions) -> Vec<PathBuf> {
     };
 
     let collected = Mutex::new(Vec::<PathBuf>::new());
+    let errors = Mutex::new(Vec::<WalkError>::new());
     let custom = custom_gitignore.as_ref();
 
     builder.build_parallel().run(|| {
         let collected = &collected;
+        let errors = &errors;
         Box::new(move |result| {
-            if let Ok(entry) = result {
-                let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-                if !is_file {
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(err) => {
+                    if let (Some(e), Ok(mut v)) = (walk_error(&err, None), errors.lock()) {
+                        v.push(e);
+                    }
                     return WalkState::Continue;
                 }
+            };
 
-                let path = entry.path();
-                if let Some(gi) = custom {
-                    if gi.matched(path, false).is_ignore() {
-                        return WalkState::Continue;
-                    }
-                }
+            let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
+            if !is_file {
+                return WalkState::Continue;
+            }
 
-                if let Ok(mut v) = collected.lock() {
-                    v.push(entry.into_path());
+            let path = entry.path();
+            if let Some(gi) = custom {
+                if gi.matched(path, false).is_ignore() {
+                    return WalkState::Continue;
                 }
+            }
+
+            if let Ok(mut v) = collected.lock() {
+                v.push(entry.into_path());
             }
             WalkState::Continue
         })
     });
 
-    collected.into_inner().unwrap_or_default()
+    (collected.into_inner().unwrap_or_default(), errors.into_inner().unwrap_or_default())
 }

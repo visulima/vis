@@ -7,13 +7,41 @@ use std::path::Path;
 
 use crate::archive::{self, ArchiveOptions};
 use crate::decode::{scan_text_with_decoding, DecodeOptions};
-use crate::detector::RawFinding;
+use crate::detector::{DetectOptions, RawFinding};
 use crate::rules::CompiledRuleset;
+
+/// Per-scan switches for one unit of text: the decode pass and the detection options.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextScanOptions {
+    pub decode: DecodeOptions,
+    pub detect: DetectOptions,
+}
+
+/// What scanning one file produced. `skipped` lists content inside it that was not scanned
+/// (archive entries over a size cap, unreadable entries), as virtual paths like
+/// `a.zip!dir/file.env`, with the reason.
+#[derive(Debug, Default)]
+pub struct FileScan {
+    pub findings: Vec<RawFinding>,
+    pub skipped: Vec<(String, &'static str)>,
+}
+
+impl From<Vec<RawFinding>> for FileScan {
+    fn from(findings: Vec<RawFinding>) -> Self {
+        Self { findings, skipped: Vec::new() }
+    }
+}
 
 /// Everything the detector does for one unit of text: plain scan, decode pass, then the
 /// composite-rule pass. Shared by files, archive entries and `scanTextSync`.
-pub fn scan_text_full(ruleset: &CompiledRuleset, path: &Path, content: &str, decode: DecodeOptions) -> Vec<RawFinding> {
-    crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, decode))
+pub fn scan_text_full(
+    ruleset: &CompiledRuleset,
+    path: &Path,
+    content: &str,
+    decode: DecodeOptions,
+    detect: DetectOptions,
+) -> Vec<RawFinding> {
+    crate::composite::apply(ruleset, scan_text_with_decoding(ruleset, path, content, decode, detect))
 }
 
 const MMAP_THRESHOLD: u64 = 1 << 20; // 1 MiB
@@ -23,18 +51,18 @@ const BINARY_SNIFF_LEN: usize = 8192;
 /// Returns `Ok(None)` if the file exceeds `max_bytes` (skipped).
 /// With `archive.max_depth > 0`, zip / tar / gzip content (by magic bytes) is opened and
 /// its entries scanned. Otherwise binary files (null byte in first 8 KiB) are skipped to
-/// an empty Vec.
+/// an empty result.
 pub fn scan_file(
     path: &Path,
     ruleset: &CompiledRuleset,
     max_bytes: u64,
-    decode: DecodeOptions,
+    opts: TextScanOptions,
     archive: ArchiveOptions,
-) -> io::Result<Option<Vec<RawFinding>>> {
+) -> io::Result<Option<FileScan>> {
     let meta = std::fs::metadata(path)?;
     let size = meta.len();
     if size == 0 {
-        return Ok(Some(Vec::new()));
+        return Ok(Some(FileScan::default()));
     }
     if size > max_bytes {
         return Ok(None);
@@ -46,7 +74,7 @@ pub fn scan_file(
         // SAFETY: another process truncating the file mid-scan would raise SIGBUS
         // for this thread. We accept that rare risk to keep the zero-copy path.
         if let Ok(map) = unsafe { memmap2::Mmap::map(&file) } {
-            return Ok(Some(scan_bytes(path, ruleset, &map, decode, archive)));
+            return Ok(Some(scan_bytes(path, ruleset, &map, opts, archive)));
         }
     }
 
@@ -58,43 +86,45 @@ pub fn scan_file(
     if archive.max_depth == 0 || archive::detect(&bytes).is_none() {
         // Plain path: take ownership of the buffer to avoid a copy for valid UTF-8.
         if is_binary(&bytes) {
-            return Ok(Some(Vec::new()));
+            return Ok(Some(FileScan::default()));
         }
-        return Ok(Some(match String::from_utf8(bytes) {
-            Ok(s) => scan_text_full(ruleset, path, &s, decode),
+        let findings = match String::from_utf8(bytes) {
+            Ok(s) => scan_text_full(ruleset, path, &s, opts.decode, opts.detect),
             Err(e) => {
                 let (cow, _, _) = encoding_rs::UTF_8.decode(e.as_bytes());
-                scan_text_full(ruleset, path, &cow, decode)
+                scan_text_full(ruleset, path, &cow, opts.decode, opts.detect)
             }
-        }));
+        };
+        return Ok(Some(findings.into()));
     }
-    Ok(Some(scan_bytes(path, ruleset, &bytes, decode, archive)))
+    Ok(Some(scan_bytes(path, ruleset, &bytes, opts, archive)))
 }
 
 fn scan_bytes(
     path: &Path,
     ruleset: &CompiledRuleset,
     bytes: &[u8],
-    decode: DecodeOptions,
+    opts: TextScanOptions,
     archive: ArchiveOptions,
-) -> Vec<RawFinding> {
+) -> FileScan {
     if archive.max_depth > 0 {
         if let Some(kind) = archive::detect(bytes) {
-            if let Some(found) = archive::scan_archive(ruleset, path, bytes, kind, decode, archive) {
+            if let Some(found) = archive::scan_archive(ruleset, path, bytes, kind, opts.decode, opts.detect, archive) {
                 return found;
             }
         }
     }
     if is_binary(bytes) {
-        return Vec::new();
+        return FileScan::default();
     }
-    match std::str::from_utf8(bytes) {
-        Ok(s) => scan_text_full(ruleset, path, s, decode),
+    let findings = match std::str::from_utf8(bytes) {
+        Ok(s) => scan_text_full(ruleset, path, s, opts.decode, opts.detect),
         Err(_) => {
             let (cow, _, _) = encoding_rs::UTF_8.decode(bytes);
-            scan_text_full(ruleset, path, &cow, decode)
+            scan_text_full(ruleset, path, &cow, opts.decode, opts.detect)
         }
-    }
+    };
+    findings.into()
 }
 
 pub(crate) fn is_binary(bytes: &[u8]) -> bool {

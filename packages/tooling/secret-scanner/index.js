@@ -92,7 +92,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-android-arm64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-android-arm64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -108,7 +108,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-android-arm-eabi')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-android-arm-eabi/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -129,7 +129,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-win32-x64-gnu')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-win32-x64-gnu/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -145,7 +145,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-win32-x64-msvc')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-win32-x64-msvc/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -162,7 +162,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-win32-ia32-msvc')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-win32-ia32-msvc/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -178,7 +178,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-win32-arm64-msvc')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-win32-arm64-msvc/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -197,7 +197,7 @@ function requireNative() {
     try {
       const binding = require('@visulima/secret-scanner-binding-darwin-universal')
       const bindingPackageVersion = require('@visulima/secret-scanner-binding-darwin-universal/package.json').version
-      if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+      if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
       return binding
@@ -213,7 +213,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-darwin-x64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-darwin-x64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -229,7 +229,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-darwin-arm64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-darwin-arm64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -249,7 +249,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-freebsd-x64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-freebsd-x64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -265,7 +265,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-freebsd-arm64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-freebsd-arm64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -286,7 +286,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-x64-musl')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-x64-musl/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -302,7 +302,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-x64-gnu')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-x64-gnu/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -320,7 +320,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-arm64-musl')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-arm64-musl/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -336,7 +336,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-arm64-gnu')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-arm64-gnu/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -354,7 +354,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-arm-musleabihf')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-arm-musleabihf/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -370,7 +370,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-arm-gnueabihf')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-arm-gnueabihf/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -388,7 +388,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-loong64-musl')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-loong64-musl/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -404,7 +404,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-loong64-gnu')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-loong64-gnu/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -422,7 +422,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-riscv64-musl')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-riscv64-musl/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -438,7 +438,7 @@ function requireNative() {
         try {
           const binding = require('@visulima/secret-scanner-binding-linux-riscv64-gnu')
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-riscv64-gnu/package.json').version
-          if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
@@ -455,7 +455,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-linux-ppc64-gnu')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-ppc64-gnu/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -471,7 +471,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-linux-s390x-gnu')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-linux-s390x-gnu/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -491,7 +491,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-openharmony-arm64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-openharmony-arm64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -507,7 +507,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-openharmony-x64')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-openharmony-x64/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -523,7 +523,7 @@ function requireNative() {
       try {
         const binding = require('@visulima/secret-scanner-binding-openharmony-arm')
         const bindingPackageVersion = require('@visulima/secret-scanner-binding-openharmony-arm/package.json').version
-        if (bindingPackageVersion !== '2.0.2' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        if (bindingPackageVersion !== '2.0.3' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
@@ -664,7 +664,7 @@ if (!nativeBinding || forceWasi) {
       if (!candidateFailed) {
         if (process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           const bindingPackageVersion = require('@visulima/secret-scanner-binding-wasm32-wasi/package.json').version
-          if (bindingPackageVersion !== '2.0.2') {
+          if (bindingPackageVersion !== '2.0.3') {
             throw new Error(`WASI binding package version mismatch, expected 2.0.3 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
         }
@@ -716,11 +716,13 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { inspectRuleset, listRules, scan, scanFiles, scanSync, scanTextSync } = nativeBinding
+const { inspectRuleset, listRules, scan, scanDetailed, scanFiles, scanFilesDetailed, scanSync, scanTextSync } = nativeBinding
 export { inspectRuleset }
 export { listRules }
 export { scan }
+export { scanDetailed }
 export { scanFiles }
+export { scanFilesDetailed }
 export { scanSync }
 export { scanTextSync }
 export const __napiBindingTarget = __napiLoadedBindingTarget

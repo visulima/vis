@@ -54,14 +54,17 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option            | Type      | Default | Description                                                                                                                                         |
-| ----------------- | --------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline`        | `string`  | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                   |
-| `concurrency`     | `number`  | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                  |
-| `maxArchiveDepth` | `number`  | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
-| `maxDecodeDepth`  | `number`  | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
-| `redact`          | `boolean` | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
-| `verbose`         | `boolean` | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
+| Option             | Type              | Default | Description                                                                                                                                         |
+| ------------------ | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                   |
+| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                  |
+| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                       |
+| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                         |
+| `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
+| `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
+| `redact`           | `boolean`         | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
+| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                              |
+| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
 
 ### `maxArchiveDepth`
 
@@ -73,7 +76,8 @@ Archives are opened in memory and their entries scanned like files, like gitleak
 - **Virtual paths**: findings report `file` as `<archive path>!<entry path>`, e.g. `release.tar.gz!vendor/inner.zip!deploy/.env`, gitleaks' `!` separator. A plain `.gz` file has one entry, named after the gzip header's file name or the archive name without `.gz`. Rule `path` regexes and allowlist `paths` see the full virtual path.
 - **Entry names**: `\` becomes `/`, control characters are removed, and `.`, `..`, empty and drive-letter components are dropped, so `../../etc/passwd` is reported as `etc/passwd`. Names are only labels; nothing is extracted to disk.
 - **Limits** (per archive on disk, across all nesting levels): every entry obeys `walk.maxFileSize` (as does the archive file itself), 256 MiB decompressed in total, 10,000 entries. An entry or gzip stream that expands more than 100x its compressed size, past the first 1 MiB, is a decompression bomb and is skipped. Hitting the total-bytes cap stops the archive; the findings found so far are kept.
-- **Skipped entries**: directories, symlinks, encrypted zip entries and binary entries (a NUL byte in the first 8 KiB), the same rule as for files.
+- **Skipped entries**: directories, symlinks and binary entries (a NUL byte in the first 8 KiB) are ignored, the same rule as for files. Entries over a size limit or flagged as bombs are listed in `skipped` of `scanDetailed` / `scanFilesDetailed` as `"too-large"` under their virtual path, encrypted or unreadable entries as `"io-error"`, and an archive whose walk stopped at the total-bytes or entry cap under its own path as `"too-large"`.
+- **Suppression**: archive entries go through the same allowlists, inline markers, baseline and `.gitleaksignore` as files, matched against the virtual path.
 
 Archive scanning applies to `scan` and `scanFiles`. `scanString` and git history scans don't open archives.
 
@@ -259,7 +263,7 @@ Proximity rules:
 - Same line: `withinColumns` (if set) bounds the column distance.
 - Different lines: only `withinLines` applies. `withinColumns` is never compared across lines (upstream gitleaks fixed the same bug in six PRs, #2123 to #2255). A rule with only `withinColumns` therefore needs the required finding on the same line. This differs from the "rectangular" area the gitleaks README describes for both bounds: a dependency on the next line is not rejected just because it starts at a different column.
 
-A reported finding carries `requiredFindings`: for each required id, the nearest finding that satisfied it (redacted with `redact: true`). The check runs per file, per archive entry and per `scanString` buffer, on the findings before the same-span dedup, so a required finding counts even if it is `skipReport` or itself a composite rule. The composite finding itself can still lose the same-span dedup to a higher-priority rule matching the exact same span.
+A reported finding carries `requiredFindings`: for each required id, the nearest finding that satisfied it (redacted with `redact: true`). The check runs per file, per archive entry and per `scanString` buffer, on the findings before the same-span dedup, so a required finding counts even if it is `skipReport` or itself a composite rule. An allowlisted or inline-allowed finding never satisfies a requirement, as in gitleaks. The composite finding itself can still lose the same-span dedup to a higher-priority rule matching the exact same span.
 
 A rule whose `required` names a rule that isn't loaded (unknown id, failed regex, or filtered out by `minConfidence` or opt-in gating) can never match. It is dropped and listed by `inspectRuleset()` with the reason, and `verbose: true` prints it.
 

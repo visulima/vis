@@ -11,9 +11,9 @@ use std::path::Path;
 use flate2::read::MultiGzDecoder;
 
 use crate::decode::DecodeOptions;
-use crate::detector::RawFinding;
+use crate::detector::DetectOptions;
 use crate::rules::CompiledRuleset;
-use crate::scanner::{is_binary, scan_text_full};
+use crate::scanner::{is_binary, scan_text_full, FileScan};
 
 /// Off by default: opening archives costs time and changes results for existing users.
 pub const DEFAULT_MAX_ARCHIVE_DEPTH: u32 = 0;
@@ -87,12 +87,13 @@ fn is_tar(bytes: &[u8]) -> bool {
 struct Ctx<'a> {
     ruleset: &'a CompiledRuleset,
     decode: DecodeOptions,
+    detect: DetectOptions,
     opts: ArchiveOptions,
     /// Path of the archive file on disk, as passed to the scanner.
     outer: String,
     total: u64,
     entries: usize,
-    out: Vec<RawFinding>,
+    out: FileScan,
 }
 
 impl Ctx<'_> {
@@ -108,6 +109,12 @@ impl Ctx<'_> {
     fn ratio_cap(&self, compressed: u64) -> u64 {
         compressed.saturating_mul(self.opts.max_ratio).max(self.opts.ratio_floor)
     }
+
+    /// Record content that was not scanned. `suffix` is the virtual suffix of the entry
+    /// (`!dir/file.env`), or of the archive layer itself when the walk stopped early.
+    fn skip(&mut self, suffix: &str, reason: &'static str) {
+        self.out.skipped.push((format!("{}{suffix}", self.outer), reason));
+    }
 }
 
 /// Scan `bytes` (the content of `path`) as an archive. Returns `None` when the bytes only
@@ -118,16 +125,18 @@ pub fn scan_archive(
     bytes: &[u8],
     kind: ArchiveKind,
     decode: DecodeOptions,
+    detect: DetectOptions,
     opts: ArchiveOptions,
-) -> Option<Vec<RawFinding>> {
+) -> Option<FileScan> {
     let mut ctx = Ctx {
         ruleset,
         decode,
+        detect,
         opts: ArchiveOptions { max_depth: opts.max_depth.min(MAX_ARCHIVE_DEPTH_CAP), ..opts },
         outer: path.to_string_lossy().into_owned(),
         total: 0,
         entries: 0,
-        out: Vec::new(),
+        out: FileScan::default(),
     };
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     open(&mut ctx, bytes, kind, "", &name, 1).then_some(ctx.out)
@@ -150,9 +159,15 @@ fn walk_zip(ctx: &mut Ctx<'_>, bytes: &[u8], prefix: &str, depth: u32) -> bool {
 
     for i in 0..zip.len() {
         if ctx.exhausted() {
+            ctx.skip(prefix, "too-large");
             break;
         }
         // Encrypted entries and unsupported compression methods fail here; skip them.
+        if zip.by_index(i).is_err() {
+            let name = zip.name_for_index(i).and_then(Result::ok).map(|n| sanitize_entry_name(&n));
+            ctx.skip(&format!("{prefix}!{}", name.as_deref().unwrap_or("unnamed")), "io-error");
+            continue;
+        }
         let Ok(mut file) = zip.by_index(i) else { continue };
         if !file.is_file() {
             continue;
@@ -163,13 +178,17 @@ fn walk_zip(ctx: &mut Ctx<'_>, bytes: &[u8], prefix: &str, depth: u32) -> bool {
         // Header sizes are attacker-controlled: they only allow an early skip, the read
         // below is capped independently.
         if file.size() > ctx.opts.max_entry_bytes {
+            ctx.skip(&format!("{prefix}!{name}"), "too-large");
             continue;
         }
         let cap = ctx.ratio_cap(file.compressed_size());
         match read_capped(ctx, &mut file, cap) {
             ReadOutcome::Data(data) => handle_entry(ctx, data, prefix, &name, depth),
-            ReadOutcome::Skip => {}
-            ReadOutcome::Stop => break,
+            ReadOutcome::Skip(reason) => ctx.skip(&format!("{prefix}!{name}"), reason),
+            ReadOutcome::Stop => {
+                ctx.skip(prefix, "too-large");
+                break;
+            }
         }
     }
     true
@@ -183,10 +202,16 @@ fn walk_tar<R: Read>(ctx: &mut Ctx<'_>, reader: R, prefix: &str, depth: u32) -> 
 
     for (i, entry) in entries.enumerate() {
         if ctx.exhausted() {
+            ctx.skip(prefix, "too-large");
             break;
         }
         // A truncated or capped stream ends the walk; findings so far are kept.
-        let Ok(mut entry) = entry else { return i > 0 };
+        let Ok(mut entry) = entry else {
+            if i > 0 {
+                ctx.skip(prefix, "io-error");
+            }
+            return i > 0;
+        };
         if !entry.header().entry_type().is_file() {
             continue;
         }
@@ -194,12 +219,16 @@ fn walk_tar<R: Read>(ctx: &mut Ctx<'_>, reader: R, prefix: &str, depth: u32) -> 
 
         let name = sanitize_entry_name(&String::from_utf8_lossy(&entry.path_bytes()));
         if entry.size() > ctx.opts.max_entry_bytes {
+            ctx.skip(&format!("{prefix}!{name}"), "too-large");
             continue;
         }
         match read_capped(ctx, &mut entry, u64::MAX) {
             ReadOutcome::Data(data) => handle_entry(ctx, data, prefix, &name, depth),
-            ReadOutcome::Skip => {}
-            ReadOutcome::Stop => break,
+            ReadOutcome::Skip(reason) => ctx.skip(&format!("{prefix}!{name}"), reason),
+            ReadOutcome::Stop => {
+                ctx.skip(prefix, "too-large");
+                break;
+            }
         }
     }
     true
@@ -230,21 +259,25 @@ fn walk_gzip(ctx: &mut Ctx<'_>, bytes: &[u8], prefix: &str, name: &str, depth: u
         .map(|f| sanitize_entry_name(&String::from_utf8_lossy(f)))
         .unwrap_or_else(|| strip_gz_suffix(name));
     if ctx.exhausted() {
+        ctx.skip(&format!("{prefix}!{inner_name}"), "too-large");
         return true;
     }
     ctx.entries += 1;
 
     let mut reader = Cursor::new(head).chain(stream);
-    if let ReadOutcome::Data(data) = read_capped(ctx, &mut reader, u64::MAX) {
-        handle_entry(ctx, data, prefix, &inner_name, depth);
+    match read_capped(ctx, &mut reader, u64::MAX) {
+        ReadOutcome::Data(data) => handle_entry(ctx, data, prefix, &inner_name, depth),
+        ReadOutcome::Skip(reason) => ctx.skip(&format!("{prefix}!{inner_name}"), reason),
+        ReadOutcome::Stop => ctx.skip(&format!("{prefix}!{inner_name}"), "too-large"),
     }
     true
 }
 
 enum ReadOutcome {
     Data(Vec<u8>),
-    /// Entry too large, a bomb, or unreadable: skip it and continue.
-    Skip,
+    /// Entry too large, a bomb (`"too-large"`), or unreadable (`"io-error"`): skip it and
+    /// continue.
+    Skip(&'static str),
     /// The per-archive byte budget ran out: stop walking.
     Stop,
 }
@@ -257,11 +290,12 @@ fn read_capped<R: Read + ?Sized>(ctx: &mut Ctx<'_>, reader: &mut R, ratio_cap: u
     let result = reader.take(limit.saturating_add(1)).read_to_end(&mut data);
     ctx.total = ctx.total.saturating_add(data.len() as u64);
 
-    if result.is_err() {
-        return ReadOutcome::Skip;
+    if let Err(e) = result {
+        let reason = if e.kind() == io::ErrorKind::FileTooLarge { "too-large" } else { "io-error" };
+        return ReadOutcome::Skip(reason);
     }
     if data.len() as u64 > limit {
-        return if limit == remaining { ReadOutcome::Stop } else { ReadOutcome::Skip };
+        return if limit == remaining { ReadOutcome::Stop } else { ReadOutcome::Skip("too-large") };
     }
     ReadOutcome::Data(data)
 }
@@ -286,9 +320,9 @@ fn handle_entry(ctx: &mut Ctx<'_>, data: Vec<u8>, prefix: &str, name: &str, dept
         Err(e) => encoding_rs::UTF_8.decode(e.as_bytes()).0.into_owned(),
     };
     let virtual_path = format!("{}{suffix}", ctx.outer);
-    for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.decode) {
+    for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.decode, ctx.detect) {
         finding.archive_entry = Some(suffix.clone());
-        ctx.out.push(finding);
+        ctx.out.findings.push(finding);
     }
 }
 
@@ -340,7 +374,7 @@ impl<R: Read> Read for CappedReader<R> {
         let n = self.inner.read(buf)?;
         if n as u64 > self.left {
             self.left = 0;
-            return Err(io::Error::other("archive decompression cap reached"));
+            return Err(io::Error::new(io::ErrorKind::FileTooLarge, "archive decompression cap reached"));
         }
         self.left -= n as u64;
         Ok(n)
@@ -353,6 +387,7 @@ mod tests {
 
     use super::*;
     use crate::config::Config;
+    use crate::detector::RawFinding;
 
     const SECRET_LINE: &str = concat!("token = ghp_aB3dE4fG5hI6jK7l", "M8nO9pQ0rS1tU2vW3xY4\n");
 
@@ -400,10 +435,15 @@ mod tests {
         e.finish().unwrap()
     }
 
-    fn scan(bytes: &[u8], name: &str, o: ArchiveOptions) -> Vec<RawFinding> {
+    fn scan_full(bytes: &[u8], name: &str, o: ArchiveOptions) -> FileScan {
         let rs = ruleset();
         let kind = detect(bytes).expect("archive");
-        scan_archive(&rs, Path::new(name), bytes, kind, DecodeOptions::default(), o).expect("opened")
+        scan_archive(&rs, Path::new(name), bytes, kind, DecodeOptions::default(), DetectOptions::default(), o)
+            .expect("opened")
+    }
+
+    fn scan(bytes: &[u8], name: &str, o: ArchiveOptions) -> Vec<RawFinding> {
+        scan_full(bytes, name, o).findings
     }
 
     fn files(findings: &[RawFinding]) -> Vec<String> {
@@ -450,9 +490,10 @@ mod tests {
         let bomb = vec![b'a'; 4 << 20];
         let z = zip_of(&[("bomb.txt", &bomb), ("ok.env", SECRET_LINE.as_bytes())]);
         let o = ArchiveOptions { ratio_floor: 64 << 10, ..opts(1) };
-        let found = scan(&z, "b.zip", o);
-        // The bomb is skipped, the following entry still scanned.
-        assert_eq!(files(&found), vec!["b.zip!ok.env"]);
+        let out = scan_full(&z, "b.zip", o);
+        // The bomb is skipped and reported, the following entry still scanned.
+        assert_eq!(files(&out.findings), vec!["b.zip!ok.env"]);
+        assert_eq!(out.skipped, vec![("b.zip!bomb.txt".to_string(), "too-large")]);
     }
 
     #[test]
@@ -460,7 +501,9 @@ mod tests {
         let mut body = vec![b'a'; 4 << 20];
         body.extend_from_slice(SECRET_LINE.as_bytes());
         let o = ArchiveOptions { ratio_floor: 64 << 10, ..opts(1) };
-        assert!(scan(&gz(&body), "big.gz", o).is_empty());
+        let out = scan_full(&gz(&body), "big.gz", o);
+        assert!(out.findings.is_empty());
+        assert_eq!(out.skipped, vec![("big.gz!big".to_string(), "too-large")]);
         // A ratio limit high enough for this stream lets it through.
         assert_eq!(scan(&gz(&body), "big.gz", ArchiveOptions { max_ratio: 100_000, ..opts(1) }).len(), 1);
     }
@@ -472,7 +515,10 @@ mod tests {
         let refs: Vec<(&str, &[u8])> = entries.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
         let z = zip_of(&refs);
 
-        assert_eq!(scan(&z, "z.zip", ArchiveOptions { max_entries: 2, ..opts(1) }).len(), 2);
+        let out = scan_full(&z, "z.zip", ArchiveOptions { max_entries: 2, ..opts(1) });
+        assert_eq!(out.findings.len(), 2);
+        // The rest of the archive was not read: the archive itself is reported as skipped.
+        assert_eq!(out.skipped, vec![("z.zip".to_string(), "too-large")]);
         let budget = SECRET_LINE.len() as u64 * 3;
         assert_eq!(scan(&z, "z.zip", ArchiveOptions { max_total_bytes: budget, ..opts(1) }).len(), 3);
         // Entries above maxFileSize are skipped, not fatal.
@@ -499,7 +545,16 @@ mod tests {
     fn garbage_with_zip_magic_falls_back() {
         let rs = ruleset();
         let bytes = b"PK\x03\x04 not really a zip";
-        assert!(scan_archive(&rs, Path::new("x"), bytes, ArchiveKind::Zip, DecodeOptions::default(), opts(1)).is_none());
+        assert!(scan_archive(
+            &rs,
+            Path::new("x"),
+            bytes,
+            ArchiveKind::Zip,
+            DecodeOptions::default(),
+            DetectOptions::default(),
+            opts(1)
+        )
+        .is_none());
     }
 
     #[test]
@@ -508,9 +563,16 @@ mod tests {
         let mut text = vec![b'x'; 300];
         text[TAR_MAGIC_OFFSET..TAR_MAGIC_OFFSET + 5].copy_from_slice(b"ustar");
         assert_eq!(detect(&text), Some(ArchiveKind::Tar));
-        assert!(
-            scan_archive(&rs, Path::new("t.txt"), &text, ArchiveKind::Tar, DecodeOptions::default(), opts(1)).is_none()
-        );
+        assert!(scan_archive(
+            &rs,
+            Path::new("t.txt"),
+            &text,
+            ArchiveKind::Tar,
+            DecodeOptions::default(),
+            DetectOptions::default(),
+            opts(1)
+        )
+        .is_none());
     }
 
     #[test]

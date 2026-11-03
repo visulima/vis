@@ -16,6 +16,8 @@ use crate::rules::{CompiledRuleset, RequiredRule};
 ///
 /// Required findings are taken from the unit's raw findings as detected, so a required rule
 /// counts even when it is itself a composite whose own requirements fail, or is `skipReport`.
+/// Suppressed findings (allowlisted or inline-allowed, present only with `reportSuppressed`)
+/// never satisfy a requirement, as in gitleaks, where allowlisted matches don't exist.
 pub fn apply(ruleset: &CompiledRuleset, findings: Vec<RawFinding>) -> Vec<RawFinding> {
     if !ruleset.has_composite || findings.is_empty() {
         return findings;
@@ -80,7 +82,9 @@ fn nearest(findings: &[RawFinding], primary_idx: usize, req: &RequiredRule) -> O
     findings
         .iter()
         .enumerate()
-        .filter(|(j, f)| *j != primary_idx && f.rule_id == req.rule_id && within(primary, f, req))
+        .filter(|(j, f)| {
+            *j != primary_idx && f.suppressed_by.is_none() && f.rule_id == req.rule_id && within(primary, f, req)
+        })
         .min_by_key(|(j, f)| {
             (primary.start_line.abs_diff(f.start_line), primary.start_column.abs_diff(f.start_column), *j)
         })
@@ -141,6 +145,7 @@ mod tests {
             inner_end: 0,
             required_findings: None,
             archive_entry: None,
+            suppressed_by: None,
         }
     }
 
@@ -209,6 +214,24 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].rule_id, "primary");
         assert_eq!(out[0].required_findings.as_ref().unwrap()[0].rule_id, "dep");
+    }
+
+    #[test]
+    fn suppressed_findings_never_satisfy_a_requirement() {
+        let rs = rules_with(serde_json::json!([{ "id": "dep" }]));
+        let mut dep = finding("dep", 1, 10);
+        dep.suppressed_by = Some(crate::detector::SUPPRESSED_ALLOWLIST);
+        let mut primary = finding("primary", 1, 1);
+        primary.suppressed_by = Some(crate::detector::SUPPRESSED_INLINE);
+
+        // The primary is dropped; the suppressed dependency itself is passed through.
+        let out = apply(&rs, vec![finding("primary", 1, 1), dep]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule_id, "dep");
+        // A suppressed primary is still a composite: kept (as suppressed) only when satisfied.
+        let out = apply(&rs, vec![primary, finding("dep", 1, 10)]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].suppressed_by, Some("inline-allow"));
     }
 
     #[test]

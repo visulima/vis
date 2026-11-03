@@ -253,6 +253,8 @@ token: |
 **Baseline JSON**
 
 - Array of `Finding` objects (same shape `scan()` returns). Pass via `baseline: "./path.json"`, or inline as `baseline: findings` (a `Finding[]`, no file IO), or as a pre-computed `baseline: set` (`ReadonlySet<string>` of fingerprints). Findings whose content-hash fingerprint (SHA-256 over `secret + ruleId + file`, truncated to 16 hex chars) matches an entry in the baseline are suppressed. Line-shift tolerant; the legacy `file:ruleID:startLine` format continues to suppress correctly without a migration. Write one with `createBaseline(findings)` (returns the JSON string) or `writeBaseline(path, findings)`.
+- **`.gitleaksignore`**: pass `gitleaksIgnore: ".gitleaksignore"` to honour gitleaks fingerprints (`file:rule:line`, `commit:file:rule:line`), secret-value entries (`secret:…`, scoped with `rule:`/`path:`) and `*` globs. Paths are matched relative to the ignore file's directory.
+- **Audit**: `reportSuppressed: true` returns suppressed findings with a `suppressedBy` reason from `scanDetailed` / `scanFilesDetailed` / the git scans; `inlineAllow: false` turns the inline markers off.
 - `rules.include` / `rules.exclude` arrays for rule-id level filtering.
 - Use `.gitignore` to exclude paths from scanning (respected by the walker), or `walk.excludePatterns` / `walk.excludeFromFiles` for extra gitignore-syntax filters.
 
@@ -308,6 +310,12 @@ interface ScanOptions {
     baseline?: Finding[] | ReadonlySet<string> | string;
     /** Rayon worker threads. 0 / omit = auto. */
     concurrency?: number;
+    /** Path to a `.gitleaksignore` to honour. Not auto-discovered by the library. */
+    gitleaksIgnore?: string | false;
+    /** Honour inline allow markers. Default true; false audits them. */
+    inlineAllow?: boolean;
+    /** Return suppressed findings from the *Detailed scans. Default false. */
+    reportSuppressed?: boolean;
 
     config?: {
         /** Layer the user's rules on top of the bundled ruleset. Default: true. */
@@ -412,6 +420,9 @@ interface SkippedRule {
 declare function scan(paths: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanFiles(files: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanString(content: string, file: string, options?: ScanOptions): Promise<Finding[]>;
+// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore entries.
+declare function scanDetailed(paths: string[], options?: ScanOptions): Promise<ScanResult>;
+declare function scanFilesDetailed(files: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function listRules(options?: ScanOptions): Promise<RuleInfo[]>;
 declare function listTags(options?: ScanOptions): { tag: string; count: number }[];
 declare function inspectRuleset(options?: ScanOptions): Promise<SkippedRule[]>;
@@ -420,12 +431,14 @@ declare const bundledConfigPath: string;
 
 // Baseline helpers — write/read suppression lists.
 declare function createBaseline(findings: readonly Finding[]): string;
-declare function writeBaseline(path: string, findings: readonly Finding[]): Promise<void>;
+declare function writeBaseline(path: string, findings: readonly Finding[], options?: { mode?: number }): Promise<void>; // mode defaults to 0o600
 declare function buildBaselineSet(findings: readonly Finding[]): Set<string>;
 declare function loadBaselineSet(path: string | undefined): Promise<Set<string>>;
 
 // Report serializer — SARIF 2.1.0 for GitHub code scanning / SARIF viewers.
 declare function toSarif(findings: readonly Finding[], options?: { toolVersion?: string }): SarifLog;
+// Percent-encodes each segment of a relative path; `file://` URI for absolute ones.
+declare function toSarifUri(path: string): string;
 
 // Heuristic helpers — the same predicates the pipeline applies. Exported so
 // custom pre-filters (editor plugins, CI gates) can reuse the logic.

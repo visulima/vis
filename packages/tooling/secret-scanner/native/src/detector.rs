@@ -76,7 +76,32 @@ pub struct RawFinding {
     /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
     /// it to relativise just the on-disk part.
     pub archive_entry: Option<String>,
+    /// Why the finding was suppressed (`"allowlist"` or `"inline-allow"`). Only set
+    /// when [`DetectOptions::report_suppressed`] is on; `None` for real findings.
+    pub suppressed_by: Option<&'static str>,
 }
+
+/// Per-scan detection switches. Kept off [`CompiledRuleset`] on purpose: the
+/// ruleset is cached by config hash, so a flag stored there would leak between
+/// scans that differ only in these options.
+#[derive(Debug, Clone, Copy)]
+pub struct DetectOptions {
+    /// Honour inline suppressions (`gitleaks:allow`, `pragma: allowlist secret`,
+    /// allow-start/end blocks, nextline pragma). Default `true`.
+    pub inline_allow: bool,
+    /// Emit allowlisted / inline-allowed matches tagged with `suppressed_by`
+    /// instead of dropping them. Default `false`.
+    pub report_suppressed: bool,
+}
+
+impl Default for DetectOptions {
+    fn default() -> Self {
+        Self { inline_allow: true, report_suppressed: false }
+    }
+}
+
+pub const SUPPRESSED_ALLOWLIST: &str = "allowlist";
+pub const SUPPRESSED_INLINE: &str = "inline-allow";
 
 /// Byte ranges inside `content` marked by `gitleaks:allow-start` ... `gitleaks:allow-end`
 /// or `secret-scanner:allow-start` ... `:allow-end` pairs. Any finding whose match falls
@@ -119,25 +144,41 @@ pub(crate) fn is_in_allow_region(regions: &[(usize, usize)], offset: usize) -> b
     regions.iter().any(|&(start, end)| offset >= start && offset <= end)
 }
 
+#[allow(dead_code)] // default-options entry point, kept for callers that need no switches
 pub fn scan_text(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
-    scan_text_inner(ruleset, path, content, true)
+    scan_text_with(ruleset, path, content, DetectOptions::default())
+}
+
+pub fn scan_text_with(ruleset: &CompiledRuleset, path: &Path, content: &str, opts: DetectOptions) -> Vec<RawFinding> {
+    scan_text_inner(ruleset, path, content, opts, true)
 }
 
 /// Scan decoded text produced by the decode pass. Path-only rules are skipped: they
 /// already fired (or not) for this file during the plain scan.
-pub(crate) fn scan_text_decoded(ruleset: &CompiledRuleset, path: &Path, content: &str) -> Vec<RawFinding> {
-    scan_text_inner(ruleset, path, content, false)
+pub(crate) fn scan_text_decoded(
+    ruleset: &CompiledRuleset,
+    path: &Path,
+    content: &str,
+    opts: DetectOptions,
+) -> Vec<RawFinding> {
+    scan_text_inner(ruleset, path, content, opts, false)
 }
 
 /// `plain == false` is the decode pass: path-only rules don't refire, and `preRegexReplace`
 /// rules are skipped because their offsets index the rewritten text, which the decode
 /// layer can't map back to the original content.
-fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain: bool) -> Vec<RawFinding> {
+fn scan_text_inner(
+    ruleset: &CompiledRuleset,
+    path: &Path,
+    content: &str,
+    opts: DetectOptions,
+    plain: bool,
+) -> Vec<RawFinding> {
     // Normalise to forward slashes so user-authored path regexes (rule `path`
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let allow_regions = find_allow_regions(content);
+    let allow_regions = if opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
 
     // 1) Candidate rules via AC keyword prefilter on the whole file. Empty-keywords rules
     //    are pre-marked so they always run. We use a bitmap indexed by rule id — O(rules)
@@ -243,7 +284,9 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain:
             if !plain {
                 continue;
             }
-            if is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "") {
+            let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "");
+
+            if path_suppressed && !opts.report_suppressed {
                 continue;
             }
 
@@ -270,6 +313,7 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain:
                 inner_end: 0,
                 required_findings: None,
                 archive_entry: None,
+                suppressed_by: path_suppressed.then_some(SUPPRESSED_ALLOWLIST),
             });
             continue;
         }
@@ -356,6 +400,7 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain:
                         text_ref,
                         offsets_ref,
                         &allow_regions,
+                        opts,
                         &mut out,
                     );
                 }
@@ -385,6 +430,7 @@ fn scan_text_inner(ruleset: &CompiledRuleset, path: &Path, content: &str, plain:
                         text_ref,
                         offsets_ref,
                         &allow_regions,
+                        opts,
                         &mut out,
                     );
                 }
@@ -414,6 +460,7 @@ fn emit_match(
     text_ref: &str,
     offsets_ref: &[usize],
     allow_regions: &[(usize, usize)],
+    opts: DetectOptions,
     out: &mut Vec<RawFinding>,
 ) {
     // #1893 — on a CRLF file a `.+`/`\S+`-style capture ends on the `\r` of the line ending.
@@ -471,22 +518,24 @@ fn emit_match(
     // Inline allow-comment (same line), block allow-region
     // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
     // `pragma: allowlist nextline secret` on the line preceding the match.
-    if has_allow_comment(line) || is_in_allow_region(allow_regions, span.match_start) {
-        return;
-    }
-
-    if sl > 1 {
-        let previous = line_slice(text_ref, offsets_ref, sl - 1);
-
-        if has_nextline_pragma(previous) {
-            return;
-        }
-    }
+    // `inline_allow: false` disables all three so CI can audit them.
+    let inline_allowed = opts.inline_allow
+        && (has_allow_comment(line)
+            || is_in_allow_region(allow_regions, span.match_start)
+            || (sl > 1 && has_nextline_pragma(line_slice(text_ref, offsets_ref, sl - 1))));
 
     // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
-    if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line)
+    let suppressed_by = if inline_allowed {
+        Some(SUPPRESSED_INLINE)
+    } else if is_allowlisted(&rule.allowlists, &rule.id, path_str, match_str, secret_slice, line)
         || is_allowlisted(&ruleset.global_allowlists, &rule.id, path_str, match_str, secret_slice, line)
     {
+        Some(SUPPRESSED_ALLOWLIST)
+    } else {
+        None
+    };
+
+    if suppressed_by.is_some() && !opts.report_suppressed {
         return;
     }
 
@@ -513,6 +562,7 @@ fn emit_match(
         inner_end: 0,
         required_findings: None,
         archive_entry: None,
+        suppressed_by,
     });
 }
 
