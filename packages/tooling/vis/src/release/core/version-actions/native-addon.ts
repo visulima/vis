@@ -26,11 +26,9 @@ import { rewriteCatalogRefs } from "../catalog";
 import { cleanPackageJsonForPublish } from "../clean-package-json";
 import type { PackageManagerAdapter, PublishResult } from "../package-managers/interface";
 import { assertValidPackageName } from "../security";
+import { exchangeOidcTokenForPackage, getGithubActionsIdToken, OFFICIAL_REGISTRY } from "./auth";
 import type { PublishContext } from "./interface";
 import { VersionActions } from "./interface";
-
-const OFFICIAL_REGISTRY = "https://registry.npmjs.org/";
-const OIDC_AUDIENCE = "npm:registry.npmjs.org";
 
 interface AuthToken {
     source: "oidc" | "NPM_TOKEN";
@@ -47,45 +45,6 @@ const getPlatformDirs = async (cwd: string): Promise<string[]> => {
     } catch {
         return [];
     }
-};
-
-const getGithubActionsIdToken = async (env: NodeJS.ProcessEnv): Promise<string | undefined> => {
-    const requestUrl = env["ACTIONS_ID_TOKEN_REQUEST_URL"];
-    const requestToken = env["ACTIONS_ID_TOKEN_REQUEST_TOKEN"];
-
-    if (!requestUrl || !requestToken) {
-        return undefined;
-    }
-
-    const url = `${requestUrl}${requestUrl.includes("?") ? "&" : "?"}audience=${encodeURIComponent(OIDC_AUDIENCE)}`;
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${requestToken}` } });
-
-    if (!response.ok) {
-        return undefined;
-    }
-
-    const body = (await response.json().catch(() => {
-        return {};
-    })) as { value?: string };
-
-    return typeof body.value === "string" ? body.value : undefined;
-};
-
-const exchangeOidcTokenForPackage = async (packageName: string, idToken: string): Promise<string | undefined> => {
-    const response = await fetch(`${OFFICIAL_REGISTRY}-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(packageName)}`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-        method: "POST",
-    });
-
-    if (!response.ok) {
-        return undefined;
-    }
-
-    const body = (await response.json().catch(() => {
-        return {};
-    })) as { token?: string };
-
-    return typeof body.token === "string" ? body.token : undefined;
 };
 
 const resolveAuthToken = async (packageName: string, idToken: string | undefined, env: NodeJS.ProcessEnv): Promise<AuthToken> => {
