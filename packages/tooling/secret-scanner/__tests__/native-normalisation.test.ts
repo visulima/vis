@@ -20,7 +20,7 @@ const tokenRule: ScanOptions = {
 /** Deterministic pseudo-random base64 body wrapped at 64 columns. */
 const base64Body = (length: number): string => {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let state = 0x2545_f491;
+    let state = 0x25_45_f4_91;
     let out = "";
 
     for (let index = 0; index < length; index += 1) {
@@ -31,7 +31,7 @@ const base64Body = (length: number): string => {
         // eslint-disable-next-line no-bitwise -- xorshift32 PRNG
         state ^= state << 5;
         // eslint-disable-next-line no-bitwise -- xorshift32 PRNG
-        out += alphabet[(state >>> 0) % 64];
+        out += alphabet.charAt((state >>> 0) % 64);
 
         if (index % 64 === 63) {
             out += "\n";
