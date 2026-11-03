@@ -20,9 +20,11 @@ export interface NativeReport {
     suppressed: SuppressedFinding[];
 }
 
-type NativeSuppressed = Native.Finding & { suppressedBy: string };
+/** A native finding; the older native shape marks suppressed ones inline with `suppressedBy`. */
+type NativeFinding = Native.Finding & { suppressedBy?: string };
 
-type RawNativeReport = Native.Finding[] | { findings: Native.Finding[]; skipped: Native.SkippedFile[]; suppressed?: NativeSuppressed[] };
+type RawNativeReport =
+    NativeFinding[] | { findings: NativeFinding[]; skipped: Native.SkippedFile[]; suppressed?: (NativeFinding & { suppressedBy: string })[] };
 
 /**
  * The one place native output is typed into the public shapes. Accepts the
