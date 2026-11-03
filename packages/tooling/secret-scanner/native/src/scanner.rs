@@ -9,6 +9,7 @@ use crate::archive::{self, ArchiveOptions};
 use crate::decode::{scan_text_with_decoding, DecodeOptions};
 use crate::detector::{DetectOptions, RawFinding};
 use crate::rules::CompiledRuleset;
+use crate::skip::Skipped;
 
 /// Per-scan switches for one unit of text: the decode pass and the detection options.
 #[derive(Debug, Clone, Copy, Default)]
@@ -18,12 +19,11 @@ pub struct TextScanOptions<'a> {
 }
 
 /// What scanning one file produced. `skipped` lists content inside it that was not scanned
-/// (archive entries over a size cap, unreadable entries) by archive-entry suffix
-/// (`!dir/file.env`, empty for the archive itself), with the reason.
+/// (archive entries over a size cap, unreadable entries).
 #[derive(Debug, Default)]
 pub struct FileScan {
     pub findings: Vec<RawFinding>,
-    pub skipped: Vec<(String, &'static str)>,
+    pub skipped: Vec<Skipped>,
 }
 
 impl From<Vec<RawFinding>> for FileScan {

@@ -6,6 +6,8 @@ use std::sync::Mutex;
 use ignore::gitignore::GitignoreBuilder;
 use ignore::{WalkBuilder, WalkState};
 
+use crate::skip::{SkipReason, Skipped};
+
 #[derive(Debug, Clone, Default)]
 pub struct WalkOptions {
     pub respect_gitignore: bool,
@@ -20,29 +22,14 @@ pub struct WalkOptions {
 }
 
 /// An entry the walker could not read (an unreadable directory drops its whole
-/// subtree, so callers must not treat it as clean).
-#[derive(Debug, Clone)]
-pub struct WalkError {
-    pub path: PathBuf,
-    pub reason: &'static str,
-}
-
-/// Map an I/O error to the reason string surfaced in `skipped`.
-pub fn io_reason(err: &std::io::Error) -> &'static str {
-    match err.kind() {
-        std::io::ErrorKind::PermissionDenied => "permission-denied",
-        std::io::ErrorKind::NotFound => "not-found",
-        _ => "io-error",
-    }
-}
-
-/// Only I/O failures count: glob / ignore-file syntax errors are not unread content.
-fn walk_error(err: &ignore::Error, path: Option<&std::path::Path>) -> Option<WalkError> {
+/// subtree, so callers must not treat it as clean). Only I/O failures count: glob /
+/// ignore-file syntax errors are not unread content.
+fn walk_error(err: &ignore::Error, path: Option<&std::path::Path>) -> Option<Skipped> {
     match err {
         ignore::Error::WithPath { path, err } => walk_error(err, Some(path)),
         ignore::Error::WithDepth { err, .. } | ignore::Error::WithLineNumber { err, .. } => walk_error(err, path),
-        ignore::Error::Loop { child, .. } => Some(WalkError { path: child.clone(), reason: "symlink-loop" }),
-        ignore::Error::Io(io_err) => path.map(|p| WalkError { path: p.to_path_buf(), reason: io_reason(io_err) }),
+        ignore::Error::Loop { child, .. } => Some(Skipped::file(child.clone(), SkipReason::SymlinkLoop)),
+        ignore::Error::Io(io_err) => path.map(|p| Skipped::file(p.to_path_buf(), io_err.into())),
         _ => None,
     }
 }
@@ -51,7 +38,7 @@ fn walk_error(err: &ignore::Error, path: Option<&std::path::Path>) -> Option<Wal
 /// ignore rules, plus the entries it failed to read. `build_parallel` handles
 /// concurrency internally, so no extra orchestration thread is spawned — a panic
 /// inside the walker propagates to the caller instead of deadlocking the channel.
-pub fn walk_paths_reporting(roots: &[PathBuf], opts: &WalkOptions) -> (Vec<PathBuf>, Vec<WalkError>) {
+pub fn walk_paths_reporting(roots: &[PathBuf], opts: &WalkOptions) -> (Vec<PathBuf>, Vec<Skipped>) {
     if roots.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -101,7 +88,7 @@ pub fn walk_paths_reporting(roots: &[PathBuf], opts: &WalkOptions) -> (Vec<PathB
     };
 
     let collected = Mutex::new(Vec::<PathBuf>::new());
-    let errors = Mutex::new(Vec::<WalkError>::new());
+    let errors = Mutex::new(Vec::<Skipped>::new());
     let custom = custom_gitignore.as_ref();
 
     builder.build_parallel().run(|| {

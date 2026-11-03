@@ -9,6 +9,7 @@ mod entropy;
 mod lines;
 mod rules;
 mod scanner;
+mod skip;
 mod suppression;
 mod walker;
 
@@ -29,7 +30,8 @@ use crate::decode::DecodeOptions;
 use crate::detector::{DetectOptions, RawFinding};
 use crate::rules::{CompiledRuleset, Confidence};
 use crate::scanner::{scan_file, scan_text_full, TextScanOptions};
-use crate::walker::{io_reason, walk_paths_reporting, WalkOptions};
+use crate::skip::{SkipReason, Skipped};
+use crate::walker::{walk_paths_reporting, WalkOptions};
 
 /// Capacity of the compiled-ruleset cache. Four is enough to cover the
 /// common matrix: `gitleaks` vs `kingfisher` vs `combined` × optional
@@ -312,32 +314,24 @@ fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
     Ok(arc)
 }
 
-/// Content that could not be scanned: the file on disk, the archive-entry suffix
-/// (`!dir/file.env`, empty for the file itself) and the reason.
-type Skip = (PathBuf, String, &'static str);
-
 /// Scan `files` on the configured pool, collecting findings and unreadable files.
 fn scan_paths(
     files: &[PathBuf],
     ruleset: &CompiledRuleset,
     opts: &ScanOptions,
-) -> Result<(Vec<RawFinding>, Vec<Skip>)> {
+) -> Result<(Vec<RawFinding>, Vec<Skipped>)> {
     let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
     let text_opts = text_scan_options(opts);
     let archive_opts = archive_options(opts, max_bytes);
 
-    let do_scan = || -> (Vec<RawFinding>, Vec<Skip>) {
-        let outcomes: Vec<(Vec<RawFinding>, Vec<Skip>)> = files
+    let do_scan = || -> (Vec<RawFinding>, Vec<Skipped>) {
+        let outcomes: Vec<(Vec<RawFinding>, Vec<Skipped>)> = files
             .par_iter()
             .map(|p| match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
-                Ok(Some(scanned)) => {
-                    let skipped =
-                        scanned.skipped.into_iter().map(|(entry, reason)| (p.clone(), entry, reason)).collect();
-                    (scanned.findings, skipped)
-                }
-                Ok(None) => (Vec::new(), vec![(p.clone(), String::new(), "too-large")]),
-                Err(e) => (Vec::new(), vec![(p.clone(), String::new(), io_reason(&e))]),
+                Ok(Some(scanned)) => (scanned.findings, scanned.skipped),
+                Ok(None) => (Vec::new(), vec![Skipped::file(p.clone(), SkipReason::TooLarge)]),
+                Err(e) => (Vec::new(), vec![Skipped::file(p.clone(), (&e).into())]),
             })
             .collect();
         let mut findings = Vec::new();
@@ -362,14 +356,19 @@ fn scan_paths(
 }
 
 /// Build the NAPI report: finalize findings, rewrite skipped paths like findings.
-fn build_report(findings: Vec<RawFinding>, skipped: Vec<Skip>, roots: &[PathBuf], redact_secrets: bool) -> ScanReport {
+fn build_report(
+    findings: Vec<RawFinding>,
+    skipped: Vec<Skipped>,
+    roots: &[PathBuf],
+    redact_secrets: bool,
+) -> ScanReport {
     let canon_roots = canonicalize_roots(roots);
     let mut skipped: Vec<SkippedFile> = skipped
         .into_iter()
-        .map(|(path, entry, reason)| {
+        .map(|Skipped { path, entry, reason }| {
             let raw = path.to_string_lossy().to_string();
             let on_disk = relative_to_root(&raw, &canon_roots).unwrap_or(raw);
-            SkippedFile { path: format!("{on_disk}{entry}"), reason: reason.to_string() }
+            SkippedFile { path: format!("{on_disk}{entry}"), reason: reason.as_str().to_string() }
         })
         .collect();
     skipped.sort_by(|a, b| a.path.cmp(&b.path));
@@ -399,7 +398,7 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
     let (files, walk_errors) = walk_paths_reporting(&roots, &walk_opts);
     let (findings, mut skipped) = scan_paths(&files, &ruleset, &opts)?;
 
-    skipped.extend(walk_errors.into_iter().map(|e| (e.path, String::new(), e.reason)));
+    skipped.extend(walk_errors);
 
     Ok(build_report(findings, skipped, &roots, redact_secrets))
 }
