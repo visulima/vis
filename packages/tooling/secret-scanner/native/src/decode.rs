@@ -128,7 +128,11 @@ pub fn scan_text_with_decoding(
 
     let (mut buf, mut fragments) = first_level(content, segments);
     for depth in 1..=opts.max_depth {
-        let raw = detector::scan_text_decoded(ruleset, path, &buf, detect);
+        // Inline markers are checked against the original line in `map_finding`; in the
+        // joined fragment buffer a nextline pragma would leak into the next fragment.
+        // Inline markers are checked against the original line in `map_finding`; in the
+        // joined fragment buffer a nextline pragma would leak into the next fragment.
+        let raw = detector::scan_text_decoded(ruleset, path, &buf, DetectOptions { inline_allow: false, ..detect });
         for finding in raw {
             let Some(mapped) = map_finding(finding, &fragments, &original) else { continue };
             // A percent run keeps the literal text between its escapes, so a plain secret
@@ -688,6 +692,20 @@ mod tests {
     #[test]
     fn allow_comment_on_original_line_suppresses_decoded_finding() {
         assert!(scan(&format!("value: {} # gitleaks:allow\n", b64(KEY)), 2).is_empty());
+    }
+
+    #[test]
+    fn nextline_pragma_does_not_leak_into_another_fragment() {
+        // Both lines carry an encoded segment, so their fragments sit next to each other
+        // in the decode buffer. The pragma only covers line 2 of the original file.
+        let text = format!(
+            "a: {} # pragma: allowlist nextline secret\nfiller\nb: {}\n",
+            b64("just some harmless text"),
+            b64(KEY)
+        );
+        let findings = scan(&text, 2);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].start_line, 3);
     }
 
     #[test]
