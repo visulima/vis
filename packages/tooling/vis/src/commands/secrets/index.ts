@@ -129,8 +129,18 @@ const secretsOptionDefinitions = {
         name: "log-ignored",
         type: Boolean,
     }),
+    "max-archive-depth": {
+        description:
+            "Open zip / tar / gzip / tar.gz files (detected by content) and scan their entries, up to this nesting depth (0-8). Findings use the path archive.zip!inner/file. Default: 0 (archives are skipped as binary). Not with --history or --staged.",
+        type: Number,
+    },
     "max-commits": {
         description: "With --history, cap the number of commits walked (most-recent first)",
+        type: Number,
+    },
+    "max-decode-depth": {
+        description:
+            "Layers of base64 / hex / percent-encoding to decode and rescan for secrets (0 disables decoding). Findings in decoded text point at the encoded span. Default: 2",
         type: Number,
     },
     "max-size": {

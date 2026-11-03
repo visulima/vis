@@ -7,7 +7,7 @@ import type { Toolbox } from "@visulima/cerebro";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/handler";
-import execute, { assertHistoryFlags } from "../../src/commands/secrets/handler";
+import execute, { assertArchiveFlags, assertHistoryFlags } from "../../src/commands/secrets/handler";
 import { formatSkippedBlobs } from "../../src/secrets/format";
 
 // Fake GitHub PAT matching the bundled `github-pat` rule.
@@ -36,6 +36,22 @@ const createRepo = (): { git: (...arguments_: string[]) => string; repo: string 
 const runSecrets = async (options: SecretsFlags & { format?: string }, workspaceRoot: string): Promise<void> => {
     await (execute as unknown as (toolbox: Partial<Toolbox>) => Promise<void>)({ argument: [], options, workspaceRoot } as unknown as Partial<Toolbox>);
 };
+
+describe(assertArchiveFlags, () => {
+    it("rejects --max-archive-depth with git blob scans", () => {
+        expect.assertions(3);
+
+        expect(() => {
+            assertArchiveFlags({ history: true, maxArchiveDepth: 1 });
+        }).toThrow(/--history scans git blobs as text/);
+        expect(() => {
+            assertArchiveFlags({ maxArchiveDepth: 1, staged: true });
+        }).toThrow(/--staged scans git blobs as text/);
+        expect(() => {
+            assertArchiveFlags({ maxArchiveDepth: 1, since: "main" });
+        }).not.toThrow();
+    });
+});
 
 describe(assertHistoryFlags, () => {
     it("rejects history-only flags without --history", () => {

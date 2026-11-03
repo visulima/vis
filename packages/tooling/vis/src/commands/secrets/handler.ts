@@ -65,7 +65,9 @@ export interface SecretsFlags {
     listRules?: boolean;
     listValidators?: boolean;
     logIgnored?: boolean;
+    maxArchiveDepth?: number;
     maxCommits?: number;
+    maxDecodeDepth?: number;
     maxSize?: number;
     minConfidence?: string;
     onlyVerified?: boolean;
@@ -100,6 +102,23 @@ const validateFormat = (raw: string | undefined): ReportFormat => {
     }
 
     return raw;
+};
+
+/** The library clamps archive nesting at this depth; reject larger values instead. */
+const MAX_ARCHIVE_DEPTH = 8;
+
+const validateDepth = (value: number | undefined, flag: string, max = Number.MAX_SAFE_INTEGER): number | undefined => {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+        const range = max === Number.MAX_SAFE_INTEGER ? "a non-negative integer" : `an integer from 0 to ${String(max)}`;
+
+        throw new VisUserError(`${flag} must be ${range} (got ${String(value)}).`);
+    }
+
+    return value;
 };
 
 const validateConfidence = (raw: string | undefined): Confidence | undefined => {
@@ -268,6 +287,8 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
             validate: flags.validate ?? cfg.config?.validate ?? false,
         },
         inlineAllow: flags.inlineAllow,
+        maxArchiveDepth: validateDepth(flags.maxArchiveDepth, "--max-archive-depth", MAX_ARCHIVE_DEPTH),
+        maxDecodeDepth: validateDepth(flags.maxDecodeDepth, "--max-decode-depth"),
         redact: flags.redact ?? cfg.redact,
         reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },
@@ -311,6 +332,17 @@ export const assertHistoryFlags = (flags: SecretsFlags): void => {
 
     if (flags.all && flags.historyRange !== undefined) {
         throw new VisUserError("--all walks every ref and can't be combined with --history-range. Use one or the other.");
+    }
+};
+
+/** Git blob scans (`--history`, `--staged`) read text only and never open archives. */
+export const assertArchiveFlags = (flags: SecretsFlags): void => {
+    const mode = flags.history ? "--history" : flags.staged ? "--staged" : undefined;
+
+    if (flags.maxArchiveDepth !== undefined && mode !== undefined) {
+        throw new VisUserError(
+            `--max-archive-depth only applies to working-tree scans; ${mode} scans git blobs as text and doesn't open archives. Drop --max-archive-depth or ${mode}.`,
+        );
     }
 };
 
@@ -566,6 +598,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
 
     // Before the --list-*/--init early returns, so no mode silently drops a history or reporting flag.
     assertHistoryFlags(flags);
+    assertArchiveFlags(flags);
     assertReportingFlags(flags, (args ?? []).length > 0);
 
     const reports = parseReportTargets(toArray(flags.report));
