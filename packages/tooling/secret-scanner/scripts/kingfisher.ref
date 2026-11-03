@@ -2,5 +2,9 @@
 # Bump by editing both lines and running: pnpm --filter @visulima/secret-scanner run build:rules
 # Review the resulting diff on data/kingfisher.json before committing.
 # Upstream: https://github.com/mongodb/kingfisher
+# `major` pins the sync job (secret-scanner-rules-sync.yml) to 1.x: from v2.0.0
+# Kingfisher ships Betterleaks/Veles-imported rules under new ids instead of its
+# own catalog, which needs a deliberate migration, not an automatic bump.
+major=1
 ref=v1.113.0
 sha=82d050530cdef9af070b8f9a75701c9c27a948c3
