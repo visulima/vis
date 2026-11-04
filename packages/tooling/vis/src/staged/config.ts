@@ -1,5 +1,5 @@
 import { ConfigError } from "./errors";
-import { isCommandTask } from "./tasks/build";
+import { dependencyTargets, isCommandTask } from "./tasks/build";
 import type { CustomTask, RunOptions, StagedConfig, StagedTask } from "./types";
 
 /**
@@ -92,6 +92,8 @@ const validateTask = (pattern: string, value: unknown): void => {
         if (value.command.trim() === "") {
             throw new ConfigError(`Command task for "${pattern}" has an empty \`command\`.`);
         }
+
+        dependencyTargets(value);
 
         return;
     }

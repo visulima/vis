@@ -145,9 +145,22 @@ export const runTasks = async (patterns: ReadonlyArray<PatternDescriptor>, rende
         }
     };
 
-    const workers: Promise<void>[] = [];
+    // Prerequisites (the `dependsOn` build) finish before any worker starts,
+    // so no command reads a `dist/` the build is still rewriting. A failed one
+    // cancels the rest even under `continueOnError`: linting against unbuilt
+    // dependencies is exactly the false result it exists to prevent.
+    while (index < patterns.length && patterns[index]?.prerequisite === true) {
+        const prerequisite = patterns[index] as PatternDescriptor;
 
-    for (let i = 0; i < Math.min(limit, patterns.length); i += 1) {
+        index += 1;
+        await runOne(prerequisite);
+    }
+
+    const workers: Promise<void>[] = [];
+    // Read once: each `pickNext()` advances `index` before its first await.
+    const workerCount = Math.min(limit, patterns.length - index);
+
+    for (let i = 0; i < workerCount; i += 1) {
         workers.push(pickNext());
     }
 

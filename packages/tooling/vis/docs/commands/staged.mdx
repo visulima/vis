@@ -76,6 +76,33 @@ no-op and the command runs once from the root.
 **absolute** paths so they resolve regardless of where the command runs. `cwd` is
 ignored when `perPackage` is set — that derives the directory per package instead.
 
+### `dependsOn` — build the owning packages' dependencies first
+
+Type-aware linters (ESLint with `@typescript-eslint` type information, oxlint with
+`typeAware`) resolve workspace imports through each dependency's built declarations. An
+unbuilt dependency turns its types into `any`, the hook reports false errors, and
+`eslint --fix` can rewrite code to fit the wrong types. `dependsOn` builds those
+dependencies before the hook lints:
+
+```ts
+staged: {
+    "packages/**/*.{ts,tsx}": { command: "eslint --fix", perPackage: true, dependsOn: ["^build"] },
+},
+```
+
+`^build` runs the `build` target for the dependencies of every workspace package that owns
+a matched file, through the project graph and the task cache. It does not build those
+packages themselves. vis makes one `vis run build --if-present` call for the whole staged
+run, covering every entry that sets `dependsOn`, and finishes it before any staged command
+starts. A build tool that cleans `dist/` when it starts would otherwise race a second build
+or a lint that is reading the declarations. If the build fails, every staged command is
+skipped, including with `--continue-on-error`.
+
+A package with no workspace dependencies selects nothing, which is not an error. Files
+under no workspace package add nothing to the build. Only the `^<target>` form is
+accepted, and every entry must name the same target, since one `vis run` call runs one
+target.
+
 > Both `perPackage` and `cwd` also prepend the target directory's `node_modules/.bin`
 > to `PATH`, so bare binary names resolve from the package's own dependencies.
 

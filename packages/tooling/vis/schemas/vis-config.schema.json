@@ -1994,7 +1994,7 @@
         },
         "staged": {
             "$ref": "#/$defs/StagedConfig",
-            "description": "Staged file patterns and commands (replaces lint-staged).\n\nAccepts all lint-staged config forms:\n- `string` or `string[]` commands\n- Sync/async functions returning `string | string[]`\n- `{ title, task }` objects for named side-effect tasks\n- `{ command, perPackage }` to run a command once per owning workspace package (cwd = that package dir), and `{ command, cwd }` to pin a command to a fixed directory\n- Mixed arrays of strings and functions\n- A top-level generate-task function"
+            "description": "Staged file patterns and commands (replaces lint-staged).\n\nAccepts all lint-staged config forms:\n- `string` or `string[]` commands\n- Sync/async functions returning `string | string[]`\n- `{ title, task }` objects for named side-effect tasks\n- `{ command, perPackage }` to run a command once per owning workspace package (cwd = that package dir), and `{ command, cwd }` to pin a command to a fixed directory\n- `{ command, dependsOn: [\"^build\"] }` to build the owning packages' dependencies in one `vis run` before any staged command starts\n- Mixed arrays of strings and functions\n- A top-level generate-task function"
         },
         "strictEnv": {
             "type": "boolean",
@@ -4441,7 +4441,7 @@
                 },
                 "internalDependencyRanges": {
                     "$ref": "#/$defs/InternalDependencyRangesMode",
-                    "description": "How the version step updates a released package's specifiers for other workspace packages in the same wave. `updateInternalDependencies` decides which dependents cascade; this decides what gets written. Default: `\"rewrite\"`.\n\nUse `\"preserve-satisfying\"` for promotion-safe ranges such as `>=1.0.0-alpha.76 <2.0.0-0`, which `\"rewrite\"` turns into `>=<newVersion>` (ratcheted floor, no ceiling)."
+                    "description": "How the version step updates a released package's specifiers for other workspace packages in the same wave. `updateInternalDependencies` decides which dependents cascade; this decides what gets written. Default: `\"rewrite\"`.\n\nUse `\"preserve-satisfying\"` for promotion-safe ranges such as `>=1.0.0-alpha.76 &lt;2.0.0-0`, which `\"rewrite\"` turns into `>=&lt;newVersion>` (ratcheted floor, no ceiling)."
                 },
                 "linked": {
                     "type": "array",
@@ -4868,7 +4868,7 @@
                 "rewrite",
                 "preserve-satisfying"
             ],
-            "description": "What the version step writes into a released package's specifier for an internal dependency. `\"rewrite\"` sets every specifier to `<operator><newVersion>`; `\"preserve-satisfying\"` leaves a range that still admits the new version untouched, raises the floor of an outgrown one (keeping its ceiling) and fails the release when the new version is past the ceiling."
+            "description": "What the version step writes into a released package's specifier for an internal dependency. `\"rewrite\"` sets every specifier to `&lt;operator>&lt;newVersion>`; `\"preserve-satisfying\"` leaves a range that still admits the new version untouched, raises the floor of an outgrown one (keeping its ceiling) and fails the release when the new version is past the ceiling."
         },
         "NotificationsConfig": {
             "type": "object",
@@ -6838,6 +6838,13 @@
                 "cwd": {
                     "type": "string"
                 },
+                "dependsOn": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Dependency targets such as `\"^build\"`; only the `^` form is supported, and every entry in a config must name the same target."
+                },
                 "perPackage": {
                     "type": "boolean"
                 }
@@ -6846,7 +6853,7 @@
                 "command"
             ],
             "additionalProperties": false,
-            "description": "Object form of a command task. Unlike a bare command string it carries execution options:\n\n- `perPackage` runs the command once per workspace package that owns the   matched files, with `cwd` set to that package's directory and file paths   made relative to it. Use it for tools that resolve their config or   plugins from the nearest `package.json` — e.g. eslint with a   cwd-sensitive shareable config. Files that sit under no workspace   package fall back to a single run from the workspace root.\n- `cwd` pins the command to a fixed directory (relative to the workspace   root, or absolute) and passes the matched files as absolute paths so   they resolve regardless of where the command runs. Ignored when   `perPackage` is set — that derives the cwd per package instead.\n\nA command task is distinguished from  {@link  CustomTask }  by carrying a `command` string and no `task` function."
+            "description": "Object form of a command task. Unlike a bare command string it carries execution options:\n\n- `perPackage` runs the command once per workspace package that owns the   matched files, with `cwd` set to that package's directory and file paths   made relative to it. Use it for tools that resolve their config or   plugins from the nearest `package.json` — e.g. eslint with a   cwd-sensitive shareable config. Files that sit under no workspace   package fall back to a single run from the workspace root.\n- `cwd` pins the command to a fixed directory (relative to the workspace   root, or absolute) and passes the matched files as absolute paths so   they resolve regardless of where the command runs. Ignored when   `perPackage` is set — that derives the cwd per package instead.\n- `dependsOn: [\"^build\"]` runs `build` for the dependencies of every   workspace package that owns a matched file, before any staged command   starts. Type-aware linters read workspace imports from each   dependency's built declarations, so an unbuilt dependency turns its   types into `any`. All entries share one `vis run … --if-present` call:   a second build running beside the first, or beside a lint, would race   a build tool that cleans `dist/` on start.\n\nA command task is distinguished from  {@link  CustomTask }  by carrying a `command` string and no `task` function."
         }
     }
 }

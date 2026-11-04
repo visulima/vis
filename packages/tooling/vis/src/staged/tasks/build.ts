@@ -44,6 +44,51 @@ const ownerPackage = (file: string, packageDirs: ReadonlyArray<string>): string 
     return best;
 };
 
+/**
+ * The targets named by the `^`-prefixed entries of `dependsOn`. Anything else is a
+ * `ConfigError` rather than ignored: a dependency that silently never builds
+ * leaves the lint reading `any` types, which is the failure the option exists
+ * to prevent.
+ */
+const dependencyTargets = (value: CommandTask): string[] => {
+    if (value.dependsOn === undefined) {
+        return [];
+    }
+
+    if (!Array.isArray(value.dependsOn)) {
+        throw new ConfigError(`\`dependsOn\` of "${value.command}" must be an array such as ["^build"].`);
+    }
+
+    return value.dependsOn.map((entry: unknown) => {
+        if (typeof entry !== "string" || !/^\^[^\s^]+$/.test(entry)) {
+            throw new ConfigError(
+                `\`dependsOn\` entry ${JSON.stringify(entry)} of "${value.command}" is not supported — staged tasks only take the dependency form "^<target>", e.g. "^build".`,
+            );
+        }
+
+        return entry.slice(1);
+    });
+};
+
+/** Wraps an argv token in double quotes when it needs them, escaping what `parseCommandString` unescapes. */
+const quoteArgument = (value: string): string => (/^[\w./:@^{}-]+$/.test(value) ? value : `"${value.replaceAll("\\", "\\\\").replaceAll("\"", String.raw`\"`)}"`);
+
+/**
+ * The single `vis run` that builds `target` for the dependencies of every
+ * owning package. Path selectors (`{packages/a}^...`) use the directories
+ * already resolved for `perPackage`, so no package name has to be read.
+ * `--if-present` keeps a package without workspace dependencies — an empty
+ * selection — from failing the hook.
+ */
+const dependencyBuildCommand = (target: string, packageDirectories: ReadonlyArray<string>, cwd: string, visEntry: ReadonlyArray<string>): string =>
+    [
+        ...visEntry.map((argument) => quoteArgument(argument)),
+        "run",
+        quoteArgument(target),
+        "--if-present",
+        ...packageDirectories.flatMap((directory) => ["-F", quoteArgument(`{${relative(cwd, directory)}}^...`)]),
+    ].join(" ");
+
 export interface BuildTaskGraphOptions {
     /** Match globs case-insensitively — enable on HFS+/APFS (macOS) and NTFS (Windows). */
     readonly caseInsensitive?: boolean;
@@ -51,6 +96,13 @@ export interface BuildTaskGraphOptions {
     readonly cwd: string;
     readonly files: ReadonlyArray<string>;
     readonly relative?: boolean;
+
+    /**
+     * Program and leading arguments that start the vis CLI, used for the
+     * `dependsOn` build. Defaults to the running vis entry under the current node,
+     * since `vis staged` is the only caller.
+     */
+    readonly visEntry?: ReadonlyArray<string>;
     /** Absolute workspace package directories, used to fan out `perPackage` command tasks. */
     readonly workspacePackages?: ReadonlyArray<string>;
 }
@@ -73,6 +125,29 @@ export const buildTaskGraph = async (options: BuildTaskGraphOptions): Promise<Pa
         return `cmd-${commandCounter}`;
     };
 
+    const dependency = { packages: new Set<string>(), targets: new Set<string>() };
+
+    /** Records the owning packages of `absoluteFiles` for the shared `dependsOn` build. Files under no package add nothing. */
+    const collectDependencies = (value: CommandTask, absoluteFiles: ReadonlyArray<string>): void => {
+        const targets = dependencyTargets(value);
+
+        if (targets.length === 0) {
+            return;
+        }
+
+        for (const target of targets) {
+            dependency.targets.add(target);
+        }
+
+        for (const file of absoluteFiles) {
+            const owner = ownerPackage(file, options.workspacePackages ?? []);
+
+            if (owner !== undefined && relative(options.cwd, owner) !== "") {
+                dependency.packages.add(owner);
+            }
+        }
+    };
+
     /**
      * Expands a command task into one descriptor per execution unit:
      *
@@ -85,6 +160,8 @@ export const buildTaskGraph = async (options: BuildTaskGraphOptions): Promise<Pa
      * - neither set behaves exactly like a bare command string.
      */
     const expandCommandTask = (value: CommandTask, view: ReadonlyArray<string>, absoluteFiles: ReadonlyArray<string>, commands: CommandDescriptor[]): void => {
+        collectDependencies(value, absoluteFiles);
+
         if (value.perPackage === true) {
             const packageDirs = options.workspacePackages ?? [];
             const groups = new Map<string, string[]>();
@@ -282,7 +359,32 @@ export const buildTaskGraph = async (options: BuildTaskGraphOptions): Promise<Pa
         });
     }
 
-    return patterns;
+    if (dependency.targets.size > 1) {
+        throw new ConfigError(
+            `Staged \`dependsOn\` names more than one target (${[...dependency.targets].map((target) => `^${target}`).join(", ")}); \`vis run\` builds one target per call, so every entry must name the same one.`,
+        );
+    }
+
+    const [target] = dependency.targets;
+
+    if (target === undefined || dependency.packages.size === 0 || patterns.length === 0) {
+        return patterns;
+    }
+
+    const command = dependencyBuildCommand(target, [...dependency.packages].sort(), options.cwd, options.visEntry ?? [process.execPath, process.argv[1] ?? "vis"]);
+    const title = `${target} dependencies of ${dependency.packages.size} package${dependency.packages.size === 1 ? "" : "s"}`;
+
+    return [
+        {
+            commands: [{ command, files: [], id: nextCommandId(), source: "string", title, verbatim: true }],
+            files: [],
+            id: nextPatternId(),
+            pattern: "dependsOn",
+            prerequisite: true,
+            title,
+        },
+        ...patterns,
+    ];
 };
 
-export { isCommandTask, isCustomTask };
+export { dependencyTargets, isCommandTask, isCustomTask };
