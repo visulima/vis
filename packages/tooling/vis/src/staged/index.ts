@@ -132,6 +132,11 @@ export const runStaged = async (options: RunOptions = {}): Promise<RunResult> =>
             cwd,
             files: candidateFiles,
             relative: options.relative,
+            // `vis staged` is the only caller, so the running entry is vis.
+            visEntry: [process.execPath, process.argv[1] ?? "vis"],
+            warn: (message) => {
+                renderer.warn({ message });
+            },
             workspacePackages: resolveWorkspacePackages(cwd),
         });
 

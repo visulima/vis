@@ -92,16 +92,16 @@ staged: {
 
 `^build` runs the `build` target for the dependencies of every workspace package that owns
 a matched file, through the project graph and the task cache. It does not build those
-packages themselves. vis makes one `vis run build --if-present` call for the whole staged
-run, covering every entry that sets `dependsOn`, and finishes it before any staged command
-starts. A build tool that cleans `dist/` when it starts would otherwise race a second build
-or a lint that is reading the declarations. If the build fails, every staged command is
-skipped, including with `--continue-on-error`.
+packages themselves. vis makes one `vis run :build --if-present` call per target for the
+whole staged run, covering every entry that sets `dependsOn`, and finishes those calls one
+after another before any staged command starts. A build tool that cleans `dist/` when it
+starts would otherwise race another build or a lint that is reading the declarations. The
+lockfile and toolchain preflights are skipped for these calls. If a build fails, every
+staged command is skipped, including with `--continue-on-error`.
 
 A package with no workspace dependencies selects nothing, which is not an error. Files
-under no workspace package add nothing to the build. Only the `^<target>` form is
-accepted, and every entry must name the same target, since one `vis run` call runs one
-target.
+under no workspace package add nothing to the build. When vis cannot find the workspace
+packages at all, it warns and builds nothing. Only the `^<target>` form is accepted.
 
 > Both `perPackage` and `cwd` also prepend the target directory's `node_modules/.bin`
 > to `PATH`, so bare binary names resolve from the package's own dependencies.

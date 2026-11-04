@@ -145,10 +145,9 @@ export const runTasks = async (patterns: ReadonlyArray<PatternDescriptor>, rende
         }
     };
 
-    // Prerequisites (the `dependsOn` build) finish before any worker starts,
-    // so no command reads a `dist/` the build is still rewriting. A failed one
-    // cancels the rest even under `continueOnError`: linting against unbuilt
-    // dependencies is exactly the false result it exists to prevent.
+    // Prerequisites (the `dependsOn` builds) run one at a time and finish
+    // before any worker starts, so no command reads a `dist/` a build is still
+    // rewriting. A failure skips the rest through the usual `cancel()` path.
     while (index < patterns.length && patterns[index]?.prerequisite === true) {
         const prerequisite = patterns[index] as PatternDescriptor;
 

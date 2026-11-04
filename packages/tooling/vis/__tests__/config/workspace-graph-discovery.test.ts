@@ -243,9 +243,10 @@ describe("workspace root project", () => {
         expect(targets["test"]).toBeDefined();
     });
 
-    it("should drop root scripts that only forward their own name to other projects through pnpm", () => {
+    it("should drop a root script that only forwards its own name to a project that has that target", () => {
         expect.assertions(1);
 
+        writePackage(scratch, "packages/a", { name: "a", scripts: { e2e: "playwright test", "e2e:examples": "playwright test examples", lint: "eslint ." } });
         writePackage(
             scratch,
             ".",
@@ -253,16 +254,12 @@ describe("workspace root project", () => {
                 name: "fixture-root",
                 private: true,
                 scripts: {
-                    "dev:docs": "pnpm --dir apps/docs dev:docs",
-                    e2e: "pnpm --filter @org/e2e e2e",
-                    "e2e:examples": "pnpm --filter \"@org/e2e\" run e2e:examples -- --headed",
+                    e2e: "pnpm --filter a e2e",
+                    // Kept: passes arguments on, a pnpm built-in, and a name no other project has.
+                    "e2e:examples": "pnpm --filter \"a\" run e2e:examples -- --headed",
                     lint: "pnpm -r --if-present run lint",
-                    "lint:oxfmt": "pnpm -F=@org/a lint:oxfmt",
-                    // Kept: a different name, a compound command, exec, an unknown flag.
-                    "lint:root": "pnpm --filter @org/a lint",
-                    "test:e2e": "pnpm --filter @org/e2e build && pnpm --filter @org/e2e test:e2e",
-                    typecheck: "pnpm --filter @org/a exec tsc --noEmit",
-                    up: "pnpm --workspace-concurrency 1 --filter @org/a up",
+                    outdated: "pnpm -r outdated",
+                    typecheck: "pnpm --filter a typecheck",
                 },
             },
             { name: "workspace-root" },
@@ -270,7 +267,7 @@ describe("workspace root project", () => {
 
         const targets = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets ?? {};
 
-        expect(Object.keys(targets).toSorted()).toStrictEqual(["lint:root", "test:e2e", "typecheck", "up"]);
+        expect(Object.keys(targets).toSorted()).toStrictEqual(["e2e:examples", "outdated", "typecheck"]);
     });
 
     it("should remove a target set to null in project.json from every source that would add it", () => {

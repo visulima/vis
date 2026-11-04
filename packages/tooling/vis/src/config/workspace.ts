@@ -52,6 +52,7 @@ import { applyImplicitDependencies } from "./implicit-dependencies";
 import { readMavenProjectArtifact, resolveMavenProjectDirectories } from "./maven-projects";
 import { resolveNuGetProjectDirectories } from "./nuget-projects";
 import { readPythonProjectName, resolvePythonProjectDirectories } from "./python-projects";
+import { withoutForwardingScripts } from "./root-forwarding-scripts";
 import { readSwiftProjectName, resolveSwiftProjectDirectories } from "./swift-projects";
 import type {
     PackageJson,
@@ -393,86 +394,35 @@ const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): st
     return [".", ...workspacePatterns];
 };
 
-const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
-
-/** pnpm flags that point a command at another workspace project; each takes a value. */
-const PNPM_PROJECT_FLAGS = new Set(["--dir", "--filter", "-C", "-F"]);
-/** pnpm flags that take no value and may sit between the selector and the script. */
-const PNPM_SWITCHES = new Set(["--if-present", "--parallel", "--reporter-hide-prefix", "--sequential", "--silent", "--stream", "-s"]);
-
 /**
- * The script a root command hands to other workspace projects, as in
- * `pnpm --filter e2e e2e` or `pnpm -r run lint`; `undefined` for anything
- * else. Deliberately narrow: a compound command, `exec`, or a flag it does not
- * know keeps the script, since dropping a real root script is worse than a
- * duplicate target the project can still remove with `targets: { x: null }`.
+ * Splits `project.json` targets into the definitions and the names set to
+ * `null`, which remove a target the project would otherwise get. Nothing past
+ * this point sees a `null`.
  */
-const delegatedScript = (command: string): string | undefined => {
-    if (/[\n\r;&|`<>]|\$\(/.test(command)) {
-        return undefined;
+const partitionRemovedTargets = (
+    targets: ProjectJson["targets"],
+): { removed: ReadonlySet<string>; targets: Record<string, VisTargetConfiguration> | undefined } => {
+    if (targets === undefined) {
+        return { removed: new Set(), targets: undefined };
     }
 
-    const tokens = command.trim().split(/\s+/).map((token) => token.replaceAll(/^["']|["']$/g, ""));
+    const removed = new Set<string>();
+    const kept: Record<string, VisTargetConfiguration> = {};
 
-    if (tokens[0] !== "pnpm") {
-        return undefined;
-    }
-
-    let delegates = false;
-    let index = 1;
-
-    while (index < tokens.length) {
-        const token = tokens[index] as string;
-        const flag = token.split("=", 1)[0] as string;
-
-        if (PNPM_PROJECT_FLAGS.has(flag)) {
-            delegates = true;
-            index += token.includes("=") ? 1 : 2;
-        } else if (token === "-r" || token === "--recursive") {
-            delegates = true;
-            index += 1;
-        } else if (PNPM_SWITCHES.has(token)) {
-            index += 1;
+    for (const [name, target] of Object.entries(targets)) {
+        if (target === null) {
+            removed.add(name);
         } else {
-            break;
+            kept[name] = target;
         }
     }
 
-    if (tokens[index] === "run") {
-        index += 1;
-    }
-
-    const script = tokens[index];
-
-    return delegates && script !== undefined && !script.startsWith("-") && script !== "exec" ? script : undefined;
+    return { removed, targets: kept };
 };
 
-/**
- * Drops the root scripts that only re-run their own name somewhere else:
- * `"build": "vis run build"` would select the root project again and spawn
- * `vis run build` without end, and `"e2e": "pnpm --filter e2e e2e"`
- * would run the e2e project's script a second time, concurrently, next to
- * the e2e project's own target.
- */
-const withoutForwardingScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
-    if (scripts === undefined) {
-        return undefined;
-    }
-
-    return Object.fromEntries(
-        Object.entries(scripts).filter(([name, command]) => {
-            for (const match of command.matchAll(VIS_RUN_RE)) {
-                const target = match[1]!.split(/\s+/).find((token) => token.length > 0 && !token.startsWith("-"));
-
-                if (target === name) {
-                    return false;
-                }
-            }
-
-            return delegatedScript(command) !== name;
-        }),
-    );
-};
+/** `record` without the keys in `removed`; the same object when nothing is removed. */
+const withoutKeys = <T>(record: Record<string, T> | undefined, removed: ReadonlySet<string>): Record<string, T> | undefined =>
+    (record === undefined || removed.size === 0 ? record : Object.fromEntries(Object.entries(record).filter(([name]) => !removed.has(name))));
 
 /**
  * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
@@ -1101,7 +1051,7 @@ const createTargetsFromScripts = (
  * {@link mergeTargetWithInherit}, which honours the `@inherit` sentinel.
  */
 const mergeProjectTargets = (
-    projectJsonTargets: Record<string, VisTargetConfiguration | null> | undefined,
+    projectJsonTargets: Record<string, VisTargetConfiguration> | undefined,
     visTaskTargets: Record<string, VisTargetConfiguration> | undefined,
 ): Record<string, VisTargetConfiguration> | undefined => {
     if (projectJsonTargets === undefined && visTaskTargets === undefined) {
@@ -1112,7 +1062,7 @@ const mergeProjectTargets = (
     const out: Record<string, VisTargetConfiguration> = {};
 
     for (const name of names) {
-        out[name] = mergeTargetWithInherit(projectJsonTargets?.[name] ?? undefined, visTaskTargets?.[name]);
+        out[name] = mergeTargetWithInherit(projectJsonTargets?.[name], visTaskTargets?.[name]);
     }
 
     return out;
@@ -1222,7 +1172,12 @@ const discoverWorkspace = (
         nonJsDiscoverOptions(config),
     );
 
-    for (const projectDirectory of projectDirectories) {
+    // The root comes last: whether a root script only forwards to another
+    // project depends on the targets every other project ended up with.
+    const targetsElsewhere = new Set<string>();
+    const discoveryOrder = [...projectDirectories.filter((directory) => directory !== "."), ...projectDirectories.filter((directory) => directory === ".")];
+
+    for (const projectDirectory of discoveryOrder) {
         const nonJs = nonJsEcosystems.get(projectDirectory);
         const isNonJs = nonJs !== undefined;
         const pkg = isNonJs ? undefined : readJsonFileSafe<PackageJson>(join(workspaceRoot, projectDirectory, "package.json"));
@@ -1262,11 +1217,9 @@ const discoverWorkspace = (
 
         const defaults = collectTargetDefaults(config, projectJson, projectType);
 
-        // `null` in project.json removes the target from every source below
-        // (script, task default, inference) — see `removedTargets` at the end.
-        const removedTargets = Object.entries(projectJson?.targets ?? {}).filter(([, target]) => target === null).map(([name]) => name);
-        const overlayTargets = mergeProjectTargets(projectJson?.targets, taskConfigs?.get(projectDirectory)?.tasks);
-        const scripts = projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts) : pkg?.scripts;
+        const { removed: removedTargets, targets: projectJsonTargets } = partitionRemovedTargets(projectJson?.targets);
+        const overlayTargets = withoutKeys(mergeProjectTargets(projectJsonTargets, taskConfigs?.get(projectDirectory)?.tasks), removedTargets);
+        const scripts = withoutKeys(projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts, targetsElsewhere) : pkg?.scripts, removedTargets);
         const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
@@ -1379,8 +1332,15 @@ const discoverWorkspace = (
             }
         }
 
+        // Task defaults and inference add targets on their own; drop removed ones last.
         for (const name of removedTargets) {
             Reflect.deleteProperty(visTargets, name);
+        }
+
+        if (projectDirectory !== ".") {
+            for (const name of Object.keys(visTargets)) {
+                targetsElsewhere.add(name);
+            }
         }
 
         projectOptions.set(projectName, visTargets);

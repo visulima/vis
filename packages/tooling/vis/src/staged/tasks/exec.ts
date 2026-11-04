@@ -1,88 +1,20 @@
 import { withEnhancedPath } from "@visulima/task-runner";
 import { x } from "tinyexec";
 
+import { splitCommandString } from "../../util/command-string";
 import { ConfigError, TaskError } from "../errors";
 
 /**
- * Minimal quote-aware argv splitter. Handles single and double quotes,
- * backslash escapes (both outside and inside double quotes, matching
- * POSIX shell semantics), and collapses runs of whitespace — enough for
- * the shell-like syntax users put in their staged config without
- * dragging in `string-argv`.
- *
- * Inside single quotes everything is literal (POSIX semantics). Inside
- * double quotes, `\"` and `\\` are interpreted; other backslash
- * sequences are preserved verbatim.
- *
- * Throws `ConfigError` on unterminated quotes so typos in config fail
- * fast instead of silently swallowing the rest of the command.
+ * Splits a staged command into argv. An unterminated quote is a
+ * `ConfigError`, so a typo in config fails fast instead of swallowing the
+ * rest of the command.
  */
 export const parseCommandString = (input: string): string[] => {
-    const tokens: string[] = [];
-    let buffer = "";
-    let inSingle = false;
-    let inDouble = false;
-
-    for (let i = 0; i < input.length; i += 1) {
-        const character = input[i];
-
-        if (character === undefined) {
-            break;
-        }
-
-        // Backslash escapes: outside any quotes, escape the next character verbatim.
-        // Inside double quotes, only `\"` and `\\` are recognised; other sequences keep the backslash.
-        // Inside single quotes backslashes are literal (POSIX sh behaviour).
-        if (character === "\\" && !inSingle && i + 1 < input.length) {
-            const next = input[i + 1];
-
-            if (next !== undefined) {
-                if (inDouble && next !== "\"" && next !== "\\") {
-                    buffer += character;
-                    buffer += next;
-                } else {
-                    buffer += next;
-                }
-
-                i += 1;
-
-                continue;
-            }
-        }
-
-        if (character === "\"" && !inSingle) {
-            inDouble = !inDouble;
-
-            continue;
-        }
-
-        if (character === "'" && !inDouble) {
-            inSingle = !inSingle;
-
-            continue;
-        }
-
-        if (!inSingle && !inDouble && /\s/.test(character)) {
-            if (buffer.length > 0) {
-                tokens.push(buffer);
-                buffer = "";
-            }
-
-            continue;
-        }
-
-        buffer += character;
+    try {
+        return splitCommandString(input);
+    } catch (error) {
+        throw new ConfigError((error as Error).message);
     }
-
-    if (inSingle || inDouble) {
-        throw new ConfigError(`Unterminated ${inSingle ? "single" : "double"} quote in command: ${input}`);
-    }
-
-    if (buffer.length > 0) {
-        tokens.push(buffer);
-    }
-
-    return tokens;
 };
 
 /**

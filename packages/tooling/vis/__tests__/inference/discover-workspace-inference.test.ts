@@ -53,6 +53,20 @@ describe("discoverWorkspace target inference", () => {
         expect(workspace.projects["@fix/alpha"]?.targets?.["build"]?.command).toBe("vite build");
     });
 
+    it("keeps inferring the other targets when project.json removes one with null", () => {
+        expect.assertions(2);
+
+        writeProject(scratch, "alpha", {
+            configFile: { contents: "export default {}", path: "vite.config.ts" },
+            projectJson: { targets: { preview: null } },
+        });
+
+        const targets = discoverWorkspace(scratch, {}).workspace.projects["@fix/alpha"]?.targets ?? {};
+
+        expect(targets["preview"]).toBeUndefined();
+        expect(targets["build"]?.command).toBe("vite build");
+    });
+
     it("does not synthesize a new target for a project that declares its own scripts", () => {
         expect.assertions(2);
 
