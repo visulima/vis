@@ -7,12 +7,13 @@
  * "generate → commit → ci release" dance, and so both entry points can
  * never drift on range resolution or release-commit filtering.
  *
- * Two-tier resolution per commit (matches bumpy):
+ * Per commit:
  *   1. Conventional-commits parse → `feat`→minor, `fix`/`perf`→patch,
- *      `BREAKING CHANGE`/`!`→major. Scope used to look up the package
- *      when present.
- *   2. File-path-based: detect changed packages from the commit's file
- *      diff; default level `patch`.
+ *      `BREAKING CHANGE`/`!`→major; `patch` when the header is not
+ *      conventional.
+ *   2. Targets: the packages the scope names, plus the packages whose
+ *      files the commit changes. Both, so a squash-merged
+ *      `perf(studio): …` that also edits `codegen` releases codegen too.
  *
  * Multiple commits affecting the same package max-merge their levels.
  *
@@ -384,10 +385,11 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
             level = CC_TYPE_TO_BUMP[parsed.type] ?? "patch";
         }
 
-        // Map by scope first, then by file paths from the same commit. A
-        // comma-separated scope (`feat(client,react): …`) targets every
-        // package one of its parts names; the file fallback applies only
-        // when none does. `/` is not a separator — `@scope/pkg` is one name.
+        // The packages the scope names plus the packages whose files the
+        // commit changes: a squash merge's title scopes one package, while
+        // its diff can span several. A comma-separated scope
+        // (`feat(client,react): …`) names several; `/` is not a separator —
+        // `@scope/pkg` is one name.
         const targets = new Set<string>();
         const scopes = (parsed.scope ?? "")
             .split(",")
@@ -402,13 +404,11 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
             }
         }
 
-        if (targets.size === 0) {
-            for (const file of files) {
-                const owner = findPackageForFile(file);
+        for (const file of files) {
+            const owner = findPackageForFile(file);
 
-                if (owner) {
-                    targets.add(owner);
-                }
+            if (owner) {
+                targets.add(owner);
             }
         }
 

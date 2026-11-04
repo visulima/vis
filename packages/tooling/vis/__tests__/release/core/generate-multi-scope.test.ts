@@ -1,7 +1,8 @@
 /**
  * `vis release generate` with comma-separated scopes (`feat(a,b): …`):
  * the header must parse as conventional (so the type sets the bump), and
- * every listed scope that names a package must be targeted.
+ * every listed scope that names a package must be targeted, on top of the
+ * packages whose files the commit changes.
  */
 
 import { execFileSync } from "node:child_process";
@@ -52,18 +53,21 @@ const setupFixture = (): { cwd: string; packages: WorkspacePackage[]; rootSha: s
     return { cwd, packages, rootSha: execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim() };
 };
 
-/** Every commit touches only `packages/c`, so a scope match is the only way to reach `a` or `b`. */
-const commitTouchingC = (cwd: string, subject: string): void => {
-    writeFileSync(join(cwd, "packages", "c", "src", "index.ts"), `export const c = ${JSON.stringify(subject)};\n`);
+/** Commits touch `packages/c` unless told otherwise, so a scope match is the only way to reach `a` or `b`. */
+const commitTouching = (cwd: string, subject: string, touched: ReadonlyArray<string>): void => {
+    for (const name of touched) {
+        writeFileSync(join(cwd, "packages", name, "src", "index.ts"), `export const ${name} = ${JSON.stringify(subject)};\n`);
+    }
+
     git(cwd, "add", ".");
     git(cwd, "commit", "-q", "-m", subject);
 };
 
-const generate = async (subject: string): Promise<{ bumps: Record<string, BumpLevel>; content: string }> => {
+const generate = async (subject: string, touched: ReadonlyArray<string> = ["c"]): Promise<{ bumps: Record<string, BumpLevel>; content: string }> => {
     const fixture = setupFixture();
 
     cwd = fixture.cwd;
-    commitTouchingC(fixture.cwd, subject);
+    commitTouching(fixture.cwd, subject, touched);
 
     const result = await runGenerate({
         config: {},
@@ -99,12 +103,12 @@ describe("generate — comma-separated scopes", () => {
         expect(parseCommit("fix(do, client)!: drop v1 frames", "")).toStrictEqual({ breaking: true, scope: "do, client", type: "fix" });
     });
 
-    it("bumps every package the scope lists, at the level the type sets", async () => {
+    it("bumps every package the scope lists and every package the commit changed, at the level the type sets", async () => {
         expect.hasAssertions();
 
         const { bumps, content } = await generate("feat(a,b): share the cache");
 
-        expect(bumps).toStrictEqual({ "@scope/a": "minor", "@scope/b": "minor" });
+        expect(bumps).toStrictEqual({ "@scope/a": "minor", "@scope/b": "minor", "@scope/c": "minor" });
         expect(content).toContain("- feat(a,b): share the cache");
     });
 
@@ -113,7 +117,7 @@ describe("generate — comma-separated scopes", () => {
 
         const { bumps } = await generate("feat(a, b)!: drop the v1 cache");
 
-        expect(bumps).toStrictEqual({ "@scope/a": "major", "@scope/b": "major" });
+        expect(bumps).toStrictEqual({ "@scope/a": "major", "@scope/b": "major", "@scope/c": "major" });
     });
 
     it("targets the parts that name a package and ignores the rest", async () => {
@@ -121,7 +125,7 @@ describe("generate — comma-separated scopes", () => {
 
         const { bumps } = await generate("fix(a,docs): correct the example");
 
-        expect(bumps).toStrictEqual({ "@scope/a": "patch" });
+        expect(bumps).toStrictEqual({ "@scope/a": "patch", "@scope/c": "patch" });
     });
 
     it("matches a full package name as one part", async () => {
@@ -129,15 +133,24 @@ describe("generate — comma-separated scopes", () => {
 
         const { bumps } = await generate("fix(@scope/a,b): correct the example");
 
-        expect(bumps).toStrictEqual({ "@scope/a": "patch", "@scope/b": "patch" });
+        expect(bumps).toStrictEqual({ "@scope/a": "patch", "@scope/b": "patch", "@scope/c": "patch" });
     });
 
-    it("falls back to the changed files when no part names a package", async () => {
+    it("targets only the changed files when no part names a package", async () => {
         expect.hasAssertions();
 
         const { bumps } = await generate("feat(docs,examples): add a guide");
 
         expect(bumps).toStrictEqual({ "@scope/c": "minor" });
+    });
+
+    it("releases every package a scoped commit changed, not only the scope's (a squash merge)", async () => {
+        expect.hasAssertions();
+
+        const { bumps, content } = await generate("perf(a): serve procedures from a sidecar", ["a", "b"]);
+
+        expect(bumps).toStrictEqual({ "@scope/a": "patch", "@scope/b": "patch" });
+        expect(content).toContain("- perf(a): serve procedures from a sidecar");
     });
 
     it("files the generated line under Features in the changelog", async () => {
