@@ -395,12 +395,66 @@ const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): st
 
 const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
 
+/** pnpm flags that point a command at another workspace project; each takes a value. */
+const PNPM_PROJECT_FLAGS = new Set(["--dir", "--filter", "-C", "-F"]);
+/** pnpm flags that take no value and may sit between the selector and the script. */
+const PNPM_SWITCHES = new Set(["--if-present", "--parallel", "--reporter-hide-prefix", "--sequential", "--silent", "--stream", "-s"]);
+
 /**
- * Drops the root scripts that run their own target through `vis run`, such as
- * `"build": "vis run build"`. As targets of the root project they would select
- * the root project again and spawn `vis run build` without end.
+ * The script a root command hands to other workspace projects, as in
+ * `pnpm --filter e2e e2e` or `pnpm -r run lint`; `undefined` for anything
+ * else. Deliberately narrow: a compound command, `exec`, or a flag it does not
+ * know keeps the script, since dropping a real root script is worse than a
+ * duplicate target the project can still remove with `targets: { x: null }`.
  */
-const withoutSelfRunScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
+const delegatedScript = (command: string): string | undefined => {
+    if (/[\n\r;&|`<>]|\$\(/.test(command)) {
+        return undefined;
+    }
+
+    const tokens = command.trim().split(/\s+/).map((token) => token.replaceAll(/^["']|["']$/g, ""));
+
+    if (tokens[0] !== "pnpm") {
+        return undefined;
+    }
+
+    let delegates = false;
+    let index = 1;
+
+    while (index < tokens.length) {
+        const token = tokens[index] as string;
+        const flag = token.split("=", 1)[0] as string;
+
+        if (PNPM_PROJECT_FLAGS.has(flag)) {
+            delegates = true;
+            index += token.includes("=") ? 1 : 2;
+        } else if (token === "-r" || token === "--recursive") {
+            delegates = true;
+            index += 1;
+        } else if (PNPM_SWITCHES.has(token)) {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+
+    if (tokens[index] === "run") {
+        index += 1;
+    }
+
+    const script = tokens[index];
+
+    return delegates && script !== undefined && !script.startsWith("-") && script !== "exec" ? script : undefined;
+};
+
+/**
+ * Drops the root scripts that only re-run their own name somewhere else:
+ * `"build": "vis run build"` would select the root project again and spawn
+ * `vis run build` without end, and `"e2e": "pnpm --filter e2e e2e"`
+ * would run the e2e project's script a second time, concurrently, next to
+ * the e2e project's own target.
+ */
+const withoutForwardingScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
     if (scripts === undefined) {
         return undefined;
     }
@@ -415,7 +469,7 @@ const withoutSelfRunScripts = (scripts: Record<string, string> | undefined): Rec
                 }
             }
 
-            return true;
+            return delegatedScript(command) !== name;
         }),
     );
 };
@@ -1047,7 +1101,7 @@ const createTargetsFromScripts = (
  * {@link mergeTargetWithInherit}, which honours the `@inherit` sentinel.
  */
 const mergeProjectTargets = (
-    projectJsonTargets: Record<string, VisTargetConfiguration> | undefined,
+    projectJsonTargets: Record<string, VisTargetConfiguration | null> | undefined,
     visTaskTargets: Record<string, VisTargetConfiguration> | undefined,
 ): Record<string, VisTargetConfiguration> | undefined => {
     if (projectJsonTargets === undefined && visTaskTargets === undefined) {
@@ -1058,7 +1112,7 @@ const mergeProjectTargets = (
     const out: Record<string, VisTargetConfiguration> = {};
 
     for (const name of names) {
-        out[name] = mergeTargetWithInherit(projectJsonTargets?.[name], visTaskTargets?.[name]);
+        out[name] = mergeTargetWithInherit(projectJsonTargets?.[name] ?? undefined, visTaskTargets?.[name]);
     }
 
     return out;
@@ -1208,8 +1262,11 @@ const discoverWorkspace = (
 
         const defaults = collectTargetDefaults(config, projectJson, projectType);
 
+        // `null` in project.json removes the target from every source below
+        // (script, task default, inference) — see `removedTargets` at the end.
+        const removedTargets = Object.entries(projectJson?.targets ?? {}).filter(([, target]) => target === null).map(([name]) => name);
         const overlayTargets = mergeProjectTargets(projectJson?.targets, taskConfigs?.get(projectDirectory)?.tasks);
-        const scripts = projectDirectory === "." ? withoutSelfRunScripts(pkg?.scripts) : pkg?.scripts;
+        const scripts = projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts) : pkg?.scripts;
         const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
@@ -1320,6 +1377,10 @@ const discoverWorkspace = (
             if (target.type === "build" && target.cache === true && !hasOutputs) {
                 visTargets[name] = { ...target, outputs: [{ auto: true }] satisfies OutputSpec[] };
             }
+        }
+
+        for (const name of removedTargets) {
+            Reflect.deleteProperty(visTargets, name);
         }
 
         projectOptions.set(projectName, visTargets);

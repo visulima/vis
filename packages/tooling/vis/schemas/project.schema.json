@@ -106,9 +106,16 @@
         "targets": {
             "type": "object",
             "additionalProperties": {
-                "$ref": "#/$defs/VisTargetConfiguration"
+                "anyOf": [
+                    {
+                        "$ref": "#/$defs/VisTargetConfiguration"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
             },
-            "description": "Vis-style target definitions (merged on top of package.json scripts)."
+            "description": "Vis-style target definitions (merged on top of package.json scripts). `null` removes a target the project would otherwise get from a `package.json` script, a workspace task default, or target inference — e.g. a root convenience script that only forwards to another project."
         },
         "$schema": {
             "type": "string",
