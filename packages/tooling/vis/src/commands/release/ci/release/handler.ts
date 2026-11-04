@@ -46,7 +46,9 @@ import {
 import {
     applyContext,
     buildContext,
+    describeUnreleasedDependencies,
     findMissingReleases,
+    findUnreleasedDependencies,
     publishContext,
     publishMissing,
     syncLockfile,
@@ -464,6 +466,18 @@ const runRelease = async ({ fs, logger, options, workspaceRoot }: Toolbox<Consol
             const { hint } = error as { hint?: string };
 
             logger.error(`The OIDC check failed, nothing was published: ${(error as Error).message}${hint ? ` ${hint}` : ""}`);
+            process.exitCode = 1;
+
+            return;
+        }
+
+        // Also before the version commit: once it exists, its dependents' ranges already name the missing versions.
+        const unreleased = await findUnreleasedDependencies(ctx, ctx.plan.releases, { runner });
+
+        if (unreleased.size > 0) {
+            logger.error(
+                `These releases depend on versions that are not on the registry, nothing was versioned or published:\n  - ${describeUnreleasedDependencies(unreleased)}\nRelease those dependencies first (add a change file for them) or fix the range.`,
+            );
             process.exitCode = 1;
 
             return;

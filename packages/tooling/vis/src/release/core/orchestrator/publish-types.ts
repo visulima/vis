@@ -1,4 +1,5 @@
 import type { VersionActions } from "../version-actions/interface";
+import type { RegistryProbe } from "./publish-dependencies";
 
 // ── Publish phase ──────────────────────────────────────────────────
 export interface PublishContextOptions {
@@ -28,6 +29,8 @@ export interface PublishContextOptions {
      * Production callers should leave this unset.
      */
     publishActionsOverride?: VersionActions;
+    /** Test-only override of the npm registry lookup that checks each release's dependencies are published. */
+    registryProbe?: RegistryProbe;
     /** Resume from previous run's state file. */
     resume?: boolean;
     tag?: string;

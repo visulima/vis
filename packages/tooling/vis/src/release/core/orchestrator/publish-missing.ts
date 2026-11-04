@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import semver from "semver";
 
 import { DEFAULT_CHANGES_DIR } from "../../config";
-import type { PlannedRelease, WorkspacePackage } from "../../types";
+import type { PlannedRelease } from "../../types";
 import { formatChangeFile } from "../change-file";
 import { DEFAULT_RELEASE_COMMIT_PATTERNS } from "../generate/conventional-commits";
 import { createTag, defaultTagFor, pushTags, renderTagPattern, resolveReleaseSource } from "../git";
@@ -13,6 +13,8 @@ import { createShellRunner } from "../shell-runner";
 import { clearCurrentVersionMemo, resolveCurrentVersion } from "../version-resolver";
 import type { OrchestratorContext } from "./context";
 import { publishContext } from "./publish";
+import type { RegistryProbe } from "./publish-dependencies";
+import { npmRegistryProbe } from "./publish-dependencies";
 import type { PublishContextOptions, PublishContextResult } from "./publish-types";
 
 /**
@@ -51,33 +53,6 @@ export interface FindMissingReleasesResult {
     /** Versions to release from HEAD with the next wave, see {@link StrandedRelease}. */
     stranded: StrandedRelease[];
 }
-
-/** `true` = the registry has the version, `false` = it does not, `undefined` = could not tell. */
-export type RegistryProbe = (pkg: WorkspacePackage, version: string, registry: string | undefined) => Promise<boolean | undefined>;
-
-/**
- * Ask npm whether `name@version` exists, from the directory the publish runs
- * in (the workspace root) so both read the same `.npmrc` registry + auth. Only a definite answer counts: npm ≥ 10 exits
- * E404 for a missing version, older npm exits 0 with empty output. Any other
- * failure (auth, network) is "unknown", and an unknown is never published.
- */
-const npmRegistryProbe
-    = (runner: CommandRunner, cwd: string): RegistryProbe =>
-        async (pkg, version, registry) => {
-            const args = ["view", `${pkg.name}@${version}`, "version"];
-
-            if (registry) {
-                args.push("--registry", registry);
-            }
-
-            const result = await runner.run("npm", args, { cwd, silent: true });
-
-            if (result.exitCode === 0) {
-                return result.stdout.trim() !== "";
-            }
-
-            return /\bE404\b/.test(`${result.stdout}\n${result.stderr}`) ? false : undefined;
-        };
 
 /**
  * The commit that last changed the manifest's `version` field, with its
@@ -254,8 +229,6 @@ export interface PublishMissingOptions extends PublishContextOptions {
     deferRecovery?: boolean;
     /** Limit to packages matching these globs. */
     projects?: string[];
-    /** Test-only override of the npm registry lookup. */
-    registryProbe?: RegistryProbe;
 }
 
 export interface PublishMissingResult extends PublishContextResult {

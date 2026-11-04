@@ -94,6 +94,7 @@ const publishResult = {
 };
 // Pushed onto the context's plan by the stubbed publish, the way the post-publish steps report.
 const publishWarnings: string[] = [];
+const unreleasedDependencies = new Map<string, { dependency: string; range: string; unknown: boolean }[]>();
 const publishMissingMock = vi.fn(async () => {
     callOrder.push("publishMissing");
 
@@ -114,6 +115,8 @@ vi.mock(import("../../../src/release/core/orchestrator"), async (importOriginal)
                 plan: { consumedChangeFiles: [], releases: [], warnings: [] },
             };
         }),
+        // The fixtures' dependencies are never on a registry; a test fills the answer in instead.
+        findUnreleasedDependencies: vi.fn(async () => unreleasedDependencies),
         publishContext: vi.fn(async (ctx: { plan: { warnings: string[] } }, options: { resume?: boolean; tag?: string } = {}) => {
             callOrder.push("publishContext");
             publishOptionsCaptured.push({ ...options });
@@ -155,6 +158,7 @@ describe("vis release ci release — C7 publish idempotency", () => {
         publishResult.published = [];
         publishResult.skipped = [];
         publishWarnings.length = 0;
+        unreleasedDependencies.clear();
         process.exitCode = undefined;
         // Off by default: vis's own CI runs on GitHub Actions, and the fixtures' failures are not its annotations.
         vi.stubEnv("GITHUB_ACTIONS", "");
@@ -285,6 +289,20 @@ describe("vis release ci release — C7 publish idempotency", () => {
 
         expect(callOrder).toStrictEqual(["publishMissing"]);
         expect(process.exitCode).toBe(1);
+    });
+
+    it("auto-publish mode → versions nothing when a release depends on a version missing from the registry", async () => {
+        expect.hasAssertions();
+
+        const errors: string[] = [];
+
+        unreleasedDependencies.set("@scope/a", [{ dependency: "@scope/b", range: "^2.1.0", unknown: false }]);
+
+        await runAutoPublish({}, { ...silentLogger, error: (message: string) => errors.push(message) });
+
+        expect(callOrder).toStrictEqual(["publishMissing"]);
+        expect(process.exitCode).toBe(1);
+        expect(errors).toStrictEqual([expect.stringContaining("@scope/a needs @scope/b@^2.1.0")]);
     });
 
     it("auto-publish mode → stops before a new wave when recovering a missing version fails", async () => {
