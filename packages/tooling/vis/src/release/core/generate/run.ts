@@ -386,10 +386,10 @@ export const runGenerate = async (options: RunGenerateOptions): Promise<RunGener
         }
 
         // The packages the scope names plus the packages whose files the
-        // commit changes. Scope alone missed every other package a squash
-        // merge touched: `perf(studio): …` across nine packages released one.
-        // A comma-separated scope (`feat(client,react): …`) names several;
-        // `/` is not a separator — `@scope/pkg` is one name.
+        // commit changes: a squash merge's title scopes one package, while
+        // its diff can span several. A comma-separated scope
+        // (`feat(client,react): …`) names several; `/` is not a separator —
+        // `@scope/pkg` is one name.
         const targets = new Set<string>();
         const scopes = (parsed.scope ?? "")
             .split(",")
