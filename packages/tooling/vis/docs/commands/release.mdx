@@ -747,6 +747,16 @@ vis release ci release --auto-publish --generate
 
 On an auto-publish channel the command first recovers what an earlier, partly failed wave left behind, exactly as [`vis release publish --missing`](#vis-release-publish) does; if that recovery fails, it exits `2` before versioning anything new. It then commits the new versions and **pushes that commit before publishing**, and only pushes the tags once the publish is done. If the push is rejected, the run stops before publishing the new wave (versions recovered in the first step stay published). A package with an earlier release tag that then fails to publish stays committed but untagged, and the next run's recovery publishes it; a failed first release is not recovered (see above).
 
+A package is never released against a dependency that is not on the registry. Before the version commit is made, and again before `vis release publish` publishes anything, every `dependencies`, `peerDependencies` and `optionalDependencies` entry that points at another workspace package outside the wave is resolved to the range the published manifest will carry (`workspace:^` becomes `^<version>`), and the registry must hold a version that satisfies it. If the registry has none, or cannot be reached, the run exits `1` with nothing versioned or published and names each dependency it is missing:
+
+```text
+These releases depend on versions that are not on the registry, nothing was versioned or published:
+  - @acme/cli needs @acme/runtime@^1.4.0
+Release those dependencies first (add a change file for them) or fix the range.
+```
+
+Dependencies released in the same wave publish first, and a dependent of one that fails to publish is skipped (`dependency-failed`). Private dependencies and `devDependencies` are not checked.
+
 ### Output
 
 The run names every package it touched, not only the counts, so a failed publish or PR comment is visible in the CI log without `--verbose`:

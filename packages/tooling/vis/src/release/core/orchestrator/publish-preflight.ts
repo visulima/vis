@@ -196,6 +196,19 @@ export const runPublishPreflight = async (
         }
     }
 
+    // A dependent must never reach the registry before what it depends on. Read-only, so a dry run checks too.
+    const { describeUnreleasedDependencies, findUnreleasedDependencies } = await import("./publish-dependencies");
+    const unreleased = await findUnreleasedDependencies(context, context.plan.releases, { registryProbe: options.registryProbe, runner });
+
+    if (unreleased.size > 0) {
+        result.failed.push({
+            name: "_unreleasedDependencies",
+            reason: `These releases depend on versions that are not on the registry, nothing was published:\n  - ${describeUnreleasedDependencies(unreleased)}\nRelease those dependencies first (add a change file for them) or fix the range.`,
+        });
+
+        return true;
+    }
+
     if (!options.dryRun && context.config.prePublishCommand) {
         try {
             await runHook(context.cwd, context.config.prePublishCommand, "prePublishCommand");
