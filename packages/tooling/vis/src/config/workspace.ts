@@ -52,6 +52,7 @@ import { applyImplicitDependencies } from "./implicit-dependencies";
 import { readMavenProjectArtifact, resolveMavenProjectDirectories } from "./maven-projects";
 import { resolveNuGetProjectDirectories } from "./nuget-projects";
 import { readPythonProjectName, resolvePythonProjectDirectories } from "./python-projects";
+import { withoutForwardingScripts } from "./root-forwarding-scripts";
 import { readSwiftProjectName, resolveSwiftProjectDirectories } from "./swift-projects";
 import type {
     PackageJson,
@@ -393,32 +394,35 @@ const withRootProject = (workspaceRoot: string, workspacePatterns: string[]): st
     return [".", ...workspacePatterns];
 };
 
-const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
-
 /**
- * Drops the root scripts that run their own target through `vis run`, such as
- * `"build": "vis run build"`. As targets of the root project they would select
- * the root project again and spawn `vis run build` without end.
+ * Splits `project.json` targets into the definitions and the names set to
+ * `null`, which remove a target the project would otherwise get. Nothing past
+ * this point sees a `null`.
  */
-const withoutSelfRunScripts = (scripts: Record<string, string> | undefined): Record<string, string> | undefined => {
-    if (scripts === undefined) {
-        return undefined;
+const partitionRemovedTargets = (
+    targets: ProjectJson["targets"],
+): { removed: ReadonlySet<string>; targets: Record<string, VisTargetConfiguration> | undefined } => {
+    if (targets === undefined) {
+        return { removed: new Set(), targets: undefined };
     }
 
-    return Object.fromEntries(
-        Object.entries(scripts).filter(([name, command]) => {
-            for (const match of command.matchAll(VIS_RUN_RE)) {
-                const target = match[1]!.split(/\s+/).find((token) => token.length > 0 && !token.startsWith("-"));
+    const removed = new Set<string>();
+    const kept: Record<string, VisTargetConfiguration> = {};
 
-                if (target === name) {
-                    return false;
-                }
-            }
+    for (const [name, target] of Object.entries(targets)) {
+        if (target === null) {
+            removed.add(name);
+        } else {
+            kept[name] = target;
+        }
+    }
 
-            return true;
-        }),
-    );
+    return { removed, targets: kept };
 };
+
+/** `record` without the keys in `removed`; the same object when nothing is removed. */
+const withoutKeys = <T>(record: Record<string, T> | undefined, removed: ReadonlySet<string>): Record<string, T> | undefined =>
+    (record === undefined || removed.size === 0 ? record : Object.fromEntries(Object.entries(record).filter(([name]) => !removed.has(name))));
 
 /**
  * The workspace patterns with `projectIgnore` appended as `!` exclusions, so
@@ -1168,7 +1172,12 @@ const discoverWorkspace = (
         nonJsDiscoverOptions(config),
     );
 
-    for (const projectDirectory of projectDirectories) {
+    // The root comes last: whether a root script only forwards to another
+    // project depends on the scripts every other project has.
+    const scriptsElsewhere = new Set<string>();
+    const discoveryOrder = [...projectDirectories.filter((directory) => directory !== "."), ...projectDirectories.filter((directory) => directory === ".")];
+
+    for (const projectDirectory of discoveryOrder) {
         const nonJs = nonJsEcosystems.get(projectDirectory);
         const isNonJs = nonJs !== undefined;
         const pkg = isNonJs ? undefined : readJsonFileSafe<PackageJson>(join(workspaceRoot, projectDirectory, "package.json"));
@@ -1196,6 +1205,12 @@ const discoverWorkspace = (
 
         if (pkg) {
             packageJsons.set(projectName, pkg);
+
+            if (projectDirectory !== ".") {
+                for (const name of Object.keys(pkg.scripts ?? {})) {
+                    scriptsElsewhere.add(name);
+                }
+            }
         }
 
         let projectType: ProjectType = "library";
@@ -1208,8 +1223,9 @@ const discoverWorkspace = (
 
         const defaults = collectTargetDefaults(config, projectJson, projectType);
 
-        const overlayTargets = mergeProjectTargets(projectJson?.targets, taskConfigs?.get(projectDirectory)?.tasks);
-        const scripts = projectDirectory === "." ? withoutSelfRunScripts(pkg?.scripts) : pkg?.scripts;
+        const { removed: removedTargets, targets: projectJsonTargets } = partitionRemovedTargets(projectJson?.targets);
+        const overlayTargets = withoutKeys(mergeProjectTargets(projectJsonTargets, taskConfigs?.get(projectDirectory)?.tasks), removedTargets);
+        const scripts = withoutKeys(projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts, scriptsElsewhere) : pkg?.scripts, removedTargets);
         const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
@@ -1320,6 +1336,11 @@ const discoverWorkspace = (
             if (target.type === "build" && target.cache === true && !hasOutputs) {
                 visTargets[name] = { ...target, outputs: [{ auto: true }] satisfies OutputSpec[] };
             }
+        }
+
+        // Task defaults and inference add targets on their own; drop removed ones last.
+        for (const name of removedTargets) {
+            Reflect.deleteProperty(visTargets, name);
         }
 
         projectOptions.set(projectName, visTargets);

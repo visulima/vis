@@ -243,6 +243,71 @@ describe("workspace root project", () => {
         expect(targets["test"]).toBeDefined();
     });
 
+    it("should drop a root script that only forwards its own name to a project that has that script", () => {
+        expect.assertions(1);
+
+        // `b` gets an inferred `build` target from vite, but no `build` script: pnpm would run the vite binary there.
+        writePackage(scratch, "packages/b", { name: "b" });
+        writeFileSync(join(scratch, "packages/b/vite.config.ts"), "export default {}");
+
+        writePackage(scratch, "packages/a", { name: "a", scripts: { e2e: "playwright test", "e2e:examples": "playwright test examples", lint: "eslint ." } });
+        writePackage(
+            scratch,
+            ".",
+            {
+                name: "fixture-root",
+                private: true,
+                scripts: {
+                    build: "pnpm --filter b build",
+                    e2e: "pnpm --filter a e2e",
+                    // Kept: passes arguments on, a pnpm built-in, and a name no other project has.
+                    "e2e:examples": "pnpm --filter \"a\" run e2e:examples -- --headed",
+                    lint: "pnpm -r --if-present run lint",
+                    outdated: "pnpm -r outdated",
+                    typecheck: "pnpm --filter a typecheck",
+                },
+            },
+            { name: "workspace-root" },
+        );
+
+        const targets = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets ?? {};
+
+        expect(Object.keys(targets).toSorted()).toStrictEqual(["build", "e2e:examples", "outdated", "typecheck"]);
+    });
+
+    it("should remove a target set to null in project.json from every source that would add it", () => {
+        expect.assertions(3);
+
+        writePackage(
+            scratch,
+            ".",
+            { name: "fixture-root", private: true, scripts: { e2e: "playwright test", "lint:oxlint": "oxlint" } },
+            { name: "workspace-root", targets: { check: null, e2e: null } },
+        );
+
+        const targets = discoverWorkspace(scratch, { tasks: { check: { command: "echo check" } } }).workspace.projects["workspace-root"]?.targets ?? {};
+
+        expect(targets["e2e"]).toBeUndefined();
+        expect(targets["check"]).toBeUndefined();
+        expect(targets["lint:oxlint"]).toBeDefined();
+    });
+
+    it("should keep a commandless alias that depends on another project's target", () => {
+        expect.assertions(2);
+
+        writePackage(
+            scratch,
+            ".",
+            { name: "fixture-root", private: true, scripts: { e2e: "pnpm --filter a e2e" } },
+            { name: "workspace-root", targets: { e2e: { command: "", dependsOn: [{ projects: "a", target: "e2e" }] } } },
+        );
+
+        const target = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets?.["e2e"];
+
+        expect(target?.command).toBe("");
+        expect(target?.dependsOn).toStrictEqual([{ projects: "a", target: "e2e" }]);
+    });
+
     it("should list the root once when the workspace patterns already include it", () => {
         expect.assertions(1);
 

@@ -123,8 +123,14 @@ export interface ProjectJson {
     stack?: "backend" | "data" | "frontend" | "infrastructure" | "systems";
     /** Filterable tags. */
     tags?: string[];
-    /** Vis-style target definitions (merged on top of package.json scripts). */
-    targets?: Record<string, VisTargetConfiguration>;
+
+    /**
+     * Vis-style target definitions (merged on top of package.json scripts).
+     * `null` removes a target the project would otherwise get from a
+     * `package.json` script, a workspace task default, or target inference —
+     * e.g. a root convenience script that only forwards to another project.
+     */
+    targets?: Record<string, VisTargetConfiguration | null>;
 }
 
 /**

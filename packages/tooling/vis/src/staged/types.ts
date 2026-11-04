@@ -31,6 +31,13 @@ export interface CustomTask {
  *   root, or absolute) and passes the matched files as absolute paths so
  *   they resolve regardless of where the command runs. Ignored when
  *   `perPackage` is set — that derives the cwd per package instead.
+ * - `dependsOn: ["^build"]` runs `build` for the dependencies of every
+ *   workspace package that owns a matched file, before any staged command
+ *   starts. Type-aware linters read workspace imports from each
+ *   dependency's built declarations, so an unbuilt dependency turns its
+ *   types into `any`. Entries share one `vis run … --if-present` call per
+ *   target, run before anything else: a build running beside another
+ *   build, or beside a lint, would race a tool that cleans `dist/` on start.
  *
  * A command task is distinguished from {@link CustomTask} by carrying a
  * `command` string and no `task` function.
@@ -38,6 +45,8 @@ export interface CustomTask {
 export interface CommandTask {
     readonly command: string;
     readonly cwd?: string;
+    /** Dependency targets such as `"^build"`; only the `^` form is supported. */
+    readonly dependsOn?: ReadonlyArray<string>;
     readonly perPackage?: boolean;
 }
 
@@ -164,6 +173,13 @@ export interface PatternDescriptor {
     readonly files: ReadonlyArray<string>;
     readonly id: string;
     readonly pattern: string;
+
+    /**
+     * Runs to completion, in order, before every other pattern starts; a
+     * failure skips the rest. Set on the `dependsOn` builds, which
+     * `buildTaskGraph` always puts first.
+     */
+    readonly prerequisite?: boolean;
     readonly title: string;
 }
 
