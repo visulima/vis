@@ -1,3 +1,9 @@
+## @visulima/vis [6.6.0](https://github.com/visulima/vis/compare/@visulima/vis@6.5.4...@visulima/vis@6.6.0) (2026-11-04)
+
+### Features
+
+* **vis:** staged dependsOn and root script forwarding ([#92](https://github.com/visulima/vis/issues/92)) ([8627e61](https://github.com/visulima/vis/commit/8627e6193bb7feb9dc659d788e690805d0715a95))
+
 ## @visulima/vis [6.5.4](https://github.com/visulima/vis/compare/@visulima/vis@6.5.3...@visulima/vis@6.5.4) (2026-11-04)
 
 ### Bug Fixes
