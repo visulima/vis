@@ -258,11 +258,11 @@ describe("workspace root project", () => {
                 name: "fixture-root",
                 private: true,
                 scripts: {
+                    build: "pnpm --filter b build",
                     e2e: "pnpm --filter a e2e",
                     // Kept: passes arguments on, a pnpm built-in, and a name no other project has.
                     "e2e:examples": "pnpm --filter \"a\" run e2e:examples -- --headed",
                     lint: "pnpm -r --if-present run lint",
-                    build: "pnpm --filter b build",
                     outdated: "pnpm -r outdated",
                     typecheck: "pnpm --filter a typecheck",
                 },
