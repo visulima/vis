@@ -1,3 +1,10 @@
+## @visulima/vis [6.5.4](https://github.com/visulima/vis/compare/@visulima/vis@6.5.3...@visulima/vis@6.5.4) (2026-11-04)
+
+### Bug Fixes
+
+* **vis:** never release against an unpublished workspace dependency ([#88](https://github.com/visulima/vis/issues/88)) ([cdf088a](https://github.com/visulima/vis/commit/cdf088a190d6b149ca8860b80786505e7e871ef7))
+* **vis:** release every package a commit changes, not only the scope's ([#89](https://github.com/visulima/vis/issues/89)) ([95671f1](https://github.com/visulima/vis/commit/95671f19b7950a831f6094e61e77a352df1fa7ab))
+
 ## @visulima/vis [6.5.3](https://github.com/visulima/vis/compare/@visulima/vis@6.5.2...@visulima/vis@6.5.3) (2026-11-03)
 
 ### Bug Fixes
