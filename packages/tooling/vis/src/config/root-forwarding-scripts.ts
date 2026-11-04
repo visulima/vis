@@ -8,10 +8,12 @@ import { splitCommandString } from "../util/command-string";
  *   is dropped wherever `vis run <name>` appears, compound command or not.
  * - `"e2e": "pnpm --filter @org/e2e e2e"` runs the e2e project's script a
  *   second time, next to that project's own target. It is dropped only when it
- *   is the whole command, adds no arguments, and another project really has
- *   the target: pnpm also runs built-ins (`pnpm -r outdated`) and package
- *   binaries (`pnpm --filter a eslint .`) this way, and dropping such a root
- *   script loses the only target that runs it.
+ *   is the whole command, adds no arguments, and another project has a
+ *   `package.json` script of that name: pnpm also runs built-ins
+ *   (`pnpm -r outdated`) and, when no script matches, package binaries
+ *   (`pnpm --filter a eslint`) this way. A target alone (inferred, or from a
+ *   task default) is not enough, since pnpm never runs it, and dropping such
+ *   a root script loses the only target that runs it.
  */
 
 const VIS_RUN_RE = /(?:^|[\s;&|(])(?:vis|v)\s+run\s+([^;&|)]*)/g;
@@ -87,16 +89,17 @@ const pnpmForwardedScript = (command: string): string | undefined => {
 
 /**
  * The root scripts left once those that only forward their own name are
- * removed. `targetsElsewhere` holds the target names of every other project.
+ * removed. `scriptsElsewhere` holds the `package.json` script names of every
+ * other project.
  */
-const withoutForwardingScripts = (scripts: Record<string, string> | undefined, targetsElsewhere: ReadonlySet<string>): Record<string, string> | undefined => {
+const withoutForwardingScripts = (scripts: Record<string, string> | undefined, scriptsElsewhere: ReadonlySet<string>): Record<string, string> | undefined => {
     if (scripts === undefined) {
         return undefined;
     }
 
     return Object.fromEntries(
         Object.entries(scripts).filter(
-            ([name, command]) => !runsItselfThroughVis(name, command) && !(pnpmForwardedScript(command) === name && targetsElsewhere.has(name)),
+            ([name, command]) => !runsItselfThroughVis(name, command) && !(pnpmForwardedScript(command) === name && scriptsElsewhere.has(name)),
         ),
     );
 };

@@ -243,8 +243,12 @@ describe("workspace root project", () => {
         expect(targets["test"]).toBeDefined();
     });
 
-    it("should drop a root script that only forwards its own name to a project that has that target", () => {
+    it("should drop a root script that only forwards its own name to a project that has that script", () => {
         expect.assertions(1);
+
+        // `b` gets an inferred `build` target from vite, but no `build` script: pnpm would run the vite binary there.
+        writePackage(scratch, "packages/b", { name: "b" });
+        writeFileSync(join(scratch, "packages/b/vite.config.ts"), "export default {}");
 
         writePackage(scratch, "packages/a", { name: "a", scripts: { e2e: "playwright test", "e2e:examples": "playwright test examples", lint: "eslint ." } });
         writePackage(
@@ -258,6 +262,7 @@ describe("workspace root project", () => {
                     // Kept: passes arguments on, a pnpm built-in, and a name no other project has.
                     "e2e:examples": "pnpm --filter \"a\" run e2e:examples -- --headed",
                     lint: "pnpm -r --if-present run lint",
+                    build: "pnpm --filter b build",
                     outdated: "pnpm -r outdated",
                     typecheck: "pnpm --filter a typecheck",
                 },
@@ -267,7 +272,7 @@ describe("workspace root project", () => {
 
         const targets = discoverWorkspace(scratch, {}).workspace.projects["workspace-root"]?.targets ?? {};
 
-        expect(Object.keys(targets).toSorted()).toStrictEqual(["e2e:examples", "outdated", "typecheck"]);
+        expect(Object.keys(targets).toSorted()).toStrictEqual(["build", "e2e:examples", "outdated", "typecheck"]);
     });
 
     it("should remove a target set to null in project.json from every source that would add it", () => {

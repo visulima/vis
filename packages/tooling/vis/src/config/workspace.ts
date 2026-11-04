@@ -1173,8 +1173,8 @@ const discoverWorkspace = (
     );
 
     // The root comes last: whether a root script only forwards to another
-    // project depends on the targets every other project ended up with.
-    const targetsElsewhere = new Set<string>();
+    // project depends on the scripts every other project has.
+    const scriptsElsewhere = new Set<string>();
     const discoveryOrder = [...projectDirectories.filter((directory) => directory !== "."), ...projectDirectories.filter((directory) => directory === ".")];
 
     for (const projectDirectory of discoveryOrder) {
@@ -1205,6 +1205,12 @@ const discoverWorkspace = (
 
         if (pkg) {
             packageJsons.set(projectName, pkg);
+
+            if (projectDirectory !== ".") {
+                for (const name of Object.keys(pkg.scripts ?? {})) {
+                    scriptsElsewhere.add(name);
+                }
+            }
         }
 
         let projectType: ProjectType = "library";
@@ -1219,7 +1225,7 @@ const discoverWorkspace = (
 
         const { removed: removedTargets, targets: projectJsonTargets } = partitionRemovedTargets(projectJson?.targets);
         const overlayTargets = withoutKeys(mergeProjectTargets(projectJsonTargets, taskConfigs?.get(projectDirectory)?.tasks), removedTargets);
-        const scripts = withoutKeys(projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts, targetsElsewhere) : pkg?.scripts, removedTargets);
+        const scripts = withoutKeys(projectDirectory === "." ? withoutForwardingScripts(pkg?.scripts, scriptsElsewhere) : pkg?.scripts, removedTargets);
         const visTargets = createTargetsFromScripts(scripts, overlayTargets, defaults, config.fileGroups);
 
         // Project Crystal-style inference. Runs *after* the explicit
@@ -1335,12 +1341,6 @@ const discoverWorkspace = (
         // Task defaults and inference add targets on their own; drop removed ones last.
         for (const name of removedTargets) {
             Reflect.deleteProperty(visTargets, name);
-        }
-
-        if (projectDirectory !== ".") {
-            for (const name of Object.keys(visTargets)) {
-                targetsElsewhere.add(name);
-            }
         }
 
         projectOptions.set(projectName, visTargets);
