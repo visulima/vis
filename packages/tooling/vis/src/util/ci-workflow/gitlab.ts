@@ -10,6 +10,7 @@
 
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
+import type { Ecosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
 import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand, yamlString } from "./plan";
 
@@ -52,12 +53,7 @@ const cachePath = (cacheDirectory: string | undefined): string => {
 };
 
 /** Toolchains vis's own pre-flight installs when they are pinned in `toolchain.tools`. */
-const PREFLIGHT_TOOLS: ReadonlyMap<string, "go" | "python" | "ruby" | "rust"> = new Map([
-    ["go", "go"],
-    ["python", "python"],
-    ["ruby", "ruby"],
-    ["rust", "rust"],
-]);
+const isPreflightTool = (name: Ecosystem): name is "go" | "python" | "ruby" | "rust" => name === "go" || name === "python" || name === "ruby" || name === "rust";
 
 /** Package caches moved into the project directory, the only place GitLab caches. */
 const ECOSYSTEM_CACHES: ReadonlyMap<string, { path: string; variable: string }> = new Map([
@@ -72,11 +68,7 @@ const ECOSYSTEM_CACHES: ReadonlyMap<string, { path: string; variable: string }> 
  * and only when they are pinned in `toolchain.tools`.
  */
 export const gitlabMissingToolchains = (plan: CiWorkflowPlan): string[] =>
-    plan.ecosystems.flatMap(({ name }) => {
-        const tool = PREFLIGHT_TOOLS.get(name);
-
-        return tool !== undefined && plan.toolchainPins[tool] !== undefined ? [] : [name];
-    });
+    plan.ecosystems.flatMap(({ name }) => (isPreflightTool(name) && plan.toolchainPins[name] !== undefined ? [] : [name]));
 
 /**
  * Renders `.gitlab/vis-ci.gitlab-ci.yml`, meant to be pulled in with
