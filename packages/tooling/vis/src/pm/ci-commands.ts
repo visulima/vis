@@ -1,4 +1,5 @@
 import type { LockfilePackageManager } from "../preflight/lockfile";
+import type { GithubAction } from "../util/github-actions";
 import { GITHUB_ACTIONS } from "../util/github-actions";
 
 /**
@@ -10,7 +11,7 @@ export interface CiPackageManagerCommands {
     /** Prefix that runs a binary installed in the workspace, e.g. `pnpm exec`. */
     exec: string;
     /** GitHub Action that installs the package manager, when it has one. */
-    githubAction?: string;
+    githubAction?: GithubAction;
 
     /**
      * `actions/setup-node` `cache:` value, when setup-node can cache for this

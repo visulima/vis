@@ -11,7 +11,7 @@
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visTargetCommand, yamlString } from "./plan";
+import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand, yamlString } from "./plan";
 
 export const GITLAB_CI_WORKFLOW_PATH = ".gitlab/vis-ci.gitlab-ci.yml";
 
@@ -51,6 +51,33 @@ const cachePath = (cacheDirectory: string | undefined): string => {
     return cacheDirectory.replaceAll(/^\.\/|\/$/gu, "");
 };
 
+/** Toolchains vis's own pre-flight installs when they are pinned in `toolchain.tools`. */
+const PREFLIGHT_TOOLS: ReadonlyMap<string, "go" | "python" | "ruby" | "rust"> = new Map([
+    ["go", "go"],
+    ["python", "python"],
+    ["ruby", "ruby"],
+    ["rust", "rust"],
+]);
+
+/** Package caches moved into the project directory, the only place GitLab caches. */
+const ECOSYSTEM_CACHES: ReadonlyMap<string, { path: string; variable: string }> = new Map([
+    ["go", { path: ".go-mod", variable: "GOMODCACHE" }],
+    ["python", { path: ".pip-cache", variable: "PIP_CACHE_DIR" }],
+    ["rust", { path: ".cargo", variable: "CARGO_HOME" }],
+]);
+
+/**
+ * Detected toolchains a GitLab job cannot get: the jobs run in a plain
+ * `node` image, and vis's pre-flight only installs go, python, ruby and rust,
+ * and only when they are pinned in `toolchain.tools`.
+ */
+export const gitlabMissingToolchains = (plan: CiWorkflowPlan): string[] =>
+    plan.ecosystems.flatMap(({ name }) => {
+        const tool = PREFLIGHT_TOOLS.get(name);
+
+        return tool !== undefined && plan.toolchainPins[tool] !== undefined ? [] : [name];
+    });
+
 /**
  * Renders `.gitlab/vis-ci.gitlab-ci.yml`, meant to be pulled in with
  * `include: { local: .gitlab/vis-ci.gitlab-ci.yml }`. It declares no
@@ -58,19 +85,47 @@ const cachePath = (cacheDirectory: string | undefined): string => {
  * pipeline's; ordering between groups uses `needs:` inside the `test` stage.
  */
 export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
-    const pm = CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager];
     const branchRules = plan.branches.map((branch) => `        - if: ${singleQuoted(branchRule(branch))}`).join("\n");
     const cacheDirectory = cachePath(plan.cacheDirectory);
-    // A configured taskRunner.cacheDirectory wins over the variable, so only set it for the default.
-    const cacheVariable
-        = plan.cacheDirectory === undefined
-            ? `        # Outside node_modules, so a clean install (npm ci) keeps the restored task cache.
-        VIS_CACHE_DIRECTORY: "$CI_PROJECT_DIR/${cacheDirectory}"
-`
-            : "";
-    const beforeScript = [...pm.setup, pm.install].map((line) => `        - ${yamlString(line)}`).join("\n");
+    const ecosystemCaches = plan.ecosystems.flatMap(({ name }) => {
+        const cache = ECOSYSTEM_CACHES.get(name);
 
-    let jobs = "";
+        return cache === undefined ? [] : [cache];
+    });
+    const variables = [
+        "        # Full history, so affected detection can diff against the base.",
+        '        GIT_DEPTH: "0"',
+        // A configured taskRunner.cacheDirectory wins over the variable, so only set it for the default.
+        ...(plan.cacheDirectory === undefined
+            ? ["        # Outside node_modules, so a clean install (npm ci) keeps the restored task cache.", `        VIS_CACHE_DIRECTORY: "$CI_PROJECT_DIR/${cacheDirectory}"`]
+            : []),
+        ...ecosystemCaches.map(({ path, variable }) => `        ${variable}: "$CI_PROJECT_DIR/${path}"`),
+    ].join("\n");
+    const cachePaths = [cacheDirectory, ...ecosystemCaches.map(({ path }) => path)].map((path) => `            - ${yamlString(`${path}/`)}`).join("\n");
+    const install
+        = plan.packageManager === undefined
+            ? [visInstallCommand(plan)]
+            : [...CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].setup, CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].install];
+    const beforeScript = install.map((line) => `        - ${yamlString(line)}`).join("\n");
+    const missing = gitlabMissingToolchains(plan);
+    const missingNote
+        = missing.length === 0
+            ? ""
+            : `#
+# Not on the node image: ${missing.join(", ")}. Pin go, python, ruby or rust in
+# toolchain.tools (vis.config.ts) so vis installs them, or set \`image:\` on
+# .vis-ci-base in your .gitlab-ci.yml to one that has them.
+`;
+
+    let jobs = plan.checkDrift
+        ? `
+"vis:workflow":
+    extends: ".vis-ci-base"
+    needs: []
+    script:
+        - ${yamlString(`${visCommand(plan)} sync ci-workflow --check`)}
+`
+        : "";
     let previous: string[] = [];
 
     for (const layer of plan.layers) {
@@ -97,17 +152,17 @@ ${shards === 1 ? "" : `    parallel: ${shards}\n`}    script:
 #
 # Every target is its own job, so jobs in a group run on separate machines at
 # the same time; a partitioned target fans out with \`parallel: N\`.
-.vis-ci-base:
+${missingNote}.vis-ci-base:
     stage: "test"
     image: ${yamlString(`node:${plan.nodeVersion}`)}
+    timeout: "${plan.timeoutMinutes}m"
     variables:
-        # Full history, so affected detection can diff against the base.
-        GIT_DEPTH: "0"
-${cacheVariable}    cache:
+${variables}
+    cache:
         # Per job: jobs of one group finish in any order, and a shared key keeps only the last upload.
         key: "vis-$CI_JOB_NAME_SLUG-$CI_COMMIT_REF_SLUG"
         paths:
-            - ${yamlString(`${cacheDirectory}/`)}
+${cachePaths}
     rules:
         - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ${branchRules}

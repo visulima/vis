@@ -12,7 +12,7 @@
 
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { GeneratedFile } from "../../util/generated-files";
-import { GITHUB_ACTIONS } from "../../util/github-actions";
+import { GITHUB_ACTIONS, usesPinned } from "../../util/github-actions";
 import type { VisReleaseConfig } from "../types";
 import type { RemoteProvider } from "./remote/interface";
 
@@ -41,7 +41,7 @@ const githubPmSetup = (pm: WorkflowGenerationOptions["packageManager"]): string 
     const { githubAction, setup } = CI_PACKAGE_MANAGER_COMMANDS[pm];
 
     if (githubAction !== undefined) {
-        return `            - uses: ${githubAction}\n`;
+        return `            - uses: ${usesPinned(githubAction)}\n`;
     }
 
     return setup.length === 0 ? "" : `            - run: |\n${setup.map((line) => `                  ${line}\n`).join("")}`;
@@ -74,13 +74,13 @@ jobs:
     release:
         runs-on: ubuntu-latest
         steps:
-            - uses: ${GITHUB_ACTIONS.checkout}
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   token: \${{ secrets.VIS_GH_TOKEN || github.token }}
                   persist-credentials: false
 
-            - uses: ${GITHUB_ACTIONS.setupNode}
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
 
@@ -114,11 +114,11 @@ jobs:
     check:
         runs-on: ubuntu-latest
         steps:
-            - uses: ${GITHUB_ACTIONS.checkout}
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   persist-credentials: false
-            - uses: ${GITHUB_ACTIONS.setupNode}
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
 ${githubPmSetup(options.packageManager)}            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}
@@ -148,11 +148,11 @@ jobs:
     snapshot:
         runs-on: ubuntu-latest
         steps:
-            - uses: ${GITHUB_ACTIONS.checkout}
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   persist-credentials: false
-            - uses: ${GITHUB_ACTIONS.setupNode}
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
 ${githubPmSetup(options.packageManager)}            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}

@@ -138,8 +138,10 @@ export default defineConfig({
             providers: ["github", "gitlab"], // default: detected (see below)
             affected: true, // default: only affected projects (`vis ci`); false runs every project (`vis run`)
             buildFirst: true, // default: build runs before targets dependsOn does not order relative to it
+            checkDrift: true, // default: the workflow runs `vis sync ci-workflow --check`
+            timeoutMinutes: 60, // default: job timeout
             branches: ["main"], // default: [defaultBase ?? "main"]
-            nodeVersion: "22",
+            nodeVersion: "22", // default: toolchain.tools.node, then 22
             runsOn: "ubuntu-latest",
         },
     },
@@ -158,7 +160,11 @@ Targets are grouped by `dependsOn`: a target waits for the listed targets it dep
 
 Step 2 is what makes step 3 safe: the parallel steps share one checkout, so two of them building or restoring the same dependency at the same time would race on its outputs. GitHub runs at most 10 steps of a group at once, so the generator rejects a group that needs more. A target whose tasks depend on the same target in other projects (`dependsOn: ["^build"]`) cannot be partitioned, because its shards would depend on each other. The task cache (`taskRunner.cacheDirectory`, by default `node_modules/.cache/vis`) is kept between runs with `actions/cache`.
 
-**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage, ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
+**Toolchains.** vis always runs on Node.js. Other toolchains are detected from the manifests in the workspace root and the project roots (`Cargo.toml`, `go.mod`, `pyproject.toml`/`requirements.txt`, `build.gradle`/`pom.xml`, `composer.json`, `Gemfile`, `*.csproj`/`global.json`, `pubspec.yaml`, `build.zig`, `mix.exs`). On GitHub, each gets its setup action with that action's own cache (cargo, Go modules, pip, Gradle/Maven, Bundler). Versions come from `toolchain.tools` in vis.config.ts first, then the ecosystem's version file (`rust-toolchain.toml`, `go.mod`, `.python-version`, `.ruby-version`, `global.json`, `.tool-versions`, `build.zig.zon`), then a current default. Swift ships on the GitHub runners. A workspace without a JS lockfile gets vis installed on its own (`npm install --global @visulima/vis@<version>`, the version that generated the file) instead of a package-manager install.
+
+**Hardening.** Every action is pinned to a commit SHA with its version as a trailing comment, so Dependabot and `vis update` can bump it. The job has a timeout (`timeoutMinutes`), read-only `permissions`, and `persist-credentials: false`. With `checkDrift` (the default), the workflow runs `vis sync ci-workflow --check`, so CI fails when the committed workflow no longer matches vis.config.ts or the workspace.
+
+**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage, ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. The jobs run in a `node` image: cargo, Go module and pip caches move into the project so GitLab can cache them, vis's pre-flight installs go, python, ruby or rust when they are pinned in `toolchain.tools`, and any other detected toolchain is named in the file's header (and in a warning) so you can give `.vis-ci-base` an image that has it. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
 
 ```yaml
 include:

@@ -11,12 +11,15 @@ import { discoverWorkspace } from "../../config/workspace";
 import { VisUserError } from "../../errors/vis-user-error";
 import { detectPackageManager } from "../../preflight/lockfile";
 import { buildCiWorkflowPlan, isCiWorkflowProvider, renderCiWorkflows } from "../../util/ci-workflow";
+import { detectEcosystems } from "../../util/ci-workflow/ecosystems";
+import { gitlabMissingToolchains } from "../../util/ci-workflow/gitlab";
 import { resolveCiWorkflowProviders } from "../../util/ci-workflow/providers";
 import type { CodeownersLine } from "../../util/codeowners";
 import { buildCodeownersLines, DEFAULT_BLOCK_MARKER, mergeIntoExisting, renderCodeowners, renderCodeownersBlock } from "../../util/codeowners";
 import { collectMaintainerLines, collectNestedCodeownersLines } from "../../util/codeowners-sources";
 import { resolveIndentForExistingFile } from "../../util/editorconfig";
 import { syncGeneratedFiles } from "../../util/generated-files";
+import getPackageVersion from "../../util/package-version";
 import type { SyncFieldsChange } from "../../util/sync-package-json-fields";
 import { applyFieldChanges, computeFieldChanges, DEFAULT_SYNCED_FIELDS } from "../../util/sync-package-json-fields";
 import { collectWorkspaceDirectories, readPkg } from "../../util/workspace-deps";
@@ -397,14 +400,38 @@ const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: ws
 
     logger.info(`▸ CI providers: ${providers.join(", ")} (${reason})`);
 
+    // The workspace root plus every project root, with the files directly in each.
+    const directories = await Promise.all(
+        [...new Set([".", ...Object.values(workspace.projects).map((project) => project.root ?? ".")])].toSorted().map(async (path) => {
+            return { files: await fs.readdir(join(root, path)).catch(() => []), path };
+        }),
+    );
+    const rootFiles = new Set(directories.find(({ path }) => path === ".")?.files);
+
     const { buildFirstOrdered, plan } = buildCiWorkflowPlan({
         cacheDirectory: config.taskRunner?.cacheDirectory,
         defaultBase: config.defaultBase,
-        packageManager: detectPackageManager(root)?.manager ?? "npm",
+        ecosystems: detectEcosystems(directories),
+        packageManager: detectPackageManager(root)?.manager,
         projects: workspace.projects,
+        rootFiles,
         settings,
         targetDefaults: config.tasks,
+        toolchainPins: config.toolchain?.tools,
+        visVersion: getPackageVersion(),
     });
+
+    if (plan.ecosystems.length > 0) {
+        logger.info(`▸ Toolchains: ${plan.ecosystems.map(({ name }) => name).join(", ")}`);
+    }
+
+    const missing = providers.includes("gitlab") ? gitlabMissingToolchains(plan) : [];
+
+    if (missing.length > 0) {
+        logger.warn(
+            `GitLab jobs run in a node image without ${missing.join(", ")}. Pin go, python, ruby or rust in toolchain.tools so vis installs them, or give .vis-ci-base an image that has them.`,
+        );
+    }
 
     if (buildFirstOrdered.length > 0) {
         logger.info(`▸ Running build before ${buildFirstOrdered.join(", ")} (ci.workflow.buildFirst; set it to false if dependsOn already says what needs build).`);

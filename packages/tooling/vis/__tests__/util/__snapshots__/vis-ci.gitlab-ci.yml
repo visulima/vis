@@ -9,6 +9,7 @@
 .vis-ci-base:
     stage: "test"
     image: "node:22"
+    timeout: "60m"
     variables:
         # Full history, so affected detection can diff against the base.
         GIT_DEPTH: "0"
@@ -26,6 +27,12 @@
         - "npm install -g corepack"
         - "corepack enable"
         - "pnpm install --frozen-lockfile"
+
+"vis:workflow":
+    extends: ".vis-ci-base"
+    needs: []
+    script:
+        - "pnpm exec vis sync ci-workflow --check"
 
 "vis:lint":
     extends: ".vis-ci-base"

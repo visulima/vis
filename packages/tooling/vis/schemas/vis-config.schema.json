@@ -3872,10 +3872,14 @@
                     "description": "Run `build` before every other listed target that `dependsOn` does not already order relative to it. Most workspaces never declare that `test` or `typecheck` needs the dependencies' `dist`, because a sequential CI job built first anyway; running them in parallel with `build` would race. Set to `false` when your `dependsOn` is complete.",
                     "default": true
                 },
+                "checkDrift": {
+                    "type": "boolean",
+                    "description": "Run `vis sync ci-workflow --check` in the workflow, so CI fails when the committed workflow no longer matches this config.",
+                    "default": true
+                },
                 "nodeVersion": {
                     "type": "string",
-                    "description": "Node.js version installed by the workflow.",
-                    "default": "22"
+                    "description": "Node.js version installed by the workflow. Defaults to `toolchain.tools.node`, then `\"22\"`."
                 },
                 "partitions": {
                     "type": "object",
@@ -3902,6 +3906,11 @@
                         "type": "string"
                     },
                     "description": "Targets to run. A target that depends on another listed target (through `dependsOn`, directly or via unlisted targets) runs in a later group; the rest run at the same time. Defaults to whichever of lint, typecheck, lint:types, build and test exist in the workspace."
+                },
+                "timeoutMinutes": {
+                    "type": "number",
+                    "description": "Minutes before the CI job is cancelled (`timeout-minutes` on GitHub, `timeout` on GitLab).",
+                    "default": 60
                 }
             },
             "additionalProperties": false,

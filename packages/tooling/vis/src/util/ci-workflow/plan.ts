@@ -14,7 +14,9 @@ import type { CiWorkflowConfig } from "../../config/types/ci";
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { LockfilePackageManager } from "../../preflight/lockfile";
+import type { RuntimeTool } from "../../runtime/toolchain";
 import { reachableFrom } from "../reachable";
+import type { DetectedEcosystem } from "./ecosystems";
 
 /** Targets used when `ci.workflow.targets` is unset, in this order, when present in the workspace. */
 const DEFAULT_CI_TARGETS = ["lint", "typecheck", "lint:types", "build", "test"] as const;
@@ -34,11 +36,23 @@ export interface CiWorkflowPlan {
     branches: string[];
     /** `taskRunner.cacheDirectory` from the config, when set; it wins over `VIS_CACHE_DIRECTORY`. */
     cacheDirectory: string | undefined;
+    /** Run `vis sync ci-workflow --check` in the workflow, so a stale workflow fails CI. */
+    checkDrift: boolean;
+    /** Non-JavaScript toolchains the workspace needs. */
+    ecosystems: DetectedEcosystem[];
     /** Target groups, in order. Targets in one group do not depend on each other. */
     layers: CiWorkflowTarget[][];
     nodeVersion: string;
-    packageManager: LockfilePackageManager;
+    /** The JavaScript package manager; `undefined` when the workspace has no JS lockfile and vis is installed on its own. */
+    packageManager: LockfilePackageManager | undefined;
+    /** Names of the files in the workspace root, for version files such as `.python-version` or `global.json`. */
+    rootFiles: ReadonlySet<string>;
     runsOn: string;
+    timeoutMinutes: number;
+    /** Versions pinned in `toolchain.tools` (vis.config.ts); they win over version files and defaults. */
+    toolchainPins: Partial<Record<RuntimeTool, string>>;
+    /** The vis version installed when there is no JS package manager. */
+    visVersion: string;
 }
 
 interface TargetLike {
@@ -161,18 +175,30 @@ export const layerTargets = (targets: ReadonlyArray<string>, edges: TargetEdges)
 export const buildCiWorkflowPlan = ({
     cacheDirectory,
     defaultBase,
+    ecosystems = [],
     packageManager,
     projects,
+    rootFiles = new Set(),
     settings,
     targetDefaults,
+    toolchainPins = {},
+    visVersion,
 }: {
     cacheDirectory: string | undefined;
     defaultBase: string | undefined;
-    packageManager: LockfilePackageManager;
+    ecosystems?: DetectedEcosystem[];
+    packageManager: LockfilePackageManager | undefined;
     projects: Record<string, { targets?: Record<string, TargetLike> }>;
+    rootFiles?: ReadonlySet<string>;
     settings: CiWorkflowConfig;
     targetDefaults?: Record<string, TargetLike | undefined>;
+    toolchainPins?: Partial<Record<RuntimeTool, string>>;
+    visVersion: string;
 }): { buildFirstOrdered: string[]; plan: CiWorkflowPlan } => {
+    if (settings.timeoutMinutes !== undefined && (!Number.isInteger(settings.timeoutMinutes) || settings.timeoutMinutes < 1)) {
+        throw new VisUserError(`ci.workflow.timeoutMinutes must be a positive integer, got ${JSON.stringify(settings.timeoutMinutes)}.`);
+    }
+
     if (settings.targets?.length === 0) {
         throw new VisUserError("ci.workflow.targets is empty. List the targets to run, or remove it to use the defaults.");
     }
@@ -222,10 +248,16 @@ export const buildCiWorkflowPlan = ({
             affected: settings.affected ?? true,
             branches: settings.branches ?? [defaultBase ?? "main"],
             cacheDirectory,
+            checkDrift: settings.checkDrift ?? true,
+            ecosystems,
             layers: layerTargets(targets, edges).map((layer) => layer.map((name) => { return { name, shards: partitions[name] ?? 1 }; })),
-            nodeVersion: settings.nodeVersion ?? "22",
+            nodeVersion: settings.nodeVersion ?? toolchainPins.node ?? "22",
             packageManager,
+            rootFiles,
             runsOn: settings.runsOn ?? "ubuntu-latest",
+            timeoutMinutes: settings.timeoutMinutes ?? 60,
+            toolchainPins,
+            visVersion,
         },
     };
 };
@@ -238,8 +270,15 @@ export const buildCiWorkflowPlan = ({
 /** Quotes a target name for the shell when it holds anything beyond name characters. */
 const shellWord = (value: string): string => (/^[\w.:@/+-]+$/u.test(value) ? value : `'${value.replaceAll("'", String.raw`'\''`)}'`);
 
+/** How the workflow runs vis: through the JS package manager, or the globally installed `vis`. */
+export const visCommand = (plan: CiWorkflowPlan): string =>
+    (plan.packageManager === undefined ? "vis" : `${CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].exec} vis`);
+
+/** Installs vis on its own, for a workspace without a JS package manager. */
+export const visInstallCommand = (plan: CiWorkflowPlan): string => `npm install --global @visulima/vis@${plan.visVersion}`;
+
 export const visTargetCommand = (plan: CiWorkflowPlan, target: string, flags: ReadonlyArray<string>): string => {
-    const vis = `${CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].exec} vis`;
+    const vis = visCommand(plan);
     const base = plan.affected ? `${vis} ci ${shellWord(target)} --no-install` : `${vis} run ${shellWord(target)}`;
 
     return [base, ...flags, "--if-present"].join(" ");

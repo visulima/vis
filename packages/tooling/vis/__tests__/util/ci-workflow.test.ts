@@ -3,18 +3,25 @@ import { describe, expect, it } from "vitest";
 import { VisUserError } from "../../src/errors/vis-user-error";
 import type { CiWorkflowPlan } from "../../src/util/ci-workflow";
 import { buildCiWorkflowPlan, collectTargetDependencies, layerTargets, withBuildFirst } from "../../src/util/ci-workflow";
+import { detectEcosystems } from "../../src/util/ci-workflow/ecosystems";
 import { renderGithubCiWorkflow } from "../../src/util/ci-workflow/github";
-import { renderGitlabCiWorkflow } from "../../src/util/ci-workflow/gitlab";
+import { gitlabMissingToolchains, renderGitlabCiWorkflow } from "../../src/util/ci-workflow/gitlab";
 
 const plan = (overrides: Partial<CiWorkflowPlan> = {}, shards: Record<string, number> = {}): CiWorkflowPlan => {
     return {
         affected: true,
         branches: ["main"],
         cacheDirectory: undefined,
+        checkDrift: true,
+        ecosystems: [],
         layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => { return { name, shards: shards[name] ?? 1 }; })),
         nodeVersion: "22",
         packageManager: "pnpm",
+        rootFiles: new Set(),
         runsOn: "ubuntu-latest",
+        timeoutMinutes: 60,
+        toolchainPins: {},
+        visVersion: "1.2.3",
         ...overrides,
     };
 };
@@ -93,7 +100,7 @@ describe(layerTargets, () => {
 describe(buildCiWorkflowPlan, () => {
     const projects = { app: { targets: { build: { dependsOn: ["^build"] }, lint: {}, test: { dependsOn: ["build"] } } } };
     const build = (settings: Parameters<typeof buildCiWorkflowPlan>[0]["settings"]): ReturnType<typeof buildCiWorkflowPlan> =>
-        buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects, settings });
+        buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects, settings, visVersion: "1.2.3" });
 
     it("defaults the targets, branches and shards", () => {
         expect.assertions(2);
@@ -110,6 +117,7 @@ describe(buildCiWorkflowPlan, () => {
         ["partitioning a target that depends on itself in other projects", { partitions: { build: 2 } }, "its shards would depend on each other"],
         ["an empty target list", { targets: [] }, "ci.workflow.targets is empty"],
         ["a target no project defines", { targets: ["e2e"] }, "no project defines \"e2e\""],
+        ["a timeout that is not a positive integer", { timeoutMinutes: 0 }, "timeoutMinutes must be a positive integer"],
     ])("rejects %s", (_, settings, message) => {
         expect.assertions(1);
 
@@ -149,6 +157,63 @@ describe(renderGithubCiWorkflow, () => {
         expect(renderGithubCiWorkflow(plan({ cacheDirectory: ".cache/vis" }))).toContain("path: \".cache/vis\"");
     });
 
+    it("pins every action to a commit, with the version as a comment", () => {
+        expect.assertions(2);
+
+        const uses = renderGithubCiWorkflow(plan()).split("\n").filter((line) => line.includes("uses:"));
+
+        expect(uses.length).toBeGreaterThan(0);
+        expect(uses.every((line) => /uses: "[\w.-]+\/[\w.-]+@[\da-f]{40}" # v?\d/u.test(line))).toBe(true);
+    });
+
+    it("sets a job timeout and checks the workflow for drift unless turned off", () => {
+        expect.assertions(3);
+
+        const yaml = renderGithubCiWorkflow(plan({ timeoutMinutes: 45 }));
+
+        expect(yaml).toContain("        timeout-minutes: 45\n");
+        expect(yaml).toContain("run: \"pnpm exec vis sync ci-workflow --check\"");
+        expect(renderGithubCiWorkflow(plan({ checkDrift: false }))).not.toContain("sync ci-workflow --check");
+    });
+
+    it("installs vis on its own when the workspace has no JS package manager", () => {
+        expect.assertions(3);
+
+        const yaml = renderGithubCiWorkflow(plan({ ecosystems: [{ manifests: ["Cargo.toml"], name: "rust" }], packageManager: undefined }));
+
+        expect(yaml).toContain("run: \"npm install --global @visulima/vis@1.2.3\"");
+        expect(yaml).toContain("run: \"vis ci test --no-install --skip-deps --if-present\"");
+        expect(yaml).not.toContain("Install dependencies");
+    });
+
+    it("sets up each detected toolchain, preferring toolchain pins and version files", () => {
+        expect.assertions(6);
+
+        const yaml = renderGithubCiWorkflow(
+            plan({
+                ecosystems: [
+                    { manifests: ["services/api/go.mod"], name: "go" },
+                    { manifests: ["build.gradle.kts"], name: "gradle" },
+                    { manifests: ["pom.xml"], name: "maven" },
+                    { manifests: ["tools/pyproject.toml"], name: "python" },
+                    { manifests: ["Cargo.toml"], name: "rust" },
+                    { manifests: ["Package.swift"], name: "swift" },
+                ],
+                rootFiles: new Set([".python-version"]),
+                toolchainPins: { rust: "1.86.0" },
+            }),
+        );
+
+        expect(yaml).toContain("go-version-file: \"services/api/go.mod\"");
+        // One JDK for both build tools.
+        expect(yaml.match(/name: "Setup Java"/gu)).toHaveLength(1);
+        expect(yaml).toContain("python-version-file: \".python-version\"");
+        expect(yaml).toContain("cache-dependency-path: |\n                      tools/pyproject.toml");
+        expect(yaml).toContain("toolchain: \"1.86.0\"");
+        // Swift ships on the runner.
+        expect(yaml).not.toContain("Swift");
+    });
+
     it("refuses a group above GitHub's 10 concurrent steps", () => {
         expect.assertions(1);
 
@@ -186,9 +251,54 @@ describe(renderGitlabCiWorkflow, () => {
         expect(yaml).toContain(String.raw`- if: '$CI_COMMIT_BRANCH =~ /^release\/[^\/]*$/'`);
     });
 
+    it("caches package managers inside the project and names toolchains the node image lacks", () => {
+        expect.assertions(4);
+
+        const rustAndJava = plan({
+            ecosystems: [
+                { manifests: ["Cargo.toml"], name: "rust" },
+                { manifests: ["pom.xml"], name: "maven" },
+            ],
+            toolchainPins: { rust: "1.86.0" },
+        });
+        const yaml = renderGitlabCiWorkflow(rustAndJava);
+
+        expect(yaml).toContain("CARGO_HOME: \"$CI_PROJECT_DIR/.cargo\"");
+        expect(yaml).toContain("- \".cargo/\"");
+        expect(gitlabMissingToolchains(rustAndJava)).toStrictEqual(["maven"]);
+        expect(yaml).toContain("# Not on the node image: maven.");
+    });
+
+    it("adds a drift-check job and a job timeout", () => {
+        expect.assertions(2);
+
+        const yaml = renderGitlabCiWorkflow(plan());
+
+        expect(yaml).toContain("\"vis:workflow\":\n    extends: \".vis-ci-base\"\n    needs: []\n    script:\n        - \"pnpm exec vis sync ci-workflow --check\"");
+        expect(yaml).toContain('    timeout: "60m"');
+    });
+
     it("refuses a cache directory outside the project", () => {
         expect.assertions(1);
 
         expect(() => renderGitlabCiWorkflow(plan({ cacheDirectory: "/tmp/vis" }))).toThrow("inside the project");
+    });
+});
+
+describe(detectEcosystems, () => {
+    it("finds manifests in the root and project roots, sorted by ecosystem", () => {
+        expect.assertions(1);
+
+        expect(
+            detectEcosystems([
+                { files: ["Cargo.toml", "package.json", "global.json"], path: "." },
+                { files: ["go.mod", "go.sum"], path: "services/api" },
+                { files: ["Api.csproj"], path: "services/dotnet" },
+            ]),
+        ).toStrictEqual([
+            { manifests: ["global.json", "services/dotnet/Api.csproj"], name: "dotnet" },
+            { manifests: ["services/api/go.mod"], name: "go" },
+            { manifests: ["Cargo.toml"], name: "rust" },
+        ]);
     });
 });

@@ -34,8 +34,15 @@ export interface CiWorkflowConfig {
     buildFirst?: boolean;
 
     /**
-     * Node.js version installed by the workflow.
-     * @default "22"
+     * Run `vis sync ci-workflow --check` in the workflow, so CI fails when the
+     * committed workflow no longer matches this config.
+     * @default true
+     */
+    checkDrift?: boolean;
+
+    /**
+     * Node.js version installed by the workflow. Defaults to
+     * `toolchain.tools.node`, then `"22"`.
      */
     nodeVersion?: string;
 
@@ -65,6 +72,13 @@ export interface CiWorkflowConfig {
      * typecheck, lint:types, build and test exist in the workspace.
      */
     targets?: string[];
+
+    /**
+     * Minutes before the CI job is cancelled (`timeout-minutes` on GitHub,
+     * `timeout` on GitLab).
+     * @default 60
+     */
+    timeoutMinutes?: number;
 }
 
 export interface CiConfig {

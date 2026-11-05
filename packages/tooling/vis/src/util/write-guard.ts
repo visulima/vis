@@ -22,7 +22,7 @@
  */
 
 import type { GeneratedFile } from "./generated-files";
-import { GITHUB_ACTIONS } from "./github-actions";
+import { GITHUB_ACTIONS, usesPinned } from "./github-actions";
 
 /** A project that opted into Write Guard via `restricted: true`. */
 export interface RestrictedProject {
@@ -94,7 +94,7 @@ jobs:
   write-guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: ${GITHUB_ACTIONS.checkout}
+      - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
         with:
           fetch-depth: 0
       - uses: geritol/write-guard@v1

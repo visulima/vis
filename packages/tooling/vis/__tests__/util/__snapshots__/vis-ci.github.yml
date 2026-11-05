@@ -19,19 +19,20 @@ jobs:
     ci:
         name: "vis ci"
         runs-on: "ubuntu-latest"
+        timeout-minutes: 60
         steps:
             # Full history, so affected detection can diff against the base.
             - name: "Checkout"
-              uses: "actions/checkout@v7"
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
               with:
                   fetch-depth: 0
                   persist-credentials: false
 
             - name: "Setup pnpm"
-              uses: "pnpm/action-setup@v6"
+              uses: "pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115" # v6.1.1
 
             - name: "Setup Node.js"
-              uses: "actions/setup-node@v7"
+              uses: "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1" # v7.1.0
               with:
                   node-version: "22"
                   cache: "pnpm"
@@ -41,12 +42,16 @@ jobs:
 
             # The vis task cache, so unchanged tasks are restored instead of re-run.
             - name: "Restore vis cache"
-              uses: "actions/cache@v5"
+              uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
               with:
                   key: "vis-${{ runner.os }}-${{ github.sha }}"
                   path: "node_modules/.cache/vis"
                   restore-keys: |
                       vis-${{ runner.os }}-
+
+            # Fails when vis.config.ts or the workspace changed without regenerating this file.
+            - name: "Check the workflow is up to date"
+              run: "pnpm exec vis sync ci-workflow --check"
 
             # Builds what the targets below depend on once, so the parallel steps
             # never build or restore the same outputs at the same time.
