@@ -118,6 +118,51 @@ flowchart TD
     I -- no --> K["Error + exitCode=1\n(not reset by clean CODEOWNERS)"]
 ```
 
+### ci-workflow
+
+Generates a CI workflow that runs your targets at the same time. Settings come from `ci.workflow` in `vis.config.ts`; re-run the command after changing them, and add `vis sync ci-workflow --check` to CI to catch a stale file.
+
+```bash
+vis sync ci-workflow                             # Write .github/workflows/vis-ci.yml
+vis sync ci-workflow --provider=github,gitlab    # Also write .gitlab/vis-ci.gitlab-ci.yml
+vis sync ci-workflow --check                     # CI: exit 1 if a generated file is stale
+```
+
+```ts
+// vis.config.ts
+export default defineConfig({
+    ci: {
+        workflow: {
+            targets: ["lint", "build", "test"], // default: whichever of lint, typecheck, lint:types, build, test exist
+            partitions: { test: 3 }, // split test into 3 shards that run at the same time
+            providers: ["github", "gitlab"], // default: ["github"]
+            affected: true, // default: only affected projects (`vis ci`); false runs every project (`vis run`)
+            buildFirst: true, // default: build runs before targets dependsOn does not order relative to it
+            branches: ["main"], // default: [defaultBase ?? "main"]
+            nodeVersion: "22",
+            runsOn: "ubuntu-latest",
+        },
+    },
+});
+```
+
+Targets are grouped by `dependsOn`: a target waits for the listed targets it depends on (directly, through `^target`, or through targets you did not list), and the rest of a group runs at once. With `buildFirst` (the default), `build` also runs before every listed target that `dependsOn` leaves unordered relative to it: most workspaces never declare that `test` or `typecheck` needs the dependencies' `dist`, because a sequential job built first anyway. Set `buildFirst: false` once `dependsOn` says what needs `build`.
+
+**GitHub Actions** gets one job that uses [parallel steps](https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel):
+
+1. install once,
+2. `vis ci <target> --deps-only` for every target, which builds everything the targets depend on once,
+3. one `parallel:` step group per target group, each step running `vis ci <target> --skip-deps` (one step per shard for a partitioned target). `--skip-deps` still hashes the dependencies, so a dependency change invalidates the cached results of what depends on it.
+
+Step 2 is what makes step 3 safe: the parallel steps share one checkout, so two of them building or restoring the same dependency at the same time would race on its outputs. GitHub runs at most 10 steps of a group at once, so the generator rejects a group that needs more. A target whose tasks depend on the same target in other projects (`dependsOn: ["^build"]`) cannot be partitioned, because its shards would depend on each other. The task cache (`taskRunner.cacheDirectory`, by default `node_modules/.cache/vis`) is kept between runs with `actions/cache`.
+
+**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage, ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
+
+```yaml
+include:
+    - local: ".gitlab/vis-ci.gitlab-ci.yml"
+```
+
 ### package-json-fields
 
 Mirrors a small set of metadata fields from the **root** `package.json` to every workspace package, so each package keeps a consistent `license`, `author`, `bugs`, `homepage`, `engines`, and `repository`. `repository.directory` is preserved per package — only `type` and `url` are copied from root.
@@ -154,3 +199,4 @@ Fields missing from root are skipped — sync never deletes from a package. Fiel
 | `--ignore-package-name`  |                          | Glob of package names to skip (package-json-fields only). Repeatable.                                                      |
 | `--format`               | `human`                  | Output format for package-json-fields: `human` or `json`.                                                                  |
 | `--quiet`                | `false`                  | Suppress per-package log lines; print only the summary (package-json-fields only).                                         |
+| `--provider`             | `github`                 | CI providers to generate for (ci-workflow only): `github`, `gitlab`. Comma-separated or repeatable.                        |

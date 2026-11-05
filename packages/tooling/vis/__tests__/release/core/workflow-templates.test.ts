@@ -117,7 +117,7 @@ describe("generateWorkflowFiles — GitHub", () => {
         const release = files.find((f) => f.path === ".github/workflows/vis-release.yml")!;
 
         expect(release.content).toContain("yarn install --immutable");
-        expect(release.content).toContain("yarn exec vis release");
+        expect(release.content).toContain("yarn vis release");
         expect(release.content).not.toContain("pnpm/action-setup");
         expect(release.content).not.toContain("oven-sh/setup-bun");
     });
@@ -194,15 +194,15 @@ describe("generateWorkflowFiles — GitLab", () => {
 
         expect(files[0]?.content).toContain("corepack enable");
         expect(files[0]?.content).toContain("yarn install --immutable");
-        expect(files[0]?.content).toContain("yarn exec vis release ci release");
+        expect(files[0]?.content).toContain("yarn vis release ci release");
     });
 
-    it("emits npm install -g pnpm for pnpm projects", () => {
+    it("emits a corepack bootstrap for pnpm projects, so the packageManager pin is honoured", () => {
         expect.hasAssertions();
 
         const files = generateWorkflowFiles({}, { branches: ["main"], packageManager: "pnpm", provider: "gitlab" });
 
-        expect(files[0]?.content).toContain("npm install -g pnpm");
+        expect(files[0]?.content).toContain("corepack enable");
         expect(files[0]?.content).toContain("pnpm install --frozen-lockfile");
     });
 

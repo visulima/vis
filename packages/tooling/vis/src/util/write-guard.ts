@@ -21,6 +21,9 @@
  * are never blocked.
  */
 
+import type { GeneratedFile } from "./generated-files";
+import { GITHUB_ACTIONS } from "./github-actions";
+
 /** A project that opted into Write Guard via `restricted: true`. */
 export interface RestrictedProject {
     /** Project name (used only for stable ordering). */
@@ -91,7 +94,7 @@ jobs:
   write-guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: ${GITHUB_ACTIONS.checkout}
         with:
           fetch-depth: 0
       - uses: geritol/write-guard@v1
@@ -156,19 +159,12 @@ ${changeLines}
 `;
 };
 
-export interface WriteGuardArtifact {
-    /** Rendered file content. */
-    content: string;
-    /** Workspace-root-relative output path. */
-    path: string;
-}
-
 /**
  * Produces both Write Guard artefacts for the given restricted
  * projects. Returns an empty list when nothing is restricted so the
  * caller can no-op cleanly.
  */
-export const buildWriteGuardArtifacts = (projects: ReadonlyArray<RestrictedProject>): WriteGuardArtifact[] => {
+export const buildWriteGuardArtifacts = (projects: ReadonlyArray<RestrictedProject>): GeneratedFile[] => {
     if (projects.length === 0) {
         return [];
     }

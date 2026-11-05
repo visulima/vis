@@ -49,5 +49,7 @@ vis ci test --query "language=typescript"  # Filter by project metadata
 | `--downstream`     | `deep`        | Downstream scope: `none`, `direct`, `deep`                                                                      |
 | `--parallel`       | `4`           | Max parallel tasks per target                                                                                   |
 | `--partition`      |               | Partition for distributed CI (e.g. `1/4`)                                                                       |
+| `--deps-only`      | `false`       | Run only the dependencies of the targets, not the targets themselves                                            |
+| `--skip-deps`      | `false`       | Run only the targets; assume an earlier `--deps-only` run built their dependencies                              |
 | `--if-present`     | `false`       | Exit 0 when the target or `--query` selects no projects (otherwise an empty selection fails the job)            |
 | `--query`          |               | Filter affected projects by query                                                                               |

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 
 import { join } from "@visulima/path";
+import { parse as parseYaml, stringify as stringifyYaml } from "@visulima/yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import syncExecute from "../../../src/commands/sync/handler";
@@ -712,5 +713,152 @@ describe("vis sync package-json-fields", () => {
         const written = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
 
         expect(written.funding).toBe("https://github.com/sponsors/me");
+    });
+});
+
+describe("vis sync ci-workflow", () => {
+    /** A `build` step on its own, outside any `parallel:` group. */
+    const STANDALONE_BUILD = "            - name: \"build\"\n              run:";
+
+    let workspaceRoot: string;
+    let originalExitCode: ExitCode;
+
+    beforeEach(() => {
+        workspaceRoot = createTemporaryDirectory("vis-sync-ci-");
+        originalExitCode = process.exitCode;
+
+        writeFileSync(join(workspaceRoot, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+        writeFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+        writeFileSync(join(workspaceRoot, "package.json"), JSON.stringify({ name: "root" }));
+
+        const appDir = join(workspaceRoot, "packages", "app");
+
+        mkdirSync(appDir, { recursive: true });
+        writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "@my/app" }));
+        writeFileSync(
+            join(appDir, "project.json"),
+            JSON.stringify({
+                targets: {
+                    build: { command: "echo build" },
+                    lint: { command: "echo lint" },
+                    test: { command: "echo test", dependsOn: ["build"] },
+                },
+            }),
+        );
+    });
+
+    afterEach(() => {
+        cleanupTemporaryDirectory(workspaceRoot);
+        process.exitCode = originalExitCode;
+    });
+
+    const sync = async (options: Record<string, unknown>, visConfig?: unknown): Promise<LoggerCall[]> => {
+        const { calls, logger } = makeLogger();
+
+        await syncExecute({
+            argument: ["ci-workflow"],
+            fs: testFs,
+            logger,
+            options: { check: false, ...options },
+            runtime: {} as never,
+            visConfig,
+            workspaceRoot,
+        } as never);
+
+        return calls;
+    };
+
+    it("writes a GitHub workflow that layers targets by dependsOn", async () => {
+        expect.assertions(3);
+
+        await sync({});
+
+        const yaml = readFileSync(join(workspaceRoot, ".github/workflows/vis-ci.yml"), "utf8");
+
+        expect(yaml).toContain("pnpm exec vis ci test --no-install --deps-only --if-present");
+        // buildFirst puts build alone ahead of the lint + test group.
+        expect(yaml.indexOf(STANDALONE_BUILD)).toBeLessThan(yaml.indexOf("- parallel:"));
+        await expect(access(join(workspaceRoot, ".gitlab/vis-ci.gitlab-ci.yml"))).rejects.toThrow("ENOENT");
+    });
+
+    it("also writes the GitLab file when asked, and --check passes right after", async () => {
+        expect.assertions(2);
+
+        await sync({ provider: ["github,gitlab"] });
+
+        expect(readFileSync(join(workspaceRoot, ".gitlab/vis-ci.gitlab-ci.yml"), "utf8")).toContain("\"vis:test\":");
+
+        await sync({ check: true, provider: ["github,gitlab"] });
+
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("accepts a reformatted file in --check", async () => {
+        expect.assertions(1);
+
+        await sync({});
+
+        const path = join(workspaceRoot, ".github/workflows/vis-ci.yml");
+        // What a formatter with 2-space indent and single quotes does to the output.
+        const reformatted = stringifyYaml(parseYaml(readFileSync(path, "utf8")), { indent: 2, singleQuote: true });
+
+        writeFileSync(path, reformatted);
+        await sync({ check: true });
+
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("fails --check when the config changed since the last sync", async () => {
+        expect.assertions(2);
+
+        await sync({});
+
+        const calls = await sync({ check: true }, { ci: { workflow: { partitions: { test: 2 } } } });
+
+        expect(process.exitCode).toBe(1);
+        expect(calls.some(([level, message]) => level === "error" && String(message).includes("vis sync ci-workflow"))).toBe(true);
+    });
+
+    it("runs build first unless buildFirst is off", async () => {
+        expect.assertions(2);
+
+        const ordered = await sync({});
+
+        expect(ordered.some(([, message]) => String(message).includes("Running build before lint"))).toBe(true);
+
+        await sync({}, { ci: { workflow: { buildFirst: false } } });
+
+        // lint now runs alongside build; test still waits for build through dependsOn.
+        expect(readFileSync(join(workspaceRoot, ".github/workflows/vis-ci.yml"), "utf8")).not.toContain(STANDALONE_BUILD);
+    });
+
+    it("rejects an empty provider list", async () => {
+        expect.assertions(1);
+
+        await expect(sync({}, { ci: { workflow: { providers: [] } } })).rejects.toThrow("No CI provider selected");
+    });
+
+    it("rejects --provider for another sync kind", async () => {
+        expect.assertions(1);
+
+        const { logger } = makeLogger();
+
+        await expect(
+            syncExecute({
+                argument: ["codeowners"],
+                fs: testFs,
+                logger,
+                options: { check: false, provider: ["github"] },
+                runtime: {} as never,
+                visConfig: undefined,
+                workspaceRoot,
+            } as never),
+        ).rejects.toThrow("--provider only applies to `vis sync ci-workflow`");
+    });
+
+    it("rejects a target no project defines", async () => {
+        expect.assertions(1);
+
+        await expect(sync({}, { ci: { workflow: { targets: ["e2e"] } } })).rejects.toThrow("no project defines \"e2e\"");
     });
 });

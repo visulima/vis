@@ -7,6 +7,8 @@ import { defineCommand } from "@visulima/cerebro";
  *
  * Currently supported kinds:
  *
+ *  - `ci-workflow`: renders the GitHub Actions workflow (parallel steps)
+ *    and/or includable GitLab CI file described by `ci.workflow`.
  *  - `codeowners`: aggregates `owners` entries from every project's
  *    project.json into a single CODEOWNERS file at the repo root
  *    (or `.github/CODEOWNERS` when the target flag is set).
@@ -58,6 +60,11 @@ const syncOptionDefinitions = {
         description: "Splice the generated block between markers in the existing file instead of overwriting it. Codeowners kind only.",
         type: Boolean,
     },
+    provider: {
+        description: "CI providers to generate for (ci-workflow kind only): github, gitlab. Comma-separated or repeated. Defaults to ci.workflow.providers, then github.",
+        multiple: true,
+        type: String,
+    },
     quiet: {
         defaultValue: false,
         description: "Suppress per-package log lines; print only the summary (package-json-fields kind only)",
@@ -76,7 +83,7 @@ const syncOptionDefinitions = {
 
 const sync = defineCommand({
     argument: {
-        description: "What to sync: codeowners | package-json-fields",
+        description: "What to sync: ci-workflow | codeowners | package-json-fields",
         name: "kind",
         type: String,
     },
@@ -89,6 +96,9 @@ const sync = defineCommand({
         ["vis sync codeowners --regeneration-command='pnpm codeowners'", "Set a custom header instruction"],
         ["vis sync codeowners --preserve-block", "Splice the generated block between markers in an existing CODEOWNERS"],
         ["vis sync codeowners --write-guard", "Also emit GitHub + GitLab Write Guard CI for restricted projects"],
+        ["vis sync ci-workflow", "Generate .github/workflows/vis-ci.yml, running targets as parallel steps"],
+        ["vis sync ci-workflow --provider=github,gitlab", "Also generate an includable .gitlab/vis-ci.gitlab-ci.yml"],
+        ["vis sync ci-workflow --check", "Fail if the generated CI workflow is stale"],
         ["vis sync package-json-fields", "Mirror license/author/repository/bugs/homepage/engines from root to every workspace package"],
         ["vis sync package-json-fields --check", "Fail if any workspace package.json is out of sync"],
         ["vis sync package-json-fields --fields license,engines", "Override the default field list for this run"],
