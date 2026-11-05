@@ -1,4 +1,5 @@
 import type { Task, TaskGraph } from "@visulima/task-runner";
+import { parsePartition } from "@visulima/task-runner";
 
 import type { VisTargetConfiguration } from "../../task/target-options";
 import type { RunOptions } from "./index";
@@ -6,12 +7,13 @@ import { resolveRunArguments } from "./run-arguments";
 import type { DiscoveredWorkspace, RunLogger, RunProjectGraph } from "./run-context";
 import { buildInitialTasks } from "./run-initial-tasks";
 import { createRunTaskGraph } from "./run-task-graph";
+import { applyGraphScope, resolveGraphScope } from "./scope-task-graph";
 
 /**
  * Builds the run's tasks: validates the forwarded arguments, creates the
  * requested tasks (applying `--partition`) and then the dependency graph.
- * Returns `undefined` when `--help` was printed or the partition leaves
- * nothing to run.
+ * Returns `undefined` when `--help` was printed or the partition (or a
+ * `--deps-only` / `--skip-deps` scope) leaves nothing to run.
  */
 export const buildRunTasks = ({
     affectedFiles,
@@ -44,6 +46,8 @@ export const buildRunTasks = ({
         return undefined;
     }
 
+    const scope = resolveGraphScope(options);
+
     const initialSelection = buildInitialTasks({
         affectedFiles,
         forwardedArgs,
@@ -75,5 +79,7 @@ export const buildRunTasks = ({
         workspace,
     });
 
-    return { initialTasks, persistentTasks, taskGraph };
+    const built = { initialTasks, persistentTasks, taskGraph };
+
+    return scope ? applyGraphScope(built, { logger, partitioned: parsePartition(options.partition) !== undefined, scope, target }) : built;
 };

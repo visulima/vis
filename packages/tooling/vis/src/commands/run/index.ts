@@ -69,11 +69,25 @@ const runOptionDefinitions = {
                 "Downstream scope for --affected: \"none\", \"direct\", or \"deep\" — controls how far to include dependents of changed projects (default \"deep\"). Requires --affected.",
         type: String,
     },
+    ...negatable({
+        defaultValue: false,
+        description:
+                "Run only the dependencies of the requested tasks, not the tasks themselves. Pair with a later --skip-deps run to fan the requested tasks out over parallel CI steps.",
+        name: "deps-only",
+        type: Boolean,
+    }),
     "dry-run": {
         defaultValue: false,
         description: "Show what would run without executing",
         type: Boolean,
     },
+    ...negatable({
+        defaultValue: false,
+        description:
+                "Run only the requested tasks and treat their dependencies as already done (by an earlier --deps-only run). Lets parallel CI steps share one dependency build.",
+        name: "skip-deps",
+        type: Boolean,
+    }),
     "hash-mode": {
         description:
                 "Override how the requested target is hashed for this run: declared (hash listed inputs) or trace (hash the files the task actually reads). Overrides per-target hashMode config for the directly-run target.",

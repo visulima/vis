@@ -69,6 +69,10 @@ const execute = async ({
     // Everything else is `vis run --affected` with the same flags, so hand
     // over rather than maintaining a second copy of the filter pipeline.
     if (options.sparseCheckout) {
+        if (options.depsOnly || options.skipDeps) {
+            throw new VisUserError("--sparse-checkout only prints project roots; --deps-only / --skip-deps do not apply to it.");
+        }
+
         const workspaceRoot = wsRoot;
         const { config, fileOwners, packageJsons, workspace } = discoverWorkspace(workspaceRoot, visConfig);
         const projectGraph = buildProjectGraph(workspaceRoot, workspace, packageJsons);
