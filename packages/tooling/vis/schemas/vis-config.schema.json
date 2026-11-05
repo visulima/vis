@@ -3877,6 +3877,14 @@
                     "description": "Run `vis sync ci-workflow --check` in the workflow, so CI fails when the committed workflow no longer matches this config.",
                     "default": true
                 },
+                "github": {
+                    "$ref": "#/$defs/CiGithubWorkflowConfig",
+                    "description": "Additions to the GitHub Actions workflow: env, permissions, services and extra steps."
+                },
+                "gitlab": {
+                    "$ref": "#/$defs/CiGitlabWorkflowConfig",
+                    "description": "Additions to the GitLab CI file: image, variables, scripts, services and runner tags."
+                },
                 "nodeVersion": {
                     "type": "string",
                     "description": "Node.js version installed by the workflow. Defaults to `toolchain.tools.node`, then `\"22\"`."
@@ -3903,9 +3911,16 @@
                 "targets": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "anyOf": [
+                            {
+                                "$ref": "#/$defs/CiWorkflowTargetConfig"
+                            },
+                            {
+                                "type": "string"
+                            }
+                        ]
                     },
-                    "description": "Targets to run. A target that depends on another listed target (through `dependsOn`, directly or via unlisted targets) runs in a later group; the rest run at the same time. Defaults to whichever of lint, typecheck, lint:types, build and test exist in the workspace."
+                    "description": "Targets to run. A target that depends on another listed target (through `dependsOn`, directly or via unlisted targets) runs in a later group; the rest run at the same time. Defaults to whichever of lint, typecheck, lint:types, build and test exist in the workspace. Use the object form to give a target environment variables."
                 },
                 "timeoutMinutes": {
                     "type": "number",
@@ -3916,6 +3931,245 @@
             "additionalProperties": false,
             "description": "Settings for the CI workflow that `vis sync ci-workflow` generates.\n\nOn GitHub the workflow is a single job: it builds the dependencies of every listed target once (`vis ci … --deps-only`), then runs the targets as GitHub Actions `parallel:` step groups (`--skip-deps`). On GitLab each target becomes its own job, and a partitioned target uses `parallel: N`."
         },
+        "CiGithubWorkflowConfig": {
+            "type": "object",
+            "properties": {
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Job-level environment variables, available to every step. Use `${{ secrets.NAME }}` for secrets."
+                },
+                "permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "none",
+                            "read",
+                            "write"
+                        ]
+                    },
+                    "description": "Permissions added to the workflow's default `contents: read`, e.g. `{ \"id-token\": \"write\" }` for OIDC."
+                },
+                "services": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/$defs/CiGithubService"
+                    },
+                    "description": "Service containers the job needs, keyed by service name (also its hostname)."
+                },
+                "steps": {
+                    "type": "object",
+                    "properties": {
+                        "after": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CiGithubStep"
+                            },
+                            "description": "Steps after all targets ran, e.g. a coverage upload (add `if: always()` to run them after a failure)."
+                        },
+                        "afterSetup": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CiGithubStep"
+                            },
+                            "description": "Steps after the toolchains are installed and before anything runs, e.g. starting `docker compose`."
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false,
+            "description": "Additions to the generated GitHub Actions workflow."
+        },
+        "CiGithubService": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "type": "object",
+                    "properties": {
+                        "password": {
+                            "type": "string"
+                        },
+                        "username": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "password",
+                        "username"
+                    ],
+                    "additionalProperties": false
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "image": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "string",
+                    "description": "Docker `create` options, e.g. `--health-cmd pg_isready`."
+                },
+                "ports": {
+                    "type": "array",
+                    "items": {
+                        "type": [
+                            "number",
+                            "string"
+                        ]
+                    }
+                },
+                "volumes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": [
+                "image"
+            ],
+            "additionalProperties": false,
+            "description": "A service container for the GitHub job (`jobs.&lt;id>.services`)."
+        },
+        "CiGithubStep": {
+            "type": "object",
+            "properties": {
+                "continue-on-error": {
+                    "type": "boolean"
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "if": {
+                    "type": "string",
+                    "description": "A GitHub expression, e.g. `always()` or `github.event_name == 'push'`."
+                },
+                "name": {
+                    "type": "string"
+                },
+                "run": {
+                    "type": "string"
+                },
+                "shell": {
+                    "type": "string"
+                },
+                "timeout-minutes": {
+                    "type": "number"
+                },
+                "uses": {
+                    "type": "string",
+                    "description": "An action reference. Pin it to a commit SHA (`owner/action@&lt;sha>`), as the generated steps are."
+                },
+                "with": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": [
+                            "boolean",
+                            "number",
+                            "string"
+                        ]
+                    }
+                },
+                "working-directory": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false,
+            "description": "A step added to the generated GitHub workflow. Exactly one of `run` and `uses` is required."
+        },
+        "CiGitlabWorkflowConfig": {
+            "type": "object",
+            "properties": {
+                "afterScript": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Commands after each job's script, e.g. collecting reports."
+                },
+                "beforeScript": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Commands after the install and before each job's script."
+                },
+                "image": {
+                    "type": "string",
+                    "description": "Image for every job instead of `node:&lt;nodeVersion>`. It must have Node.js, which vis runs on."
+                },
+                "services": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/CiGitlabService"
+                    }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Runner tags that pick which runners take the jobs."
+                },
+                "variables": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Variables for every job. Use masked CI/CD variables for secrets."
+                }
+            },
+            "additionalProperties": false,
+            "description": "Additions to the generated GitLab CI file. They apply to every job."
+        },
+        "CiGitlabService": {
+            "anyOf": [
+                {
+                    "type": "string"
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "alias": {
+                            "type": "string"
+                        },
+                        "command": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "variables": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "name"
+                    ],
+                    "additionalProperties": false
+                }
+            ],
+            "description": "A service container for every GitLab job (`services:`)."
+        },
         "CiWorkflowProvider": {
             "type": "string",
             "enum": [
@@ -3923,6 +4177,26 @@
                 "gitlab"
             ],
             "description": "CI providers `vis sync ci-workflow` can render a workflow for."
+        },
+        "CiWorkflowTargetConfig": {
+            "type": "object",
+            "properties": {
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Environment variables for this target's step (GitHub) or job (GitLab)."
+                },
+                "name": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": false,
+            "description": "A target with settings of its own."
         },
         "CodeownersConfig": {
             "type": "object",

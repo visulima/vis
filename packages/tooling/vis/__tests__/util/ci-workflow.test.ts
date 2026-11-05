@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "@visulima/yaml";
 import { describe, expect, it } from "vitest";
 
 import { VisUserError } from "../../src/errors/vis-user-error";
@@ -14,7 +15,9 @@ const plan = (overrides: Partial<CiWorkflowPlan> = {}, shards: Record<string, nu
         cacheDirectory: undefined,
         checkDrift: true,
         ecosystems: [],
-        layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => { return { name, shards: shards[name] ?? 1 }; })),
+        github: {},
+        gitlab: {},
+        layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => { return { env: undefined, name, shards: shards[name] ?? 1 }; })),
         nodeVersion: "22",
         packageManager: "pnpm",
         rootFiles: new Set(),
@@ -108,7 +111,21 @@ describe(buildCiWorkflowPlan, () => {
         const { plan: result } = build({ partitions: { test: 2 } });
 
         expect(result.branches).toStrictEqual(["trunk"]);
-        expect(result.layers).toStrictEqual([[{ name: "build", shards: 1 }], [{ name: "lint", shards: 1 }, { name: "test", shards: 2 }]]);
+        expect(result.layers).toStrictEqual([
+            [{ env: undefined, name: "build", shards: 1 }],
+            [
+                { env: undefined, name: "lint", shards: 1 },
+                { env: undefined, name: "test", shards: 2 },
+            ],
+        ]);
+    });
+
+    it("keeps the env of a target given in object form", () => {
+        expect.assertions(1);
+
+        const { plan: result } = build({ targets: ["lint", { env: { CI_SHARD: "1" }, name: "test" }] });
+
+        expect(result.layers.flat().find(({ name }) => name === "test")?.env).toStrictEqual({ CI_SHARD: "1" });
     });
 
     it.each([
@@ -118,6 +135,9 @@ describe(buildCiWorkflowPlan, () => {
         ["an empty target list", { targets: [] }, "ci.workflow.targets is empty"],
         ["a target no project defines", { targets: ["e2e"] }, "no project defines \"e2e\""],
         ["a timeout that is not a positive integer", { timeoutMinutes: 0 }, "timeoutMinutes must be a positive integer"],
+        ["a target listed twice", { targets: ["lint", { name: "lint" }] }, "lists \"lint\" more than once"],
+        ["a step with both run and uses", { github: { steps: { after: [{ name: "x", run: "true", uses: "a/b@c" }] } } }, "\"x\" needs exactly one of `run` or `uses`"],
+        ["a step with neither run nor uses", { github: { steps: { afterSetup: [{ name: "y" }] } } }, "\"y\" needs exactly one of `run` or `uses`"],
     ])("rejects %s", (_, settings, message) => {
         expect.assertions(1);
 
@@ -214,6 +234,38 @@ describe(renderGithubCiWorkflow, () => {
         expect(yaml).not.toContain("Swift");
     });
 
+    it("adds the configured env, permissions, services and steps", () => {
+        expect.assertions(8);
+
+        const yaml = renderGithubCiWorkflow(
+            plan({
+                github: {
+                    env: { DATABASE_URL: "postgres://postgres@localhost/test", TOKEN: "${{ secrets.TOKEN }}" },
+                    permissions: { "id-token": "write" },
+                    services: { postgres: { env: { POSTGRES_PASSWORD: "postgres" }, image: "postgres:17", options: "--health-cmd pg_isready", ports: ["5432:5432"] } },
+                    steps: {
+                        after: [{ if: "always()", name: "Upload coverage", uses: "codecov/codecov-action@abc", with: { files: "coverage/lcov.info" } }],
+                        afterSetup: [{ name: "Start services", run: "docker compose up -d", "working-directory": "infra" }],
+                    },
+                },
+                layers: [[{ env: { CI_SHARD: "1" }, name: "test", shards: 1 }]],
+            }),
+        );
+
+        expect(yaml).toContain("permissions:\n    contents: \"read\"\n    id-token: \"write\"\n");
+        expect(yaml).toContain("        env:\n            DATABASE_URL: \"postgres://postgres@localhost/test\"\n            TOKEN: \"${{ secrets.TOKEN }}\"\n");
+        expect(yaml).toContain(
+            "        services:\n            postgres:\n                env:\n                    POSTGRES_PASSWORD: \"postgres\"\n                image: \"postgres:17\"\n                options: \"--health-cmd pg_isready\"\n                ports:\n                    - \"5432:5432\"\n",
+        );
+        // After setup and before the drift check and the dependency build.
+        expect(yaml.indexOf("Start services")).toBeLessThan(yaml.indexOf("Check the workflow is up to date"));
+        expect(yaml).toContain("              working-directory: \"infra\"\n              run: \"docker compose up -d\"");
+        // After every target.
+        expect(yaml.indexOf("Upload coverage")).toBeGreaterThan(yaml.indexOf("vis ci test"));
+        expect(yaml).toContain("              env:\n                  CI_SHARD: \"1\"\n              run: \"pnpm exec vis ci test");
+        expect(parseYaml(yaml)).toMatchObject({ jobs: { ci: { services: { postgres: { ports: ["5432:5432"] } } } }, permissions: { "id-token": "write" } });
+    });
+
     it("refuses a group above GitHub's 10 concurrent steps", () => {
         expect.assertions(1);
 
@@ -267,6 +319,33 @@ describe(renderGitlabCiWorkflow, () => {
         expect(yaml).toContain("- \".cargo/\"");
         expect(gitlabMissingToolchains(rustAndJava)).toStrictEqual(["maven"]);
         expect(yaml).toContain("# Not on the node image: maven.");
+    });
+
+    it("applies the configured image, variables, scripts, services, tags and per-target variables", () => {
+        expect.assertions(7);
+
+        const custom = plan({
+            ecosystems: [{ manifests: ["pom.xml"], name: "maven" }],
+            gitlab: {
+                afterScript: ["echo done"],
+                beforeScript: ["./scripts/prepare.sh"],
+                image: "registry.example.com/ci/node-java:22",
+                services: ["postgres:17", { alias: "cache", name: "redis:7" }],
+                tags: ["docker"],
+                variables: { POSTGRES_PASSWORD: "postgres" },
+            },
+            layers: [[{ env: { CI_SHARD: "1" }, name: "test", shards: 1 }]],
+        });
+        const yaml = renderGitlabCiWorkflow(custom);
+
+        expect(yaml).toContain('    image: "registry.example.com/ci/node-java:22"');
+        expect(yaml).toContain('        POSTGRES_PASSWORD: "postgres"');
+        expect(yaml).toContain('        - "pnpm install --frozen-lockfile"\n        - "./scripts/prepare.sh"\n');
+        expect(yaml).toContain('    tags:\n        - "docker"\n    services:\n        - "postgres:17"\n        - alias: "cache"\n          name: "redis:7"\n    after_script:\n        - "echo done"\n');
+        expect(yaml).toContain('    variables:\n        CI_SHARD: "1"\n    script:');
+        // The custom image is the answer to missing toolchains.
+        expect(gitlabMissingToolchains(custom)).toStrictEqual([]);
+        expect(parseYaml(yaml)).toMatchObject({ ".vis-ci-base": { services: ["postgres:17", { alias: "cache", name: "redis:7" }], tags: ["docker"] } });
     });
 
     it("adds a drift-check job and a job timeout", () => {

@@ -16,56 +16,61 @@
  * selection as the later steps builds exactly the closure they need.
  */
 
+import type { CiGithubStep } from "../../config/types/ci";
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { GithubAction } from "../github-actions";
 import { GITHUB_ACTIONS } from "../github-actions";
 import type { DetectedEcosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand, yamlString } from "./plan";
+import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand } from "./plan";
+import { yamlEntry, yamlString } from "./yaml";
 
 /** GitHub runs at most 10 background steps of a job at once; more would queue. */
 const MAX_PARALLEL_STEPS = 10;
 
-interface RunStep {
+/** A generated step (pinned `GithubAction`) or one from `ci.workflow.github.steps` (a `uses` string). */
+interface RunStep extends Omit<CiGithubStep, "uses"> {
     comment?: string;
-    name: string;
-    run?: string;
-    uses?: GithubAction;
-    with?: Record<string, boolean | number | string>;
+    uses?: GithubAction | string;
 }
 
 type Step = RunStep | { parallel: RunStep[] };
 
-const scalar = (value: boolean | number | string, indent: string): string => {
-    if (typeof value !== "string") {
-        return String(value);
-    }
-
-    return value.includes("\n") ? `|\n${value.replace(/\n$/u, "").split("\n").map((line) => `${indent}${line}`).join("\n")}` : yamlString(value);
-};
-
-/** Renders one step as a list item at `indent`. */
+/** Renders one step as a list item at `indent`, keys in the order GitHub's docs use. */
 const renderStep = (step: Step, indent: string): string => {
     if ("parallel" in step) {
         return `${indent}- parallel:\n${step.parallel.map((child) => renderStep(child, `${indent}      `)).join("")}`;
     }
 
     const key = `${indent}  `;
-    const lines = step.comment === undefined ? [] : step.comment.split("\n").map((line) => `${indent}# ${line}`);
+    const { comment, env, name, run, uses, with: inputs, ...rest } = step;
+    const lines = comment === undefined ? [] : comment.split("\n").map((line) => `${indent}# ${line}`);
 
-    lines.push(`${indent}- name: ${yamlString(step.name)}`);
+    lines.push(`${indent}- name: ${yamlString(name)}`);
 
-    if (step.uses !== undefined) {
-        lines.push(`${key}uses: ${yamlString(`${step.uses.name}@${step.uses.sha}`)} # ${step.uses.version}`);
+    if (rest.if !== undefined) {
+        lines.push(...yamlEntry("if", rest.if, key));
     }
 
-    if (step.with !== undefined) {
-        lines.push(`${key}with:`, ...Object.entries(step.with).map(([name, value]) => `${key}    ${name}: ${scalar(value, `${key}        `)}`));
+    if (typeof uses === "string") {
+        lines.push(...yamlEntry("uses", uses, key));
+    } else if (uses !== undefined) {
+        lines.push(`${key}uses: ${yamlString(`${uses.name}@${uses.sha}`)} # ${uses.version}`);
     }
 
-    if (step.run !== undefined) {
-        lines.push(`${key}run: ${scalar(step.run, `${key}    `)}`);
+    for (const [entry, value] of [
+        ["with", inputs],
+        ["env", env],
+        ["working-directory", rest["working-directory"]],
+        ["shell", rest.shell],
+        ["run", run],
+        ["continue-on-error", rest["continue-on-error"]],
+        ["timeout-minutes", rest["timeout-minutes"]],
+    ] as const) {
+        if (value !== undefined) {
+            lines.push(...yamlEntry(entry, value, key));
+        }
     }
 
     return `${lines.join("\n")}\n`;
@@ -198,6 +203,8 @@ const setupSteps = (plan: CiWorkflowPlan): RunStep[] => {
         },
     });
 
+    steps.push(...(plan.github.steps?.afterSetup ?? []));
+
     if (plan.checkDrift) {
         steps.push({
             comment: "Fails when vis.config.ts or the workspace changed without regenerating this file.",
@@ -211,19 +218,19 @@ const setupSteps = (plan: CiWorkflowPlan): RunStep[] => {
 
 const targetSteps = (plan: CiWorkflowPlan): Step[] =>
     plan.layers.map((layer) => {
-        const steps: RunStep[] = layer.flatMap(({ name, shards }) => {
+        const steps: RunStep[] = layer.flatMap(({ env, name, shards }) => {
             // No --skip-toolchain: the deps step already installed any pinned tool, so each step
             // only activates it (a pinned Node.js must be on PATH in this process too).
             const flags = ["--skip-deps"];
 
             if (shards === 1) {
-                return [{ name, run: visTargetCommand(plan, name, flags) }];
+                return [{ env, name, run: visTargetCommand(plan, name, flags) }];
             }
 
             return Array.from({ length: shards }, (_, index) => {
                 const partition = `${index + 1}/${shards}`;
 
-                return { name: `${name} (${partition})`, run: visTargetCommand(plan, name, [...flags, `--partition=${partition}`]) };
+                return { env, name: `${name} (${partition})`, run: visTargetCommand(plan, name, [...flags, `--partition=${partition}`]) };
             });
         });
 
@@ -257,6 +264,12 @@ export const renderGithubCiWorkflow = (plan: CiWorkflowPlan): string => {
                 .join("\n")}\n`,
         },
         ...targetSteps(plan),
+        ...(plan.github.steps?.after ?? []),
+    ];
+    const { env, permissions, services } = plan.github;
+    const jobExtras = [
+        ...(env === undefined ? [] : yamlEntry("env", env, "        ")),
+        ...(services === undefined ? [] : yamlEntry("services", services, "        ")),
     ];
 
     return `# ${GENERATED_NOTE}
@@ -268,8 +281,7 @@ on: # yamllint disable-line rule:truthy
         branches:
 ${plan.branches.map((branch) => `            - ${yamlString(branch)}`).join("\n")}
 
-permissions:
-    contents: "read"
+${yamlEntry("permissions", { contents: "read", ...permissions }, "").join("\n")}
 
 concurrency:
     group: "vis-ci-\${{ github.ref }}"
@@ -281,6 +293,6 @@ jobs:
         name: "vis ci"
         runs-on: ${yamlString(plan.runsOn)}
         timeout-minutes: ${plan.timeoutMinutes}
-        steps:
+${jobExtras.map((line) => `${line}\n`).join("")}        steps:
 ${steps.map((step) => renderStep(step, "            ")).join("\n")}`;
 };

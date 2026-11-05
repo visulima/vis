@@ -12,7 +12,8 @@ import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { Ecosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand, yamlString } from "./plan";
+import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand } from "./plan";
+import { yamlEntry, yamlString } from "./yaml";
 
 export const GITLAB_CI_WORKFLOW_PATH = ".gitlab/vis-ci.gitlab-ci.yml";
 
@@ -64,11 +65,13 @@ const ECOSYSTEM_CACHES: ReadonlyMap<string, { path: string; variable: string }> 
 
 /**
  * Detected toolchains a GitLab job cannot get: the jobs run in a plain
- * `node` image, and vis's pre-flight only installs go, python, ruby and rust,
- * and only when they are pinned in `toolchain.tools`.
+ * `node` image (unless `ci.workflow.gitlab.image` replaces it), and vis's
+ * pre-flight only installs go, python, ruby and rust, and only when they are
+ * pinned in `toolchain.tools`.
  */
 export const gitlabMissingToolchains = (plan: CiWorkflowPlan): string[] =>
-    plan.ecosystems.flatMap(({ name }) => (isPreflightTool(name) && plan.toolchainPins[name] !== undefined ? [] : [name]));
+    // A custom image is the user's answer to exactly this.
+    (plan.gitlab.image === undefined ? plan.ecosystems.flatMap(({ name }) => (isPreflightTool(name) && plan.toolchainPins[name] !== undefined ? [] : [name])) : []);
 
 /**
  * Renders `.gitlab/vis-ci.gitlab-ci.yml`, meant to be pulled in with
@@ -92,13 +95,20 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
             ? ["        # Outside node_modules, so a clean install (npm ci) keeps the restored task cache.", `        VIS_CACHE_DIRECTORY: "$CI_PROJECT_DIR/${cacheDirectory}"`]
             : []),
         ...ecosystemCaches.map(({ path, variable }) => `        ${variable}: "$CI_PROJECT_DIR/${path}"`),
+        ...Object.entries(plan.gitlab.variables ?? {}).flatMap(([name, value]) => yamlEntry(name, value, "        ")),
     ].join("\n");
     const cachePaths = [cacheDirectory, ...ecosystemCaches.map(({ path }) => path)].map((path) => `            - ${yamlString(`${path}/`)}`).join("\n");
     const install
         = plan.packageManager === undefined
             ? [visInstallCommand(plan)]
             : [...CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].setup, CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].install];
-    const beforeScript = install.map((line) => `        - ${yamlString(line)}`).join("\n");
+    const beforeScript = [...install, ...(plan.gitlab.beforeScript ?? [])].map((line) => `        - ${yamlString(line)}`).join("\n");
+    const { afterScript, services, tags } = plan.gitlab;
+    const baseExtras = [
+        ...(tags === undefined ? [] : yamlEntry("tags", tags, "    ")),
+        ...(services === undefined ? [] : yamlEntry("services", services, "    ")),
+        ...(afterScript === undefined ? [] : yamlEntry("after_script", afterScript, "    ")),
+    ];
     const missing = gitlabMissingToolchains(plan);
     const missingNote
         = missing.length === 0
@@ -121,14 +131,14 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
     let previous: string[] = [];
 
     for (const layer of plan.layers) {
-        for (const { name, shards } of layer) {
+        for (const { env, name, shards } of layer) {
             const flags = shards === 1 ? [] : ["--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL"];
 
             jobs += `
 ${yamlString(jobName(name))}:
     extends: ".vis-ci-base"
     needs: [${previous.map((job) => yamlString(job)).join(", ")}]
-${shards === 1 ? "" : `    parallel: ${shards}\n`}    script:
+${shards === 1 ? "" : `    parallel: ${shards}\n`}${env === undefined ? "" : `${yamlEntry("variables", env, "    ").join("\n")}\n`}    script:
         - ${yamlString(visTargetCommand(plan, name, flags))}
 `;
         }
@@ -146,7 +156,7 @@ ${shards === 1 ? "" : `    parallel: ${shards}\n`}    script:
 # the same time; a partitioned target fans out with \`parallel: N\`.
 ${missingNote}.vis-ci-base:
     stage: "test"
-    image: ${yamlString(`node:${plan.nodeVersion}`)}
+    image: ${yamlString(plan.gitlab.image ?? `node:${plan.nodeVersion}`)}
     timeout: "${plan.timeoutMinutes}m"
     variables:
 ${variables}
@@ -160,5 +170,5 @@ ${cachePaths}
 ${branchRules}
     before_script:
 ${beforeScript}
-${jobs}`;
+${baseExtras.map((line) => `${line}\n`).join("")}${jobs}`;
 };

@@ -953,7 +953,17 @@ export interface VisConfig {
     zig?: { discover?: boolean };
 }
 
-export type { CiConfig, CiWorkflowConfig, CiWorkflowProvider } from "./types/ci";
+export type {
+    CiConfig,
+    CiGithubService,
+    CiGithubStep,
+    CiGithubWorkflowConfig,
+    CiGitlabService,
+    CiGitlabWorkflowConfig,
+    CiWorkflowConfig,
+    CiWorkflowProvider,
+    CiWorkflowTargetConfig,
+} from "./types/ci";
 export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types/codeowners";
 export type { LintFmtAdapterOverride } from "./types/lint";
 export type { NativeAuditExclusions, PolicyName } from "./types/policies";

@@ -171,6 +171,44 @@ include:
     - local: ".gitlab/vis-ci.gitlab-ci.yml"
 ```
 
+#### Customizing the generated files
+
+The generated files are not edited by hand (`--check` would flag the edit and the next sync would undo it). Add to them through `ci.workflow` instead. Every option is typed, so `vis.config.ts` gets autocompletion and type errors:
+
+```ts
+export default defineConfig({
+    ci: {
+        workflow: {
+            // A target in object form gets its own environment variables (GitHub step env / GitLab job variables).
+            targets: ["lint", "build", { name: "test", env: { TZ: "UTC" } }],
+            github: {
+                env: { DATABASE_URL: "postgres://postgres:postgres@localhost:5432/test", NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" },
+                permissions: { "id-token": "write" }, // added to the default `contents: read`
+                services: {
+                    postgres: { image: "postgres:17", env: { POSTGRES_PASSWORD: "postgres" }, ports: ["5432:5432"], options: "--health-cmd pg_isready" },
+                },
+                steps: {
+                    // After the toolchains are installed, before the drift check and the dependency build.
+                    afterSetup: [{ name: "Start docker compose", run: "docker compose up -d --wait" }],
+                    // After every target; `if: always()` also runs it after a failure.
+                    after: [{ name: "Upload coverage", if: "always()", uses: "codecov/codecov-action@<sha>", with: { files: "coverage/lcov.info" } }],
+                },
+            },
+            gitlab: {
+                image: "registry.example.com/ci/node-java:22", // must have Node.js; replaces node:<nodeVersion>
+                variables: { POSTGRES_PASSWORD: "postgres" },
+                services: ["postgres:17"],
+                beforeScript: ["./scripts/prepare.sh"], // after the install
+                afterScript: ["./scripts/collect-reports.sh"],
+                tags: ["docker"],
+            },
+        },
+    },
+});
+```
+
+A step needs exactly one of `run` and `uses`, and a target can only be listed once; anything else is an error rather than being dropped. Pin `uses` to a commit SHA, as the generated steps are.
+
 ### package-json-fields
 
 Mirrors a small set of metadata fields from the **root** `package.json` to every workspace package, so each package keeps a consistent `license`, `author`, `bugs`, `homepage`, `engines`, and `repository`. `repository.directory` is preserved per package — only `type` and `url` are copied from root.
