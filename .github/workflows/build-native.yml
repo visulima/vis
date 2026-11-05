@@ -545,25 +545,27 @@ jobs:
                   if-no-files-found: "error"
 
             # --- Test native bindings inline (only on targets that can run natively) ---
-            - name: "Test task-runner native binding"
-              if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.task-runner == 'true')"
-              run: "pnpm vitest run __tests__/unit/native-binding.test.ts"
-              working-directory: "packages/tooling/task-runner"
+            # Independent suites, so they run as one parallel group.
+            - parallel:
+                  - name: "Test task-runner native binding"
+                    if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.task-runner == 'true')"
+                    run: "pnpm vitest run __tests__/unit/native-binding.test.ts"
+                    working-directory: "packages/tooling/task-runner"
 
-            - name: "Test tui native binding"
-              if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.tui == 'true')"
-              run: "pnpm vitest run __tests__/native-binding.test.ts"
-              working-directory: "packages/terminal/tui"
+                  - name: "Test tui native binding"
+                    if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.tui == 'true')"
+                    run: "pnpm vitest run __tests__/native-binding.test.ts"
+                    working-directory: "packages/terminal/tui"
 
-            - name: "Test vis native binding"
-              if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.vis == 'true')"
-              run: "pnpm vitest run __tests__/native/native-binding.test.ts"
-              working-directory: "packages/tooling/vis"
+                  - name: "Test vis native binding"
+                    if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.vis == 'true')"
+                    run: "pnpm vitest run __tests__/native/native-binding.test.ts"
+                    working-directory: "packages/tooling/vis"
 
-            - name: "Test secret-scanner native binding"
-              if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.secret-scanner == 'true')"
-              run: "pnpm vitest run __tests__/native-binding.test.ts"
-              working-directory: "packages/tooling/secret-scanner"
+                  - name: "Test secret-scanner native binding"
+                    if: "matrix.settings.testable && (github.event_name != 'pull_request' || needs.files-changed.outputs.secret-scanner == 'true')"
+                    run: "pnpm vitest run __tests__/native-binding.test.ts"
+                    working-directory: "packages/tooling/secret-scanner"
 
     # This check runs once all build jobs have passed
     build-native-required-check:

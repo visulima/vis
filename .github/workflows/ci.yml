@@ -45,7 +45,12 @@ jobs:
                   run-signatures-audit: false
                   run-npm-audit: false
 
+            # Mostly waits for the Build Native workflow of this commit, so it runs in the
+            # background while the affected JS packages build; only the tests need the bindings.
+            # https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsbackground
             - name: "Download native build artifacts"
+              id: "native-artifacts"
+              background: true
               uses: "./.github/actions/native-test-artifacts"
               with:
                   ref: "${{ github.event.pull_request.head.sha || github.sha }}"
@@ -68,6 +73,9 @@ jobs:
             # On pushes to main the base is the last successful run, so unchanged packages are skipped.
             - name: "Build affected packages"
               run: "pnpm run build:affected:packages"
+
+            - name: "Wait for native build artifacts"
+              wait: "native-artifacts"
 
             - name: "Run tests"
               env:
