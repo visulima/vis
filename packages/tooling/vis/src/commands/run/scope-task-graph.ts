@@ -86,11 +86,11 @@ export const scopeTaskGraph = (
         }
     }
 
-    const roots = Object.keys(tasks).filter((id) => !dependedOn.has(id));
+    const rootTasks = Object.values(tasks).filter((task) => !dependedOn.has(task.id));
 
     return {
-        initialTasks: scope === "skip-deps" ? initialTasks.filter((task) => task.id in tasks) : roots.flatMap((id) => (tasks[id] ? [tasks[id]] : [])),
-        taskGraph: { dependencies, roots, tasks },
+        initialTasks: scope === "skip-deps" ? initialTasks.filter((task) => task.id in tasks) : rootTasks,
+        taskGraph: { dependencies, roots: rootTasks.map((task) => task.id), tasks },
     };
 };
 

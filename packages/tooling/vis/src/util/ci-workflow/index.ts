@@ -4,11 +4,11 @@ import { renderGithubCiWorkflow } from "./github";
 import { GITLAB_CI_WORKFLOW_PATH, renderGitlabCiWorkflow } from "./gitlab";
 import type { CiWorkflowPlan } from "./plan";
 
-export type { CiWorkflowPlan, CiWorkflowTarget } from "./plan";
-export { buildCiWorkflowPlan, collectTargetDependencies, DEFAULT_CI_TARGETS, layerTargets, withBuildFirst } from "./plan";
+export type { CiWorkflowPlan } from "./plan";
+export { buildCiWorkflowPlan, collectTargetDependencies, layerTargets, withBuildFirst } from "./plan";
 
 /** The file each provider gets and how it is rendered. */
-export const CI_WORKFLOW_RENDERERS: Record<CiWorkflowProvider, { path: string; render: (plan: CiWorkflowPlan) => string }> = {
+const CI_WORKFLOW_RENDERERS: Record<CiWorkflowProvider, { path: string; render: (plan: CiWorkflowPlan) => string }> = {
     github: { path: ".github/workflows/vis-ci.yml", render: renderGithubCiWorkflow },
     gitlab: { path: GITLAB_CI_WORKFLOW_PATH, render: renderGitlabCiWorkflow },
 };
