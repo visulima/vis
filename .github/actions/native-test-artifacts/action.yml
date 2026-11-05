@@ -40,7 +40,7 @@ runs:
               commit: "${{ inputs.ref }}"
               name: "bindings-(.+)"
               name_is_regexp: true
-              path: "artifacts"
+              path: "${{ runner.temp }}/native-artifacts"
               if_no_artifact_found: "fail"
               allow_forks: false
 
@@ -48,7 +48,7 @@ runs:
           if: "steps.download_native_artifacts.outcome == 'failure'"
           shell: "bash"
           run: |
-              rm -rf artifacts
+              rm -rf "$RUNNER_TEMP/native-artifacts"
               sleep 30
 
         - name: "Download native build artifacts (retry)"
@@ -62,29 +62,34 @@ runs:
               commit: "${{ inputs.ref }}"
               name: "bindings-(.+)"
               name_is_regexp: true
-              path: "artifacts"
+              path: "${{ runner.temp }}/native-artifacts"
               if_no_artifact_found: "fail"
               allow_forks: false
 
         - name: "Distribute native artifacts to package roots"
           shell: "bash"
           run: |
-              if [ ! -d artifacts ]; then
+              # Downloaded outside the workspace: callers run this action as a background
+              # step while nx hashes and builds the workspace, so only the final moves into
+              # the package roots may touch it.
+              artifacts="$RUNNER_TEMP/native-artifacts"
+
+              if [ ! -d "$artifacts" ]; then
                 echo "no native artifacts downloaded, skipping distribution"
                 exit 0
               fi
 
-              find artifacts -name "task-runner-native.*.node" -exec mv {} packages/tooling/task-runner/ \; 2>/dev/null || true
-              find artifacts -name "tui-native.*.node" -exec mv {} packages/terminal/tui/ \; 2>/dev/null || true
-              find artifacts -name "vis-native.*.node" -exec mv {} packages/tooling/vis/ \; 2>/dev/null || true
-              find artifacts -name "secret-scanner-native.*.node" -exec mv {} packages/tooling/secret-scanner/ \; 2>/dev/null || true
+              find "$artifacts" -name "task-runner-native.*.node" -exec mv {} packages/tooling/task-runner/ \; 2>/dev/null || true
+              find "$artifacts" -name "tui-native.*.node" -exec mv {} packages/terminal/tui/ \; 2>/dev/null || true
+              find "$artifacts" -name "vis-native.*.node" -exec mv {} packages/tooling/vis/ \; 2>/dev/null || true
+              find "$artifacts" -name "secret-scanner-native.*.node" -exec mv {} packages/tooling/secret-scanner/ \; 2>/dev/null || true
 
               # Restore the task-runner sidecars into their binding-package
               # dirs (the .node moves above don't carry them). Without this,
               # the seccomp + macOS-interpose integration tests can't find
               # the helper/dylib and silently skip instead of validating.
               for sidecar in fspy-seccomp-helper fspy-macos.dylib fspy-windows.dll; do
-                  find artifacts -path "*/npm/*/$sidecar" -print0 2>/dev/null | while IFS= read -r -d "" f; do
+                  find "$artifacts" -path "*/npm/*/$sidecar" -print0 2>/dev/null | while IFS= read -r -d "" f; do
                       binding="$(basename "$(dirname "$f")")"
                       mkdir -p "packages/tooling/task-runner/npm/$binding"
                       install -m 0755 "$f" "packages/tooling/task-runner/npm/$binding/$sidecar" 2>/dev/null || true
@@ -94,13 +99,13 @@ runs:
               # Restore the vis CLI front-end binary into its binding-package
               # dirs so the CLI front-end integration test resolves it instead
               # of skipping. Both vis-native-cli (unix) and .exe (Windows) match.
-              find artifacts -path "*/bindings-vis-*/npm/*/vis-native-cli*" -print0 2>/dev/null | while IFS= read -r -d "" f; do
+              find "$artifacts" -path "*/bindings-vis-*/npm/*/vis-native-cli*" -print0 2>/dev/null | while IFS= read -r -d "" f; do
                   binding="$(basename "$(dirname "$f")")"
                   mkdir -p "packages/tooling/vis/npm/$binding"
                   install -m 0755 "$f" "packages/tooling/vis/npm/$binding/$(basename "$f")" 2>/dev/null || true
               done
 
-              rm -rf artifacts/
+              rm -rf "$artifacts"
 
         # Build Native uploads every target, so the runner's own bindings must be
         # present now; tests would otherwise silently skip their native coverage.

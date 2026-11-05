@@ -117,7 +117,10 @@ jobs:
         skip-playwright: 'true'
         run-signatures-audit: false
         run-npm-audit: false
+    # Mostly waits for Build Native, so it runs in the background while the packages build.
     - name: Native test artifacts
+      id: native-artifacts
+      background: true
       uses: ./.github/actions/native-test-artifacts
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -126,6 +129,8 @@ jobs:
       # The benches import workspace packages through their dist output. Nx skips a bench
       # project's dependencies when it has no build target, so the packages are built here.
       run: pnpm exec nx run-many --target=build:prod --projects=tag:type:package --parallel
+    - name: Wait for native test artifacts
+      wait: native-artifacts
     - name: Run benchmark
       uses: "CodSpeedHQ/action@61efe07e57e55bedeab750c434504de272a56e8c" # v5.6.1
       with:
