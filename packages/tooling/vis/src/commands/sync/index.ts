@@ -61,7 +61,7 @@ const syncOptionDefinitions = {
         type: Boolean,
     },
     provider: {
-        description: "CI providers to generate for (ci-workflow kind only): github, gitlab. Comma-separated or repeated. Defaults to ci.workflow.providers, then github.",
+        description: "CI providers to generate for (ci-workflow kind only): github, gitlab. Comma-separated or repeated. Defaults to ci.workflow.providers, then the repository's CI files or git remote.",
         multiple: true,
         type: String,
     },

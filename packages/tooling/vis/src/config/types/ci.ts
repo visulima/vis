@@ -47,8 +47,8 @@ export interface CiWorkflowConfig {
     partitions?: Record<string, number>;
 
     /**
-     * Which providers to generate a workflow for.
-     * @default ["github"]
+     * Which providers to generate a workflow for. Detected when unset: from
+     * the CI files in the repository, then the CI environment or git remote.
      */
     providers?: CiWorkflowProvider[];
 

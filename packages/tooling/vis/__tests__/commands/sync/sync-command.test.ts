@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 
 import { join } from "@visulima/path";
@@ -727,6 +727,9 @@ describe("vis sync ci-workflow", () => {
         workspaceRoot = createTemporaryDirectory("vis-sync-ci-");
         originalExitCode = process.exitCode;
 
+        // A GitHub repository, so provider detection does not depend on the machine's git remote or CI env.
+        mkdirSync(join(workspaceRoot, ".github", "workflows"), { recursive: true });
+
         writeFileSync(join(workspaceRoot, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
         writeFileSync(join(workspaceRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
         writeFileSync(join(workspaceRoot, "package.json"), JSON.stringify({ name: "root" }));
@@ -779,6 +782,18 @@ describe("vis sync ci-workflow", () => {
         // buildFirst puts build alone ahead of the lint + test group.
         expect(yaml.indexOf(STANDALONE_BUILD)).toBeLessThan(yaml.indexOf("- parallel:"));
         await expect(access(join(workspaceRoot, ".gitlab/vis-ci.gitlab-ci.yml"))).rejects.toThrow("ENOENT");
+    });
+
+    it("detects a GitLab repository from its .gitlab-ci.yml and logs why", async () => {
+        expect.assertions(2);
+
+        rmSync(join(workspaceRoot, ".github"), { force: true, recursive: true });
+        writeFileSync(join(workspaceRoot, ".gitlab-ci.yml"), "include: []\n");
+
+        const calls = await sync({});
+
+        expect(calls.some(([, message]) => String(message).includes("CI providers: gitlab (found .gitlab-ci.yml)"))).toBe(true);
+        expect(readFileSync(join(workspaceRoot, ".gitlab/vis-ci.gitlab-ci.yml"), "utf8")).toContain("\"vis:test\":");
     });
 
     it("also writes the GitLab file when asked, and --check passes right after", async () => {

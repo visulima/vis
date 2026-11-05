@@ -11,6 +11,7 @@ import { discoverWorkspace } from "../../config/workspace";
 import { VisUserError } from "../../errors/vis-user-error";
 import { detectPackageManager } from "../../preflight/lockfile";
 import { buildCiWorkflowPlan, isCiWorkflowProvider, renderCiWorkflows } from "../../util/ci-workflow";
+import { resolveCiWorkflowProviders } from "../../util/ci-workflow/providers";
 import type { CodeownersLine } from "../../util/codeowners";
 import { buildCodeownersLines, DEFAULT_BLOCK_MARKER, mergeIntoExisting, renderCodeowners, renderCodeownersBlock } from "../../util/codeowners";
 import { collectMaintainerLines, collectNestedCodeownersLines } from "../../util/codeowners-sources";
@@ -350,17 +351,51 @@ const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: ws
     const root = wsRoot as string;
     const { config, workspace } = discoverWorkspace(root, visConfig);
     const settings = config.ci?.workflow ?? {};
-    const providers = options.provider === undefined ? (settings.providers ?? ["github"]) : parseCsvOption(options.provider, []);
+    const flag = options.provider === undefined ? undefined : parseCsvOption(options.provider, []);
+    const unknown = [...(flag ?? []), ...(settings.providers ?? [])].filter((provider) => !isCiWorkflowProvider(provider));
+
+    if (unknown.length > 0) {
+        throw new VisUserError(`Unknown CI provider: ${unknown.map((provider) => `"${provider}"`).join(", ")}. Known: github, gitlab.`);
+    }
+
+    const { providers, reason } = await resolveCiWorkflowProviders({
+        configured: settings.providers,
+        detectRemote: async () => {
+            const [{ detectKnownRemoteProvider }, { createShellRunner }] = await Promise.all([
+                import("../../release/core/remote/detect"),
+                import("../../release/core/shell-runner"),
+            ]);
+
+            return detectKnownRemoteProvider(root, createShellRunner());
+        },
+        exists: async (path) => {
+            try {
+                await fs.stat(join(root, path));
+
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        flag: flag?.filter(isCiWorkflowProvider),
+        prompt:
+            options.check || !process.stdout.isTTY || process.env["CI"] === "true"
+                ? undefined
+                : async () => {
+                    const { multiSelectPrompt } = await import("../../release/core/prompts");
+
+                    return multiSelectPrompt("Which CI providers should vis generate a workflow for?", [
+                        { label: "GitHub Actions", value: "github" },
+                        { label: "GitLab CI", value: "gitlab" },
+                    ]);
+                },
+    });
 
     if (providers.length === 0) {
         throw new VisUserError("No CI provider selected. Pass --provider=github,gitlab or set ci.workflow.providers.");
     }
 
-    const unknown = providers.filter((provider) => !isCiWorkflowProvider(provider));
-
-    if (unknown.length > 0) {
-        throw new VisUserError(`Unknown CI provider: ${unknown.map((provider) => `"${provider}"`).join(", ")}. Known: github, gitlab.`);
-    }
+    logger.info(`▸ CI providers: ${providers.join(", ")} (${reason})`);
 
     const { buildFirstOrdered, plan } = buildCiWorkflowPlan({
         cacheDirectory: config.taskRunner?.cacheDirectory,
@@ -375,7 +410,7 @@ const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: ws
         logger.info(`▸ Running build before ${buildFirstOrdered.join(", ")} (ci.workflow.buildFirst; set it to false if dependsOn already says what needs build).`);
     }
 
-    const { stale } = await syncGeneratedFiles(renderCiWorkflows(plan, providers.filter(isCiWorkflowProvider)), {
+    const { stale } = await syncGeneratedFiles(renderCiWorkflows(plan, providers), {
         fs,
         isCurrent: sameYaml,
         logger,
