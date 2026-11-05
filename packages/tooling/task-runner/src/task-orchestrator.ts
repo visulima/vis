@@ -645,6 +645,11 @@ class TaskOrchestrator {
                 return this.#applyCachedResult(task, cachedResult, startTime);
             }
 
+            // Nothing to fetch for a task that will neither run nor restore outputs.
+            if (task.satisfied) {
+                return this.#satisfiedResult(task, startTime);
+            }
+
             if (this.#remoteCache) {
                 const retrieved = await retrieveByTaskHash(this.#remoteCache, hash, this.#cache.cacheDirectory, this.#onRemoteUploadError);
 

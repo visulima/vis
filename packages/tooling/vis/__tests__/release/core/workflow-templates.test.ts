@@ -118,6 +118,8 @@ describe("generateWorkflowFiles — GitHub", () => {
 
         expect(release.content).toContain("yarn install --immutable");
         expect(release.content).toContain("yarn vis release");
+        // corepack, so the packageManager pin decides the yarn version rather than the runner's yarn.
+        expect(release.content.indexOf("corepack enable")).toBeGreaterThan(release.content.indexOf("actions/setup-node"));
         expect(release.content).not.toContain("pnpm/action-setup");
         expect(release.content).not.toContain("oven-sh/setup-bun");
     });

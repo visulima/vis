@@ -19,7 +19,7 @@ export interface CiWorkflowConfig {
 
     /**
      * Branches whose pushes run the workflow, besides pull/merge requests.
-     * @default [defaultBase ?? "main"]
+     * Defaults to `[defaultBase ?? "main"]`.
      */
     branches?: string[];
 
@@ -61,8 +61,8 @@ export interface CiWorkflowConfig {
     /**
      * Targets to run. A target that depends on another listed target (through
      * `dependsOn`, directly or via unlisted targets) runs in a later group;
-     * the rest run at the same time.
-     * @default the ones of lint, typecheck, lint:types, build, test that exist in the workspace
+     * the rest run at the same time. Defaults to whichever of lint,
+     * typecheck, lint:types, build and test exist in the workspace.
      */
     targets?: string[];
 }

@@ -10,6 +10,7 @@ export interface GeneratedFile {
 
 export interface SyncGeneratedFilesOptions {
     fs: CerebroFs;
+
     /**
      * Whether the file on disk already matches the rendered content. Defaults
      * to comparing the text with surrounding whitespace trimmed.

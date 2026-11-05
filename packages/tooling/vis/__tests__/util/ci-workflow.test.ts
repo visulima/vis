@@ -11,7 +11,7 @@ const plan = (overrides: Partial<CiWorkflowPlan> = {}, shards: Record<string, nu
         affected: true,
         branches: ["main"],
         cacheDirectory: undefined,
-        layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => ({ name, shards: shards[name] ?? 1 }))),
+        layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => { return { name, shards: shards[name] ?? 1 }; })),
         nodeVersion: "22",
         packageManager: "pnpm",
         runsOn: "ubuntu-latest",

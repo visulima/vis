@@ -11,6 +11,7 @@ export interface CiPackageManagerCommands {
     exec: string;
     /** GitHub Action that installs the package manager, when it has one. */
     githubAction?: string;
+
     /**
      * `actions/setup-node` `cache:` value, when setup-node can cache for this
      * manager. setup-node asks the manager for its cache directory, so a manager
@@ -19,6 +20,7 @@ export interface CiPackageManagerCommands {
     githubNodeCache?: "npm" | "pnpm";
     /** Lockfile-respecting install. */
     install: string;
+
     /**
      * Shell lines that make the package manager available on a plain `node`
      * image (GitLab), or on the GitHub runner when there is no `githubAction`.

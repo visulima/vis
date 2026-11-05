@@ -48,7 +48,7 @@ const cachePath = (cacheDirectory: string | undefined): string => {
         throw new VisUserError(`GitLab can only cache paths inside the project; taskRunner.cacheDirectory is "${cacheDirectory}".`);
     }
 
-    return cacheDirectory.replace(/^\.\/|\/$/gu, "");
+    return cacheDirectory.replaceAll(/^\.\/|\/$/gu, "");
 };
 
 /**
@@ -62,8 +62,8 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
     const branchRules = plan.branches.map((branch) => `        - if: ${singleQuoted(branchRule(branch))}`).join("\n");
     const cacheDirectory = cachePath(plan.cacheDirectory);
     // A configured taskRunner.cacheDirectory wins over the variable, so only set it for the default.
-    const cacheVariable =
-        plan.cacheDirectory === undefined
+    const cacheVariable
+        = plan.cacheDirectory === undefined
             ? `        # Outside node_modules, so a clean install (npm ci) keeps the restored task cache.
         VIS_CACHE_DIRECTORY: "$CI_PROJECT_DIR/${cacheDirectory}"
 `

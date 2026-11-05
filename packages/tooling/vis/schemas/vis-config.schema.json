@@ -3865,8 +3865,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "description": "Branches whose pushes run the workflow, besides pull/merge requests.",
-                    "default": "[defaultBase ?? \"main\"]"
+                    "description": "Branches whose pushes run the workflow, besides pull/merge requests. Defaults to `[defaultBase ?? \"main\"]`."
                 },
                 "buildFirst": {
                     "type": "boolean",
@@ -3905,8 +3904,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "description": "Targets to run. A target that depends on another listed target (through `dependsOn`, directly or via unlisted targets) runs in a later group; the rest run at the same time.",
-                    "default": "the ones of lint, typecheck, lint:types, build, test that exist in the workspace"
+                    "description": "Targets to run. A target that depends on another listed target (through `dependsOn`, directly or via unlisted targets) runs in a later group; the rest run at the same time. Defaults to whichever of lint, typecheck, lint:types, build and test exist in the workspace."
                 }
             },
             "additionalProperties": false,

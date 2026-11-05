@@ -32,11 +32,19 @@ export interface WorkflowGenerationOptions {
     useOidc: boolean;
 }
 
-/** The step that installs the package manager on GitHub, for managers that ship an action. */
+/**
+ * The step that makes the package manager available on GitHub: its action
+ * when it ships one, otherwise the shared shell setup (corepack for yarn).
+ * Interpolated after `setup-node`, which the shell setup needs.
+ */
 const githubPmSetup = (pm: WorkflowGenerationOptions["packageManager"]): string => {
-    const action = CI_PACKAGE_MANAGER_COMMANDS[pm].githubAction;
+    const { githubAction, setup } = CI_PACKAGE_MANAGER_COMMANDS[pm];
 
-    return action === undefined ? "" : `            - uses: ${action}\n`;
+    if (githubAction !== undefined) {
+        return `            - uses: ${githubAction}\n`;
+    }
+
+    return setup.length === 0 ? "" : `            - run: |\n${setup.map((line) => `                  ${line}\n`).join("")}`;
 };
 
 const buildCmd = (pm: WorkflowGenerationOptions["packageManager"]): string => `${pm} run build`;
