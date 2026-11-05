@@ -65,7 +65,11 @@ jobs:
                   run-npm-audit: false
                   run-signatures-audit: false
 
+            # Mostly waits for Build Native, so it runs in the background while the
+            # packages build; only the coverage suite needs the bindings.
             - name: "Native test artifacts"
+              id: "native-artifacts"
+              background: true
               uses: "./.github/actions/native-test-artifacts"
               with:
                   ref: "${{ github.sha }}"
@@ -76,6 +80,9 @@ jobs:
             # what changed actually runs - while the report still covers every package.
             - name: "Build packages"
               run: "pnpm run build:packages"
+
+            - name: "Wait for native test artifacts"
+              wait: "native-artifacts"
 
             # `test:coverage` over every package. A baseline must cover the whole repo,
             # not only what a single change touched.
