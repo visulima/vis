@@ -7,8 +7,8 @@ settings:
 catalogs:
   backend:
     '@hono/node-server':
-      specifier: ^2.1.5
-      version: 2.1.5
+      specifier: ^2.1.6
+      version: 2.1.8
     hono:
       specifier: 4.13.16
       version: 4.13.16
@@ -1340,7 +1340,7 @@ importers:
         version: 43.8.0
       '@hono/node-server':
         specifier: catalog:backend
-        version: 2.1.5(hono@4.13.16)
+        version: 2.1.8(hono@4.13.16)
       '@napi-rs/cli':
         specifier: catalog:dev
         version: 3.10.8(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@types/node@26.6.5)(emnapi@1.11.3(node-addon-api@7.1.1))(supports-color@10.2.2)
@@ -2921,6 +2921,12 @@ packages:
 
   '@hono/node-server@2.1.5':
     resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: '>=4.13.7 <5'
+
+  '@hono/node-server@2.1.8':
+    resolution: {integrity: sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: '>=4.13.7 <5'
@@ -13832,6 +13838,10 @@ snapshots:
       yargs: 17.7.3
 
   '@hono/node-server@2.1.5(hono@4.13.16)':
+    dependencies:
+      hono: 4.13.16
+
+  '@hono/node-server@2.1.8(hono@4.13.16)':
     dependencies:
       hono: 4.13.16
 
