@@ -90,17 +90,8 @@ pub struct ProcessEvent {
 
 impl From<core::ProcessEvent> for ProcessEvent {
     fn from(v: core::ProcessEvent) -> Self {
-        Self {
-            kind: v.kind,
-            index: v.index,
-            text: v.text,
-            exit_code: v.exit_code,
-            killed: v.killed,
-            message: v.message,
-            command_name: v.command_name,
-            duration_ms: v.duration_ms,
-            pid: v.pid,
-        }
+        let core::ProcessEvent { kind, index, text, exit_code, killed, message, command_name, duration_ms, pid } = v;
+        Self { kind, index, text, exit_code, killed, message, command_name, duration_ms, pid }
     }
 }
 
@@ -124,14 +115,8 @@ pub struct ConcurrentCloseEvent {
 
 impl From<core::ConcurrentCloseEvent> for ConcurrentCloseEvent {
     fn from(v: core::ConcurrentCloseEvent) -> Self {
-        Self {
-            index: v.index,
-            command: v.command,
-            name: v.name,
-            exit_code: v.exit_code,
-            killed: v.killed,
-            duration_ms: v.duration_ms,
-        }
+        let core::ConcurrentCloseEvent { index, command, name, exit_code, killed, duration_ms } = v;
+        Self { index, command, name, exit_code, killed, duration_ms }
     }
 }
 
@@ -147,6 +132,7 @@ pub struct ConcurrentRunResult {
 
 impl From<core::ConcurrentRunResult> for ConcurrentRunResult {
     fn from(v: core::ConcurrentRunResult) -> Self {
-        Self { close_events: v.close_events.into_iter().map(Into::into).collect(), success: v.success }
+        let core::ConcurrentRunResult { close_events, success } = v;
+        Self { close_events: close_events.into_iter().map(Into::into).collect(), success }
     }
 }

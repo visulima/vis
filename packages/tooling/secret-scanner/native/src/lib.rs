@@ -117,23 +117,41 @@ pub struct Finding {
 
 impl From<core::Finding> for Finding {
     fn from(v: core::Finding) -> Self {
+        let core::Finding {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings,
+        } = v;
         Self {
-            rule_id: v.rule_id,
-            description: v.description,
-            file: v.file,
-            start_line: v.start_line,
-            end_line: v.end_line,
-            start_column: v.start_column,
-            end_column: v.end_column,
-            r#match: v.r#match,
-            secret: v.secret,
-            entropy: v.entropy,
-            tags: v.tags,
-            source: v.source,
-            confidence: v.confidence,
-            alternate_matches: v.alternate_matches,
-            decoded: v.decoded,
-            required_findings: v.required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
         }
     }
 }
@@ -176,24 +194,43 @@ pub struct SuppressedFinding {
 
 impl From<core::SuppressedFinding> for SuppressedFinding {
     fn from(v: core::SuppressedFinding) -> Self {
+        let core::SuppressedFinding {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings,
+            suppressed_by,
+        } = v;
         Self {
-            rule_id: v.rule_id,
-            description: v.description,
-            file: v.file,
-            start_line: v.start_line,
-            end_line: v.end_line,
-            start_column: v.start_column,
-            end_column: v.end_column,
-            r#match: v.r#match,
-            secret: v.secret,
-            entropy: v.entropy,
-            tags: v.tags,
-            source: v.source,
-            confidence: v.confidence,
-            alternate_matches: v.alternate_matches,
-            decoded: v.decoded,
-            required_findings: v.required_findings.map(|list| list.into_iter().map(Into::into).collect()),
-            suppressed_by: v.suppressed_by,
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            suppressed_by,
         }
     }
 }
@@ -213,16 +250,9 @@ pub struct RequiredFinding {
 
 impl From<core::RequiredFinding> for RequiredFinding {
     fn from(v: core::RequiredFinding) -> Self {
-        Self {
-            rule_id: v.rule_id,
-            start_line: v.start_line,
-            end_line: v.end_line,
-            start_column: v.start_column,
-            end_column: v.end_column,
-            r#match: v.r#match,
-            secret: v.secret,
-            decoded: v.decoded,
-        }
+        let core::RequiredFinding { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded } =
+            v;
+        Self { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded }
     }
 }
 
@@ -239,7 +269,8 @@ pub struct SkippedFile {
 
 impl From<core::SkippedFile> for SkippedFile {
     fn from(v: core::SkippedFile) -> Self {
-        Self { path: v.path, reason: v.reason }
+        let core::SkippedFile { path, reason } = v;
+        Self { path, reason }
     }
 }
 
@@ -257,10 +288,11 @@ pub struct ScanReport {
 
 impl From<core::ScanReport> for ScanReport {
     fn from(v: core::ScanReport) -> Self {
+        let core::ScanReport { findings, suppressed, skipped } = v;
         Self {
-            findings: v.findings.into_iter().map(Into::into).collect(),
-            suppressed: v.suppressed.into_iter().map(Into::into).collect(),
-            skipped: v.skipped.into_iter().map(Into::into).collect(),
+            findings: findings.into_iter().map(Into::into).collect(),
+            suppressed: suppressed.into_iter().map(Into::into).collect(),
+            skipped: skipped.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -273,7 +305,8 @@ pub struct SkippedRule {
 
 impl From<core::SkippedRule> for SkippedRule {
     fn from(v: core::SkippedRule) -> Self {
-        Self { rule_id: v.rule_id, reason: v.reason }
+        let core::SkippedRule { rule_id, reason } = v;
+        Self { rule_id, reason }
     }
 }
 
@@ -296,18 +329,19 @@ pub struct RuleInfo {
 
 impl From<core::RuleInfo> for RuleInfo {
     fn from(v: core::RuleInfo) -> Self {
-        Self {
-            id: v.id,
-            description: v.description,
-            tags: v.tags,
-            keywords: v.keywords,
-            entropy: v.entropy,
-            has_regex: v.has_regex,
-            has_path_filter: v.has_path_filter,
-            always_runs: v.always_runs,
-            source: v.source,
-            confidence: v.confidence,
-        }
+        let core::RuleInfo {
+            id,
+            description,
+            tags,
+            keywords,
+            entropy,
+            has_regex,
+            has_path_filter,
+            always_runs,
+            source,
+            confidence,
+        } = v;
+        Self { id, description, tags, keywords, entropy, has_regex, has_path_filter, always_runs, source, confidence }
     }
 }
 

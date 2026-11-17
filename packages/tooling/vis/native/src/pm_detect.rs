@@ -23,12 +23,8 @@ pub struct DetectedPackageManager {
 
 impl From<core::DetectedPackageManager> for DetectedPackageManager {
     fn from(detected: core::DetectedPackageManager) -> Self {
-        Self {
-            name: detected.name,
-            version: detected.version,
-            build_meta: detected.build_meta,
-            is_workspace: detected.is_workspace,
-        }
+        let core::DetectedPackageManager { name, version, build_meta, is_workspace } = detected;
+        Self { name, version, build_meta, is_workspace }
     }
 }
 
