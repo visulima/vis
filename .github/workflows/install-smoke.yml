@@ -19,6 +19,11 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/vis/scripts/install-native.cjs"
             - "packages/tooling/vis/scripts/install-smoke.mjs"
             - "packages/tooling/vis/native/cli/**"
+            - "packages/tooling/vis/src/runtime/runtime-diagnostics.ts"
+            - "packages/tooling/vis/src/cache/doctor-cache.ts"
+            - "packages/tooling/vis-mcp/**"
+            - ".github/actions/wait-for-native-build/**"
+            - ".github/actions/native-release-artifacts/**"
             - ".github/workflows/install-smoke.yml"
     push:
         branches:
@@ -30,6 +35,11 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/vis/scripts/install-native.cjs"
             - "packages/tooling/vis/scripts/install-smoke.mjs"
             - "packages/tooling/vis/native/cli/**"
+            - "packages/tooling/vis/src/runtime/runtime-diagnostics.ts"
+            - "packages/tooling/vis/src/cache/doctor-cache.ts"
+            - "packages/tooling/vis-mcp/**"
+            - ".github/actions/wait-for-native-build/**"
+            - ".github/actions/native-release-artifacts/**"
             - ".github/workflows/install-smoke.yml"
 
 concurrency:

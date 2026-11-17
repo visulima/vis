@@ -161,14 +161,17 @@ const berryRc = `npmRegistryServer: "${REGISTRY}"\nunsafeHttpWhitelist: ["localh
 const managers = {
     bun: {
         available: () => have("bun"),
+        launch: { exec: ["bun", "x", "vis", "--version"], run: ["bun", "run", "v"] },
         install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
     },
     npm: {
         available: () => have("npm"),
+        launch: { exec: ["npm", "exec", "--", "vis", "--version"], run: ["npm", "run", "v"] },
         install: (mode) => ({ args: ["install", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npm", files: registryFiles }),
     },
     pnpm: {
         available: () => have("pnpm"),
+        launch: { exec: ["pnpm", "exec", "vis", "--version"], run: ["pnpm", "run", "v"] },
         install: (mode) => ({
             args: ["add", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
             command: "pnpm",
@@ -180,10 +183,12 @@ const managers = {
     },
     "yarn-berry": {
         available: () => have("npx"),
+        launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },
         install: (mode) => ({ args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec], command: "npx", files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" } }),
     },
     "yarn-classic": {
         available: () => have("npx"),
+        launch: { run: ["npx", "--yes", "yarn@1.22.22", "run", "v"] },
         install: (mode) => ({ args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npx", files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` } }),
     },
 };
@@ -217,7 +222,7 @@ for (const name of requested) {
         const plan = manager.install(mode);
 
         mkdirSync(join(directory, "packages", "a"), { recursive: true });
-        writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "consumer", private: true, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra }, null, 2));
+        writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra }, null, 2));
         writeFileSync(join(directory, "packages", "a", "package.json"), JSON.stringify({ name: "a", scripts: { build: "echo a" }, version: "1.0.0" }));
 
         for (const [file, content] of Object.entries(plan.files)) {
@@ -243,6 +248,13 @@ for (const name of requested) {
         const version = execute("--version");
 
         check(row, "`vis --version` prints the package version", version.status === 0 && version.stdout.trim() === manifest.version, `${version.stdout.trim()} ${version.stderr.trim()}`.trim());
+
+        // The shim each package manager generates is what a user's `run` script or `exec` invocation goes through.
+        for (const [how, command] of Object.entries(manager.launch)) {
+            const launched = run(command[0], command.slice(1), { cwd: directory, env: environment });
+
+            check(row, `\`${how}\` starts vis through the package manager's own path`, launched.status === 0 && launched.stdout.split("\n").some((line) => line.trim() === manifest.version), `${launched.stdout.trim().slice(-80)} ${launched.stderr.trim().slice(0, 120)}`.trim());
+        }
 
         const help = execute("--help");
 
