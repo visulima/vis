@@ -1,0 +1,31 @@
+# The secret scanner engine in plain Rust: rule compilation, detection, decoding,
+# archive scanning and report building. No napi — the `secret-scanner-native`
+# addon (the workspace root) wraps this crate for Node, and the `vis` CLI can link
+# it directly.
+[package]
+name = "secret-scanner-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+regex = "1"
+regex-syntax = "0.8"
+fancy-regex = "0.19"
+aho-corasick = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ignore = "0.4"
+walkdir = "2"
+rayon = "1"
+memmap2 = "0.9"
+encoding_rs = "0.8"
+once_cell = "1"
+thiserror = "2"
+zip = { version = "9.3.0", default-features = false, features = ["deflate-flate2"] }
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.10"
