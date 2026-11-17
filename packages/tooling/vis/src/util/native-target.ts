@@ -1,5 +1,6 @@
 // Platform → `@visulima/vis-binding-<target>` slug. Keep in sync with
 // bin/resolve-binary.mjs (the launcher's copy) and the NAPI loader in index.js.
+
 // Best-effort musl detection for Linux. Defaults to glibc on any uncertainty.
 const isMusl = (): boolean => {
     const { report } = process;
