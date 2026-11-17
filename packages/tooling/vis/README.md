@@ -113,7 +113,7 @@ allowBuilds:
     "@visulima/vis": true
 ```
 
-- **pnpm 10:** the install exits 0 and only warns that the build script was ignored. `allowBuilds` has no effect there; run `pnpm approve-builds`, or list the package in `onlyBuiltDependencies` (in `pnpm-workspace.yaml`, or under `"pnpm"` in `package.json`):
+- **pnpm 10:** the install exits 0 and only warns that the build script was ignored. From 10.26 on, the `allowBuilds` entry above works the same way. Before 10.26 it is ignored, so use the legacy `onlyBuiltDependencies` (in `pnpm-workspace.yaml`, or under `"pnpm"` in `package.json`), which every 10.x release still honors. Or run `pnpm approve-builds`:
 
 ```json
 {
