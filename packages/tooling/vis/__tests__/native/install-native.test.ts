@@ -43,8 +43,15 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
     let installed: string;
     let platformPackage: string;
 
-    const install = (environment: Record<string, string> = {}, script = join(installed, "scripts", "install-native.cjs")) =>
-        spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, ...environment } });
+    // `NODE_PATH` is dropped: pnpm sets it to the workspace's hoisted `node_modules`, which holds the real
+    // platform package, so a copy under a temp dir would resolve it even when the test installs none.
+    const install = (environment: Record<string, string> = {}, script = join(installed, "scripts", "install-native.cjs")) => {
+        const inherited: NodeJS.ProcessEnv = { ...process.env };
+
+        delete inherited.NODE_PATH;
+
+        return spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...inherited, ...environment } });
+    };
 
     const writeBinary = (body: string) => {
         writeFileSync(join(platformPackage, "vis-native-cli"), body, { mode: 0o755 });
