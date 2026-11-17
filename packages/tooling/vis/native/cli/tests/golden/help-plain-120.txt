@@ -1,0 +1,254 @@
+vis v6.6.0
+
+ Usage 
+
+    vis <command> [positional arguments] [options] 
+
+  Run & Execute 
+
+    run           Run a target across workspace projects                                                                
+    ci            Run affected targets in a CI-optimized pipeline                                                       
+    affected      Run a target only on projects affected by recent changes                                              
+    staged        Run linters on staged files using config from vis.config.ts                                           
+    dlx           Execute a remote package without permanent installation                                               
+    exec          Execute a local node_modules/.bin command (no remote fallback)                                        
+    x             Run a TypeScript/JavaScript file directly under the selected runtime (node | bun)                     
+    ci ignore     Exit with inverted codes for CI "Ignored Build Step" gating (Vercel/Netlify)                          
+
+  Workspace 
+
+    graph                 Visualize the project dependency graph                                                        
+    action-graph          Show the execution plan for a target without running it                                       
+    task-why              Explain why a task is included in the graph by walking its dependency chain to a root         
+    replay                Replay a previous task run from .vis/runs/ — show task results without re-executing          
+    sort-package-json     Sort package.json files across the workspace using the sort-package-json Rust crate           
+    status                Show a workspace health dashboard at a glance                                                 
+    dashboard             Open a browser dashboard with cache, run history, and cache-miss diffs                        
+    sync                  Synchronise derived workspace artefacts (codeowners, package.json fields, tsconfig refs, …)   
+    list                  List all workspace projects with metadata                                                     
+    clean                 Remove node_modules from all workspace projects                                               
+    split                 Extract a package into a standalone git repo, preserving its history                          
+    import                Import an external repo into the monorepo under a prefix, preserving history                  
+    optimize              Analyze and optimize dependencies using e18e replacements and @socketregistry overrides       
+    cache list            List all cache entries                                                                        
+    cache clean           Remove cache entries (defaults to all stores: workspace task cache, AI responses, Socket.dev  
+                          reports)                                                                                      
+    cache prune           Remove old and oversized cache entries                                                        
+    cache size            Print on-disk footprint and stats for one or more cache stores (task / ai / socket)           
+    cache why             Explain why a task missed the cache by diffing hash inputs against the previous run           
+    cache hash            Print the recorded hash and per-input hash details for a task                                 
+    cache verify          Verify cache restore fidelity: extract the cached entry into a tmp directory and diff each    
+                          file's content, mode, and mtime against the live workspace. Exits 1 on any drift (changed     
+                          content, mode, mtime) or if a cached output is missing from the workspace. With --scope=all,  
+                          the first cache directory containing the task is used.                                        
+    cache doctor          Probe the configured remote cache (HTTP HEAD or REAPI Capabilities) and report reachability,  
+                          latency, and negotiated capabilities                                                          
+    service start         Start a service target detached so it survives across `vis run` invocations                   
+    service stop          Stop a running service                                                                        
+    service list          List services registered for this workspace                                                   
+    service status        Re-run the readiness probe and report a service's health                                      
+    service restart       Stop and re-start a running service                                                           
+    service logs          Print or tail a service's captured stdout/stderr                                              
+    docker scaffold       Build a minimal, cache-friendly Docker context for a focus project + its deps                 
+    docker prune          Strip unfocused workspace projects from a scaffolded context (run inside a build stage)       
+    docker init           Generate a multi-stage Dockerfile wired to the scaffold/prune flow (create-only)              
+    docker lint           Lint a Dockerfile with hadolint (downloaded on demand); --fix applies safe autofixes          
+    toolchain status      Show every detected manager + expected vs actual tool versions                                
+    toolchain detect      Print the primary manager's name (for scripts)                                                
+    toolchain install     Install pinned versions — per-tool delegation to the right manager                           
+    toolchain use         Pin a version via the best manager for that tool                                              
+    toolchain which       Print the resolved binary path a manager would launch for a tool                              
+
+  Scaffold & Config 
+
+    ignore                Generate or merge an ignore file (.dockerignore/.vercelignore/.npmignore/.slugignore) without 
+                          duplicate entries                                                                             
+    init                  Initialize vis.config.ts with best-practice security defaults                                 
+    create                Create a new project from a template                                                          
+    generate              Scaffold files from an in-repo template                                                       
+    devcontainer [dc]     Create or update .devcontainer/devcontainer.json interactively                                
+
+  Dependencies 
+
+    update [up]                    Update packages to their latest versions                                             
+    install [i]                    Install dependencies using the detected package manager                              
+    add                            Add packages using the detected package manager                                      
+    remove [rm, un, uninstall]     Remove packages using the detected package manager                                   
+    dedupe                         Deduplicate dependencies using the detected package manager                          
+    why [explain]                  Show why a package is installed (dependency chain)                                   
+    info [view]                    Show npm registry metadata for a package (alias of `npm view` / `pnpm view` / `yarn  
+                                   info` / `bun pm view`)                                                               
+    link [ln]                      Link a local package for development                                                 
+    unlink                         Unlink a previously linked package                                                   
+
+  Security & Health 
+
+    check [c, outdated]          Check for outdated dependencies, security vulnerabilities, and supply chain settings   
+    deps                         Lint workspace dependency policies (workspace-protocol, banned-deps, redefine-root,    
+                                 workspace-versions, custom-types, empty-deps, root-private, root-package-manager,      
+                                 root-deps, missing-package-json, dead-workspace-patterns, types-in-deps, similar-deps) 
+    approve-builds               Review and approve dependencies with build scripts                                     
+    audit                        Audit installed packages for vulnerabilities and supply chain risks                    
+    inspect                      Run all marshalls against a package without installing it                              
+    doctor                       Run a full project health check (outdated, security, duplicates, optimizations)        
+    sbom                         Generate a CycloneDX 1.7 Software Bill of Materials for the workspace                  
+    advisories sync              Download and ingest one or more OSV ecosystem dumps into the local cache               
+    advisories status            Print the local advisory DB summary: path, schema version, ecosystems, row counts,     
+                                 last sync, ETag                                                                        
+    advisories prune             Delete the local advisory DB. The next `vis audit --offline` will fail until you       
+                                 re-sync                                                                                
+    advisories bloom sync        Fetch and verify the endevco/osv-bloom MAL-* prefilter into the local cache            
+    advisories bloom status      Print the local osv-bloom cache freshness: built-at, filter size, m/k parameters, set  
+                                 digest                                                                                 
+    security list                List build-script status — allowed, unapproved, and stale allowlist entries           
+    security sync                Push vis.config security settings to the package manager's native config               
+    security run                 Run lifecycle scripts for packages in security.policies.installScripts.allow (LavaMoat 
+                                 'run' parity)                                                                          
+    security tripwire            Install @lavamoat/preinstall-always-fail as a devDep so a missing ignore-scripts       
+                                 setting fails loudly                                                                   
+    security keys-refresh        Force-refresh the cached npm signing keys used by the signatures marshall              
+    security verify-lockfile     Verify the entire lockfile closure against supply-chain policies (firstSeen,           
+                                 publisherChange, blockExoticSubdeps)                                                   
+    attest                       Build an in-toto SLSA v1 provenance statement for an artifact and keyless-sign it via  
+                                 Sigstore                                                                               
+    attest verify                Verify inbound provenance + registry signatures across the locked dependency graph and 
+                                 gate on regressions                                                                    
+
+  System 
+
+    analyze              Analyze a single package update with AI                                                        
+    pm                   Package manager utilities (cache, publish, audit, list, config, etc.)                          
+    self-update          Update vis itself to the latest version                                                        
+    implode              Remove vis from the system (self-uninstall)                                                    
+    ai                   AI-assisted commands: provider detection and failure-fix proposals (cache management lives     
+                         under `vis cache`)                                                                             
+    ai discover-help     Print the machine-readable AI subcommand catalogue (JSON to stdout, designed for AI agents)    
+    ai providers         List detected AI providers and show which one is selected                                      
+    ai test              Test the best available AI provider with a quick prompt                                        
+    ai fix               Read a failed task's logs and propose a structured patch (Phase 1: local-only, no git)         
+    ai heal              Diagnose the most recent failed task and post a structured patch as a PR/MR comment (or        
+                         Buildkite annotation)                                                                          
+    ai heal accept       Re-run the proposed fix and commit it to the PR/MR branch when validation passes               
+
+ Available Commands 
+
+    completion         Generate shell completion scripts                                                                
+    version [v, V]     Output the version number                                                                        
+    help                                                                                                                
+
+  Release 
+
+    release                   Version, changelog and publish workspace packages (unstable)                              
+    release add               Author a new change file (interactive, or non-interactive via --packages)                 
+    release generate          Auto-derive change files (one per bumped package) from branch commits                     
+                              (conventional-commits + path heuristics)                                                  
+    release status            Print pending release plan (which packages will bump and to what version)                 
+    release plan              Inspect the release plan; with --interactive, walk through and override bump levels       
+    release changelog         Render the would-be changelog entries without writing to disk                             
+    release check             Verify pending change files cover changed packages — CI / husky gate                     
+    release doctor            Preflight diagnostics for the release subsystem (workspace, PM, OIDC, NAPI, guards)       
+    release next-version      Print the next computed version for each package in the release plan. Read-only; no       
+                              mutations.                                                                                
+    release version           Apply pending change files to disk: bump versions + write CHANGELOG entries               
+    release publish           Pack-then-publish unpublished packages, push tags, create GH releases                     
+    release snapshot          Publish 0.0.0-<tag>-<sha> snapshot versions of affected packages                          
+    release stage             List, approve, or reject npm staged-publish records (RFC §13.6 — approve/reject need     
+                              2FA)                                                                                      
+    release pre               Enter / exit pre-release mode (changesets-compatible — every `version` produces a        
+                              prerelease until exit)                                                                    
+    release pretrust          Publish non-functional placeholder packages so npm Trusted Publishing (OIDC) can be       
+                              configured before the first release                                                       
+    release init              Scaffold .vis/release; migrate from changesets / bumpy / semantic-release                 
+    release notifications     Dry-run the configured notification channels (slack / discord / webhook / plugins) with a 
+                              synthetic release                                                                         
+    release ci check          CI: post or update a sticky PR comment with the pending release plan                      
+    release ci plan           CI: emit JSON plan + write to $GITHUB_OUTPUT for workflow gating                          
+    release ci release        CI: maintain a rolling version-PR (default) or version+publish inline (--auto-publish)    
+    release ci rebase-pr      CI: rebase the open version-PR onto the base branch and force-push                        
+    release ci snapshot       CI: publish snapshot of affected packages + post sticky PR comment with install           
+                              instructions                                                                              
+    release ci setup          CI: print setup checklist for tokens (VIS_GH_TOKEN, NPM_TOKEN, OIDC) and workflow         
+                              permissions                                                                               
+
+  Lint & Format 
+
+    lint     Orchestrate detected source-code linters (eslint, …) across the workspace                                  
+    fmt      Orchestrate detected formatters (prettier, …) across the workspace                                         
+
+  Security 
+
+    secrets     Scan a repository for hardcoded secrets and credentials                                                 
+
+  Git Hooks 
+
+    hook install       Install git hooks for the workspace (migrates husky / prek on prompt)                            
+    hook uninstall     Remove git hooks and reset core.hooksPath                                                        
+    hook migrate       Migrate from husky or prek to vis hooks (auto-detected)                                          
+    hook list          Show configured hooks grouped by stage                                                           
+    hook validate      Sanity-check installed hooks and the bundled runner                                              
+    hook run           Run a specific hook stage against tracked files                                                  
+    hook add           Add a managed hook snippet (e.g. `vis secrets --staged`)                                         
+
+  Migrate 
+
+    migrate all              Run every applicable migration non-interactively (autodetected)                            
+    migrate deps             Migrate dependencies and scripts to vis                                                    
+    migrate lint-staged      Inline lint-staged configuration into vis                                                  
+    migrate nano-staged      Inline nano-staged configuration into vis                                                  
+    migrate turborepo        Migrate turborepo tasks/config to vis                                                      
+    migrate nx               Migrate nx targets/config to vis                                                           
+    migrate moon             Migrate moon tasks/templates to vis                                                        
+    migrate self             Auto-rewrite vis.config.ts to use renamed fields (targetDefaults → tasks, taskDefaults → 
+                             scopedTasks, taskRunnerOptions → taskRunner)                                              
+    migrate gitleaks         Migrate gitleaks config/baseline/hooks to `vis secrets`                                    
+    migrate kingfisher       Migrate Kingfisher baseline/hooks/scripts to `vis secrets`                                 
+    migrate secretlint       Replace secretlint with `vis secrets`                                                      
+    migrate syncpack         Translate syncpack customTypes into vis policy and strip the syncpack dep/scripts          
+    migrate sherif           Strip sherif config/dep/scripts and surface ignore-rules as a positive `vis lint --<rule>` 
+                             command                                                                                    
+    migrate verify           Audit the workspace for stray gitleaks/secretlint/sherif/syncpack references (exit 1 on    
+                             issues)                                                                                    
+    migrate verify-graph     Prove a turbo/nx/moon → vis migration preserved the task graph + cache-key surface (exit  
+                             1 on divergence)                                                                           
+
+  Runtime 
+
+    shim install       Install project-local PM shims (.vis/shims) that enforce the project's package manager           
+    shim uninstall     Remove the project-local PM shim dir (.vis/shims)                                                
+    shim status        Report whether the PM shims are installed and active on PATH                                     
+
+ Command Options 
+
+  --group string   Display only the specified group 
+
+ Global Options 
+
+  -v, --verbose        Turn on verbose output                                                                           
+  boolean                                                                                                               
+  --debug boolean      Turn on debugging output                                                                         
+  -h, --help boolean   Print out helpful usage information                                                              
+  -q, --quiet          Silence output                                                                                   
+  boolean                                                                                                               
+  -V, --version        Print version info                                                                               
+  boolean                                                                                                               
+  --no-color boolean   Turn off colored output                                                                          
+  --color boolean      Force colored output                                                                             
+  --cwd string         Override workspace root directory                                                                
+  --runtime string     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME and config; falls back to        
+                       lockfile detection.                                                                              
+  --config string      Path to a vis config file (overrides discovery)                                                  
+  --ca-cert string     Path to a CA bundle (PEM) to trust for HTTPS — for corporate proxies. Equivalent to             
+                       NODE_EXTRA_CA_CERTS.                                                                             
+
+ Environment Variables 
+
+    CEREBRO_OUTPUT_LEVEL         Controls the verbosity level of output. Valid values: '16' (quiet), '32' (normal),     
+                                 '64' (verbose), '128' (debug)                                                          
+    CEREBRO_MIN_NODE_VERSION     Sets the minimum required Node.js version. Overrides the default minimum version check 
+    NO_UPDATE_NOTIFIER           When set, disables the update notifier check                                           
+    NODE_ENV                     Standard Node.js environment variable. When set to 'test', disables update notifier    
+    DEBUG                        When set, enables debug output (same as --debug flag)                                  
+    CEREBRO_TERMINAL_WIDTH       Sets the terminal width for table rendering. Useful for testing and consistent output  
+
+Run "vis help <command>" or "vis <command> --help" for help with a specific command.
+

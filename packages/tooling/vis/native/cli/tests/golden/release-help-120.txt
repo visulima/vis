@@ -1,0 +1,68 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32mrelease[39m 
+
+[1m[7m[32m Description [39m[27m[22m
+
+    Version, changelog and publish workspace packages (unstable) 
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m, [1m[33m--verbose[39m[22m        Turn on verbose output                                                                           
+  [4mboolean[24m                                                                                                               
+  [1m[33m--debug[39m[22m [4mboolean[24m      Turn on debugging output                                                                         
+  [1m-h[22m, [1m[33m--help[39m[22m [4mboolean[24m   Print out helpful usage information                                                              
+  [1m-q[22m, [1m[33m--quiet[39m[22m          Silence output                                                                                   
+  [4mboolean[24m                                                                                                               
+  [1m-V[22m, [1m[33m--version[39m[22m        Print version info                                                                               
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-color[39m[22m [4mboolean[24m   Turn off colored output                                                                          
+  [1m[33m--color[39m[22m [4mboolean[24m      Force colored output                                                                             
+  [1m[33m--cwd[39m[22m [4mstring[24m         Override workspace root directory                                                                
+  [1m[33m--runtime[39m[22m [4mstring[24m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME and config; falls back to        
+                       lockfile detection.                                                                              
+  [1m[33m--config[39m[22m [4mstring[24m      Path to a vis config file (overrides discovery)                                                  
+  [1m[33m--ca-cert[39m[22m [4mstring[24m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate proxies. Equivalent to             
+                       NODE_EXTRA_CA_CERTS.                                                                             
+
+[1mExamples[22m
+
+    vis release            List the release subcommands                                                                 
+    vis release status     Show what is about to release                                                                
+    vis release doctor     Diagnose the release setup                                                                   
+
+[1m[7m[32m Subcommands [39m[27m[22m
+
+    [32mrelease add[39m               Author a new change file (interactive, or non-interactive via --packages)                 
+    [32mrelease generate[39m          Auto-derive change files (one per bumped package) from branch commits                     
+                              (conventional-commits + path heuristics)                                                  
+    [32mrelease status[39m            Print pending release plan (which packages will bump and to what version)                 
+    [32mrelease plan[39m              Inspect the release plan; with --interactive, walk through and override bump levels       
+    [32mrelease changelog[39m         Render the would-be changelog entries without writing to disk                             
+    [32mrelease check[39m             Verify pending change files cover changed packages — CI / husky gate                     
+    [32mrelease doctor[39m            Preflight diagnostics for the release subsystem (workspace, PM, OIDC, NAPI, guards)       
+    [32mrelease next-version[39m      Print the next computed version for each package in the release plan. Read-only; no       
+                              mutations.                                                                                
+    [32mrelease version[39m           Apply pending change files to disk: bump versions + write CHANGELOG entries               
+    [32mrelease publish[39m           Pack-then-publish unpublished packages, push tags, create GH releases                     
+    [32mrelease snapshot[39m          Publish 0.0.0-<tag>-<sha> snapshot versions of affected packages                          
+    [32mrelease stage[39m             List, approve, or reject npm staged-publish records (RFC §13.6 — approve/reject need     
+                              2FA)                                                                                      
+    [32mrelease pre[39m               Enter / exit pre-release mode (changesets-compatible — every `version` produces a        
+                              prerelease until exit)                                                                    
+    [32mrelease pretrust[39m          Publish non-functional placeholder packages so npm Trusted Publishing (OIDC) can be       
+                              configured before the first release                                                       
+    [32mrelease init[39m              Scaffold .vis/release; migrate from changesets / bumpy / semantic-release                 
+    [32mrelease notifications[39m     Dry-run the configured notification channels (slack / discord / webhook / plugins) with a 
+                              synthetic release                                                                         
+    [32mrelease ci check[39m          CI: post or update a sticky PR comment with the pending release plan                      
+    [32mrelease ci plan[39m           CI: emit JSON plan + write to $GITHUB_OUTPUT for workflow gating                          
+    [32mrelease ci release[39m        CI: maintain a rolling version-PR (default) or version+publish inline (--auto-publish)    
+    [32mrelease ci rebase-pr[39m      CI: rebase the open version-PR onto the base branch and force-push                        
+    [32mrelease ci snapshot[39m       CI: publish snapshot of affected packages + post sticky PR comment with install           
+                              instructions                                                                              
+    [32mrelease ci setup[39m          CI: print setup checklist for tokens (VIS_GH_TOKEN, NPM_TOKEN, OIDC) and workflow         
+                              permissions                                                                               
+

@@ -1,0 +1,50 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32mcache list[39m [options] 
+
+[1m[7m[32m Description [39m[27m[22m
+
+    List all cache entries 
+
+[1m[7m[33m Command Options [39m[27m[22m
+
+  [1m[33m--cache-dir[39m[22m   Cache directory (overrides config and default). Relative paths    
+  [4mstring[24m      are resolved against the workspace root.                          
+  [1m[33m--scope[39m[22m     Cache scope: 'shared' (default — main worktree's cache),         
+  [4mstring[24m      'worktree' (this checkout's local cache), or 'all' (both)         
+  [1m[33m--format[39m[22m    Output format: table or json (default: table)                     
+  [4mstring[24m                                                                        
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m,           Turn on verbose output                                          
+  [1m[33m--verbose[39m[22m                                                                     
+  [4mboolean[24m                                                                       
+  [1m[33m--debug[39m[22m       Turn on debugging output                                        
+  [4mboolean[24m                                                                       
+  [1m-h[22m, [1m[33m--help[39m[22m    Print out helpful usage information                             
+  [4mboolean[24m                                                                       
+  [1m-q[22m, [1m[33m--quiet[39m[22m   Silence output                                                  
+  [4mboolean[24m                                                                       
+  [1m-V[22m,           Print version info                                              
+  [1m[33m--version[39m[22m                                                                     
+  [4mboolean[24m                                                                       
+  [1m[33m--no-color[39m[22m    Turn off colored output                                         
+  [4mboolean[24m                                                                       
+  [1m[33m--color[39m[22m       Force colored output                                            
+  [4mboolean[24m                                                                       
+  [1m[33m--cwd[39m[22m         Override workspace root directory                               
+  [4mstring[24m                                                                        
+  [1m[33m--runtime[39m[22m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME 
+  [4mstring[24m        and config; falls back to lockfile detection.                   
+  [1m[33m--config[39m[22m      Path to a vis config file (overrides discovery)                 
+  [4mstring[24m                                                                        
+  [1m[33m--ca-cert[39m[22m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate   
+  [4mstring[24m        proxies. Equivalent to NODE_EXTRA_CA_CERTS.                     
+
+[1mExamples[22m
+
+    vis cache list     List all cache entries                                   
+
