@@ -1,3 +1,9 @@
+## @visulima/vis [6.6.1](https://github.com/visulima/vis/compare/@visulima/vis@6.6.0...@visulima/vis@6.6.1) (2026-11-17)
+
+### Performance Improvements
+
+* **vis:** run git hooks through the native binary ([#100](https://github.com/visulima/vis/issues/100)) ([9036a34](https://github.com/visulima/vis/commit/9036a343c8d5470217bc2fd76939cedb1da46807))
+
 ## @visulima/vis [6.6.0](https://github.com/visulima/vis/compare/@visulima/vis@6.5.4...@visulima/vis@6.6.0) (2026-11-04)
 
 ### Features
