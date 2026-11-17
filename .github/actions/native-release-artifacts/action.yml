@@ -87,6 +87,7 @@ runs:
               # - task-runner: the fspy helpers (seccomp helper / macOS dylib / Windows DLL)
               # Plain globs instead of `find -path`: the same step runs on Windows (git-bash),
               # where the `find` patterns matched nothing.
+              echo "::group::artifact layout (debug)"; find artifacts -maxdepth 4 | head -80; echo "::endgroup::"
               shopt -s nullglob
               for f in artifacts/bindings-vis-*/npm/*/vis-native-cli* \
                   artifacts/bindings-task-runner-*/npm/*/fspy-seccomp-helper \
