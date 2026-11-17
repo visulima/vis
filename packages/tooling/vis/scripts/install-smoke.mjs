@@ -50,6 +50,13 @@ const check = (row, name, ok, detail = "") => {
 const run = (command, args, options = {}) =>
     spawnSync(command, args, { encoding: "utf8", shell: isWindows, timeout: 300_000, ...options, env: { ...process.env, ...options.env } });
 
+// Setup failures end the run; a package manager may fail with an empty stderr, so say everything the spawn knows.
+const abort = (what, result) => {
+    console.error(`install-smoke: ${what} failed (status ${result.status}, signal ${result.signal}${result.error ? `, ${result.error.message}` : ""})`);
+    console.error(`${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim());
+    process.exit(2);
+};
+
 const have = (command) => run(command, ["--version"]).status === 0;
 
 // The first lines of a command's output, joined for a one-line failure detail.
@@ -73,8 +80,7 @@ const packOne = (cwd, command) => {
     const result = run(command, ["pack", "--pack-destination", tarballs], { cwd });
 
     if (result.status !== 0) {
-        console.error(result.stderr);
-        process.exit(2);
+        abort(`${command} pack in ${cwd}`, result);
     }
 
     // npm prints the file name, pnpm the full path.
@@ -155,8 +161,7 @@ for (const tarball of [...bindings, rootTarball]) {
     published.push(tarball);
 
     if (result.status !== 0) {
-        console.error(result.stderr);
-        process.exit(2);
+        abort(`npm publish ${tarball}`, result);
     }
 }
 
