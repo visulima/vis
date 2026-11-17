@@ -453,6 +453,25 @@ describe(checkLauncher, () => {
         expect(checkLauncher().message).toContain("slower path");
     });
 
+    it("says Windows uses the Node launcher instead of blaming the start command", () => {
+        expect.assertions(3);
+
+        const platform = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+
+        Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+        process.env["VIS_LAUNCHER"] = "node";
+
+        try {
+            const result = checkLauncher();
+
+            expect(result.status).toBe("skip");
+            expect(result.message).toContain("Windows uses the Node launcher");
+            expect(result.message).not.toContain("npm");
+        } finally {
+            Object.defineProperty(process, "platform", platform);
+        }
+    });
+
     it("skips when neither launcher started the process", () => {
         expect.assertions(1);
 

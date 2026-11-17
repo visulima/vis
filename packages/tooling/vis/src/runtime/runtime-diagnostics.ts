@@ -549,8 +549,8 @@ export const checkGitLfsTracking = (workspaceRoot: string = process.cwd()): Runt
  * `ok` for the native executable. `skip` (a hint, never a failure: `vis doctor
  * --strict` fails on `warn`, and a package manager that blocks install scripts
  * is a valid setup) for the launcher, with the fix in the message, and when
- * neither started this process (running `dist/bin.js` directly, a dev checkout)
- * or on Windows, which always uses the launcher.
+ * neither started this process (running `dist/bin.js` directly, a dev checkout).
+ * On Windows, which always uses the launcher, the message says so.
  */
 export const checkLauncher = (): RuntimeDiagnostic => {
     const launcher = process.env["VIS_LAUNCHER"];
@@ -559,7 +559,11 @@ export const checkLauncher = (): RuntimeDiagnostic => {
         return { id: "launcher", message: "Started by the native vis executable (fast path).", status: "ok" };
     }
 
-    if (launcher === "node" && process.platform !== "win32") {
+    if (launcher === "node" && process.platform === "win32") {
+        return { id: "launcher", message: "Windows uses the Node launcher; the native fast path is not available there.", status: "skip" };
+    }
+
+    if (launcher === "node") {
         return {
             id: "launcher",
             message:
