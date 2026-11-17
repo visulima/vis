@@ -189,7 +189,7 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         it("does not affect other package managers", () => {
             expect.assertions(1);
 
-            install({ npm_config_user_agent: "npm/11.0.0 node/v24", npm_command: "rebuild" });
+            install({ npm_command: "rebuild", npm_config_user_agent: "npm/11.0.0 node/v24" });
 
             expect(launcherKept()).toBe(false);
         });
