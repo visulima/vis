@@ -237,7 +237,7 @@ for (const name of requested) {
         const environment = { CI: "1", NO_COLOR: "1", npm_config_cache: join(work, "npm-cache"), npm_config_userconfig: publishConfig, YARN_CACHE_FOLDER: join(directory, ".yarn-cache") };
         const installed = run(plan.command, plan.args, { cwd: directory, env: environment });
 
-        check(row, "install succeeds", installed.status === 0, installed.stderr.trim().split("\n").slice(-3).join(" | "));
+        check(row, "install succeeds", installed.status === 0, `${installed.stderr}${installed.stdout}`.trim().split("\n").slice(0, 14).join(" | "));
 
         if (installed.status !== 0) {
             continue;
@@ -288,7 +288,7 @@ for (const name of requested) {
             check(row, mode === "enabled" ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === (mode === "enabled"));
 
             if (needsWorkspace) {
-                check(row, `doctor reports the ${mode === "enabled" ? "native" : "slower"} path`, launcher?.status === (mode === "enabled" ? "ok" : "warn"), JSON.stringify(launcher));
+                check(row, `doctor reports the ${mode === "enabled" ? "native" : "slower"} path`, mode === "enabled" ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true, JSON.stringify(launcher));
             }
         }
 

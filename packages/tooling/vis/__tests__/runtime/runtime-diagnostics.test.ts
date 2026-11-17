@@ -444,12 +444,12 @@ describe(checkLauncher, () => {
         expect(checkLauncher().id).toBe("launcher");
     });
 
-    it.skipIf(process.platform === "win32")("warns that the slower Node launcher is in use, naming the fix", () => {
+    it.skipIf(process.platform === "win32")("reports the slower Node launcher as a hint (not a warning), naming the fix", () => {
         expect.assertions(2);
 
         process.env["VIS_LAUNCHER"] = "node";
 
-        expect(checkLauncher().status).toBe("warn");
+        expect(checkLauncher().status).toBe("skip");
         expect(checkLauncher().message).toContain("slower path");
     });
 

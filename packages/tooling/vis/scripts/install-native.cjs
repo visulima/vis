@@ -13,11 +13,12 @@
 //   - the package is not under a node_modules directory (a checkout of the repo),
 //   - the platform has no binary, or `VIS_SKIP_NATIVE_LINK` is set,
 //   - Windows: the generated `.cmd` shim cannot exec an extensionless `bin/vis`,
-//   - the platform package is missing (`--omit=optional`) or its binary does not run.
+//   - the platform package is missing (`--omit=optional`) or its binary does not run,
+//   - pnpm may already have written a shim that starts Node (see `pnpmShimMayStartNode`).
 
 const { spawnSync } = require("node:child_process");
-const { chmodSync, copyFileSync, linkSync, rmSync } = require("node:fs");
-const { join, sep } = require("node:path");
+const { chmodSync, copyFileSync, linkSync, readFileSync, rmSync } = require("node:fs");
+const { basename, dirname, join, sep } = require("node:path");
 
 const packageRoot = join(__dirname, "..");
 const target = join(packageRoot, "bin", "vis");
@@ -47,9 +48,42 @@ const slug = () => {
     return undefined;
 };
 
+// pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the
+// launcher is in place. A first install (also from a lockfile) rewrites the shim after
+// this script ran, but a later run does not: `pnpm approve-builds` / `pnpm rebuild`, or
+// an install on top of an earlier one that skipped the script. `node <native binary>`
+// would then crash, so keep the launcher, which works with either shim.
+const pnpmShimMayStartNode = () => {
+    if (!(process.env.npm_config_user_agent || "").startsWith("pnpm/")) {
+        return false;
+    }
+
+    if (process.env.npm_command === "rebuild") {
+        return true;
+    }
+
+    // pnpm lists packages whose scripts it skipped (`ignoredBuilds`, `pendingBuilds`) in
+    // `node_modules/.modules.yaml`, next to the `.pnpm` virtual store.
+    let directory = packageRoot;
+
+    while (basename(directory) !== ".pnpm" && dirname(directory) !== directory) {
+        directory = dirname(directory);
+    }
+
+    try {
+        return readFileSync(join(dirname(directory), ".modules.yaml"), "utf8").includes("@visulima/vis@");
+    } catch {
+        return false;
+    }
+};
+
 const main = () => {
     if (process.env.VIS_SKIP_NATIVE_LINK || process.platform === "win32" || !packageRoot.includes(`${sep}node_modules${sep}`)) {
         return "skipped";
+    }
+
+    if (pnpmShimMayStartNode()) {
+        return "pnpm already linked a shim that starts Node; remove node_modules and reinstall to use the native binary";
     }
 
     const name = slug();

@@ -546,9 +546,11 @@ export const checkGitLfsTracking = (workspaceRoot: string = process.cwd()): Runt
  * install scripts (pnpm 10+ without an allow-list, `--ignore-scripts`, bun without
  * `trustedDependencies`) leave the launcher in place.
  *
- * `ok` for the native executable, `warn` for the launcher where a native binary
- * exists, `skip` when neither started this process (running `dist/bin.js`
- * directly, a dev checkout) or on Windows, which always uses the launcher.
+ * `ok` for the native executable. `skip` (a hint, never a failure: `vis doctor
+ * --strict` fails on `warn`, and a package manager that blocks install scripts
+ * is a valid setup) for the launcher, with the fix in the message, and when
+ * neither started this process (running `dist/bin.js` directly, a dev checkout)
+ * or on Windows, which always uses the launcher.
  */
 export const checkLauncher = (): RuntimeDiagnostic => {
     const launcher = process.env["VIS_LAUNCHER"];
@@ -561,8 +563,8 @@ export const checkLauncher = (): RuntimeDiagnostic => {
         return {
             id: "launcher",
             message:
-                "Started through the Node launcher (slower path): the install script did not link the native binary. Allow install scripts for @visulima/vis (e.g. `pnpm approve-builds`, bun `trustedDependencies`) and reinstall to start commands without Node.",
-            status: "warn",
+                "Started through the Node launcher (slower path): the install script did not link the native binary. Allow install scripts for @visulima/vis (e.g. `pnpm approve-builds`, bun `trustedDependencies`) and reinstall from scratch to start commands without Node.",
+            status: "skip",
         };
     }
 

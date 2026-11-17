@@ -93,6 +93,13 @@ jobs:
             - name: "Build vis"
               run: "pnpm exec nx run vis:build:prod"
 
+            # The smoke script reports a package manager that is missing as NOT RUN, so bun is
+            # installed here to make that row run.
+            - name: "Install bun"
+              if: "runner.os != 'Windows'"
+              shell: "bash"
+              run: "npm install --global bun@1.4.4"
+
             - name: "Install smoke"
               working-directory: "packages/tooling/vis"
               shell: "bash"
@@ -101,5 +108,5 @@ jobs:
                   if [ "$RUNNER_OS" = "Windows" ]; then
                       node scripts/install-smoke.mjs --pm npm
                   else
-                      node scripts/install-smoke.mjs --pm npm,pnpm,yarn-classic,yarn-berry
+                      node scripts/install-smoke.mjs --pm npm,pnpm,yarn-classic,yarn-berry,bun
                   fi

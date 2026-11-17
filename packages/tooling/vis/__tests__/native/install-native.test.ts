@@ -142,6 +142,59 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         expect(readFileSync(join(checkout, "bin", "vis"), "utf8")).toBe(PLACEHOLDER);
     });
 
+    describe("pnpm shims that would start Node", () => {
+        const pnpm = { npm_config_user_agent: "pnpm/11.0.0 npm/? node/v24" };
+
+        beforeEach(() => {
+            writeBinary("#!/bin/sh\necho native\n");
+        });
+
+        const launcherKept = () => readFileSync(join(installed, "bin", "vis"), "utf8") === PLACEHOLDER;
+
+        it("links on a first pnpm install", () => {
+            expect.assertions(1);
+
+            install({ ...pnpm, INIT_CWD: root, npm_command: "add" });
+
+            expect(launcherKept()).toBe(false);
+        });
+
+        it("keeps the launcher on `pnpm rebuild`, where the shim was written before the script ran", () => {
+            expect.assertions(1);
+
+            install({ ...pnpm, INIT_CWD: root, npm_command: "rebuild" });
+
+            expect(launcherKept()).toBe(true);
+        });
+
+        it("keeps the launcher when pnpm recorded this package's scripts as skipped or pending", () => {
+            expect.assertions(1);
+
+            const store = join(root, "pnpm-project", "node_modules", ".pnpm", "@visulima+vis@1.0.0", "node_modules", "@visulima");
+            const storedPackage = join(store, "vis");
+
+            mkdirSync(join(storedPackage, "bin"), { recursive: true });
+            mkdirSync(join(storedPackage, "scripts"), { recursive: true });
+            copyFileSync(installScript, join(storedPackage, "scripts", "install-native.cjs"));
+            writeFileSync(join(storedPackage, "bin", "vis"), PLACEHOLDER);
+            mkdirSync(join(store, `vis-binding-${nativeTarget()}`), { recursive: true });
+            copyFileSync(join(platformPackage, "vis-native-cli"), join(store, `vis-binding-${nativeTarget()}`, "vis-native-cli"));
+            writeFileSync(join(root, "pnpm-project", "node_modules", ".modules.yaml"), "ignoredBuilds:\n  - '@visulima/vis@1.0.0'\nlayoutVersion: 5\n");
+
+            install({ ...pnpm, INIT_CWD: join(root, "other"), npm_command: "install" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(readFileSync(join(storedPackage, "bin", "vis"), "utf8")).toBe(PLACEHOLDER);
+        });
+
+        it("does not affect other package managers", () => {
+            expect.assertions(1);
+
+            install({ npm_config_user_agent: "npm/11.0.0 node/v24", npm_command: "rebuild" });
+
+            expect(launcherKept()).toBe(false);
+        });
+    });
+
     it("honours VIS_SKIP_NATIVE_LINK", () => {
         expect.assertions(1);
 
