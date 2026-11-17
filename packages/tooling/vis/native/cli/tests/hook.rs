@@ -340,3 +340,28 @@ fn tag_filters_see_what_earlier_hooks_changed() {
 
     assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\nexe: run.sh\n");
 }
+
+#[test]
+fn hook_run_help_prints_the_usage_instead_of_running_or_delegating() {
+    let repo = Repo::new("help");
+
+    repo.file("a.ts", "x\n").config(r#"{"version":1,"stages":{"pre-commit":[{"id":"a","entry":"echo ran"}]}}"#);
+
+    let output = repo.vis(&["hook", "run", "--help"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("Run a specific hook stage against tracked files"), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("ran") && !stdout(&output).contains("DELEGATED"), "{}", stdout(&output));
+}
+
+#[test]
+fn help_flag_after_double_dash_is_not_a_help_request() {
+    let repo = Repo::new("dashdash");
+
+    repo.file("a.ts", "x\n").config(r#"{"version":1,"stages":{"pre-commit":[{"id":"a","entry":"echo ran"}]}}"#);
+
+    let output = repo.vis(&["hook", "run", "pre-commit", "--", "--help"]);
+
+    // The native runner hands the shape it does not model to Node; it is never answered as help.
+    assert_eq!(stdout(&output), "DELEGATED hook run pre-commit -- --help\n");
+}
