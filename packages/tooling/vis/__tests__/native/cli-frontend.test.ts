@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,5 +96,85 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         expect(result.stdout).toContain("FALLBACK:status,--json");
         expect(result.status).toBe(5);
+    });
+
+    describe("help surface routing", () => {
+        const launcherEnvironment = (extra: Record<string, string> = {}) => {
+            return {
+                ...process.env,
+                VIS_FALLBACK_ENTRY: fallbackStub,
+                VIS_NATIVE_BIN: binary as string,
+                VIS_VERSION: packageVersion,
+                ...extra,
+            };
+        };
+
+        const viaLauncher = (...args: string[]) => spawnSync(process.execPath, [launcher, ...args], { encoding: "utf8", env: launcherEnvironment() });
+
+        const viaBinary = (...args: string[]) =>
+            spawnSync(binary as string, args, { encoding: "utf8", env: launcherEnvironment({ VIS_NODE: process.execPath }) });
+
+        it.each([[["--help"]], [["-h"]], [[]], [["help"]], [["help", "install"]], [["status", "--help"]]])(
+            "answers `vis %j` with the native binary's output",
+            (args: string[]) => {
+                expect.assertions(4);
+
+                const viaNode = viaLauncher(...args);
+                const native = viaBinary(...args);
+
+                // Never the in-process stub: the binary answered, and did not hand back to Node.
+                expect(viaNode.stdout).not.toContain("FALLBACK:");
+                expect(viaNode.stdout).toBe(native.stdout);
+                expect(viaNode.stderr).toBe(native.stderr);
+                expect(viaNode.status).toBe(native.status);
+            },
+        );
+
+        it("prints the command list for `--help`", () => {
+            expect.assertions(2);
+
+            const result = viaLauncher("--help");
+
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain(`vis v${packageVersion}`);
+        });
+
+        it("leaves help after a `--` separator to the command", () => {
+            expect.assertions(2);
+
+            const result = viaLauncher("status", "--", "--help");
+
+            expect(result.stdout).toContain("FALLBACK:status,--,--help");
+            expect(result.status).toBe(5);
+        });
+
+        it("keeps `complete <shell>` (script generation) in-process", () => {
+            expect.assertions(2);
+
+            const result = viaLauncher("complete", "bash");
+
+            expect(result.stdout).toContain("FALLBACK:complete,bash");
+            expect(result.status).toBe(5);
+        });
+
+        it("falls back to Node for help when no native binary resolves", () => {
+            expect.assertions(2);
+
+            // A package copy with no sibling binary and no binding package to resolve.
+            const bareRoot = join(temporaryDirectory, "bare-package");
+
+            mkdirSync(join(bareRoot, "bin"), { recursive: true });
+            copyFileSync(join(packageRoot, "bin", "vis.mjs"), join(bareRoot, "bin", "vis.mjs"));
+            copyFileSync(join(packageRoot, "bin", "resolve-binary.mjs"), join(bareRoot, "bin", "resolve-binary.mjs"));
+            copyFileSync(join(packageRoot, "package.json"), join(bareRoot, "package.json"));
+
+            const environment: NodeJS.ProcessEnv = launcherEnvironment();
+
+            delete environment.VIS_NATIVE_BIN;
+            const result = spawnSync(process.execPath, [join(bareRoot, "bin", "vis.mjs"), "--help"], { encoding: "utf8", env: environment });
+
+            expect(result.stdout).toContain("FALLBACK:--help");
+            expect(result.status).toBe(5);
+        });
     });
 });

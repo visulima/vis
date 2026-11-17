@@ -4,7 +4,7 @@
 // `bin/vis` imports this file; run it directly with `node bin/vis.mjs`.
 //
 // Its only jobs are to (1) route the small set of
-// natively-implemented commands to the platform Rust binary, and (2) fall
+// natively-implemented commands (and the help surface) to the platform Rust binary, and (2) fall
 // through to the existing in-process Node CLI for everything else. The
 // fall-through path is byte-identical to running `dist/bin.js` directly, so the
 // launcher adds no extra Node boot for delegated commands — it `import()`s the
@@ -49,7 +49,21 @@ const command = process.argv[2] ?? "";
 // are not: sending those through the binary would only add a second Node boot.
 const isNativeCommand = NATIVE_COMMANDS.has(command) || (command === "hook" && process.argv[3] === "run");
 
-if (isNativeCommand) {
+// The binary also renders the help surface from its generated manifest: bare `vis`,
+// `help …`, `--help` / `-h` anywhere before a `--` separator, and the dynamic
+// `complete --` endpoint. It delegates whatever it cannot answer to `dist/bin.js`
+// itself (never back through this launcher), so these are safe to hand over. A
+// plain `complete <shell>` (script generation) is Node's, so it stays in-process.
+const userArguments = process.argv.slice(2);
+const separatorIndex = userArguments.indexOf("--");
+const optionArguments = separatorIndex === -1 ? userArguments : userArguments.slice(0, separatorIndex);
+const isNativeHelp
+    = userArguments.length === 0
+        || command === "help"
+        || (command === "complete" && userArguments[1] === "--")
+        || optionArguments.some((argument) => argument === "--help" || argument === "-h");
+
+if (isNativeCommand || isNativeHelp) {
     const binary = resolveNativeBinary(packageRoot);
 
     if (binary !== undefined) {
