@@ -24,11 +24,18 @@
 use std::env;
 use std::process::{exit, Command, ExitStatus};
 
+mod complete;
 mod exec;
+mod help;
 mod hook;
+mod manifest;
 mod pm;
 mod pm_family;
 mod pm_shim;
+mod surface;
+mod table;
+mod term;
+mod width_tables;
 mod x;
 
 /// Internal, additive diagnostic command. Used to validate the
@@ -51,6 +58,9 @@ fn main() {
         // command). NOTE: `-v` is cerebro's *verbose* flag, not version, so it is
         // intentionally NOT routed here and falls through to Node.
         "--version" | "-V" => print_version(),
+        // `vis complete -- <words…>` — dynamic shell completion, answered from the
+        // command manifest (the endpoint the generated completion scripts call).
+        "complete" if args.get(1).map(String::as_str) == Some("--") => exit(complete::run(&args)),
         // `vis __pm-shim <pm> [args...]` — the package-manager guard + exec,
         // ported fully native (no Node in the loop).
         "__pm-shim" => {
@@ -65,7 +75,8 @@ fn main() {
         // `vis hook run …` — native git-hook runner. Every other `hook`
         // subcommand (install, migrate, …), and any `run` shape the fast path
         // is not certain about, is delegated to Node by `hook::run` itself.
-        "hook" if args.get(1).map(String::as_str) == Some("run") => hook::run(&args),
+        // `hook run --help` is the manifest's to answer (the `_` arm below).
+        "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
@@ -76,8 +87,17 @@ fn main() {
         // argv so the config-delegation path can replay it.
         "remove" | "dedupe" | "link" | "unlink" | "outdated" | "why" => pm_family::run(first, &args),
         // Native command routing is added here as commands are ported off Node.
-        // Every unmatched invocation is delegated unchanged to the Node CLI.
-        _ => delegate(&args),
+        // Not a native command above: bare `vis`, `--help`, `<command> --help` and
+        // `help <command>` are rendered from the generated manifest, a word that is no
+        // command at all is rejected (with a did-you-mean), and everything else is
+        // delegated unchanged to the Node CLI.
+        _ => {
+            if let Some(code) = surface::answer(&args).or_else(|| surface::reject_unknown(&args)) {
+                exit(code);
+            }
+
+            delegate(&args)
+        }
     }
 }
 

@@ -1,0 +1,43 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32mcache[39m [32m<subcommand>[39m [positional arguments] [33m[options][39m 
+
+[1m[7m[32m Subcommands [39m[27m[22m
+
+    [32mcache list[39m       List all cache entries                                                                             
+    [32mcache clean[39m      Remove cache entries (defaults to all stores: workspace task cache, AI responses, Socket.dev       
+                     reports)                                                                                           
+    [32mcache prune[39m      Remove old and oversized cache entries                                                             
+    [32mcache size[39m       Print on-disk footprint and stats for one or more cache stores (task / ai / socket)                
+    [32mcache why[39m        Explain why a task missed the cache by diffing hash inputs against the previous run                
+    [32mcache hash[39m       Print the recorded hash and per-input hash details for a task                                      
+    [32mcache verify[39m     Verify cache restore fidelity: extract the cached entry into a tmp directory and diff each file's  
+                     content, mode, and mtime against the live workspace. Exits 1 on any drift (changed content, mode,  
+                     mtime) or if a cached output is missing from the workspace. With --scope=all, the first cache      
+                     directory containing the task is used.                                                             
+    [32mcache doctor[39m     Probe the configured remote cache (HTTP HEAD or REAPI Capabilities) and report reachability,       
+                     latency, and negotiated capabilities                                                               
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m, [1m[33m--verbose[39m[22m        Turn on verbose output                                                                           
+  [4mboolean[24m                                                                                                               
+  [1m[33m--debug[39m[22m [4mboolean[24m      Turn on debugging output                                                                         
+  [1m-h[22m, [1m[33m--help[39m[22m [4mboolean[24m   Print out helpful usage information                                                              
+  [1m-q[22m, [1m[33m--quiet[39m[22m          Silence output                                                                                   
+  [4mboolean[24m                                                                                                               
+  [1m-V[22m, [1m[33m--version[39m[22m        Print version info                                                                               
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-color[39m[22m [4mboolean[24m   Turn off colored output                                                                          
+  [1m[33m--color[39m[22m [4mboolean[24m      Force colored output                                                                             
+  [1m[33m--cwd[39m[22m [4mstring[24m         Override workspace root directory                                                                
+  [1m[33m--runtime[39m[22m [4mstring[24m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME and config; falls back to        
+                       lockfile detection.                                                                              
+  [1m[33m--config[39m[22m [4mstring[24m      Path to a vis config file (overrides discovery)                                                  
+  [1m[33m--ca-cert[39m[22m [4mstring[24m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate proxies. Equivalent to             
+                       NODE_EXTRA_CA_CERTS.                                                                             
+
+Run "[36mvis[39m [32mcache <subcommand>[39m [33m--help[39m" for help with a specific subcommand.
+

@@ -2,7 +2,6 @@
 // tests can construct the exact command set the binary ships without running
 // the CLI (workspace discovery, plugins, upgrade check).
 import type { Cli } from "@visulima/cerebro";
-import completionCommand from "@visulima/cerebro/command/completion";
 import versionCommand from "@visulima/cerebro/command/version";
 
 import actionGraphCommand from "./commands/action-graph";
@@ -19,6 +18,7 @@ import checkCommand from "./commands/check";
 import ciCommand from "./commands/ci";
 import ciIgnoreCommand from "./commands/ci-ignore";
 import cleanCommand from "./commands/clean";
+import completionCommand from "./commands/completion/completion-command";
 import createCommand from "./commands/create";
 import dashboardCommand from "./commands/dashboard";
 import dedupeCommand from "./commands/dedupe";
