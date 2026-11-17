@@ -1,6 +1,8 @@
 import type { SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
 
+import { visCommand } from "./native-binary";
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
@@ -54,7 +56,8 @@ export const execVis = async (visBin: string, args: ReadonlyArray<string>, optio
     return await new Promise<ExecResult>((resolve, reject) => {
         // `spawn` reports failures via the 'error' event, never a synchronous
         // throw — handler at the bottom of this block forwards them to reject.
-        const child = spawn(process.execPath, [visBin, ...args], spawnOptions);
+        const { args: spawnArgs, command } = visCommand(visBin, args);
+        const child = spawn(command, spawnArgs, spawnOptions);
 
         let stdout = "";
         let stderr = "";
