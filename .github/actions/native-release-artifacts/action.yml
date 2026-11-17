@@ -87,7 +87,7 @@ runs:
               # - task-runner: the fspy helpers (seccomp helper / macOS dylib / Windows DLL)
               # Plain globs instead of `find -path`: the same step runs on Windows (git-bash),
               # where the `find` patterns matched nothing.
-              echo "::group::artifact layout (debug)"; find artifacts -maxdepth 4 | head -80; echo "::endgroup::"
+              echo "::group::sidecar glob (debug)"; for g in artifacts/bindings-vis-*/npm/*/vis-native-cli*; do echo "glob: [$g]"; done; echo "pwd=$(pwd) install=$(command -v install)"; echo "::endgroup::"
               shopt -s nullglob
               for f in artifacts/bindings-vis-*/npm/*/vis-native-cli* \
                   artifacts/bindings-task-runner-*/npm/*/fspy-seccomp-helper \
@@ -99,9 +99,11 @@ runs:
                       *) dest="packages/tooling/task-runner/npm/${binding}" ;;
                   esac
                   mkdir -p "$dest"
+                  echo "sidecar: $f -> $dest"
                   install -m 0755 "$f" "${dest}/$(basename "$f")"
               done
               shopt -u nullglob
+              ls -l packages/tooling/vis/npm/win32-x64-msvc/ 2>&1 | sed -n 1,10p
 
               rm -rf artifacts/
 
