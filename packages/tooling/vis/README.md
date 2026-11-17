@@ -104,6 +104,13 @@ yarn add @visulima/vis
 pnpm add @visulima/vis
 ```
 
+**pnpm 11 and 12** do not run a dependency's install script until it is approved. `@visulima/vis` uses one to link the native executable at `bin/vis`; without the approval the install still works (the command runs through a Node launcher, which starts slower) but `pnpm add` ends with `ERR_PNPM_IGNORED_BUILDS`. Approve it once with `pnpm approve-builds`, or add it to `pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+    "@visulima/vis": true
+```
+
 ### Binaries
 
 `@visulima/vis` installs four executables:

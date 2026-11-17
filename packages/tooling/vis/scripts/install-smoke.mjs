@@ -10,7 +10,10 @@
 // Each package manager is installed twice: with install scripts allowed (the
 // binary must be linked at `bin/vis`, `doctor` reports the native path) and with
 // them disabled (the Node launcher must still work, `doctor` reports the slower
-// path). Never publishes anywhere but the local registry.
+// path). pnpm gets a third row, "unapproved": pnpm 12 refuses to run a dependency's
+// install script until it is listed in `allowBuilds` and ends the install with
+// ERR_PNPM_IGNORED_BUILDS, yet the package is installed, so `vis` must still work
+// through the Node launcher. Never publishes anywhere but the local registry.
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +26,8 @@ const isWindows = process.platform === "win32";
 const REGISTRY_PORT = 4873 + Math.floor(Math.random() * 500);
 const REGISTRY = `http://localhost:${REGISTRY_PORT}/`;
 const VERDACCIO = "verdaccio@6.11.2";
+// The pnpm row runs the exact release it documents; `npx` keeps it independent of the pnpm that builds the repo.
+const PNPM = "pnpm@12.21.0";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
@@ -170,15 +175,19 @@ const managers = {
         install: (mode) => ({ args: ["install", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npm", files: registryFiles }),
     },
     pnpm: {
-        available: () => have("pnpm"),
-        launch: { exec: ["pnpm", "exec", "vis", "--version"], run: ["pnpm", "run", "v"] },
-        install: (mode) => ({
-            args: ["add", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
-            command: "pnpm",
-            // pnpm 10 reads the package.json key, pnpm 11 the workspace file; scripts-disabled rows keep the
-            // allow-list so only `--ignore-scripts` is what turns the fast path off.
-            extra: { pnpm: { onlyBuiltDependencies: ["@visulima/vis"] } },
-            files: { ...registryFiles, "pnpm-workspace.yaml": "allowBuilds:\n  '@visulima/vis': true\n" },
+        available: () => have("npx"),
+        launch: { exec: ["npx", "--yes", PNPM, "exec", "vis", "--version"], run: ["npx", "--yes", PNPM, "run", "v"] },
+        modes: ["enabled", "disabled", "unapproved"],
+        install: (mode, directory) => ({
+            // A store of its own per row: pnpm keeps the files an install script produced in its store (the
+            // side-effects cache) and would hand them to a later row that disabled scripts.
+            args: ["--yes", PNPM, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
+            command: "npx",
+            // pnpm reads `allowBuilds` from the workspace file. The scripts-disabled row keeps the approval so only
+            // `--ignore-scripts` turns the fast path off; the unapproved row leaves it out and nothing else.
+            // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package the
+            // earlier `--ignore-scripts` install skipped.
+            files: { ...registryFiles, "pnpm-workspace.yaml": `verifyDepsBeforeRun: false\n${mode === "unapproved" ? "" : "allowBuilds:\n  '@visulima/vis': true\n"}` },
         }),
     },
     "yarn-berry": {
@@ -216,10 +225,10 @@ for (const name of requested) {
         continue;
     }
 
-    for (const mode of isWindows ? ["enabled"] : ["enabled", "disabled"]) {
+    for (const mode of isWindows ? ["enabled"] : (manager.modes ?? ["enabled", "disabled"])) {
         const row = `${name} (scripts ${mode})`;
         const directory = join(work, `${name}-${mode}`);
-        const plan = manager.install(mode);
+        const plan = manager.install(mode, directory);
 
         mkdirSync(join(directory, "packages", "a"), { recursive: true });
         writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra }, null, 2));
@@ -236,13 +245,27 @@ for (const name of requested) {
         const environment = { CI: "1", NO_COLOR: "1", npm_config_cache: join(work, "npm-cache"), npm_config_userconfig: publishConfig, YARN_CACHE_FOLDER: join(directory, ".yarn-cache") };
         const installed = run(plan.command, plan.args, { cwd: directory, env: environment });
 
-        check(row, "install succeeds", installed.status === 0, `${installed.stderr}${installed.stdout}`.trim().split("\n").slice(0, 14).join(" | "));
+        const installOutput = `${installed.stderr}${installed.stdout}`;
 
-        if (installed.status !== 0) {
-            continue;
+        if (mode === "unapproved") {
+            // pnpm installs the files and then fails the command until the build is approved.
+            check(row, "pnpm reports the unapproved build", installOutput.includes("ERR_PNPM_IGNORED_BUILDS"), installOutput.trim().split("\n").slice(0, 14).join(" | "));
+        } else {
+            check(row, "install succeeds", installed.status === 0, installOutput.trim().split("\n").slice(0, 14).join(" | "));
+
+            if (installed.status !== 0) {
+                continue;
+            }
         }
 
         const vis = join(directory, "node_modules", ".bin", "vis");
+        // Only "enabled" runs the install script that links the native executable.
+        const native = mode === "enabled";
+
+        if (!existsSync(vis)) {
+            check(row, "install leaves a `vis` bin", false, installOutput.trim().split("\n").slice(0, 6).join(" | "));
+            continue;
+        }
         const execute = (...args) => run(vis, args, { cwd: directory, env: environment });
 
         const version = execute("--version");
@@ -291,10 +314,10 @@ for (const name of requested) {
         if (!isWindows) {
             const linked = isNativeFile(join(directory, "node_modules", "@visulima", "vis", "bin", "vis"));
 
-            check(row, mode === "enabled" ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === (mode === "enabled"));
+            check(row, native ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === native);
 
             if (needsWorkspace) {
-                check(row, `doctor reports the ${mode === "enabled" ? "native" : "slower"} path`, mode === "enabled" ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true, JSON.stringify(launcher));
+                check(row, `doctor reports the ${native ? "native" : "slower"} path`, native ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true, JSON.stringify(launcher));
             }
         }
 
