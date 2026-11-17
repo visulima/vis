@@ -10,17 +10,28 @@ license = "MIT"
 publish = false
 
 [lib]
-crate-type = ["rlib"]
+crate-type = [ "rlib" ]
 
 [dependencies]
 rustc-hash = "2"
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
+xxhash-rust = { version = "0.8", features = [ "xxh3" ] }
 walkdir = "2"
 rayon = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "signal", "sync", "time", "macros"] }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "process",
+  "io-util",
+  "signal",
+  "sync",
+  "time",
+  "macros"
+] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["signal", "process"] }
+nix = { version = "0.31", features = [
+  "signal",
+  "process"
+] }
 
 # Process-tree termination on Windows (job objects, console control events). The
 # file-access tracker's injection features stay with the addon crate.
@@ -39,7 +50,7 @@ windows-sys = { version = "0.61", features = [
 # `cargo bench` falls back to vanilla criterion locally; under `cargo codspeed`
 # (the CodSpeed CI path in .github/workflows/codspeed.yml) it emits instrumented
 # measurements. Pinned to the 4.x line to match `CodSpeedHQ/action@v4`.
-criterion = { package = "codspeed-criterion-compat", version = "4", default-features = false, features = ["cargo_bench_support"] }
+criterion = { package = "codspeed-criterion-compat", version = "4", default-features = false, features = [ "cargo_bench_support" ] }
 
 # Native micro-benchmarks (criterion), measuring our Rust hot paths directly — the
 # layer the hyperfine/vitest harness in packages/tooling/vis/__bench__ cannot isolate
