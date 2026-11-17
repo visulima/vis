@@ -588,6 +588,11 @@ fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
         .env("VIS_LAUNCHER", "node")
         .output()
         .expect("run binary");
+    let overridden = Command::new(package.join("bin/vis"))
+        .arg("__native-info")
+        .env("VIS_FALLBACK_ENTRY_OVERRIDE", "/stub/entry.js")
+        .output()
+        .expect("run binary");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let entry = std::fs::canonicalize(package.join("dist/bin.js")).unwrap();
 
@@ -596,4 +601,9 @@ fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
     assert!(stdout.contains(&entry.display().to_string()), "stdout was: {stdout}");
     assert!(stdout.contains("4.5.6"), "stdout was: {stdout}");
     assert!(!stdout.contains("stale"), "stdout was: {stdout}");
+    assert!(
+        String::from_utf8_lossy(&overridden.stdout).contains("/stub/entry.js"),
+        "override ignored: {:?}",
+        overridden.stdout
+    );
 }

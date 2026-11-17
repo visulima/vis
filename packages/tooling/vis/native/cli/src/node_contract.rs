@@ -8,7 +8,8 @@
 //! whatever a parent `vis` process left in the environment (a stale entry would
 //! otherwise point the Node fallback at another install). A binary outside a
 //! package (a platform package, started by the launcher) keeps what the launcher
-//! set. `VIS_NODE` is left alone: delegation uses it when set and otherwise runs
+//! set. Tests and dev builds that sit in a package but need a stub entry set
+//! `VIS_FALLBACK_ENTRY_OVERRIDE`, which wins over the located entry. `VIS_NODE` is left alone: delegation uses it when set and otherwise runs
 //! `node` from `PATH`.
 
 use std::env;
@@ -30,7 +31,7 @@ pub fn init() {
 
     match exe.as_deref().and_then(locate) {
         Some(layout) => {
-            for (key, value) in owned_env(&layout) {
+            for (key, value) in owned_env(&layout, env::var_os("VIS_FALLBACK_ENTRY_OVERRIDE")) {
                 match value {
                     Some(value) => env::set_var(key, value),
                     None => env::remove_var(key),
@@ -46,9 +47,9 @@ pub fn init() {
 }
 
 /// What a binary installed inside a package sets, `None` meaning "must be unset".
-fn owned_env(layout: &Layout) -> [(&'static str, Option<OsString>); 3] {
+fn owned_env(layout: &Layout, entry_override: Option<OsString>) -> [(&'static str, Option<OsString>); 3] {
     [
-        ("VIS_FALLBACK_ENTRY", Some(layout.entry.clone().into_os_string())),
+        ("VIS_FALLBACK_ENTRY", Some(entry_override.unwrap_or_else(|| layout.entry.clone().into_os_string()))),
         ("VIS_VERSION", layout.version.as_ref().map(OsString::from)),
         ("VIS_LAUNCHER", Some(OsString::from("native"))),
     ]
@@ -146,7 +147,7 @@ mod tests {
         let layout = locate(&root.join("bin").join("vis")).unwrap();
 
         assert_eq!(
-            owned_env(&layout),
+            owned_env(&layout, None),
             [
                 ("VIS_FALLBACK_ENTRY", Some(root.join("dist/bin.js").into_os_string())),
                 ("VIS_VERSION", Some(OsString::from("1.2.3"))),
@@ -159,6 +160,16 @@ mod tests {
     fn a_located_package_without_a_manifest_clears_an_inherited_version() {
         let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
 
-        assert_eq!(owned_env(&layout)[1], ("VIS_VERSION", None));
+        assert_eq!(owned_env(&layout, None)[1], ("VIS_VERSION", None));
+    }
+
+    #[test]
+    fn an_explicit_override_wins_over_the_located_entry() {
+        let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
+
+        assert_eq!(
+            owned_env(&layout, Some(OsString::from("/stub.mjs")))[0],
+            ("VIS_FALLBACK_ENTRY", Some(OsString::from("/stub.mjs")))
+        );
     }
 }

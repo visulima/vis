@@ -40,7 +40,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         const result = spawnSync(process.execPath, [launcher, "__native-info"], {
             encoding: "utf8",
-            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_NATIVE_BIN: binary as string },
+            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub, VIS_NATIVE_BIN: binary as string },
         });
 
         expect(result.status).toBe(0);
@@ -54,7 +54,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         const result = spawnSync(process.execPath, [launcher, "--version"], {
             encoding: "utf8",
-            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_NATIVE_BIN: binary as string },
+            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub, VIS_NATIVE_BIN: binary as string },
         });
 
         expect(result.status).toBe(0);
@@ -67,7 +67,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         const result = spawnSync(process.execPath, [launcher, "__pm-shim", "bogus", "install"], {
             encoding: "utf8",
-            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_NATIVE_BIN: binary as string },
+            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub, VIS_NATIVE_BIN: binary as string },
         });
 
         expect(result.status).toBe(1);
@@ -79,7 +79,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         const result = spawnSync(binary as string, ["run", "build", "--flag"], {
             encoding: "utf8",
-            env: { ...process.env, VIS_FALLBACK_ENTRY: delegateStub, VIS_NODE: process.execPath },
+            env: { ...process.env, VIS_FALLBACK_ENTRY: delegateStub, VIS_FALLBACK_ENTRY_OVERRIDE: delegateStub, VIS_NODE: process.execPath },
         });
 
         expect(result.stdout).toContain("DELEGATE:run,build,--flag");
@@ -91,7 +91,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         const result = spawnSync(process.execPath, [launcher, "status", "--json"], {
             encoding: "utf8",
-            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_NATIVE_BIN: binary as string },
+            env: { ...process.env, VIS_FALLBACK_ENTRY: fallbackStub, VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub, VIS_NATIVE_BIN: binary as string },
         });
 
         expect(result.stdout).toContain("FALLBACK:status,--json");

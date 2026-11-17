@@ -39,6 +39,7 @@ fn command(program: &str) -> Command {
 
     command
         .env_remove("VIS_FALLBACK_ENTRY")
+        .env_remove("VIS_FALLBACK_ENTRY_OVERRIDE")
         .env_remove("VIS_LAUNCHER")
         .env_remove("VIS_NODE")
         .env_remove("VIS_VERSION");
