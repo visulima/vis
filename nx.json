@@ -86,7 +86,9 @@
                 "^production",
                 "{projectRoot}/vitest.config.ts",
                 "{workspaceRoot}/tools/get-vitest-config.ts",
-                "{projectRoot}/**/*.node"
+                "{projectRoot}/**/*.node",
+                "{projectRoot}/vis-native-cli",
+                "{projectRoot}/vis-native-cli.exe"
             ],
             "cache": true
         },

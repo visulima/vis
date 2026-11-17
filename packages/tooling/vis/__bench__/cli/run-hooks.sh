@@ -244,12 +244,12 @@ install_tool() {
 FAILED=0
 fail() { echo "  INVALID: $*" >&2; FAILED=1; }
 
-# validate <label> <scenario> <dir> <cmd...>
+# validate <label> <scenario> <dir> <command string, shell-quoted words>
 validate() {
-  local label="$1" s="$2" d="$3"; shift 3
+  local label="$1" s="$2" d="$3"; local -a argv; eval "argv=($4)"
   local log="$WORK/hb.log" err="$WORK/hb.err" rc=0
   rm -f "$log"
-  (cd "$d" && HB_LOG="$log" VIS_HOOK_TRACE=1 "$@" </dev/null >/dev/null 2>"$err") || rc=$?
+  (cd "$d" && HB_LOG="$log" VIS_HOOK_TRACE=1 "${argv[@]}" </dev/null >/dev/null 2>"$err") || rc=$?
   if [[ $rc -ne 0 ]]; then fail "$label exited $rc (stderr: $(head -c 300 "$err"))"; return; fi
   if [[ "$s" != C ]]; then
     local total; total=$(awk '{ n += $1 } END { print n + 0 }' "$log" 2>/dev/null || echo 0)
@@ -262,7 +262,7 @@ validate() {
     # negative control: a staged trailing-whitespace file must make the tool fail
     local neg="$WORK/neg"; rm -rf "$neg"; cp -R "$d" "$neg"
     (cd "$neg" && printf 'export const bad = 1;   \n' > src/m7.ts && git add src/m7.ts)
-    if (cd "$neg" && "${@//$d/$neg}" >/dev/null 2>&1); then fail "$label: passed a file with trailing whitespace"; fi
+    if (cd "$neg" && "${argv[@]//"$d"/$neg}" >/dev/null 2>&1); then fail "$label: passed a file with trailing whitespace"; fi
     rm -rf "$neg"
   fi
 }
@@ -291,8 +291,8 @@ for s in "${SCEN[@]}"; do
       flag="$(cfg_flag "$t" "$s")"
       case "$t" in
         vis)
-          add "vis (launcher)" "node $VIS_PKG/bin/vis.mjs hook run pre-commit"
-          [[ -n "$VIS_NATIVE" ]] && add "vis (native)" "env VIS_FALLBACK_ENTRY=$VIS_PKG/dist/bin.js $VIS_NATIVE hook run pre-commit" ;;
+          add "vis (launcher)" "node $(printf '%q' "$VIS_PKG/bin/vis.mjs") hook run pre-commit"
+          [[ -n "$VIS_NATIVE" ]] && add "vis (native)" "env VIS_FALLBACK_ENTRY=$(printf '%q' "$VIS_PKG/dist/bin.js") $(printf '%q' "$VIS_NATIVE") hook run pre-commit" ;;
         hk)         add hk "hk run pre-commit" ;;
         prek)       add prek "prek run $flag" ;;
         lefthook)   add lefthook "lefthook run pre-commit" ;;
@@ -302,8 +302,7 @@ for s in "${SCEN[@]}"; do
     # validate each command once, in the fixture, before timing
     i=0; while [[ $i -lt ${#args[@]} ]]; do
       label="${args[$i+1]}"; cmd="${args[$i+2]}"; i=$((i+3))
-      # shellcheck disable=SC2086
-      validate "$label" "$s" "$d" $cmd
+      validate "$label" "$s" "$d" "$cmd"
     done
     (( FAILED )) && { echo "validation failed — not timing scenario $s/run" >&2; exit 1; }
     ( cd "$d" && run_hyperfine "$RESULTS_DIR/hooks-$TIMESTAMP-$s-run.json" "${args[@]}" )
@@ -315,8 +314,9 @@ for s in "${SCEN[@]}"; do
     for t in "${TOOLS[@]}"; do
       [[ "$s" == C && "$t" == lefthook ]] && continue
       d="$WORK/inst-$s-$t"; cp -R "$base" "$d"; install_tool "$t" "$s" "$d"
-      validate "$t (installed)" "$s" "$d" git -C "$d" hook run pre-commit
-      args+=(-n "$t" "git -C $d hook run pre-commit")
+      cmd="git -C $(printf '%q' "$d") hook run pre-commit"
+      validate "$t (installed)" "$s" "$d" "$cmd"
+      args+=(-n "$t" "$cmd")
     done
     (( FAILED )) && { echo "validation failed — not timing scenario $s/installed" >&2; exit 1; }
     run_hyperfine "$RESULTS_DIR/hooks-$TIMESTAMP-$s-installed.json" "${args[@]}"

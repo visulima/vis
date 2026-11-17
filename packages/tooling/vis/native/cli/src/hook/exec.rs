@@ -89,7 +89,9 @@ fn is_plain_word(word: &str) -> bool {
 /// the first not a shell builtin / keyword and not a `VAR=value` assignment. Anything
 /// else — quoting, `$`, pipes, globs, redirections — needs the shell.
 fn direct_argv(command: &str) -> Option<Vec<&str>> {
-    let words: Vec<&str> = command.split_ascii_whitespace().collect();
+    // Only space and tab separate words; a newline (or any other control character) ends a
+    // shell command, so it leaves `is_plain_word` false and the entry goes to `sh`.
+    let words: Vec<&str> = command.split([' ', '\t']).filter(|w| !w.is_empty()).collect();
     let first = *words.first()?;
 
     if !words.iter().all(|w| is_plain_word(w))
@@ -204,6 +206,9 @@ mod tests {
             "cd x",
             "",
             "-x",
+            "./first\n./second",
+            "./first\r\n./second",
+            "./first\x0b./second",
         ] {
             assert!(direct_argv(command).is_none(), "{command:?} needs the shell");
         }

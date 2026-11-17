@@ -47,7 +47,7 @@ describe.skipIf(process.platform === "win32")("generated dispatcher (behaviour)"
 
     const fire = (root: string, hook: string, args: string[] = [], env: NodeJS.ProcessEnv = {}): { code: number; out: string } => {
         try {
-            const out = execFileSync(join(root, ".vis/hooks/_", hook), args, { cwd: root, encoding: "utf8", env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+            const out = execFileSync(join(root, ".vis/hooks/_", hook), args, { cwd: root, encoding: "utf8", env: { ...process.env, VIS_GIT_HOOKS: "1", ...env }, stdio: ["ignore", "pipe", "pipe"] });
 
             return { code: 0, out };
         } catch (error) {
@@ -178,7 +178,7 @@ describe.skipIf(process.platform === "win32")("generated dispatcher (behaviour)"
 
         try {
             // git hands the hook a path relative to the repo root when core.hooksPath is relative.
-            execFileSync(".vis/hooks/_/pre-commit", ["x"], { cwd: root, env: process.env });
+            execFileSync(".vis/hooks/_/pre-commit", ["x"], { cwd: root, env: { ...process.env, VIS_GIT_HOOKS: "1" } });
 
             // ...and the path handed to the binary (and inherited by hook commands) must not be relative.
             expect(readFileSync(log, "utf8")).toBe(`native hook run pre-commit x fallback=${join(realpathSync(root), "node_modules/@visulima/vis/dist/bin.js")}\n`);
@@ -198,7 +198,7 @@ describe.skipIf(process.platform === "win32")("generated dispatcher (behaviour)"
             mkdirSync(join(root, "node_modules/@visulima/vis/dist"), { recursive: true });
             writeFileSync(join(root, "node_modules/@visulima/vis/dist/bin.js"), "");
             writeFileSync(join(root, "node_modules/@visulima/vis/vis-native-cli"), `#!/bin/sh\necho ran > "${join(root, "ran")}"\n`, { mode: 0o755 });
-            execFileSync(".config/husky/_/pre-commit", [], { cwd: root, env: process.env });
+            execFileSync(".config/husky/_/pre-commit", [], { cwd: root, env: { ...process.env, VIS_GIT_HOOKS: "1" } });
 
             expect(existsSync(join(root, "ran"))).toBe(true);
         } finally {

@@ -53,8 +53,8 @@ const CASES: Record<string, Case> = {
     "fail entry": { config: cfg(hook("t", { fail: "do not use this" })), files: TREE },
     "failFast stops at the first failure": { config: { ...cfg(hook("a", { entry: "./fail.sh" }), hook("b", { entry: REC })), failFast: true }, files: TREE },
     "failing entry": { config: cfg(hook("t", { entry: "./fail.sh" })), files: TREE },
-
     "files + exclude": { config: cfg(hook("t", { entry: REC, exclude: "^docs/", files: String.raw`^(src|docs)/` })), files: TREE },
+
     "files regex": { config: cfg(hook("t", { entry: REC, files: String.raw`\.ts$` })), files: TREE },
     "git-arg stage: entry reads \"$1\" itself": {
         args: ["MSGFILE"],
@@ -72,9 +72,10 @@ const CASES: Record<string, Case> = {
     "mixed-line-ending --fix=lf": { config: cfg(hook("m", { args: ["--fix=lf"], builtin: "mixed-line-ending" })), files: MIXED },
     "mixed-line-ending --fix=no": { config: cfg(hook("m", { args: ["--fix=no"], builtin: "mixed-line-ending" })), files: MIXED },
     "mixed-line-ending -f crlf": { config: cfg(hook("m", { args: ["-f", "crlf"], builtin: "mixed-line-ending" })), files: MIXED },
-
     "mixed-line-ending auto": { config: cfg(hook("m", { builtin: "mixed-line-ending" })), files: MIXED },
+
     "mixed-line-ending bad value": { config: cfg(hook("m", { args: ["--fix=bogus"], builtin: "mixed-line-ending" })), files: MIXED },
+    "newline-separated commands run through the shell": { config: cfg(hook("t", { entry: `${REC}\n./fail.sh`, passFilenames: false })), files: TREE },
     "no hooks for the stage": { config: cfg(hook("t", { entry: REC })), files: TREE, stage: "pre-push" },
     "no matching files skips the hook": { config: cfg(hook("t", { entry: REC, files: "nomatch" })), files: TREE },
 
