@@ -579,7 +579,11 @@ fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
     std::fs::create_dir_all(package.join("dist")).unwrap();
     std::fs::write(package.join("dist/bin.js"), "").unwrap();
     std::fs::write(package.join("package.json"), r#"{"name":"@visulima/vis","version":"4.5.6"}"#).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_vis"), package.join("bin/vis")).unwrap();
+    // A hard link has no writable descriptor another test's fork could inherit
+    // (which makes exec fail with "Text file busy"); fall back to a copy across devices.
+    if std::fs::hard_link(env!("CARGO_BIN_EXE_vis"), package.join("bin/vis")).is_err() {
+        std::fs::copy(env!("CARGO_BIN_EXE_vis"), package.join("bin/vis")).unwrap();
+    }
 
     let output = Command::new(package.join("bin/vis"))
         .arg("__native-info")
