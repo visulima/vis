@@ -14,7 +14,7 @@
 const NATIVE_COMMANDS = new Set(["--version", "-V", "__native-info", "__pm-shim", "dedupe", "exec", "link", "outdated", "pm", "remove", "unlink", "why", "x"]);
 
 // Whether the binary should get this invocation: `args` is `process.argv.slice(2)`.
-const routesToNative = (args) => {
+const routesToNative = (args, platform = process.platform) => {
     const [command = "", subcommand] = args;
 
     if (NATIVE_COMMANDS.has(command)) {
@@ -31,6 +31,12 @@ const routesToNative = (args) => {
     }
 
     if (command === "complete") {
+        return false;
+    }
+
+    // Windows keeps the help surface in Node: the binary paints it with raw ANSI codes
+    // and does not enable virtual-terminal processing, which classic conhost needs.
+    if (platform === "win32") {
         return false;
     }
 

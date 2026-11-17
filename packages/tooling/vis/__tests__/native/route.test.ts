@@ -40,6 +40,22 @@ describe("launcher routing (bin/route.mjs)", () => {
     ])("routes `vis %j` to native: %s", (args: string[], expected: boolean) => {
         expect.assertions(1);
 
-        expect(routesToNative(args)).toBe(expected);
+        expect(routesToNative(args, "linux")).toBe(expected);
+    });
+
+    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]]])(
+        "keeps the help surface `vis %j` in Node on Windows",
+        (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "win32")).toBe(false);
+        },
+    );
+
+    it("still routes the native commands on Windows", () => {
+        expect.assertions(2);
+
+        expect(routesToNative(["--version"], "win32")).toBe(true);
+        expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
     });
 });
