@@ -18,7 +18,7 @@ import checkCommand from "./commands/check";
 import ciCommand from "./commands/ci";
 import ciIgnoreCommand from "./commands/ci-ignore";
 import cleanCommand from "./commands/clean";
-import completionCommand from "./commands/completion";
+import completionCommand from "./commands/completion/completion-command";
 import createCommand from "./commands/create";
 import dashboardCommand from "./commands/dashboard";
 import dedupeCommand from "./commands/dedupe";
