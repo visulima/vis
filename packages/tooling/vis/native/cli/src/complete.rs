@@ -6,7 +6,7 @@
 
 use std::io::{self, Write};
 
-use crate::manifest::{Command, Manifest};
+use crate::manifest::{self, Command, Manifest, Routed};
 
 /// "Do not fall back to file completion."
 const NO_FILE_COMPLETION: u32 = 4;
@@ -78,9 +78,7 @@ pub fn complete(manifest: &Manifest, words: &[String]) -> String {
     let typed: Vec<&str> = before.iter().map(String::as_str).take_while(|word| !word.starts_with('-')).collect();
 
     let candidates = if current.starts_with('-') {
-        let command = (1..=typed.len())
-            .rev()
-            .find_map(|length| manifest.commands.iter().find(|command| command.path() == typed[..length]));
+        let command = manifest::resolve(&manifest.commands, &typed);
 
         option_candidates(manifest, command, current)
     } else {
@@ -164,6 +162,15 @@ mod tests {
 
         assert!(out.lines().any(|line| line.starts_with("--format\t")), "{out}");
         assert!(out.lines().any(|line| line.starts_with("--verbose\t")));
+    }
+
+    #[test]
+    fn options_resolve_aliases_the_way_commands_do() {
+        let manifest = Manifest::load();
+        let alias = complete(&manifest, &words(&["i", "--fr"]));
+
+        assert!(alias.lines().next().is_some_and(|line| line.starts_with("--frozen-lockfile")), "{alias}");
+        assert_eq!(alias, complete(&manifest, &words(&["install", "--fr"])));
     }
 
     #[test]
