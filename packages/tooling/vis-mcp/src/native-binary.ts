@@ -33,11 +33,17 @@ export const isNativeExecutable = (filePath: string): boolean => {
     }
 };
 
-/** Command and argv used to run the vis CLI at `visBin`. */
-export const visCommand = (visBin: string, args: ReadonlyArray<string>): { args: string[]; command: string } => {
+/**
+ * Command, argv and default environment used to run the vis CLI at `visBin`.
+ *
+ * A native binary is spawned directly, so the Node launcher never runs to set
+ * `VIS_NODE`; the binary would then look `node` up on `PATH`, which an MCP
+ * server may not have. Default it to the Node running this server.
+ */
+export const visCommand = (visBin: string, args: ReadonlyArray<string>): { args: string[]; command: string; env: Record<string, string> } => {
     if (isNativeExecutable(visBin)) {
-        return { args: [...args], command: visBin };
+        return { args: [...args], command: visBin, env: { VIS_NODE: process.execPath } };
     }
 
-    return { args: [visBin, ...args], command: process.execPath };
+    return { args: [visBin, ...args], command: process.execPath, env: {} };
 };

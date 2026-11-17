@@ -68,8 +68,8 @@ describe(visCommand, () => {
     it("should run a native binary directly and a script through node", () => {
         expect.assertions(2);
 
-        expect(visCommand(process.execPath, ["list"])).toStrictEqual({ args: ["list"], command: process.execPath });
-        expect(visCommand(FAKE_VIS, ["list"])).toStrictEqual({ args: [FAKE_VIS, "list"], command: process.execPath });
+        expect(visCommand(process.execPath, ["list"])).toStrictEqual({ args: ["list"], command: process.execPath, env: { VIS_NODE: process.execPath } });
+        expect(visCommand(FAKE_VIS, ["list"])).toStrictEqual({ args: [FAKE_VIS, "list"], command: process.execPath, env: {} });
     });
 });
 
@@ -83,5 +83,31 @@ describe("execVis with a native binary", () => {
 
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe("42");
+    });
+
+    it("should default VIS_NODE to the running node for a native binary", async () => {
+        expect.assertions(1);
+
+        const previous = process.env.VIS_NODE;
+
+        delete process.env.VIS_NODE;
+
+        try {
+            const result = await execVis(process.execPath, ["-p", "process.env.VIS_NODE"]);
+
+            expect(result.stdout.trim()).toBe(process.execPath);
+        } finally {
+            if (previous !== undefined) {
+                process.env.VIS_NODE = previous;
+            }
+        }
+    });
+
+    it("should let a caller-supplied VIS_NODE win over the default", async () => {
+        expect.assertions(1);
+
+        const result = await execVis(process.execPath, ["-p", "process.env.VIS_NODE"], { env: { VIS_NODE: "/custom/node" } });
+
+        expect(result.stdout.trim()).toBe("/custom/node");
     });
 });

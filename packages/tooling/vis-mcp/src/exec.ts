@@ -25,10 +25,12 @@ export const execVis = async (visBin: string, args: ReadonlyArray<string>, optio
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
 
+    const { args: spawnArgs, command, env: defaultEnv } = visCommand(visBin, args);
+
     // Only forward string-valued env keys. An `options.env` entry typed as
     // `string | undefined` must not leak into the child as the literal string
     // "undefined" (the result of spreading an undefined value), so filter it.
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = { ...defaultEnv };
 
     for (const [key, value] of Object.entries(process.env)) {
         if (value !== undefined) {
@@ -56,7 +58,6 @@ export const execVis = async (visBin: string, args: ReadonlyArray<string>, optio
     return await new Promise<ExecResult>((resolve, reject) => {
         // `spawn` reports failures via the 'error' event, never a synchronous
         // throw — handler at the bottom of this block forwards them to reject.
-        const { args: spawnArgs, command } = visCommand(visBin, args);
         const child = spawn(command, spawnArgs, spawnOptions);
 
         let stdout = "";
