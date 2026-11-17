@@ -1,7 +1,7 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import completion from "../../../src/commands/completion";
+import completion from "../../../src/commands/completion/completion-command";
 
 const generate = async (shell: string): Promise<string> => {
     const chunks: string[] = [];
