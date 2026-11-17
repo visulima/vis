@@ -124,6 +124,75 @@ pub fn answer(args: &[String]) -> Option<i32> {
     Some(0)
 }
 
+/// Levenshtein distance between two short words.
+fn distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut row: Vec<usize> = (0..=right.len()).collect();
+
+    for (index, left_char) in left.chars().enumerate() {
+        let mut diagonal = row[0];
+
+        row[0] = index + 1;
+
+        for (column, right_char) in right.iter().enumerate() {
+            let above = row[column + 1];
+
+            row[column + 1] = (row[column] + 1).min(above + 1).min(diagonal + usize::from(left_char != *right_char));
+            diagonal = above;
+        }
+    }
+
+    row[right.len()]
+}
+
+/// The candidate closest to `word`, if it is close enough to be a plausible typo.
+fn closest<'a>(word: &str, candidates: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let limit = 2.max(word.chars().count() / 3);
+
+    candidates
+        .map(|candidate| (distance(word, candidate), candidate))
+        .filter(|(distance, _)| *distance <= limit)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, candidate)| candidate)
+}
+
+/// `vis frobnicate` printed nothing and exited 1. When the first word is not a command,
+/// an alias, or the start of any command path, say so (with the closest command when
+/// one is a plausible typo) and exit 1. Everything else, including bare parents of
+/// subcommands, flags-first invocations and internal `__` entry points, returns `None`
+/// and is delegated untouched.
+pub fn reject_unknown(args: &[String]) -> Option<i32> {
+    let request = Request::parse(args);
+    let word = *request.words.first()?;
+
+    if word.starts_with("__") {
+        return None;
+    }
+
+    let manifest = Manifest::load();
+
+    if resolve(&manifest, &request.words).is_some() || !manifest.subcommands_of(&[word]).is_empty() {
+        return None;
+    }
+
+    let visible = manifest.commands.iter().filter(|command| !command.hidden);
+    // First path words, plus the aliases of top-level commands (`vis i`).
+    let names = visible.flat_map(|command| {
+        let aliases = if command.command_path.is_empty() { command.alias.as_slice() } else { &[] };
+
+        command.path().into_iter().take(1).chain(aliases.iter().map(String::as_str))
+    });
+
+    match closest(word, names) {
+        Some(candidate) => eprintln!("Error: Unknown command \"{word}\". Did you mean \"{candidate}\"?"),
+        None => eprintln!("Error: Unknown command \"{word}\"."),
+    }
+
+    eprintln!("Run \"vis --help\" to see the available commands.");
+
+    Some(1)
+}
+
 /// `vis help [<command path>…] [--group <name>]`.
 fn answer_help_command(manifest: &Manifest, help: &Help, request: &Request) -> Option<i32> {
     let path = &request.words[1..];
@@ -167,4 +236,22 @@ fn answer_help_command(manifest: &Manifest, help: &Help, request: &Request) -> O
     eprintln!("Command \"{joined}\" not found");
 
     Some(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distance_counts_edits() {
+        assert_eq!(distance("instal", "install"), 1);
+        assert_eq!(distance("abc", "abc"), 0);
+        assert_eq!(distance("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn closest_ignores_far_words() {
+        assert_eq!(closest("instal", ["run", "install"].into_iter()), Some("install"));
+        assert_eq!(closest("frobnicate", ["run", "install"].into_iter()), None);
+    }
 }

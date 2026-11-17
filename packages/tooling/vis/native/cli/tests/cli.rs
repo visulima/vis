@@ -485,16 +485,6 @@ fn command_help_is_answered_natively_without_a_node_fallback() {
 }
 
 #[test]
-fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
-    // Only `dlx` as the first argument takes the lean entry; `-v dlx` runs the full CLI.
-    let lean = binary().args(["dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
-    let full = binary().args(["-v", "dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
-
-    assert!(!String::from_utf8_lossy(&lean.stdout).contains("--ca-cert"));
-    assert!(String::from_utf8_lossy(&full.stdout).contains("--ca-cert"));
-}
-
-#[test]
 fn complete_lists_every_command_for_the_first_word() {
     let output = binary().args(["complete", "--", ""]).output().expect("run binary");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -515,5 +505,66 @@ fn complete_narrows_by_prefix_and_reaches_subcommands() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).lines().next().and_then(|line| line.split('\t').next()),
         Some("prune")
+    );
+}
+
+#[test]
+fn unknown_command_exits_one_and_names_the_closest_command() {
+    let output = binary().arg("instal").env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("Unknown command \"instal\". Did you mean \"install\"?"), "{stderr}");
+}
+
+#[test]
+fn unknown_command_with_no_close_match_still_errors() {
+    let output = binary().arg("frobnicate").env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("Unknown command \"frobnicate\"."), "{stderr}");
+    assert!(!stderr.contains("Did you mean"), "{stderr}");
+}
+
+#[test]
+fn command_groups_and_bare_migrate_still_reach_node() {
+    // `vis migrate` (bare) opens an interactive flow in the Node CLI, and a parent such
+    // as `cache` is a Node matter too: none of them may be turned into an error here.
+    for args in [&["migrate"][..], &["cache"], &["cache", "--help"], &["docker"]] {
+        let output = binary().args(args).env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
+
+        assert_eq!(
+            output.status.code(),
+            Some(70),
+            "{args:?} must be delegated, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
+    // Only `dlx` as the first argument takes the lean entry; `-v dlx` runs the full CLI.
+    let lean = binary().args(["dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
+    let full = binary().args(["-v", "dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
+
+    assert!(!String::from_utf8_lossy(&lean.stdout).contains("--ca-cert"));
+    assert!(String::from_utf8_lossy(&full.stdout).contains("--ca-cert"));
+}
+
+#[test]
+fn known_commands_still_delegate_to_node() {
+    let output = binary().arg("run").env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
+
+    assert_eq!(
+        output.status.code(),
+        Some(70),
+        "a real command must reach the Node fallback, not the unknown-command error"
     );
 }

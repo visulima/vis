@@ -93,7 +93,12 @@ fn main() {
         "remove" | "dedupe" | "link" | "unlink" | "outdated" | "why" => pm_family::run(first, &args),
         // Native command routing is added here as commands are ported off Node.
         // Every unmatched invocation is delegated unchanged to the Node CLI.
-        _ => delegate(&args),
+        // Not a native command: reject a word that is no command at all (with a
+        // did-you-mean), and hand everything else to Node.
+        _ => match surface::reject_unknown(&args) {
+            Some(code) => exit(code),
+            None => delegate(&args),
+        },
     }
 }
 
