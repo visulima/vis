@@ -37,21 +37,6 @@ const migrateLegacyHooksDirectory = (directory: string): string | undefined => {
 };
 
 /**
- * Builds a nested dirname expression for the shell script.
- *
- * Example: depth 3 produces `dirname "$(dirname "$(dirname "$0"))"`.
- */
-const nestedDirname = (depth: number): string => {
-    let expression = "\"$0\"";
-
-    for (let index = 0; index < depth; index += 1) {
-        expression = `"$(dirname ${expression})"`;
-    }
-
-    return expression;
-};
-
-/**
  * Generates the shell script that dispatches to user-defined hooks.
  *
  * `options.skipInCI` (from `config.json`) bakes a CI kill-switch into the
@@ -61,11 +46,20 @@ const nestedDirname = (depth: number): string => {
  * (so a single CI job can force hooks back on). Mirrors where husky places
  * its own dispatcher skip-guard, but is driven by config and regenerated on
  * `vis hook install` rather than hand-written per repo.
+ *
+ * Speed: this script runs on every commit, so it forks nothing before the hook
+ * body (shell parameter expansion instead of `basename` / `dirname`). When the
+ * stage script is the stock one `vis hook migrate` writes — nothing but comments
+ * and a single `exec vis hook run STAGE "$@"` — and the native `vis` binary is
+ * installed next to the package, the binary is run directly: no Node launcher
+ * (~25 ms) and no second shell. Anything else (a hand-edited stage script, no
+ * binary for this platform, Yarn PnP, …) takes the original `sh -e "$s"` path.
+ * The binary is located at run time, relative to `node_modules/@visulima/vis`,
+ * so an upgrade can never leave a stale absolute path behind.
  */
 const hookScript = (directory: string, options: { skipInCI?: boolean } = {}): string => {
     const segments = directory.split("/").filter((s) => s !== "" && s !== ".").length;
     const depth = segments + 2;
-    const rootExpression = nestedDirname(depth);
 
     // Built as a plain string (not part of the template literal below) so the
     // `${CI-}` / `${VIS_GIT_HOOKS-}` shell expansions reach the output verbatim.
@@ -73,16 +67,41 @@ const hookScript = (directory: string, options: { skipInCI?: boolean } = {}): st
 
     return `#!/usr/bin/env sh
 { [ "$VIS_GIT_HOOKS" = "2" ]; } && set -x
-n=$(basename "$0")
-s=$(dirname "$(dirname "$0")")/$n
+n=\${0##*/}
+s=\${0%/*}
+case $s in */*) s=\${s%/*};; *) s=.;; esac
+s=$s/$n
 
 [ ! -f "$s" ] && exit 0
 
 { [ "\${VIS_GIT_HOOKS-}" = "0" ]; } && exit 0
 ${ciGuard}
-d=${rootExpression}
+d=$0
+i=${depth}
+while [ "$i" -gt 0 ]; do case $d in */*) d=\${d%/*};; *) d=.;; esac; i=$((i - 1)); done
 export PATH="$d/node_modules/.bin:$PATH"
-sh -e "$s" "$@"
+
+std=0
+while IFS= read -r l || [ -n "$l" ]; do
+    case $l in
+        ""|"#"*) ;;
+        "exec vis hook run $n \\"\\$@\\"") std=$((std + 1));;
+        *) std=-1000;;
+    esac
+done < "$s"
+
+b=
+if [ "$std" = 1 ]; then
+    p=$d/node_modules/@visulima/vis
+    for b in "$p/vis-native-cli" "$p"/../vis-binding-*/vis-native-cli; do [ -x "$b" ] && break; b=; done
+    [ -f "$p/dist/bin.js" ] || b=
+fi
+
+if [ -n "$b" ]; then
+    VIS_FALLBACK_ENTRY="$p/dist/bin.js" "$b" hook run "$n" "$@"
+else
+    sh -e "$s" "$@"
+fi
 c=$?
 
 [ $c != 0 ] && echo "vis - $n script failed (code $c)"
@@ -97,7 +116,7 @@ const writeDispatcher = (internalDirectory: string, directory: string, skipInCI:
     writeFileSync(join(internalDirectory, "h"), hookScript(directory, { skipInCI }), { mode: 0o755 });
 
     for (const hook of HOOKS) {
-        writeFileSync(join(internalDirectory, hook), `#!/usr/bin/env sh\n. "$(dirname "$0")/h"`, { mode: 0o755 });
+        writeFileSync(join(internalDirectory, hook), `#!/usr/bin/env sh\n. "\${0%/*}/h"`, { mode: 0o755 });
     }
 };
 

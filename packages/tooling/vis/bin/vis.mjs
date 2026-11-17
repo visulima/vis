@@ -39,7 +39,11 @@ const NATIVE_COMMANDS = new Set(["--version", "-V", "__native-info", "__pm-shim"
 
 const command = process.argv[2] ?? "";
 
-if (NATIVE_COMMANDS.has(command)) {
+// `hook run` is native too, but the other `hook` subcommands (install, migrate, …)
+// are not: sending those through the binary would only add a second Node boot.
+const isNativeCommand = NATIVE_COMMANDS.has(command) || (command === "hook" && process.argv[3] === "run");
+
+if (isNativeCommand) {
     const binary = resolveNativeBinary(packageRoot);
 
     if (binary !== undefined) {
