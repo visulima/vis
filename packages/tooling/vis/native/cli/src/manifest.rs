@@ -86,15 +86,111 @@ pub enum Example {
     Row(Vec<String>),
 }
 
-impl Command {
+/// What routing a word to a command needs, so the cheap [`Routes`] and the full [`Command`]
+/// resolve identically.
+pub trait Routed {
+    fn name(&self) -> &str;
+    fn command_path(&self) -> &[String];
+    fn alias(&self) -> &[String];
+    fn keys(&self) -> &[String];
+    fn hidden(&self) -> bool;
+
     /// Full path words: the parent path followed by the name (`["cache", "list"]`).
-    pub fn path(&self) -> Vec<&str> {
-        self.command_path.iter().map(String::as_str).chain(std::iter::once(self.name.as_str())).collect()
+    fn path(&self) -> Vec<&str> {
+        self.command_path().iter().map(String::as_str).chain(std::iter::once(self.name())).collect()
     }
 
-    pub fn path_string(&self) -> String {
+    fn path_string(&self) -> String {
         self.path().join(" ")
     }
+}
+
+macro_rules! impl_routed {
+    ($type:ty) => {
+        impl Routed for $type {
+            fn name(&self) -> &str {
+                &self.name
+            }
+
+            fn command_path(&self) -> &[String] {
+                &self.command_path
+            }
+
+            fn alias(&self) -> &[String] {
+                &self.alias
+            }
+
+            fn keys(&self) -> &[String] {
+                &self.keys
+            }
+
+            fn hidden(&self) -> bool {
+                self.hidden
+            }
+        }
+    };
+}
+
+impl_routed!(Command);
+impl_routed!(Route);
+
+/// A command reduced to what routing needs. Deserializing these skips the options,
+/// arguments and examples that make up most of the manifest.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Route {
+    name: String,
+    #[serde(rename = "commandPath")]
+    command_path: Vec<String>,
+    alias: Vec<String>,
+    keys: Vec<String>,
+    hidden: bool,
+}
+
+/// The manifest as far as routing goes, for invocations that only need to know whether
+/// a word is a command.
+#[derive(Debug, Deserialize)]
+pub struct Routes {
+    pub commands: Vec<Route>,
+}
+
+impl Routes {
+    pub fn load() -> Self {
+        serde_json::from_str(MANIFEST_JSON).expect("embedded command manifest is valid JSON")
+    }
+}
+
+/// Resolve a command the way the Node CLI does: the longest full path among the
+/// leading words, else the first word as a key (name or alias).
+pub fn resolve<'c, C: Routed>(commands: &'c [C], words: &[&str]) -> Option<&'c C> {
+    (1..=words.len()).rev().find_map(|length| {
+        let candidate = words[..length].join(" ");
+
+        commands.iter().find(|command| command.path_string() == candidate).or_else(|| {
+            if length == 1 {
+                by_key(commands, &candidate)
+            } else {
+                None
+            }
+        })
+    })
+}
+
+/// `commands.get(key)` as cerebro's lookup map answers it.
+pub fn by_key<'c, C: Routed>(commands: &'c [C], key: &str) -> Option<&'c C> {
+    commands.iter().find(|command| command.keys().iter().any(|candidate| candidate == key))
+}
+
+/// Visible commands whose path starts with `prefix` and is longer than it.
+pub fn subcommands_of<'c, C: Routed>(commands: &'c [C], prefix: &[&str]) -> Vec<&'c C> {
+    commands
+        .iter()
+        .filter(|command| {
+            !command.hidden()
+                && command.command_path().len() >= prefix.len()
+                && command.command_path().iter().zip(prefix).all(|(left, right)| left == right)
+        })
+        .collect()
 }
 
 impl Manifest {
@@ -104,7 +200,7 @@ impl Manifest {
 
     /// `commands.get(key)` as cerebro's lookup map answers it.
     pub fn by_key(&self, key: &str) -> Option<&Command> {
-        self.commands.iter().find(|command| command.keys.iter().any(|candidate| candidate == key))
+        by_key(&self.commands, key)
     }
 
     /// The command `vis help <words…>` resolves: an exact key, else a command whose
@@ -116,13 +212,6 @@ impl Manifest {
 
     /// Visible commands whose path starts with `prefix` and is longer than it.
     pub fn subcommands_of(&self, prefix: &[&str]) -> Vec<&Command> {
-        self.commands
-            .iter()
-            .filter(|command| {
-                !command.hidden
-                    && command.command_path.len() >= prefix.len()
-                    && command.command_path.iter().zip(prefix).all(|(left, right)| left == right)
-            })
-            .collect()
+        subcommands_of(&self.commands, prefix)
     }
 }

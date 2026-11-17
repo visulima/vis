@@ -52,12 +52,6 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let first = args.first().map(String::as_str).unwrap_or("");
 
-    // Bare `vis`, `--help`, `<command> --help` and `help <command>` come from the
-    // generated command manifest, for every command including those Node still serves.
-    if let Some(code) = surface::answer(&args) {
-        exit(code);
-    }
-
     match first {
         NATIVE_INFO => native_info(),
         // `--version` / `-V` print the bare semver (same as cerebro's version
@@ -81,7 +75,8 @@ fn main() {
         // `vis hook run …` — native git-hook runner. Every other `hook`
         // subcommand (install, migrate, …), and any `run` shape the fast path
         // is not certain about, is delegated to Node by `hook::run` itself.
-        "hook" if args.get(1).map(String::as_str) == Some("run") => hook::run(&args),
+        // `hook run --help` is the manifest's to answer (the `_` arm below).
+        "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
@@ -92,13 +87,17 @@ fn main() {
         // argv so the config-delegation path can replay it.
         "remove" | "dedupe" | "link" | "unlink" | "outdated" | "why" => pm_family::run(first, &args),
         // Native command routing is added here as commands are ported off Node.
-        // Every unmatched invocation is delegated unchanged to the Node CLI.
-        // Not a native command: reject a word that is no command at all (with a
-        // did-you-mean), and hand everything else to Node.
-        _ => match surface::reject_unknown(&args) {
-            Some(code) => exit(code),
-            None => delegate(&args),
-        },
+        // Not a native command above: bare `vis`, `--help`, `<command> --help` and
+        // `help <command>` are rendered from the generated manifest, a word that is no
+        // command at all is rejected (with a did-you-mean), and everything else is
+        // delegated unchanged to the Node CLI.
+        _ => {
+            if let Some(code) = surface::answer(&args).or_else(|| surface::reject_unknown(&args)) {
+                exit(code);
+            }
+
+            delegate(&args)
+        }
     }
 }
 

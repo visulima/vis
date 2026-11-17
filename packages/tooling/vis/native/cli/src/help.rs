@@ -4,7 +4,7 @@
 //! Everything is driven by the generated command manifest, so commands that are
 //! still served by Node show up here too.
 
-use crate::manifest::{ArgDef, Command, EnvDef, Example, Manifest, OptionDef};
+use crate::manifest::{ArgDef, Command, EnvDef, Example, Manifest, OptionDef, Routed};
 use crate::table::{render, visible_width, Cell, Layout};
 
 const CLI_NAME: &str = "vis";

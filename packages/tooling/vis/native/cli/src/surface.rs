@@ -9,15 +9,8 @@ use std::env;
 use std::io::{self, Write};
 
 use crate::help::{Help, Style};
-use crate::manifest::{Command, Manifest};
+use crate::manifest::{self, Manifest, Routed, Routes};
 use crate::term;
-
-/// Commands whose flags after the command belong to the tool they run, so
-/// `--help` is not vis's to answer.
-///
-/// `remove`, `dedupe`, `link`, `unlink`, `outdated` and `why` are included because the
-/// native front-end already forwards their flags (`--help` too) to the package manager.
-const PASSTHROUGH: &[&str] = &["exec", "x", "pm", "remove", "dedupe", "link", "unlink", "outdated", "why"];
 
 /// Global flags that take no value and may precede the command.
 fn is_valueless_global(argument: &str) -> bool {
@@ -56,22 +49,6 @@ impl<'a> Request<'a> {
     }
 }
 
-/// Resolve a command the way the Node CLI does: the longest full path among the
-/// leading words, else the first word as a key (name or alias).
-fn resolve<'m>(manifest: &'m Manifest, words: &[&str]) -> Option<&'m Command> {
-    (1..=words.len()).rev().find_map(|length| {
-        let candidate = words[..length].join(" ");
-
-        manifest.commands.iter().find(|command| command.path_string() == candidate).or_else(|| {
-            if length == 1 {
-                manifest.by_key(&candidate)
-            } else {
-                None
-            }
-        })
-    })
-}
-
 fn emit(text: &str) {
     let mut stdout = io::stdout().lock();
 
@@ -80,14 +57,15 @@ fn emit(text: &str) {
     let _ = stdout.flush();
 }
 
+/// Whether the invocation asks for help (`--help` / `-h` before any `--`).
+pub fn asks_for_help(args: &[String]) -> bool {
+    Request::parse(args).wants_help()
+}
+
 /// Answer the invocation natively, returning the exit code, or `None` to let the
 /// caller delegate it.
 pub fn answer(args: &[String]) -> Option<i32> {
     let request = Request::parse(args);
-
-    if request.words.first().is_some_and(|word| PASSTHROUGH.contains(word)) {
-        return None;
-    }
 
     let bare = args.is_empty();
     let root_help = request.words.is_empty() && request.flags_are_plain() && (bare || request.wants_help());
@@ -116,7 +94,7 @@ pub fn answer(args: &[String]) -> Option<i32> {
         return answer_help_command(&manifest, &help, &request);
     }
 
-    let command = resolve(&manifest, &request.words)?;
+    let command = manifest::resolve(&manifest.commands, &request.words)?;
 
     // The lean entry only serves `dlx`/`exec` when they are the first argument.
     emit(&help.command(command, command.lean && args.first().map(String::as_str) == request.words.first().copied()));
@@ -169,16 +147,19 @@ pub fn reject_unknown(args: &[String]) -> Option<i32> {
         return None;
     }
 
-    let manifest = Manifest::load();
+    // Runs for every invocation Node serves, so it reads only the routing fields.
+    let routes = Routes::load();
 
-    if resolve(&manifest, &request.words).is_some() || !manifest.subcommands_of(&[word]).is_empty() {
+    if manifest::resolve(&routes.commands, &request.words).is_some()
+        || !manifest::subcommands_of(&routes.commands, &[word]).is_empty()
+    {
         return None;
     }
 
-    let visible = manifest.commands.iter().filter(|command| !command.hidden);
+    let visible = routes.commands.iter().filter(|command| !command.hidden());
     // First path words, plus the aliases of top-level commands (`vis i`).
     let names = visible.flat_map(|command| {
-        let aliases = if command.command_path.is_empty() { command.alias.as_slice() } else { &[] };
+        let aliases = if command.command_path().is_empty() { command.alias() } else { &[] };
 
         command.path().into_iter().take(1).chain(aliases.iter().map(String::as_str))
     });
