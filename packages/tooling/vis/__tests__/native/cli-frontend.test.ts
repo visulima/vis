@@ -203,6 +203,9 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
             const environment: NodeJS.ProcessEnv = launcherEnvironment();
 
             delete environment.VIS_NATIVE_BIN;
+            // pnpm sets NODE_PATH to the workspace's hoisted node_modules, which holds the real platform
+            // package: without this the copy resolves it through the Node fallback paths.
+            delete environment.NODE_PATH;
             const result = spawnSync(process.execPath, [join(bareRoot, "bin", "vis.mjs"), "--help"], { encoding: "utf8", env: environment });
 
             expect(result.stdout).toContain("FALLBACK:--help");
