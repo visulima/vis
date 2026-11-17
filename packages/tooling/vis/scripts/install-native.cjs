@@ -17,7 +17,7 @@
 //   - pnpm may already have written a shim that starts Node (see `pnpmShimMayStartNode`).
 
 const { spawnSync } = require("node:child_process");
-const { chmodSync, copyFileSync, linkSync, readFileSync, rmSync } = require("node:fs");
+const { chmodSync, copyFileSync, linkSync, readFileSync, renameSync, rmSync } = require("node:fs");
 const { basename, dirname, join, sep } = require("node:path");
 
 const packageRoot = join(__dirname, "..");
@@ -48,6 +48,37 @@ const slug = () => {
     return undefined;
 };
 
+// Entries of the `ignoredBuilds` / `pendingBuilds` lists in `.modules.yaml`, either
+// block (`- '@scope/name@1.0.0'`) or flow (`[a, b]`) style. Hand-parsed because this
+// script runs before anything is installed.
+const skippedBuilds = (yaml) => {
+    const entries = [];
+    let inList = false;
+
+    for (const line of yaml.split(/\r?\n/u)) {
+        const key = /^(\w+):\s*(.*)$/u.exec(line);
+
+        if (key) {
+            inList = key[1] === "ignoredBuilds" || key[1] === "pendingBuilds";
+
+            if (inList) {
+                entries.push(...key[2].replace(/^\[|\]$/gu, "").split(","));
+            }
+        } else if (inList) {
+            entries.push(line.replace(/^\s*-/u, ""));
+        }
+    }
+
+    return entries.map((entry) => entry.trim().replace(/^['"]|['"]$/gu, "")).filter(Boolean);
+};
+
+// `@visulima/vis@<this version>`, optionally followed by pnpm's peer suffix.
+const isThisPackage = (entry, version) => {
+    const prefix = `@visulima/vis@${version}`;
+
+    return entry.startsWith(prefix) && !/^[\w.-]/u.test(entry.slice(prefix.length));
+};
+
 // pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the
 // launcher is in place. A first install (also from a lockfile) rewrites the shim after
 // this script ran, but a later run does not: `pnpm approve-builds` / `pnpm rebuild`, or
@@ -71,7 +102,9 @@ const pnpmShimMayStartNode = () => {
     }
 
     try {
-        return readFileSync(join(dirname(directory), ".modules.yaml"), "utf8").includes("@visulima/vis@");
+        const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+
+        return skippedBuilds(readFileSync(join(dirname(directory), ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
     } catch {
         return false;
     }
@@ -107,18 +140,28 @@ const main = () => {
         return "the platform binary does not run";
     }
 
-    // Replace the directory entry rather than writing through it: a package manager
-    // may have hard-linked `bin/vis` from its content store.
-    rmSync(target, { force: true });
+    // Build the replacement next to the launcher and rename it over `bin/vis`: the swap is
+    // atomic, and it replaces the directory entry rather than writing through it (a package
+    // manager may have hard-linked `bin/vis` from its content store).
+    const temporary = `${target}.${process.pid}.tmp`;
 
     try {
-        linkSync(binary, target);
-    } catch {
-        // Cross-device or a file system without hard links.
-        copyFileSync(binary, target);
-    }
+        rmSync(temporary, { force: true });
 
-    chmodSync(target, 0o755);
+        try {
+            linkSync(binary, temporary);
+        } catch {
+            // Cross-device or a file system without hard links.
+            copyFileSync(binary, temporary);
+        }
+
+        chmodSync(temporary, 0o755);
+        renameSync(temporary, target);
+    } catch (error) {
+        rmSync(temporary, { force: true });
+
+        return `could not replace bin/vis (${error && error.message}); it was left unchanged`;
+    }
 
     return "linked";
 };

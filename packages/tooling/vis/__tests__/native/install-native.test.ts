@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, chmodSync, constants, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,6 +113,23 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         expect(readFileSync(join(installed, "bin", "vis"), "utf8")).toBe(PLACEHOLDER);
     });
 
+    it.skipIf(process.getuid?.() === 0)("leaves bin/vis untouched and removes its temporary file when the swap fails", () => {
+        expect.assertions(3);
+
+        writeBinary("#!/bin/sh\necho native\n");
+        chmodSync(join(installed, "bin"), 0o555);
+
+        try {
+            const result = install();
+
+            expect(result.stderr).toContain("it was left unchanged");
+            expect(readFileSync(join(installed, "bin", "vis"), "utf8")).toBe(PLACEHOLDER);
+            expect(readdirSync(join(installed, "bin"))).toStrictEqual(["vis"]);
+        } finally {
+            chmodSync(join(installed, "bin"), 0o755);
+        }
+    });
+
     it("keeps the Node launcher when the platform package is not installed", () => {
         expect.assertions(2);
 
@@ -167,23 +184,40 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             expect(launcherKept()).toBe(true);
         });
 
-        it("keeps the launcher when pnpm recorded this package's scripts as skipped or pending", () => {
-            expect.assertions(1);
-
-            const store = join(root, "pnpm-project", "node_modules", ".pnpm", "@visulima+vis@1.0.0", "node_modules", "@visulima");
+        // Lays the package out inside pnpm's virtual store and returns its installed `bin/vis`.
+        const installInPnpmStore = (modulesYaml: string, packageVersion = "1.0.0") => {
+            const store = join(root, "pnpm-project", "node_modules", ".pnpm", `@visulima+vis@${packageVersion}`, "node_modules", "@visulima");
             const storedPackage = join(store, "vis");
 
             mkdirSync(join(storedPackage, "bin"), { recursive: true });
             mkdirSync(join(storedPackage, "scripts"), { recursive: true });
             copyFileSync(installScript, join(storedPackage, "scripts", "install-native.cjs"));
             writeFileSync(join(storedPackage, "bin", "vis"), PLACEHOLDER);
+            writeFileSync(join(storedPackage, "package.json"), JSON.stringify({ name: "@visulima/vis", version: packageVersion }));
             mkdirSync(join(store, `vis-binding-${nativeTarget()}`), { recursive: true });
             copyFileSync(join(platformPackage, "vis-native-cli"), join(store, `vis-binding-${nativeTarget()}`, "vis-native-cli"));
-            writeFileSync(join(root, "pnpm-project", "node_modules", ".modules.yaml"), "ignoredBuilds:\n  - '@visulima/vis@1.0.0'\nlayoutVersion: 5\n");
+            writeFileSync(join(root, "pnpm-project", "node_modules", ".modules.yaml"), modulesYaml);
 
             install({ ...pnpm, INIT_CWD: join(root, "other"), npm_command: "install" }, join(storedPackage, "scripts", "install-native.cjs"));
 
-            expect(readFileSync(join(storedPackage, "bin", "vis"), "utf8")).toBe(PLACEHOLDER);
+            return readFileSync(join(storedPackage, "bin", "vis"), "utf8");
+        };
+
+        it("keeps the launcher when pnpm recorded this package's scripts as skipped or pending", () => {
+            expect.assertions(3);
+
+            expect(installInPnpmStore("ignoredBuilds:\n  - '@visulima/vis@1.0.0'\nlayoutVersion: 5\n")).toBe(PLACEHOLDER);
+            expect(installInPnpmStore("pendingBuilds:\n  - '@visulima/vis@1.0.0'\nlayoutVersion: 5\n")).toBe(PLACEHOLDER);
+            expect(installInPnpmStore("ignoredBuilds: ['esbuild@0.1.0', '@visulima/vis@1.0.0']\n")).toBe(PLACEHOLDER);
+        });
+
+        it("links when only another version or another list mentions this package", () => {
+            expect.assertions(2);
+
+            expect(installInPnpmStore("ignoredBuilds:\n  - '@visulima/vis@0.9.0'\n  - '@visulima/vis-binding-x@1.0.0'\n")).not.toBe(PLACEHOLDER);
+            expect(installInPnpmStore("included:\n  dependencies: true\nskipped:\n  - '@visulima/vis@1.0.0'\nignoredBuilds:\n  - esbuild@0.1.0\n")).not.toBe(
+                PLACEHOLDER,
+            );
         });
 
         it("does not affect other package managers", () => {
