@@ -161,7 +161,7 @@ const berryRc = `npmRegistryServer: "${REGISTRY}"\nunsafeHttpWhitelist: ["localh
 const managers = {
     bun: {
         available: () => have("bun"),
-        launch: { exec: ["bun", "x", "vis", "--version"], run: ["bun", "run", "v"] },
+        launch: { run: ["bun", "run", "v"] },
         install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
     },
     npm: {
