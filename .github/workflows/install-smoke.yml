@@ -110,9 +110,8 @@ jobs:
               shell: "bash"
               run: "npm install --global bun@1.4.4"
 
-            # The pnpm row runs pnpm 12.21.0 (`npx pnpm@12.21.0`, pinned in the script) with `@visulima/vis`
-            # approved in `allowBuilds`, with `--ignore-scripts`, and without any approval (pnpm 12 ends that
-            # install with ERR_PNPM_IGNORED_BUILDS; `vis` must still run through the Node launcher).
+            # The pnpm row runs the pinned pnpm 12 three ways: build approved in `allowBuilds`, `--ignore-scripts`,
+            # and unapproved (that install ends with ERR_PNPM_IGNORED_BUILDS; `vis` must still run through the Node launcher).
             - name: "Install smoke"
               working-directory: "packages/tooling/vis"
               shell: "bash"
