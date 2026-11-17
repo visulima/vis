@@ -60,6 +60,10 @@ A flag that parses but does nothing is worse than one that errors: it is how a C
 
 - `schemas/vis-config.schema.json` and `schemas/project.schema.json` are **regenerated** by `scripts/generate-schemas.ts` from the TypeScript types via `ts-json-schema-generator`. **Don't hand-edit these files.** Run `pnpm generate:schemas`; CI guards drift via `check:schemas-drift`.
 
+### Command manifest
+
+- `native/cli/src/manifest.json` lists every command (name, group, aliases, description, options, positionals, examples) and is what the native `vis` binary renders help, completions and unknown-command hints from. It is **regenerated** by `scripts/generate-command-manifest.ts` from `src/register-commands.ts`; **don't hand-edit it**. Run `pnpm generate:command-manifest` after adding or changing a command, its options or its description; CI guards drift via `check:command-manifest-drift` and `__tests__/native/command-manifest.test.ts`.
+
 ### Ecosystem-update feature
 
 `vis` can auto-update references in **GitHub Actions workflows**, **Docker** images, and **GitLab CI** include/image references, with a breaking-change UI and interactive picker. When extending the updater, keep changes confined to the relevant module under `src/commands/`/`src/inference/` and reuse the existing picker rather than building a new TUI.
