@@ -60,6 +60,7 @@ jobs:
                   filters: |
                       task-runner:
                         - 'packages/tooling/task-runner/native/src/**'
+                        - 'packages/tooling/task-runner/native/core/**'
                         - 'packages/tooling/task-runner/native/fspy_seccomp/**'
                         - 'packages/tooling/task-runner/native/benches/**'
                         - 'packages/tooling/task-runner/native/Cargo.toml'
@@ -90,6 +91,7 @@ jobs:
                   filters: |
                       task-runner:
                         - 'packages/tooling/task-runner/native/src/**'
+                        - 'packages/tooling/task-runner/native/core/**'
                         - 'packages/tooling/task-runner/native/fspy_seccomp/**'
                         - 'packages/tooling/task-runner/native/benches/**'
                         - 'packages/tooling/task-runner/native/Cargo.toml'
