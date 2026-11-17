@@ -1,7 +1,9 @@
-#!/usr/bin/env node
-// Native front-end launcher for `vis`.
+/* eslint-disable unicorn/no-process-exit -- CLI entry: exit codes are forwarded from the native binary */
+// Native front-end launcher for `vis`, used when the install script did not put
+// the native executable at `bin/vis` (see `bin/vis` and `scripts/install-native.cjs`).
+// `bin/vis` imports this file; run it directly with `node bin/vis.mjs`.
 //
-// This is the npm `bin` entry. Its only jobs are to (1) route the small set of
+// Its only jobs are to (1) route the small set of
 // natively-implemented commands to the platform Rust binary, and (2) fall
 // through to the existing in-process Node CLI for everything else. The
 // fall-through path is byte-identical to running `dist/bin.js` directly, so the
@@ -21,6 +23,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveNativeBinary } from "./resolve-binary.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// Tells the CLI (and `vis doctor`) it was started through Node rather than the
+// native executable that the install script normally puts at `bin/vis`.
+process.env.VIS_LAUNCHER = "node";
 
 // VIS_FALLBACK_ENTRY lets tests (and the native binary's own delegation) point
 // the Node entry elsewhere; production resolves it next to the package.
@@ -53,6 +59,7 @@ if (isNativeCommand) {
             env: {
                 ...process.env,
                 VIS_FALLBACK_ENTRY: fallbackEntry,
+                VIS_LAUNCHER: "node",
                 VIS_NODE: process.execPath,
                 VIS_VERSION: version,
             },

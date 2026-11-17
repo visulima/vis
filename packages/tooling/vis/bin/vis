@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// Node launcher entry. On install, `scripts/install-native.cjs` replaces this
+// file with the platform's native executable so `vis` starts without Node. This
+// content stays only when that did not happen (install scripts disabled, a
+// platform without a prebuilt binary, `--omit=optional`): it still works, but
+// every command pays a Node start-up first. `vis doctor` reports it.
+import "./vis.mjs";
