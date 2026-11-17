@@ -52,6 +52,9 @@ const run = (command, args, options = {}) =>
 
 const have = (command) => run(command, ["--version"]).status === 0;
 
+// The first lines of a command's output, joined for a one-line failure detail.
+const excerpt = (text, lines) => text.trim().split("\n").slice(0, lines).join(" | ");
+
 const work = mkdtempSync(join(tmpdir(), "vis-install-smoke-"));
 const tarballs = join(work, "tarballs");
 
@@ -183,11 +186,20 @@ const managers = {
             // side-effects cache) and would hand them to a later row that disabled scripts.
             args: ["--yes", PNPM, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
             command: "npx",
-            // pnpm reads `allowBuilds` from the workspace file. The scripts-disabled row keeps the approval so only
-            // `--ignore-scripts` turns the fast path off; the unapproved row leaves it out and nothing else.
-            // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package the
-            // earlier `--ignore-scripts` install skipped.
-            files: { ...registryFiles, "pnpm-workspace.yaml": `verifyDepsBeforeRun: false\n${mode === "unapproved" ? "" : "allowBuilds:\n  '@visulima/vis': true\n"}` },
+            // pnpm installs the files and then fails the command until the build is approved.
+            ...(mode === "unapproved" ? { expectInstall: "ERR_PNPM_IGNORED_BUILDS" } : {}),
+            files: {
+                ...registryFiles,
+                "pnpm-workspace.yaml": [
+                    // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package
+                    // the earlier `--ignore-scripts` install skipped.
+                    "verifyDepsBeforeRun: false",
+                    // pnpm reads `allowBuilds` from the workspace file. The scripts-disabled row keeps the approval so only
+                    // `--ignore-scripts` turns the fast path off; the unapproved row leaves it out and nothing else.
+                    ...(mode === "unapproved" ? [] : ["allowBuilds:", "  '@visulima/vis': true"]),
+                    "",
+                ].join("\n"),
+            },
         }),
     },
     "yarn-berry": {
@@ -247,25 +259,23 @@ for (const name of requested) {
 
         const installOutput = `${installed.stderr}${installed.stdout}`;
 
-        if (mode === "unapproved") {
-            // pnpm installs the files and then fails the command until the build is approved.
-            check(row, "pnpm reports the unapproved build", installOutput.includes("ERR_PNPM_IGNORED_BUILDS"), installOutput.trim().split("\n").slice(0, 14).join(" | "));
-        } else {
-            check(row, "install succeeds", installed.status === 0, installOutput.trim().split("\n").slice(0, 14).join(" | "));
+        if (plan.expectInstall === undefined) {
+            check(row, "install succeeds", installed.status === 0, excerpt(installOutput, 14));
 
             if (installed.status !== 0) {
                 continue;
             }
+        } else {
+            check(row, `install ends with ${plan.expectInstall}`, installed.status !== 0 && installOutput.includes(plan.expectInstall), excerpt(installOutput, 14));
         }
 
         const vis = join(directory, "node_modules", ".bin", "vis");
-        // Only "enabled" runs the install script that links the native executable.
-        const native = mode === "enabled";
 
         if (!existsSync(vis)) {
-            check(row, "install leaves a `vis` bin", false, installOutput.trim().split("\n").slice(0, 6).join(" | "));
+            check(row, "install leaves a `vis` bin", false, excerpt(installOutput, 6));
             continue;
         }
+
         const execute = (...args) => run(vis, args, { cwd: directory, env: environment });
 
         const version = execute("--version");
@@ -287,7 +297,12 @@ for (const name of requested) {
 
         check(row, "`vis hook run pre-push` succeeds", hook.status === 0 && hook.stdout.includes('No hooks configured for stage "pre-push"'), hook.stderr.trim().slice(0, 120));
 
-        // `vis --help` is answered by the Node CLI, so it proves the delegation from the binary.
+        // `--help` is answered natively on every row. Script generation is Node's, so the generated
+        // script proves the hand-off (from the binary, or from the launcher) without needing a workspace.
+        const completion = execute("completion", "--shell=bash");
+
+        check(row, "delegated `vis completion` runs through Node", completion.status === 0 && completion.stdout.includes("vis complete --"), completion.stderr.trim().slice(0, 120));
+
         // `list` and `doctor` need a workspace root, which vis does not detect in a bun-managed
         // project (an existing limitation, unrelated to how the binary is installed): bun only gets
         // the layout check below.
@@ -312,6 +327,8 @@ for (const name of requested) {
         })();
 
         if (!isWindows) {
+            // Only "enabled" runs the install script that links the native executable.
+            const native = mode === "enabled";
             const linked = isNativeFile(join(directory, "node_modules", "@visulima", "vis", "bin", "vis"));
 
             check(row, native ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === native);
