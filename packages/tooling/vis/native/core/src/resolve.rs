@@ -1447,8 +1447,7 @@ mod tests {
         let resolved = resolve_add("pnpm", "10.0.0", opts).unwrap();
 
         assert_eq!(resolved.bin, "pnpm");
-        assert!(resolved.args.iter().position(|a| a == "--filter") < resolved.args.iter().position(|a| a == "add"));
-        assert!(resolved.args.contains(&"-D".to_owned()));
+        assert_eq!(resolved.args, ["--filter", "app", "add", "-D", "react"]);
     }
 
     #[test]
