@@ -8,69 +8,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hookScript, installHooks } from "../../../src/commands/hook/install";
 import { cleanPackageJsonScripts, detectHuskyDirectory, detectPackageManager, transformHookScript } from "../../../src/commands/hook/migrate";
 import { uninstallHooks } from "../../../src/commands/hook/uninstall";
+import { createTemporaryGitRepo } from "./hook-test-helpers";
 
-const DIRNAME_LINE_RE = /^d=(.+)$/m;
-const DIRNAME_COUNT_RE = /dirname/g;
+const DEPTH_LINE_RE = /^i=(\d+)$/m;
 
-const countDirnameCalls = (script: string): number => {
-    const match = DIRNAME_LINE_RE.exec(script);
+/** The number of directory levels the dispatcher climbs from `$0` to the repo root. */
+const climbDepth = (script: string): number => {
+    const match = DEPTH_LINE_RE.exec(script);
 
-    if (!match) {
-        return 0;
-    }
-
-    return (match[1]?.match(DIRNAME_COUNT_RE) ?? []).length;
-};
-
-/**
- * Git exports `GIT_DIR`, `GIT_INDEX_FILE` and friends into hook processes, so
- * these tests retarget the outer repo when the suite runs from a pre-commit
- * hook. Clear them for the duration so every git call resolves from cwd.
- */
-const INHERITED_GIT_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"];
-
-const detachGitEnvironment = (): (() => void) => {
-    const saved = new Map(INHERITED_GIT_VARS.map((name) => [name, process.env[name]]));
-
-    for (const name of INHERITED_GIT_VARS) {
-        Reflect.deleteProperty(process.env, name);
-    }
-
-    return () => {
-        for (const [name, value] of saved) {
-            if (value === undefined) {
-                Reflect.deleteProperty(process.env, name);
-            } else {
-                process.env[name] = value;
-            }
-        }
-    };
-};
-
-/**
- * Creates a temp directory with `git init` and returns cleanup helpers.
- * execSync used with hardcoded "git init" — no user input, safe for test setup.
- */
-const createTemporaryGitRepo = (): { cleanup: () => void; restore: () => void; root: string } => {
-    const root = mkdtempSync(join(tmpdir(), "vis-hook-test-"));
-    const originalCwd = process.cwd();
-    const restoreEnvironment = detachGitEnvironment();
-
-    execSync("git init", { cwd: root, stdio: "ignore" });
-    process.chdir(root);
-
-    return {
-        cleanup: () => {
-            process.chdir(originalCwd);
-            restoreEnvironment();
-            rmSync(root, { force: true, recursive: true });
-        },
-        restore: () => {
-            process.chdir(originalCwd);
-            restoreEnvironment();
-        },
-        root,
-    };
+    return match ? Number(match[1]) : 0;
 };
 
 const createTemporaryDirectory = (): { cleanup: () => void; root: string } => {
@@ -97,7 +43,7 @@ describe(hookScript, () => {
 
         const script = hookScript(".husky");
 
-        expect(countDirnameCalls(script)).toBe(3);
+        expect(climbDepth(script)).toBe(3);
     });
 
     it("should compute correct depth for nested dir", () => {
@@ -105,7 +51,7 @@ describe(hookScript, () => {
 
         const script = hookScript(".vis/hooks");
 
-        expect(countDirnameCalls(script)).toBe(4);
+        expect(climbDepth(script)).toBe(4);
     });
 
     it("should handle ./ prefix correctly", () => {
@@ -114,8 +60,8 @@ describe(hookScript, () => {
         const withDot = hookScript("./.config/husky");
         const withoutDot = hookScript(".config/husky");
 
-        expect(countDirnameCalls(withDot)).toBe(countDirnameCalls(withoutDot));
-        expect(countDirnameCalls(withDot)).toBe(4);
+        expect(climbDepth(withDot)).toBe(climbDepth(withoutDot));
+        expect(climbDepth(withDot)).toBe(4);
     });
 
     it("should handle ./ prefix for simple dir", () => {
@@ -124,8 +70,8 @@ describe(hookScript, () => {
         const withDot = hookScript("./custom-hooks");
         const withoutDot = hookScript("custom-hooks");
 
-        expect(countDirnameCalls(withDot)).toBe(countDirnameCalls(withoutDot));
-        expect(countDirnameCalls(withDot)).toBe(3);
+        expect(climbDepth(withDot)).toBe(climbDepth(withoutDot));
+        expect(climbDepth(withDot)).toBe(3);
     });
 
     it("should start with shebang", () => {

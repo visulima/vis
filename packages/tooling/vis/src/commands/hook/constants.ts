@@ -17,6 +17,11 @@ const HOOKS = [
 
 const DEFAULT_HOOKS_DIRECTORY = ".vis/hooks";
 
+// The one line of a stock stage script (`vis hook migrate` writes it, the dispatcher in
+// install.ts recognises it): `exec vis hook run <stage> "$@"`.
+const STAGE_EXEC_PREFIX = "exec vis hook run ";
+const STAGE_EXEC_SUFFIX = " \"$@\"";
+
 /**
  * Pre-1.0 hooks directory. `vis hook install` migrates an existing
  * `.vis-hooks` to {@link DEFAULT_HOOKS_DIRECTORY} in place. Kept only for
@@ -81,4 +86,6 @@ export {
     PREK_STAGES_WITH_GIT_ARGS,
     PREK_SUPPORTED_STAGES,
     PREK_TRANSLATABLE_LANGUAGES,
+    STAGE_EXEC_PREFIX,
+    STAGE_EXEC_SUFFIX,
 };

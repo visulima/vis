@@ -12,52 +12,14 @@ import { createRequire } from "node:module";
 import type { Toolbox } from "@visulima/cerebro";
 import { dirname, join } from "@visulima/path";
 
+import { nativeTarget } from "../../util/native-target";
+
 // The PM binaries the shim dir intercepts. `node` and `vis` are NOT shimmed.
 const SHIM_NAMES = ["npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"] as const;
 
 const isWindows = process.platform === "win32";
 
 const shimDirectoryFor = (toolbox: Toolbox): string => join(toolbox.process.cwd, ".vis", "shims");
-
-// Best-effort musl detection for Linux. Keep the platform/target logic below in
-// sync with bin/resolve-binary.mjs (the launcher's copy) and the NAPI loader in
-// index.js. Defaults to glibc on any uncertainty.
-const isMusl = (): boolean => {
-    const { report } = process;
-
-    if (typeof report?.getReport !== "function") {
-        return false;
-    }
-
-    const data = report.getReport() as { header?: { glibcVersionRuntime?: string }; sharedObjects?: string[] };
-
-    if (Array.isArray(data.sharedObjects)) {
-        return data.sharedObjects.some((object) => object.includes("libc.musl-") || object.includes("ld-musl-"));
-    }
-
-    return !data.header?.glibcVersionRuntime;
-};
-
-const STATIC_TARGETS: Record<string, string> = {
-    "darwin:arm64": "darwin-arm64",
-    "darwin:x64": "darwin-x64",
-    "win32:arm64": "win32-arm64-msvc",
-    "win32:x64": "win32-x64-msvc",
-};
-
-const nativeTarget = (): string | undefined => {
-    const { arch, platform } = process;
-
-    if (platform === "linux") {
-        if (arch === "arm64" || arch === "x64") {
-            return `linux-${arch}-${isMusl() ? "musl" : "gnu"}`;
-        }
-
-        return undefined;
-    }
-
-    return STATIC_TARGETS[`${platform}:${arch}`];
-};
 
 // Resolve the native CLI binary so the wrapper can exec it directly (no Node boot
 // on the PM-guard hot path). Mirrors `resolveNativeBinary` in

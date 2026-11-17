@@ -91,6 +91,18 @@ Also migrated from that PR: `graph.rs` now hashes its adjacency/in-degree maps
 with `rustc-hash`'s `FxHashMap` (nub's `workspace/filter.rs` change) — trusted
 in-process IDs don't need SipHash's DoS resistance.
 
+## Git hooks
+
+`run-hooks.sh` times one `pre-commit` run over 60 staged files for vis, hk, prek, lefthook and pre-commit (missing tools are skipped), in two modes: the tool's own `run` command, and `git hook run pre-commit` after each tool's own `install` — the whole chain a real commit pays. Scenarios: **A** one hook over all files, **B** four hooks filtered by extension, **C** four built-in text-hygiene hooks. Timing is plain `hyperfine` (JSON + Markdown tables land in `results/`); before timing, every tool is validated to exit 0 and to have received all 60 files, so a tool that silently matches nothing cannot look fast.
+
+```sh
+bash __bench__/cli/run-hooks.sh                                   # all scenarios, both modes
+bash __bench__/cli/run-hooks.sh --scenarios A,B --modes installed --runs 30
+bash __bench__/cli/run-hooks.sh --expect-native                   # fail unless vis took the native path
+```
+
+Needs `pnpm run build && pnpm run build:native:cli` first. `vis (native)` and the installed-hook row use `vis-native-cli`; `vis (launcher)` is `node bin/vis.mjs`, i.e. what typing `vis hook run` pays.
+
 ## Fixtures
 
 Install fixtures mirror nub's: `simple` (~435 pkgs), `monorepo` (~407 pkgs / 4 workspaces), `t3` (Next/tRPC/Drizzle — Bun's create-t3-app bench), `large` (~1168 pkgs). Generate lockfiles with `bash __bench__/cli/gen-fixtures.sh` after editing a fixture's `package.json`. Each tool installs from its own lockfile family (`pnpm-lock.yaml`, `bun.lock`, `package-lock.json`); foreign lockfiles are pruned per-tool so no tool reads a stale lock.

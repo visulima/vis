@@ -1,6 +1,7 @@
 # The native `vis` CLI front-end — the Rust migration's startup + dispatch shell.
 #
-# A deliberately lean crate: it depends only on `vis-core` (pure pm logic), never
+# A deliberately lean crate: it depends on `vis-core` (pure pm logic) plus the small
+# set needed by the `hook run` fast path (regex, prek-identify, serde_json), never
 # on the `vis-native` addon, so `cargo build -p vis-cli` stays fast and free of
 # the addon's heavy, toolchain-sensitive deps (oxc, rusqlite, …). Shared logic
 # ported off Node lives in `vis-core`.
@@ -20,3 +21,12 @@ path = "src/main.rs"
 
 [dependencies]
 vis-core = { path = "../core" }
+# `hook run` fast path. `prek-identify` is pinned to the addon's version so both
+# classify files identically; `regex` is built without Unicode tables because the
+# fast path only accepts patterns whose ASCII semantics match JS `RegExp`.
+prek-identify = "0.5"
+regex = { version = "1", default-features = false, features = [
+  "std",
+  "perf"
+] }
+serde_json = "1"

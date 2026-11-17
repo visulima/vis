@@ -25,6 +25,7 @@ use std::env;
 use std::process::{exit, Command, ExitStatus};
 
 mod exec;
+mod hook;
 mod pm;
 mod pm_family;
 mod pm_shim;
@@ -61,6 +62,10 @@ fn main() {
         // `vis exec <command>` — run a local bin via the project PM. Matches the
         // Node lean exec path (runtime/lockfile detection, no config load).
         "exec" => exec::run(if args.len() > 1 { &args[1..] } else { &[] }),
+        // `vis hook run …` — native git-hook runner. Every other `hook`
+        // subcommand (install, migrate, …), and any `run` shape the fast path
+        // is not certain about, is delegated to Node by `hook::run` itself.
+        "hook" if args.get(1).map(String::as_str) == Some("run") => hook::run(&args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
