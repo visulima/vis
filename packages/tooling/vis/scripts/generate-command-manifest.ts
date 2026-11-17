@@ -15,7 +15,8 @@
  * to be built: every bare import other than cerebro is replaced by an inert stub,
  * because command *definitions* only use cerebro's `defineCommand` / `lazyNamed`.
  *
- * Do not hand-edit the output. CI guards drift with `check:command-manifest-drift`.
+ * Do not hand-edit the output. `__tests__/native/command-manifest.test.ts` fails when it drifts
+ * (CI runs it through the package's tests); `check:command-manifest-drift` is the local equivalent.
  */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

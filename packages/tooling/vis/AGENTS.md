@@ -62,7 +62,7 @@ A flag that parses but does nothing is worse than one that errors: it is how a C
 
 ### Command manifest
 
-- `native/cli/src/manifest.json` lists every command (name, group, aliases, description, options, positionals, examples) and is what the native `vis` binary renders help, completions and unknown-command hints from. It is **regenerated** by `scripts/generate-command-manifest.ts` from `src/register-commands.ts`; **don't hand-edit it**. Run `pnpm generate:command-manifest` after adding or changing a command, its options or its description; CI guards drift via `check:command-manifest-drift` and `__tests__/native/command-manifest.test.ts`.
+- `native/cli/src/manifest.json` lists every command (name, group, aliases, description, options, positionals, examples) and is what the native `vis` binary renders help, completions and unknown-command hints from. It is **regenerated** by `scripts/generate-command-manifest.ts` from `src/register-commands.ts`; **don't hand-edit it**. Run `pnpm generate:command-manifest` after adding or changing a command, its options or its description; Drift is guarded by `__tests__/native/command-manifest.test.ts` (it rebuilds the manifest and compares it byte for byte), which runs with the package's tests through `test:affected`; `check:command-manifest-drift` is only a local equivalent and no workflow runs it.
 
 ### Ecosystem-update feature
 
