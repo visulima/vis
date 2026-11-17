@@ -6,32 +6,26 @@
 
 use std::io::{self, Write};
 
-use crate::manifest::{Command, Manifest, OptionDef};
+use crate::manifest::{Command, Manifest};
 
 /// "Do not fall back to file completion."
 const NO_FILE_COMPLETION: u32 = 4;
-
-fn matching(prefix: &str, candidate: &str) -> bool {
-    candidate.starts_with(prefix)
-}
 
 fn option_candidates<'a>(manifest: &'a Manifest, command: Option<&'a Command>, prefix: &str) -> Vec<(String, String)> {
     let command_options = command.and_then(|command| command.options.as_deref()).unwrap_or_default();
     let mut candidates = Vec::new();
 
-    for option in
-        command_options.iter().chain(manifest.global_options.iter()).filter(|option: &&OptionDef| !option.hidden)
-    {
+    for option in command_options.iter().chain(manifest.global_options.iter()).filter(|option| !option.hidden) {
         let long = format!("--{}", option.name);
 
-        if matching(prefix, &long) {
+        if long.starts_with(prefix) {
             candidates.push((long, option.description.clone()));
         }
 
         if let Some(alias) = &option.alias {
             let short = format!("-{alias}");
 
-            if matching(prefix, &short) && prefix.len() <= 1 {
+            if short.starts_with(prefix) && prefix.len() <= 1 {
                 candidates.push((short, option.description.clone()));
             }
         }
@@ -54,7 +48,7 @@ fn word_candidates(manifest: &Manifest, typed: &[&str], prefix: &str) -> Vec<(St
         let next = path[typed.len()];
         let is_leaf = path.len() == typed.len() + 1;
 
-        if !matching(prefix, next) {
+        if !next.starts_with(prefix) {
             continue;
         }
 
@@ -68,7 +62,7 @@ fn word_candidates(manifest: &Manifest, typed: &[&str], prefix: &str) -> Vec<(St
 
         // Aliases are only for the top level, where `vis i` stands for `vis install`.
         if typed.is_empty() && is_leaf {
-            for alias in command.alias.iter().filter(|alias| matching(prefix, alias)) {
+            for alias in command.alias.iter().filter(|alias| alias.starts_with(prefix)) {
                 candidates.push((alias.clone(), command.description.clone()));
             }
         }
