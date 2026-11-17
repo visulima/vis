@@ -16,7 +16,8 @@
 #
 # A, B use a no-op payload script so the numbers isolate orchestration, not the
 # linter. Before timing, every tool is validated: exit 0, the payload received
-# all 60 files (A, B), and (C) a staged trailing-whitespace file makes it fail.
+# exactly the 60 staged files, once each (A, B; in B every hook only its own
+# extension), and (C) a staged trailing-whitespace file makes it fail.
 # A tool that silently matches zero files would otherwise look "fastest".
 #
 # Requires: hyperfine, git >= 2.36, node, the tools to compare (missing ones are
@@ -67,7 +68,7 @@ mkdir -p "$RESULTS_DIR"
 write_payload() {
   cat > payload.sh <<'P'
 #!/bin/sh
-[ -n "$HB_LOG" ] && echo "$#" >> "$HB_LOG"
+[ -n "$HB_LOG" ] && echo "$*" >> "$HB_LOG"
 exit 0
 P
   chmod +x payload.sh
@@ -252,8 +253,16 @@ validate() {
   (cd "$d" && HB_LOG="$log" VIS_HOOK_TRACE=1 "${argv[@]}" </dev/null >/dev/null 2>"$err") || rc=$?
   if [[ $rc -ne 0 ]]; then fail "$label exited $rc (stderr: $(head -c 300 "$err"))"; return; fi
   if [[ "$s" != C ]]; then
-    local total; total=$(awk '{ n += $1 } END { print n + 0 }' "$log" 2>/dev/null || echo 0)
-    [[ "$total" == 60 ]] || fail "$label: payload saw $total files, expected 60"
+    # every staged file must reach a hook exactly once: same set, no duplicates
+    local staged got
+    staged=$(cd "$d" && git diff --cached --name-only | sort)
+    got=$(tr ' ' '\n' < "$log" 2>/dev/null | sed '/^$/d' | sort)
+    [[ "$got" == "$staged" ]] || fail "$label: payload files differ from the 60 staged files (saw $(printf '%s\n' "$got" | sed '/^$/d' | wc -l | tr -d ' '))"
+    # scenario B: each hook's invocation must only see its own extension
+    if [[ "$s" == B ]]; then
+      awk '{ e = $1; sub(/.*\./, "", e); for (i = 2; i <= NF; i++) { x = $i; sub(/.*\./, "", x); if (x != e) bad = 1 } } END { exit bad }' "$log" \
+        || fail "$label: a filtered hook received files of another extension"
+    fi
   fi
   if [[ "$label" == vis* && $EXPECT_NATIVE -eq 1 ]]; then
     grep -q 'vis\[native\]' "$err" || fail "$label: did not take the native path (--expect-native)"

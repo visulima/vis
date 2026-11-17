@@ -102,16 +102,22 @@ done < "$s"
 b=
 if [ "$std" = 1 ]; then
     p=$d/node_modules/@visulima/vis
-    for b in "$p/${executable}"${bindingCandidate}; do [ -x "$b" ] && break; b=; done
+    for b in "\${VIS_NATIVE_BIN-}" "$p/${executable}"${bindingCandidate}; do [ -x "$b" ] && break; b=; done
     [ -f "$p/dist/bin.js" ] || b=
 fi
 
 if [ -n "$b" ]; then
-    VIS_FALLBACK_ENTRY="$p/dist/bin.js" "$b" hook run "$n" "$@"
-else
-    sh -e "$s" "$@"
+    VIS_NODE=node VIS_FALLBACK_ENTRY="$p/dist/bin.js" "$b" hook run "$n" "$@"
+    c=$?
+    # The native runner only exits 0 or 1; 126 / 127 mean the binary itself could not start
+    # (built for another platform, corrupt), so the stock script still gets its turn.
+    case $c in 126|127) b=;; esac
 fi
-c=$?
+
+if [ -z "$b" ]; then
+    sh -e "$s" "$@"
+    c=$?
+fi
 
 [ $c != 0 ] && echo "vis - $n script failed (code $c)"
 [ $c = 127 ] && echo "vis - command not found in PATH=$PATH"

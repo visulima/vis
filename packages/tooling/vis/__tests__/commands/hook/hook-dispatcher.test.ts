@@ -98,6 +98,38 @@ describe.skipIf(process.platform === "win32")("generated dispatcher (behaviour)"
         }
     });
 
+    it("honours the VIS_NATIVE_BIN override and pins the Node the native runner delegates to", () => {
+        expect.assertions(2);
+
+        const { cleanup, log, root } = setup({ binary: false });
+
+        try {
+            const override = join(root, "override-bin");
+
+            writeFileSync(override, `#!/bin/sh\necho "native $* node=$VIS_NODE" >> "${log}"\n`, { mode: 0o755 });
+
+            expect(fire(root, "pre-commit", [], { VIS_NATIVE_BIN: override, VIS_NODE: "/inherited/node" }).code).toBe(0);
+            expect(readFileSync(log, "utf8")).toBe("native hook run pre-commit node=node\n");
+        } finally {
+            cleanup();
+        }
+    });
+
+    it("falls back to the stage script when the native binary cannot start", () => {
+        expect.assertions(2);
+
+        const { cleanup, log, root } = setup({ binary: false });
+
+        try {
+            writeFileSync(join(root, "node_modules/@visulima/vis/vis-native-cli"), "#!/nonexistent/interpreter\n", { mode: 0o755 });
+
+            expect(fire(root, "pre-commit").code).toBe(0);
+            expect(readFileSync(log, "utf8")).toBe("node-launcher hook run pre-commit\n");
+        } finally {
+            cleanup();
+        }
+    });
+
     it("keeps the exit code and the failure notice of the native run", () => {
         expect.assertions(2);
 
