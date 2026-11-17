@@ -6,9 +6,11 @@ license = "MIT"
 
 # The native addon lives at the workspace root; the scanner engine is the
 # `secret-scanner-core` crate (no napi), so native callers can link it without
-# the addon.
+# the addon. `default-members` keeps plain `cargo test` / `cargo clippy` in this
+# directory covering both.
 [workspace]
 members = ["core"]
+default-members = [".", "core"]
 
 [lib]
 crate-type = ["cdylib"]
