@@ -85,19 +85,22 @@ runs:
               # install -m 0755 restores the exec bit the artifact round-trip drops.
               # - vis: the CLI front-end binary
               # - task-runner: the fspy helpers (seccomp helper / macOS dylib / Windows DLL)
-              find artifacts \( -path "*/bindings-vis-*/npm/*/vis-native-cli*" \
-                  -o -path "*/bindings-task-runner-*/npm/*/fspy-seccomp-helper" \
-                  -o -path "*/bindings-task-runner-*/npm/*/fspy-macos.dylib" \
-                  -o -path "*/bindings-task-runner-*/npm/*/fspy-windows.dll" \) -print0 \
-                  | while IFS= read -r -d "" f; do
-                      binding="$(basename "$(dirname "$f")")"
-                      case "$f" in
-                          */bindings-vis-*) dest="packages/tooling/vis/npm/${binding}" ;;
-                          *) dest="packages/tooling/task-runner/npm/${binding}" ;;
-                      esac
-                      mkdir -p "$dest"
-                      install -m 0755 "$f" "${dest}/$(basename "$f")"
-                  done
+              # Plain globs instead of `find -path`: the same step runs on Windows (git-bash),
+              # where the `find` patterns matched nothing.
+              shopt -s nullglob
+              for f in artifacts/bindings-vis-*/npm/*/vis-native-cli* \
+                  artifacts/bindings-task-runner-*/npm/*/fspy-seccomp-helper \
+                  artifacts/bindings-task-runner-*/npm/*/fspy-macos.dylib \
+                  artifacts/bindings-task-runner-*/npm/*/fspy-windows.dll; do
+                  binding="$(basename "$(dirname "$f")")"
+                  case "$f" in
+                      artifacts/bindings-vis-*) dest="packages/tooling/vis/npm/${binding}" ;;
+                      *) dest="packages/tooling/task-runner/npm/${binding}" ;;
+                  esac
+                  mkdir -p "$dest"
+                  install -m 0755 "$f" "${dest}/$(basename "$f")"
+              done
+              shopt -u nullglob
 
               rm -rf artifacts/
 
