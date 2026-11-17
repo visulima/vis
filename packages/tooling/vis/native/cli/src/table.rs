@@ -180,8 +180,38 @@ fn truncate(line: &str, limit: usize) -> String {
 
     let mut kept = String::new();
     let mut used = 0;
+    let mut open_style = false;
+    let mut chars = line.chars().peekable();
 
-    for character in line.chars() {
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            // Copy a complete `ESC [ … <final byte>` sequence without counting it.
+            kept.push(character);
+
+            if chars.next_if_eq(&'[').is_some() {
+                kept.push('[');
+
+                let mut parameters = String::new();
+
+                for next in chars.by_ref() {
+                    kept.push(next);
+
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        if next == 'm' {
+                            // `ESC[0m`, `ESC[m` and the `2x`/`39`/`49` closers end a style.
+                            open_style = !matches!(parameters.as_str(), "" | "0" | "22" | "23" | "24" | "39" | "49");
+                        }
+
+                        break;
+                    }
+
+                    parameters.push(next);
+                }
+            }
+
+            continue;
+        }
+
         let character_width = char_width(character);
 
         if used + character_width > limit.saturating_sub(1) {
@@ -193,6 +223,10 @@ fn truncate(line: &str, limit: usize) -> String {
     }
 
     kept.push('…');
+
+    if open_style {
+        kept.push_str("\u{1b}[0m");
+    }
 
     kept
 }
@@ -365,6 +399,16 @@ mod tests {
     fn wraps_on_spaces_and_keeps_long_words_whole() {
         assert_eq!(wrap("aaa bbb ccc", 7), vec!["aaa bbb", "ccc"]);
         assert_eq!(wrap("aaaaaaaaaa bb", 4), vec!["aaaaaaaaaa", "bb"]);
+    }
+
+    #[test]
+    fn truncation_keeps_escape_sequences_whole_and_resets_the_style() {
+        let line = "\u{1b}[32mabcdefghijklmnopqrstuvwxyz\u{1b}[39m";
+
+        assert_eq!(truncate(line, 20), "\u{1b}[32mabcdefghijklmnopqrs…\u{1b}[0m");
+        assert_eq!(visible_width(&truncate(line, 20)), 20);
+        assert_eq!(truncate("abcdefghijklmnopqrstuvwxyz", 20), "abcdefghijklmnopqrs…");
+        assert_eq!(truncate(line, 40), line);
     }
 
     #[test]
