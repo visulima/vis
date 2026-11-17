@@ -493,3 +493,27 @@ fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
     assert!(!String::from_utf8_lossy(&lean.stdout).contains("--ca-cert"));
     assert!(String::from_utf8_lossy(&full.stdout).contains("--ca-cert"));
 }
+
+#[test]
+fn complete_lists_every_command_for_the_first_word() {
+    let output = binary().args(["complete", "--", ""]).output().expect("run binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+
+    for expected in ["run", "install", "cache", "release", "completion", "help"] {
+        assert!(stdout.lines().any(|line| line.split('\t').next() == Some(expected)), "missing {expected}: {stdout}");
+    }
+
+    assert_eq!(stdout.lines().last(), Some(":4"));
+}
+
+#[test]
+fn complete_narrows_by_prefix_and_reaches_subcommands() {
+    let output = binary().args(["complete", "--", "cache", "pr"]).output().expect("run binary");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).lines().next().and_then(|line| line.split('\t').next()),
+        Some("prune")
+    );
+}

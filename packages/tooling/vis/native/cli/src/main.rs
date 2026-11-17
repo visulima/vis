@@ -24,6 +24,7 @@
 use std::env;
 use std::process::{exit, Command, ExitStatus};
 
+mod complete;
 mod exec;
 mod help;
 mod hook;
@@ -63,6 +64,9 @@ fn main() {
         // command). NOTE: `-v` is cerebro's *verbose* flag, not version, so it is
         // intentionally NOT routed here and falls through to Node.
         "--version" | "-V" => print_version(),
+        // `vis complete -- <words…>` — dynamic shell completion, answered from the
+        // command manifest (the endpoint the generated completion scripts call).
+        "complete" if args.get(1).map(String::as_str) == Some("--") => exit(complete::run(&args)),
         // `vis __pm-shim <pm> [args...]` — the package-manager guard + exec,
         // ported fully native (no Node in the loop).
         "__pm-shim" => {
