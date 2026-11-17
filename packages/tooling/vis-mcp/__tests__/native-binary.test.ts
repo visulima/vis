@@ -79,7 +79,8 @@ describe("execVis with a native binary", () => {
 
         // `process.execPath` is a native executable: spawned via `node <node> ...` it would
         // try to parse the binary as JavaScript and fail.
-        const result = await execVis(process.execPath, ["-p", "40 + 2"]);
+        // The result is stringified: `-p` colours a bare number when FORCE_COLOR is set (CI).
+        const result = await execVis(process.execPath, ["-p", "String(40 + 2)"]);
 
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe("42");
