@@ -7,41 +7,22 @@
 //! the Node runner instead.
 
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::process::Command;
 
-/// Where a builtin writes its findings. `info` is stdout, `error` is stderr.
-pub struct Log;
+/// A builtin: `(files, args, root)` → exit code. `Err` is an I/O failure the
+/// caller reports as `builtin "<id>" crashed: <message>` with exit code 1.
+pub type Builtin = fn(&[String], &[String], &Path) -> io::Result<i32>;
 
-impl Log {
-    pub fn info(&self, message: &str) {
-        println!("{message}");
-    }
-
-    pub fn error(&self, message: &str) {
-        eprintln!("{message}");
-    }
-}
-
-/// Names of the builtins implemented here.
-pub fn is_supported(name: &str) -> bool {
-    matches!(name, "trailing-whitespace" | "end-of-file-fixer" | "mixed-line-ending" | "check-merge-conflict")
-}
-
-/// A builtin that could not read or write one of its files. Mirrors the Node
-/// dispatcher's `builtin "<id>" crashed: <message>` + exit code 1.
-pub struct Crash(pub String);
-
-/// Run `name` over `files` (relative to `root`). `Err` means the builtin crashed.
-pub fn run(name: &str, files: &[String], args: &[String], root: &Path, log: &Log) -> Result<i32, Crash> {
-    let io = |error: std::io::Error| Crash(error.to_string());
-
+/// The builtin implemented here for `name`, if any.
+pub fn resolve(name: &str) -> Option<Builtin> {
     match name {
-        "trailing-whitespace" => trailing_whitespace(files, root, log).map_err(io),
-        "end-of-file-fixer" => end_of_file_fixer(files, root, log).map_err(io),
-        "mixed-line-ending" => mixed_line_ending(files, args, root, log).map_err(io),
-        "check-merge-conflict" => check_merge_conflict(files, args, root, log).map_err(io),
-        other => Err(Crash(format!("unknown builtin {other}"))),
+        "trailing-whitespace" => Some(trailing_whitespace),
+        "end-of-file-fixer" => Some(end_of_file_fixer),
+        "mixed-line-ending" => Some(mixed_line_ending),
+        "check-merge-conflict" => Some(check_merge_conflict),
+        _ => None,
     }
 }
 
@@ -56,7 +37,7 @@ fn is_markdown(file: &str) -> bool {
     [".md", ".markdown", ".mdown", ".mdx"].iter().any(|ext| lower.ends_with(ext))
 }
 
-fn trailing_whitespace(files: &[String], root: &Path, log: &Log) -> std::io::Result<i32> {
+fn trailing_whitespace(files: &[String], _args: &[String], root: &Path) -> io::Result<i32> {
     let mut rc = 0;
 
     for file in files {
@@ -119,7 +100,7 @@ fn trailing_whitespace(files: &[String], root: &Path, log: &Log) -> std::io::Res
 
         if out != buf {
             fs::write(&path, &out)?;
-            log.info(&format!("Fixing {file}"));
+            println!("Fixing {file}");
             rc = 1;
         }
     }
@@ -127,7 +108,7 @@ fn trailing_whitespace(files: &[String], root: &Path, log: &Log) -> std::io::Res
     Ok(rc)
 }
 
-fn end_of_file_fixer(files: &[String], root: &Path, log: &Log) -> std::io::Result<i32> {
+fn end_of_file_fixer(files: &[String], _args: &[String], root: &Path) -> io::Result<i32> {
     let mut rc = 0;
 
     for file in files {
@@ -145,7 +126,7 @@ fn end_of_file_fixer(files: &[String], root: &Path, log: &Log) -> std::io::Resul
 
             next.push(0x0a);
             fs::write(&path, next)?;
-            log.info(&format!("Fixing {file}"));
+            println!("Fixing {file}");
             rc = 1;
 
             continue;
@@ -159,7 +140,7 @@ fn end_of_file_fixer(files: &[String], root: &Path, log: &Log) -> std::io::Resul
 
         if end == 0 {
             fs::write(&path, [])?;
-            log.info(&format!("Fixing {file}"));
+            println!("Fixing {file}");
             rc = 1;
 
             continue;
@@ -182,7 +163,7 @@ fn end_of_file_fixer(files: &[String], root: &Path, log: &Log) -> std::io::Resul
 
         next.extend_from_slice(keep);
         fs::write(&path, next)?;
-        log.info(&format!("Fixing {file}"));
+        println!("Fixing {file}");
         rc = 1;
     }
 
@@ -215,7 +196,7 @@ impl Ending {
     }
 }
 
-fn mixed_line_ending(files: &[String], args: &[String], root: &Path, log: &Log) -> std::io::Result<i32> {
+fn mixed_line_ending(files: &[String], args: &[String], root: &Path) -> io::Result<i32> {
     let mut fix_arg = "auto".to_owned();
     let mut idx = 0;
 
@@ -228,7 +209,7 @@ fn mixed_line_ending(files: &[String], args: &[String], root: &Path, log: &Log) 
             match args.get(idx) {
                 Some(next) => fix_arg = next.clone(),
                 None => {
-                    log.error(&format!("mixed-line-ending: {a} requires a value (auto|no|lf|crlf|cr)"));
+                    eprintln!("mixed-line-ending: {a} requires a value (auto|no|lf|crlf|cr)");
 
                     return Ok(2);
                 }
@@ -241,7 +222,7 @@ fn mixed_line_ending(files: &[String], args: &[String], root: &Path, log: &Log) 
     }
 
     if !matches!(fix_arg.as_str(), "auto" | "cr" | "crlf" | "lf" | "no") {
-        log.error(&format!("mixed-line-ending: invalid --fix value {fix_arg}"));
+        eprintln!("mixed-line-ending: invalid --fix value {fix_arg}");
 
         return Ok(2);
     }
@@ -294,7 +275,7 @@ fn mixed_line_ending(files: &[String], args: &[String], root: &Path, log: &Log) 
 
         if fix_arg == "no" {
             if mixed {
-                log.info(&format!("{file}: mixed line endings"));
+                println!("{file}: mixed line endings");
                 rc = 1;
             }
 
@@ -337,7 +318,7 @@ fn mixed_line_ending(files: &[String], args: &[String], root: &Path, log: &Log) 
         }
 
         fs::write(&path, out)?;
-        log.info(&format!("{file}: fixed mixed line endings"));
+        println!("{file}: fixed mixed line endings");
         rc = 1;
     }
 
@@ -368,7 +349,7 @@ fn is_in_merge(root: &Path) -> bool {
 
 const CONFLICT_PATTERNS: [&str; 5] = ["<<<<<<< ", "======= ", "=======\r\n", "=======\n", ">>>>>>> "];
 
-fn check_merge_conflict(files: &[String], args: &[String], root: &Path, log: &Log) -> std::io::Result<i32> {
+fn check_merge_conflict(files: &[String], args: &[String], root: &Path) -> io::Result<i32> {
     let assume_in_merge = args.iter().any(|a| a == "--assume-in-merge");
 
     if !assume_in_merge && !is_in_merge(root) {
@@ -387,7 +368,7 @@ fn check_merge_conflict(files: &[String], args: &[String], root: &Path, log: &Lo
 
             for pattern in CONFLICT_PATTERNS {
                 if line.starts_with(pattern) {
-                    log.info(&format!("{file}:{}: Merge conflict string \"{}\" found", i + 1, pattern.trim()));
+                    println!("{file}:{}: Merge conflict string \"{}\" found", i + 1, pattern.trim());
                     rc = 1;
                 }
             }

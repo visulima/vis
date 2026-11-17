@@ -26,7 +26,6 @@ use std::process::{exit, Command, ExitStatus};
 
 mod exec;
 mod hook;
-mod hook_builtins;
 mod pm;
 mod pm_family;
 mod pm_shim;

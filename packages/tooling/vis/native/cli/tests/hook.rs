@@ -4,8 +4,8 @@
 //! `.vis/hooks/config.json`, then drives the compiled binary. Anything the fast
 //! path declines must reach the Node CLI untouched, so the delegation tests point
 //! `VIS_NODE` / `VIS_FALLBACK_ENTRY` at a stub that just reports it was called.
-//! Full parity with the Node runner is covered by the differential checks run
-//! through the real CLI (see `__bench__/cli/run-hooks.sh --expect-native`).
+//! Parity with the Node runner is pinned separately by
+//! `__tests__/native/hook-run-parity.test.ts`.
 
 #![cfg(unix)]
 
@@ -264,6 +264,8 @@ fn configs_the_fast_path_cannot_match_exactly_are_delegated_before_anything_runs
         r#"{"id":"r","entry":"true","files":"[a&&b]"}"#,
         r#"{"id":"r","entry":"true","files":"a{,3}"}"#,
         r#"{"id":"r","entry":"true","files":"("}"#,
+        r#"{"id":"r","entry":"true","files":"\\.tsx?+$"}"#,
+        r#"{"id":"r","entry":"true","files":"^a{ 2}"}"#,
         // a tag the upstream classifier does not know (vis overlay tags live in JS)
         r#"{"id":"t","entry":"true","types":["vis-config"]}"#,
     ] {
@@ -305,4 +307,37 @@ fn hooks_dir_flag_is_honoured_in_both_forms() {
     for args in forms {
         assert_eq!(stdout(&repo.vis(args)), "Running pre-commit\nalt a.ts\n");
     }
+}
+
+#[test]
+fn an_absolute_hooks_dir_is_delegated() {
+    let repo = Repo::new("abs-hooks-dir");
+
+    repo.file("a.ts", "x\n").config(r#"{"version":1,"stages":{"pre-commit":[{"id":"e","entry":"echo native"}]}}"#);
+
+    let absolute = repo.root.join(".vis/hooks");
+    let flag = format!("--hooks-dir={}", absolute.display());
+
+    assert_delegated(&repo, &["hook", "run", "pre-commit", &flag], &format!("DELEGATED hook run pre-commit {flag}\n"));
+}
+
+#[test]
+fn hooks_do_not_inherit_the_launchers_delegation_variables() {
+    let repo = Repo::new("env");
+
+    repo.file("a.ts", "x\n")
+        .config(r#"{"version":1,"stages":{"pre-commit":[{"id":"e","entry":"sh -c 'echo [${VIS_FALLBACK_ENTRY-unset}][${VIS_NODE-unset}]'","passFilenames":false}]}}"#);
+
+    assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\n[unset][unset]\n");
+}
+
+#[test]
+fn tag_filters_see_what_earlier_hooks_changed() {
+    let repo = Repo::new("late-tags");
+
+    repo.file("run.sh", "echo\n").config(
+        r#"{"version":1,"stages":{"pre-commit":[{"id":"x","entry":"chmod +x run.sh","passFilenames":false},{"id":"e","entry":"echo exe:","types":["executable"]}]}}"#,
+    );
+
+    assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\nexe: run.sh\n");
 }
