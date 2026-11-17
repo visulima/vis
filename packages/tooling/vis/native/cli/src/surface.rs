@@ -21,6 +21,13 @@ fn is_help_flag(argument: &str) -> bool {
     matches!(argument, "--help" | "-h")
 }
 
+/// `args` without the valueless global flags that lead it.
+pub fn without_leading_globals(args: &[String]) -> &[String] {
+    let start = args.iter().take_while(|argument| is_valueless_global(argument)).count();
+
+    &args[start..]
+}
+
 /// What an invocation asks for, once leading global flags are set aside.
 struct Request<'a> {
     /// Leading non-flag words: the command path, then any positionals.
@@ -31,8 +38,7 @@ struct Request<'a> {
 
 impl<'a> Request<'a> {
     fn parse(args: &'a [String]) -> Self {
-        let start = args.iter().take_while(|argument| is_valueless_global(argument)).count();
-        let rest = &args[start..];
+        let rest = without_leading_globals(args);
         let words: Vec<&str> =
             rest.iter().take_while(|argument| !argument.starts_with('-')).map(String::as_str).collect();
 
