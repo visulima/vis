@@ -104,11 +104,31 @@ yarn add @visulima/vis
 pnpm add @visulima/vis
 ```
 
-**pnpm 11 and 12** do not run a dependency's install script until it is approved. `@visulima/vis` uses one to link the native executable at `bin/vis`; without the approval the install still works (the command runs through a Node launcher, which starts slower) but `pnpm add` ends with `ERR_PNPM_IGNORED_BUILDS`. Approve it once with `pnpm approve-builds`, or add it to `pnpm-workspace.yaml`:
+**pnpm** does not run a dependency's install script until it is approved, and `@visulima/vis` uses one to link the native executable at `bin/vis`. Without the approval the files are still installed and `vis` still runs (through a Node launcher, which starts slower), but:
+
+- **pnpm 11 and 12:** every `pnpm install` / `pnpm add` that pulls in the package exits non-zero (`ERR_PNPM_IGNORED_BUILDS`), so a CI pipeline fails. Treat the approval as required. Run `pnpm approve-builds` once, or add it to `pnpm-workspace.yaml`:
 
 ```yaml
 allowBuilds:
     "@visulima/vis": true
+```
+
+- **pnpm 10:** the install exits 0 and only warns that the build script was ignored. `allowBuilds` has no effect there; run `pnpm approve-builds`, or list the package in `onlyBuiltDependencies` (in `pnpm-workspace.yaml`, or under `"pnpm"` in `package.json`):
+
+```json
+{
+    "pnpm": {
+        "onlyBuiltDependencies": ["@visulima/vis"]
+    }
+}
+```
+
+**bun** also skips dependency install scripts unless the package is in your `package.json` `trustedDependencies`:
+
+```json
+{
+    "trustedDependencies": ["@visulima/vis"]
+}
 ```
 
 ### Binaries
