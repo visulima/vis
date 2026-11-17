@@ -232,7 +232,6 @@ fn unsupported_shapes_are_delegated_to_node() {
     // unknown flag
     repo.config(r#"{"version":1,"stages":{"pre-commit":[{"id":"a","entry":"true"}]}}"#);
     assert_delegated(&repo, &["hook", "run", "pre-commit", "--bogus"], "DELEGATED hook run pre-commit --bogus\n");
-    assert_delegated(&repo, &["hook", "run", "--help"], "DELEGATED hook run --help\n");
 
     // other hook subcommands never run natively
     assert_delegated(&repo, &["hook", "install"], "DELEGATED hook install\n");

@@ -111,7 +111,6 @@ fn first_difference(expected: &[u8], actual: &[u8]) -> String {
 }
 
 #[test]
-#[ignore = "needs a subject that renders help: set VIS_GOLDEN_SUBJECT, or run once the native renderer lands"]
 fn help_output_matches_goldens() {
     let cwd = fixture("goldens");
     let update = std::env::var_os("VIS_UPDATE_GOLDEN").is_some();
@@ -137,7 +136,11 @@ fn help_output_matches_goldens() {
             let (code, actual) = capture(&subject(), case.args, case.color, width, &cwd);
 
             if code != Some(0) || actual != expected {
-                failures.push(format!("{} at {width} columns (exit {code:?}): {}", case.name, first_difference(&expected, &actual)));
+                failures.push(format!(
+                    "{} at {width} columns (exit {code:?}): {}",
+                    case.name,
+                    first_difference(&expected, &actual)
+                ));
             }
         }
     }
@@ -145,4 +148,87 @@ fn help_output_matches_goldens() {
     fs::remove_dir_all(&cwd).ok();
 
     assert!(failures.is_empty(), "golden mismatches:\n{}", failures.join("\n"));
+}
+
+/// Commands whose `--help` is forwarded to the package manager or tool they run (the
+/// native front-end already did this before it rendered help), so only `help <name>`
+/// is comparable. `dedupe --help` in particular really runs `<pm> dedupe`.
+const TOOL_FLAG_COMMANDS: &[&str] = &["exec", "x", "pm", "remove", "dedupe", "link", "unlink", "outdated", "why"];
+
+/// Every command in the generated manifest: its `--help` (or `help <name>` for the
+/// commands whose `--help` belongs to the tool they run).
+fn every_command_invocation() -> Vec<Vec<String>> {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../src/manifest.json")).expect("manifest parses");
+    let mut invocations = Vec::new();
+
+    for command in manifest["commands"].as_array().expect("commands array") {
+        let mut words: Vec<String> = command["commandPath"]
+            .as_array()
+            .map(|path| path.iter().filter_map(|word| word.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
+        let name = command["name"].as_str().expect("command name").to_owned();
+
+        words.push(name.clone());
+
+        if words.len() == 1 && TOOL_FLAG_COMMANDS.contains(&name.as_str()) {
+            invocations.push(vec!["help".to_owned(), name]);
+        } else {
+            words.push("--help".to_owned());
+            invocations.push(words);
+        }
+    }
+
+    invocations
+}
+
+#[test]
+fn every_command_help_matches_reference() {
+    let Some(reference) = reference() else {
+        eprintln!("skipped: set VIS_REFERENCE_CLI to compare every command against a reference CLI");
+
+        return;
+    };
+
+    let cwd = fixture("every-command");
+    let invocations = every_command_invocation();
+    let subject = subject();
+    let failures = std::sync::Mutex::new(Vec::new());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+                let Some(args) = invocations.get(index) else { break };
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+                for width in WIDTHS {
+                    let (expected_code, expected) = capture(&reference, &args, true, width, &cwd);
+                    let (code, actual) = capture(&subject, &args, true, width, &cwd);
+
+                    if code != expected_code || actual != expected {
+                        failures.lock().unwrap().push(format!(
+                            "{} at {width}: exit {code:?} vs {expected_code:?}, {}",
+                            args.join(" "),
+                            first_difference(&expected, &actual)
+                        ));
+                    }
+                }
+            });
+        }
+    });
+
+    fs::remove_dir_all(&cwd).ok();
+
+    let failures = failures.into_inner().unwrap();
+
+    assert!(
+        failures.is_empty(),
+        "{} of {} command helps differ from the reference:\n{}",
+        failures.len(),
+        invocations.len(),
+        failures.join("\n")
+    );
 }

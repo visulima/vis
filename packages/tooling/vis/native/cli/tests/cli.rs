@@ -421,3 +421,75 @@ fn delegate_with_unlaunchable_node_exits_ex_software() {
 
     assert!(stderr.contains("failed to launch Node CLI"), "stderr was: {stderr}");
 }
+
+#[test]
+fn no_color_flag_beats_force_color_in_help() {
+    let output = binary()
+        .args(["--help", "--no-color"])
+        .env("FORCE_COLOR", "1")
+        .env("COLUMNS", "100")
+        .output()
+        .expect("run binary");
+
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains('\u{1b}'), "colour codes leaked into --no-color output");
+}
+
+#[test]
+fn help_for_an_unknown_command_reports_on_stderr_and_exits_zero() {
+    let output = binary().args(["help", "frobnicate"]).env("VIS_VERSION", "1.2.3").output().expect("run binary");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "vis v1.2.3\n");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "Command \"frobnicate\" not found\n");
+}
+
+#[test]
+fn help_group_filter_lists_only_that_group() {
+    let output = binary().args(["help", "--group", "Git Hooks"]).env("COLUMNS", "100").output().expect("run binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("Available Git Hooks Commands"), "{stdout}");
+    assert!(stdout.contains("hook install"));
+    assert!(!stdout.contains("cache list"));
+}
+
+#[test]
+fn tool_flag_commands_keep_their_help_flag_for_the_tool() {
+    // `exec --help` belongs to the tool being run, so it must not render vis help.
+    let output = binary()
+        .args(["exec", "--help"])
+        .env("VIS_NODE", "/nonexistent-node")
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .output()
+        .expect("run binary");
+
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Command Positional Arguments"));
+}
+
+#[test]
+fn command_help_is_answered_natively_without_a_node_fallback() {
+    // `hook run --help` used to be handed to Node; the manifest renders it now, so it
+    // works even when no fallback entry exists.
+    let output = binary()
+        .args(["hook", "run", "--help"])
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .env("COLUMNS", "100")
+        .output()
+        .expect("run binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("Run a specific hook stage against tracked files"), "{stdout}");
+}
+
+#[test]
+fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
+    // Only `dlx` as the first argument takes the lean entry; `-v dlx` runs the full CLI.
+    let lean = binary().args(["dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
+    let full = binary().args(["-v", "dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");
+
+    assert!(!String::from_utf8_lossy(&lean.stdout).contains("--ca-cert"));
+    assert!(String::from_utf8_lossy(&full.stdout).contains("--ca-cert"));
+}

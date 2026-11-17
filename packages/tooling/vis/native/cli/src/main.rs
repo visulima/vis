@@ -25,10 +25,16 @@ use std::env;
 use std::process::{exit, Command, ExitStatus};
 
 mod exec;
+mod help;
 mod hook;
+mod manifest;
 mod pm;
 mod pm_family;
 mod pm_shim;
+mod surface;
+mod table;
+mod term;
+mod width_tables;
 mod x;
 
 /// Internal, additive diagnostic command. Used to validate the
@@ -44,6 +50,12 @@ fn main() {
     // forwarded verbatim by the JS launcher.
     let args: Vec<String> = env::args().skip(1).collect();
     let first = args.first().map(String::as_str).unwrap_or("");
+
+    // Bare `vis`, `--help`, `<command> --help` and `help <command>` come from the
+    // generated command manifest, for every command including those Node still serves.
+    if let Some(code) = surface::answer(&args) {
+        exit(code);
+    }
 
     match first {
         NATIVE_INFO => native_info(),
