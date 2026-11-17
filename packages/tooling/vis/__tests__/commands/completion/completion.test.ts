@@ -2,6 +2,7 @@ import type { Toolbox } from "@visulima/cerebro";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import completion from "../../../src/commands/completion/completion-command";
+import { isUserError } from "../../../src/errors/vis-user-error";
 
 const generate = async (shell: string): Promise<string> => {
     const chunks: string[] = [];
@@ -38,6 +39,15 @@ describe("completion command", () => {
         // PowerShell quotes the separator (`& vis complete '--'`).
         expect(script).toMatch(/vis complete '?--/);
         expect(script).not.toContain("node vis");
+    });
+
+    it("rejects an unknown shell with a user error instead of a stack trace", async () => {
+        expect.assertions(2);
+
+        const failure = await generate("nushell").catch((error: unknown) => error);
+
+        expect(isUserError(failure)).toBe(true);
+        expect((failure as Error).message).toContain("Invalid shell type: nushell");
     });
 
     it("keeps cerebro's name and options so the manifest and help are unchanged", () => {

@@ -1,6 +1,8 @@
 import type { Command, Toolbox } from "@visulima/cerebro";
 import completionCommand from "@visulima/cerebro/command/completion";
 
+import { VisUserError } from "../../errors/vis-user-error";
+
 const SHELLS = ["bash", "zsh", "fish", "powershell"] as const;
 
 type Shell = (typeof SHELLS)[number];
@@ -41,7 +43,7 @@ const execute = async ({ env, logger, options, runtime }: Toolbox): Promise<void
     }
 
     if (!SHELLS.includes(shell as Shell)) {
-        throw new Error(`Invalid shell type: ${shell}. Valid shells are: ${SHELLS.join(", ")}`);
+        throw new VisUserError(`Invalid shell type: ${shell}. Valid shells are: ${SHELLS.join(", ")}`);
     }
 
     const { default: tab } = await import("@bomb.sh/tab");
