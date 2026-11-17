@@ -3,16 +3,15 @@
 // the native executable at `bin/vis` (see `bin/vis` and `scripts/install-native.cjs`).
 // `bin/vis` imports this file; run it directly with `node bin/vis.mjs`.
 //
-// Its only jobs are to (1) route the small set of
-// natively-implemented commands (and the help surface) to the platform Rust binary, and (2) fall
-// through to the existing in-process Node CLI for everything else. The
-// fall-through path is byte-identical to running `dist/bin.js` directly, so the
-// launcher adds no extra Node boot for delegated commands — it `import()`s the
-// same entry in the same process.
+// Its only jobs are to (1) route the natively-implemented commands (and the help
+// surface) to the platform Rust binary, and (2) fall through to the existing
+// in-process Node CLI for everything else. The fall-through path is byte-identical
+// to running `dist/bin.js` directly, so the launcher adds no extra Node boot for
+// delegated commands: it `import()`s the same entry in the same process.
 //
-// As commands are ported off Node, their names are added to NATIVE_COMMANDS and
-// the binary grows to handle them; the binary itself delegates anything it does
-// not implement back to `dist/bin.js` via the VIS_* contract.
+// As commands are ported off Node, their names are added to NATIVE_COMMANDS in
+// `route.mjs` and the binary grows to handle them; the binary itself delegates
+// anything it does not implement back to `dist/bin.js` via the VIS_* contract.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -21,6 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveNativeBinary } from "./resolve-binary.mjs";
+import { routesToNative } from "./route.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -32,44 +32,15 @@ process.env.VIS_LAUNCHER = "node";
 // the Node entry elsewhere; production resolves it next to the package.
 const fallbackEntry = process.env.VIS_FALLBACK_ENTRY ?? join(packageRoot, "dist", "bin.js");
 
-// Commands answered by the native binary. Every entry here MUST be handled by
-// the binary (natively or via its own Node delegation), with VERIFIED parity to
-// the Node behavior. Unknown commands never reach the binary — they take the
-// in-process path below, unchanged. NOTE: `-v` is cerebro's verbose flag (not
-// version), so it is deliberately absent.
-//
-// `exec` parity was verified empirically against cerebro: tool flags after the
-// command are forwarded to the tool on both the native path and the Node handler
-// (src/commands/exec/handler.ts), which was fixed to stop dropping them.
-const NATIVE_COMMANDS = new Set(["--version", "-V", "__native-info", "__pm-shim", "dedupe", "exec", "link", "outdated", "pm", "remove", "unlink", "why", "x"]);
-
-const command = process.argv[2] ?? "";
-
-// `hook run` is native too, but the other `hook` subcommands (install, migrate, …)
-// are not: sending those through the binary would only add a second Node boot.
-const isNativeCommand = NATIVE_COMMANDS.has(command) || (command === "hook" && process.argv[3] === "run");
-
-// The binary also renders the help surface from its generated manifest: bare `vis`,
-// `help …`, `--help` / `-h` anywhere before a `--` separator, and the dynamic
-// `complete --` endpoint. It delegates whatever it cannot answer to `dist/bin.js`
-// itself (never back through this launcher), so these are safe to hand over. A
-// plain `complete <shell>` (script generation) is Node's, so it stays in-process.
 const userArguments = process.argv.slice(2);
-const separatorIndex = userArguments.indexOf("--");
-const optionArguments = separatorIndex === -1 ? userArguments : userArguments.slice(0, separatorIndex);
-const isNativeHelp
-    = userArguments.length === 0
-        || command === "help"
-        || (command === "complete" && userArguments[1] === "--")
-        || optionArguments.some((argument) => argument === "--help" || argument === "-h");
 
-if (isNativeCommand || isNativeHelp) {
+if (routesToNative(userArguments)) {
     const binary = resolveNativeBinary(packageRoot);
 
     if (binary !== undefined) {
         const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-        const { error, signal, status } = spawnSync(binary, process.argv.slice(2), {
+        const { error, signal, status } = spawnSync(binary, userArguments, {
             env: {
                 ...process.env,
                 VIS_FALLBACK_ENTRY: fallbackEntry,
