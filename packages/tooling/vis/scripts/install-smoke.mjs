@@ -47,7 +47,6 @@ const run = (command, args, options = {}) =>
 
 const have = (command) => run(command, ["--version"]).status === 0;
 
-// ---- pack ------------------------------------------------------------------
 
 const work = mkdtempSync(join(tmpdir(), "vis-install-smoke-"));
 const tarballs = join(work, "tarballs");
@@ -79,7 +78,6 @@ const bindings = readdirSync(join(packageRoot, "npm")).map((slug) => packOne(joi
 // `pnpm pack` resolves `workspace:*` / `catalog:` ranges the way a release does.
 const rootTarball = packOne(packageRoot, "pnpm");
 
-// ---- registry ---------------------------------------------------------------
 
 const registryDirectory = join(work, "registry");
 
@@ -158,7 +156,6 @@ for (const tarball of [...bindings, rootTarball]) {
 
 check("publish", "platform packages are published before the root", published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")));
 
-// ---- install rows -------------------------------------------------------------
 
 const spec = `@visulima/vis@${manifest.version}`;
 const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
