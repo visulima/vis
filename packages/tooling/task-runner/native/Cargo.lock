@@ -775,15 +775,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "task-runner-native"
+name = "task-runner-core"
 version = "0.1.0"
 dependencies = [
  "codspeed-criterion-compat",
- "fspy-seccomp",
- "libc",
- "napi",
- "napi-build",
- "napi-derive",
  "nix",
  "rayon",
  "rustc-hash",
@@ -791,6 +786,20 @@ dependencies = [
  "walkdir",
  "windows-sys 0.61.2",
  "xxhash-rust",
+]
+
+[[package]]
+name = "task-runner-native"
+version = "0.1.0"
+dependencies = [
+ "fspy-seccomp",
+ "libc",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "task-runner-core",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -4,24 +4,24 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
-# `rlib` is added alongside `cdylib` so the in-crate criterion benches
-# (native/benches/) can link the pure graph/hash logic. The napi build
-# (`napi build`) still consumes the `cdylib` for the `.node` artifact; the
-# extra `rlib` has no effect on the shipped addon.
+# The native addon lives at the workspace root; the engines are the `task-runner-core`
+# crate (no napi). `default-members` keeps plain `cargo test` / `cargo clippy` /
+# `cargo bench` in this directory covering both. The fspy_* crates are separate
+# packages (own lockfile; the injected dylib/DLL must never be linked into the addon),
+# so they are excluded from the workspace.
+[workspace]
+members = ["core"]
+default-members = [".", "core"]
+exclude = ["fspy_macos", "fspy_seccomp", "fspy_windows"]
+
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 napi = { version = "3", features = ["async"] }
 napi-derive = "3"
-rustc-hash = "2"
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
-walkdir = "2"
-rayon = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "signal", "sync", "time", "macros"] }
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["signal", "process"] }
+task-runner-core = { path = "core" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 
 # Linux file-access tracker via seccomp_unotify. Pure Rust, no
 # system libraries — fspy_seccomp talks to the kernel directly via
@@ -39,14 +39,12 @@ libc = "0.2.178"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
-  "Win32_System_Console",
-  "Win32_System_JobObjects",
-  "Win32_System_Threading",
   "Win32_Foundation",
   "Win32_Security",
   # Windows file-access tracker parent (native/src/windows.rs): suspended
   # process creation + CreateRemoteThread(LoadLibraryW) DLL injection + a
   # per-spawn named-pipe server that drains the injected fspy_windows DLL.
+  "Win32_System_Threading",
   "Win32_System_Memory",
   "Win32_System_LibraryLoader",
   "Win32_System_Diagnostics_Debug",
@@ -57,26 +55,6 @@ windows-sys = { version = "0.61", features = [
 
 [build-dependencies]
 napi-build = "2"
-
-[dev-dependencies]
-# `codspeed-criterion-compat` is a drop-in for criterion: same API (imported as
-# `criterion` via the package rename), so the bench sources are unchanged. Plain
-# `cargo bench` falls back to vanilla criterion locally; under `cargo codspeed`
-# (the CodSpeed CI path in .github/workflows/codspeed.yml) it emits instrumented
-# measurements. Pinned to the 4.x line to match `CodSpeedHQ/action@v4`.
-criterion = { package = "codspeed-criterion-compat", version = "4", default-features = false, features = ["cargo_bench_support"] }
-
-# Native micro-benchmarks (criterion). Mirrors the cache-hash + workspace/topo
-# suite from nubjs/nub#17, but measures OUR Rust hot paths directly — the layer
-# the hyperfine/vitest harness in packages/tooling/vis/__bench__ cannot isolate
-# because the Node-boot floor swamps it. Run with `cargo bench`.
-[[bench]]
-name = "graph"
-harness = false
-
-[[bench]]
-name = "file_hasher"
-harness = false
 
 # Max-opt release profile, governing the shipped addon AND the sidecar
 # binaries built under this workspace (see the fspy_seccomp note above).

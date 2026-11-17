@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
+use task_runner_core::concurrent::types as core;
 
 /// Configuration for a single command to run concurrently.
 #[napi(object)]
@@ -18,6 +19,12 @@ pub struct ConcurrentCommandConfig {
     pub shell: Option<bool>,
     /// Stdin mode: "null" (default), "pipe", or "inherit".
     pub stdin: Option<String>,
+}
+
+impl From<ConcurrentCommandConfig> for core::ConcurrentCommandConfig {
+    fn from(v: ConcurrentCommandConfig) -> Self {
+        Self { command: v.command, name: v.name, cwd: v.cwd, env: v.env, shell: v.shell, stdin: v.stdin }
+    }
 }
 
 /// Options controlling the concurrent runner behavior.
@@ -40,6 +47,19 @@ pub struct ConcurrentRunnerOptions {
     /// When set, used instead of the platform default (/bin/sh or cmd.exe).
     /// Format: "/path/to/shell" — args are always ["-c", command].
     pub shell_path: Option<String>,
+}
+
+impl From<ConcurrentRunnerOptions> for core::ConcurrentRunnerOptions {
+    fn from(v: ConcurrentRunnerOptions) -> Self {
+        Self {
+            max_processes: v.max_processes,
+            kill_signal: v.kill_signal,
+            kill_others: v.kill_others,
+            success_condition: v.success_condition,
+            kill_timeout: v.kill_timeout,
+            shell_path: v.shell_path,
+        }
+    }
 }
 
 /// An event emitted during concurrent execution.
@@ -68,6 +88,22 @@ pub struct ProcessEvent {
     pub pid: Option<u32>,
 }
 
+impl From<core::ProcessEvent> for ProcessEvent {
+    fn from(v: core::ProcessEvent) -> Self {
+        Self {
+            kind: v.kind,
+            index: v.index,
+            text: v.text,
+            exit_code: v.exit_code,
+            killed: v.killed,
+            message: v.message,
+            command_name: v.command_name,
+            duration_ms: v.duration_ms,
+            pid: v.pid,
+        }
+    }
+}
+
 /// Result of a close event for a single command.
 #[napi(object)]
 #[derive(Debug, Clone)]
@@ -86,6 +122,19 @@ pub struct ConcurrentCloseEvent {
     pub duration_ms: f64,
 }
 
+impl From<core::ConcurrentCloseEvent> for ConcurrentCloseEvent {
+    fn from(v: core::ConcurrentCloseEvent) -> Self {
+        Self {
+            index: v.index,
+            command: v.command,
+            name: v.name,
+            exit_code: v.exit_code,
+            killed: v.killed,
+            duration_ms: v.duration_ms,
+        }
+    }
+}
+
 /// Overall result of a concurrent run.
 #[napi(object)]
 #[derive(Debug, Clone)]
@@ -96,78 +145,8 @@ pub struct ConcurrentRunResult {
     pub success: bool,
 }
 
-impl ProcessEvent {
-    /// Emitted exactly once per command, immediately after the child
-    /// process has been spawned. `pid` is the OS pid (or `None` if the
-    /// platform could not return one). Consumers use this to register
-    /// children for SIGINT/SIGTERM cleanup at the JS layer.
-    pub fn started(index: u32, pid: Option<u32>) -> Self {
-        Self {
-            kind: "started".to_string(),
-            index,
-            text: None,
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid,
-        }
-    }
-
-    pub fn stdout(index: u32, text: String) -> Self {
-        Self {
-            kind: "stdout".to_string(),
-            index,
-            text: Some(text),
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
-    }
-
-    pub fn stderr(index: u32, text: String) -> Self {
-        Self {
-            kind: "stderr".to_string(),
-            index,
-            text: Some(text),
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
-    }
-
-    pub fn close(index: u32, exit_code: i32, killed: bool, name: Option<String>, duration_ms: f64) -> Self {
-        Self {
-            kind: "close".to_string(),
-            index,
-            text: None,
-            exit_code: Some(exit_code),
-            killed: Some(killed),
-            message: None,
-            command_name: name,
-            duration_ms: Some(duration_ms),
-            pid: None,
-        }
-    }
-
-    pub fn error(index: u32, message: String) -> Self {
-        Self {
-            kind: "error".to_string(),
-            index,
-            text: None,
-            exit_code: None,
-            killed: None,
-            message: Some(message),
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
+impl From<core::ConcurrentRunResult> for ConcurrentRunResult {
+    fn from(v: core::ConcurrentRunResult) -> Self {
+        Self { close_events: v.close_events.into_iter().map(Into::into).collect(), success: v.success }
     }
 }
