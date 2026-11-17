@@ -32,12 +32,16 @@ const SHELL_OWN: &[&str] = &[
 ];
 
 /// A child's command line. The launcher's internal delegation variables are removed:
-/// they point at this install's JS entry (possibly relatively), and a `vis` run from
-/// inside a hook must resolve its own.
+/// they describe this install (its JS entry, possibly relative, its version and how it
+/// was started), and a `vis` run from inside a hook must resolve its own.
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
 
-    command.env_remove("VIS_FALLBACK_ENTRY").env_remove("VIS_NODE");
+    command
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .env_remove("VIS_LAUNCHER")
+        .env_remove("VIS_NODE")
+        .env_remove("VIS_VERSION");
 
     command
 }

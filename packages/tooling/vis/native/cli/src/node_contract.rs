@@ -4,11 +4,15 @@
 //! `VIS_FALLBACK_ENTRY` and `VIS_VERSION` before starting this binary. When the
 //! npm install puts the binary at `<package>/bin/vis` itself there is no
 //! launcher, so [`init`] derives the same values from where the executable
-//! lives. Anything already set (by the launcher, or by a user override such as
-//! `VIS_FALLBACK_ENTRY`) wins. `VIS_NODE` is left alone: delegation uses it when
-//! set and otherwise runs `node` from `PATH`.
+//! lives. A binary that is found inside a package owns those values: it replaces
+//! whatever a parent `vis` process left in the environment (a stale entry would
+//! otherwise point the Node fallback at another install). A binary outside a
+//! package (a platform package, started by the launcher) keeps what the launcher
+//! set. `VIS_NODE` is left alone: delegation uses it when set and otherwise runs
+//! `node` from `PATH`.
 
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,27 +24,34 @@ struct Layout {
 }
 
 /// Fill in `VIS_FALLBACK_ENTRY`, `VIS_VERSION` and `VIS_LAUNCHER` for this process
-/// (and the Node CLI it spawns) when the launcher did not.
+/// (and the Node CLI it spawns).
 pub fn init() {
-    set_if_unset("VIS_LAUNCHER", "native");
+    let exe = env::current_exe().and_then(fs::canonicalize).ok();
 
-    let Ok(exe) = env::current_exe().and_then(fs::canonicalize) else {
-        return;
-    };
-
-    if let Some(layout) = locate(&exe) {
-        set_if_unset("VIS_FALLBACK_ENTRY", &layout.entry);
-
-        if let Some(version) = &layout.version {
-            set_if_unset("VIS_VERSION", version);
+    match exe.as_deref().and_then(locate) {
+        Some(layout) => {
+            for (key, value) in owned_env(&layout) {
+                match value {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
+        }
+        None => {
+            if env::var_os("VIS_LAUNCHER").is_none() {
+                env::set_var("VIS_LAUNCHER", "native");
+            }
         }
     }
 }
 
-fn set_if_unset(key: &str, value: impl AsRef<std::ffi::OsStr>) {
-    if env::var_os(key).is_none() {
-        env::set_var(key, value);
-    }
+/// What a binary installed inside a package sets, `None` meaning "must be unset".
+fn owned_env(layout: &Layout) -> [(&'static str, Option<OsString>); 3] {
+    [
+        ("VIS_FALLBACK_ENTRY", Some(layout.entry.clone().into_os_string())),
+        ("VIS_VERSION", layout.version.as_ref().map(OsString::from)),
+        ("VIS_LAUNCHER", Some(OsString::from("native"))),
+    ]
 }
 
 /// Find the package that owns `exe`: the binary installed at `<package>/bin/vis`,
@@ -123,5 +134,31 @@ mod tests {
         fs::write(root.join("dist/bin.js"), "").unwrap();
 
         assert_eq!(locate(&root.join("vis-native-cli")).unwrap().version, None);
+    }
+
+    #[test]
+    fn a_located_package_overrides_what_a_parent_process_left_behind() {
+        let root = scratch("owned-env");
+
+        install_package(&root);
+        fs::create_dir_all(root.join("bin")).unwrap();
+
+        let layout = locate(&root.join("bin").join("vis")).unwrap();
+
+        assert_eq!(
+            owned_env(&layout),
+            [
+                ("VIS_FALLBACK_ENTRY", Some(root.join("dist/bin.js").into_os_string())),
+                ("VIS_VERSION", Some(OsString::from("1.2.3"))),
+                ("VIS_LAUNCHER", Some(OsString::from("native"))),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_located_package_without_a_manifest_clears_an_inherited_version() {
+        let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
+
+        assert_eq!(owned_env(&layout)[1], ("VIS_VERSION", None));
     }
 }

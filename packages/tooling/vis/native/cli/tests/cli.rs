@@ -568,3 +568,32 @@ fn known_commands_still_delegate_to_node() {
         "a real command must reach the Node fallback, not the unknown-command error"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
+    let package = std::env::temp_dir().join(format!("vis-cli-owned-env-{}", std::process::id()));
+
+    let _ = std::fs::remove_dir_all(&package);
+    std::fs::create_dir_all(package.join("bin")).unwrap();
+    std::fs::create_dir_all(package.join("dist")).unwrap();
+    std::fs::write(package.join("dist/bin.js"), "").unwrap();
+    std::fs::write(package.join("package.json"), r#"{"name":"@visulima/vis","version":"4.5.6"}"#).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_vis"), package.join("bin/vis")).unwrap();
+
+    let output = Command::new(package.join("bin/vis"))
+        .arg("__native-info")
+        .env("VIS_FALLBACK_ENTRY", "/stale/parent/entry.js")
+        .env("VIS_VERSION", "0.0.1-stale")
+        .env("VIS_LAUNCHER", "node")
+        .output()
+        .expect("run binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let entry = std::fs::canonicalize(package.join("dist/bin.js")).unwrap();
+
+    let _ = std::fs::remove_dir_all(&package);
+
+    assert!(stdout.contains(&entry.display().to_string()), "stdout was: {stdout}");
+    assert!(stdout.contains("4.5.6"), "stdout was: {stdout}");
+    assert!(!stdout.contains("stale"), "stdout was: {stdout}");
+}
