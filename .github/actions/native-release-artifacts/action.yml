@@ -87,7 +87,6 @@ runs:
               # - task-runner: the fspy helpers (seccomp helper / macOS dylib / Windows DLL)
               # Plain globs instead of `find -path`: the same step runs on Windows (git-bash),
               # where the `find` patterns matched nothing.
-              echo "::group::sidecar glob (debug)"; for g in artifacts/bindings-vis-*/npm/*/vis-native-cli*; do echo "glob: [$g]"; done; echo "pwd=$(pwd) install=$(command -v install)"; echo "::endgroup::"
               shopt -s nullglob
               for f in artifacts/bindings-vis-*/npm/*/vis-native-cli* \
                   artifacts/bindings-task-runner-*/npm/*/fspy-seccomp-helper \
@@ -99,11 +98,9 @@ runs:
                       *) dest="packages/tooling/task-runner/npm/${binding}" ;;
                   esac
                   mkdir -p "$dest"
-                  echo "sidecar: $f -> $dest"
                   install -m 0755 "$f" "${dest}/$(basename "$f")"
               done
               shopt -u nullglob
-              ls -l packages/tooling/vis/npm/win32-x64-msvc/ 2>&1 | sed -n 1,10p
 
               rm -rf artifacts/
 
@@ -126,7 +123,8 @@ runs:
                   for manifest in "${manifests[@]}"; do
                       dir="$(dirname "$manifest")"
                       # Plain assignment, so a jq failure stops the step under `set -e`.
-                      files="$(jq -er '.files[]' "$manifest")"
+                      # jq prints CRLF on Windows; a trailing CR would make every entry but the last look missing.
+                      files="$(jq -er '.files[]' "$manifest" | tr -d '\r')"
                       while IFS= read -r file; do
                           if [ ! -e "${dir}/${file}" ]; then
                               echo "::error file=${manifest}::missing published file ${dir}/${file}"
