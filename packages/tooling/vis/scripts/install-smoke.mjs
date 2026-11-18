@@ -34,8 +34,8 @@ const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf
 
 const pmFlag = process.argv.indexOf("--pm");
 const explicitlyRequested = pmFlag !== -1;
-const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
 const knownManagers = ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
+const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : knownManagers;
 
 for (const name of requested) {
     if (!knownManagers.includes(name)) {
