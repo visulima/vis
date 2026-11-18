@@ -47,7 +47,7 @@ const check = (row, name, ok, detail = "") => {
 };
 
 // On Windows the command runs through cmd.exe, which splits its line on spaces; quote each word so a
-// temporary directory such as `C:\\Users\\Jane Doe` stays one argument. Elsewhere the argv is passed as is.
+// temporary directory such as `C:\Users\Jane Doe` stays one argument. Elsewhere the argv is passed as is.
 const quoteWord = (word) => (/[\s"&()^%!<>|]/u.test(word) ? `"${word.replaceAll('"', '\\"')}"` : word);
 const invoke = (command, args) => (isWindows ? [[command, ...args].map(quoteWord).join(" "), []] : [command, args]);
 
@@ -197,19 +197,7 @@ writeFileSync(globalConfig, "");
 const published = [];
 
 for (const tarball of [...bindings, rootTarball]) {
-    const result = run("npm", [
-        "publish",
-        join(tarballs, tarball),
-        "--userconfig",
-        publishConfig,
-        "--globalconfig",
-        globalConfig,
-        "--registry",
-        REGISTRY,
-        "--tag",
-        "smoke",
-        "--provenance=false",
-    ]);
+    const result = run("npm", ["publish", join(tarballs, tarball), "--userconfig", publishConfig, "--globalconfig", globalConfig, "--registry", REGISTRY, "--tag", "smoke", "--provenance=false"]);
 
     published.push(tarball);
 
@@ -218,11 +206,7 @@ for (const tarball of [...bindings, rootTarball]) {
     }
 }
 
-check(
-    "publish",
-    "platform packages are published before the root",
-    published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")),
-);
+check("publish", "platform packages are published before the root", published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")));
 
 const spec = `@visulima/vis@${manifest.version}`;
 const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
@@ -232,15 +216,7 @@ const managers = {
     bun: {
         available: () => have("bun"),
         launch: { run: ["bun", "run", "v"] },
-        install: (mode) => ({
-            args: ["add", "-d", spec],
-            command: "bun",
-            extra: {
-                packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`,
-                ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}),
-            },
-            files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` },
-        }),
+        install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
     },
     npm: {
         available: () => have("npm"),
@@ -275,20 +251,12 @@ const managers = {
     "yarn-berry": {
         available: () => have("npx"),
         launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },
-        install: (mode) => ({
-            args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec],
-            command: "npx",
-            files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" },
-        }),
+        install: (mode) => ({ args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec], command: "npx", files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" } }),
     },
     "yarn-classic": {
         available: () => have("npx"),
         launch: { run: ["npx", "--yes", "yarn@1.22.22", "run", "v"] },
-        install: (mode) => ({
-            args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
-            command: "npx",
-            files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` },
-        }),
+        install: (mode) => ({ args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npx", files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` } }),
     },
 };
 
@@ -336,14 +304,7 @@ for (const name of requested) {
         const plan = manager.install(mode, directory);
 
         mkdirSync(join(directory, "packages", "a"), { recursive: true });
-        writeFileSync(
-            join(directory, "package.json"),
-            JSON.stringify(
-                { name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra },
-                null,
-                2,
-            ),
-        );
+        writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra }, null, 2));
         writeFileSync(join(directory, "packages", "a", "package.json"), JSON.stringify({ name: "a", scripts: { build: "echo a" }, version: "1.0.0" }));
 
         for (const [file, content] of Object.entries(plan.files)) {
@@ -354,13 +315,7 @@ for (const name of requested) {
         mkdirSync(join(directory, ".vis", "hooks"), { recursive: true });
         writeFileSync(join(directory, ".vis", "hooks", "config.json"), JSON.stringify({ stages: { "pre-commit": [{ entry: "true", id: "a" }] }, version: 1 }));
 
-        const environment = {
-            CI: "1",
-            NO_COLOR: "1",
-            npm_config_cache: join(work, "npm-cache"),
-            npm_config_userconfig: publishConfig,
-            YARN_CACHE_FOLDER: join(directory, ".yarn-cache"),
-        };
+        const environment = { CI: "1", NO_COLOR: "1", npm_config_cache: join(work, "npm-cache"), npm_config_userconfig: publishConfig, YARN_CACHE_FOLDER: join(directory, ".yarn-cache") };
         const installed = run(plan.command, plan.args, { cwd: directory, env: environment });
 
         const installOutput = `${installed.stderr}${installed.stdout}`;
@@ -372,12 +327,7 @@ for (const name of requested) {
                 continue;
             }
         } else {
-            check(
-                row,
-                `install ends with ${plan.expectInstall}`,
-                installed.status !== 0 && installOutput.includes(plan.expectInstall),
-                excerpt(installOutput, 14),
-            );
+            check(row, `install ends with ${plan.expectInstall}`, installed.status !== 0 && installOutput.includes(plan.expectInstall), excerpt(installOutput, 14));
         }
 
         const vis = join(directory, "node_modules", ".bin", "vis");
@@ -391,23 +341,13 @@ for (const name of requested) {
 
         const version = execute("--version");
 
-        check(
-            row,
-            "`vis --version` prints the package version",
-            version.status === 0 && version.stdout.trim() === manifest.version,
-            `${version.stdout.trim()} ${version.stderr.trim()}`.trim(),
-        );
+        check(row, "`vis --version` prints the package version", version.status === 0 && version.stdout.trim() === manifest.version, `${version.stdout.trim()} ${version.stderr.trim()}`.trim());
 
         // The shim each package manager generates is what a user's `run` script or `exec` invocation goes through.
         for (const [how, command] of Object.entries(manager.launch)) {
             const launched = run(command[0], command.slice(1), { cwd: directory, env: environment });
 
-            check(
-                row,
-                `\`${how}\` starts vis through the package manager's own path`,
-                launched.status === 0 && launched.stdout.split("\n").some((line) => line.trim() === manifest.version),
-                `${launched.stdout.trim().slice(-80)} ${launched.stderr.trim().slice(0, 120)}`.trim(),
-            );
+            check(row, `\`${how}\` starts vis through the package manager's own path`, launched.status === 0 && launched.stdout.split("\n").some((line) => line.trim() === manifest.version), `${launched.stdout.trim().slice(-80)} ${launched.stderr.trim().slice(0, 120)}`.trim());
         }
 
         const help = execute("--help");
@@ -416,23 +356,13 @@ for (const name of requested) {
 
         const hook = execute("hook", "run", "pre-push");
 
-        check(
-            row,
-            "`vis hook run pre-push` succeeds",
-            hook.status === 0 && hook.stdout.includes('No hooks configured for stage "pre-push"'),
-            hook.stderr.trim().slice(0, 120),
-        );
+        check(row, "`vis hook run pre-push` succeeds", hook.status === 0 && hook.stdout.includes('No hooks configured for stage "pre-push"'), hook.stderr.trim().slice(0, 120));
 
         // `--help` is answered natively on every row. Script generation is Node's, so the generated
         // script proves the hand-off (from the binary, or from the launcher) without needing a workspace.
         const completion = execute("completion", "--shell=bash");
 
-        check(
-            row,
-            "delegated `vis completion` runs through Node",
-            completion.status === 0 && completion.stdout.includes("vis complete --"),
-            completion.stderr.trim().slice(0, 120),
-        );
+        check(row, "delegated `vis completion` runs through Node", completion.status === 0 && completion.stdout.includes("vis complete --"), completion.stderr.trim().slice(0, 120));
 
         // `list` and `doctor` need a workspace root, which vis does not detect in a bun-managed
         // project (an existing limitation, unrelated to how the binary is installed): bun only gets
@@ -442,12 +372,7 @@ for (const name of requested) {
         if (needsWorkspace) {
             const delegated = execute("list");
 
-            check(
-                row,
-                "delegated `vis list` runs through Node",
-                delegated.status === 0 && delegated.stdout.includes("project(s)"),
-                delegated.stderr.trim().slice(0, 120),
-            );
+            check(row, "delegated `vis list` runs through Node", delegated.status === 0 && delegated.stdout.includes("project(s)"), delegated.stderr.trim().slice(0, 120));
         }
 
         const launcher = (() => {
@@ -470,12 +395,7 @@ for (const name of requested) {
             check(row, native ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === native);
 
             if (needsWorkspace) {
-                check(
-                    row,
-                    `doctor reports the ${native ? "native" : "slower"} path`,
-                    native ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true,
-                    JSON.stringify(launcher),
-                );
+                check(row, `doctor reports the ${native ? "native" : "slower"} path`, native ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true, JSON.stringify(launcher));
             }
         }
 

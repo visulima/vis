@@ -141,6 +141,8 @@ fn delegate(args: &[String]) -> ! {
         }
     };
 
+    // stdio is inherited by default, so the child shares the controlling
+    // terminal and process group — Ctrl-C / SIGINT reach it directly.
     let mut command = Command::new(&node);
 
     command.arg(&entry).args(args);
