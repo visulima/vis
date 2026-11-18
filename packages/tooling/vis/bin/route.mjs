@@ -36,6 +36,12 @@ const routesToNative = (args, platform = process.platform) => {
         return platform !== "win32" || !asksForHelp(args);
     }
 
+    // `advisories bloom status` is answered natively for `--format json --cache-dir <dir>`.
+    // The binary hands every other shape of it to Node itself, as it does for `hook run`.
+    if (command === "advisories" && subcommand === "bloom" && args[2] === "status") {
+        return platform !== "win32" || !asksForHelp(args);
+    }
+
     // `complete --` is the dynamic endpoint the generated completion scripts call on
     // every <TAB>; any other `complete` shape is not a native command, so it stays
     // in-process (script generation is `vis completion --shell=<shell>`, Node's too).
