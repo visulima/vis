@@ -22,6 +22,7 @@
 //! fails loudly if it is unset.
 
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::process::{exit, Command, ExitStatus};
 
 mod complete;
@@ -52,7 +53,10 @@ fn main() {
 
     // argv[0] is the binary path; the remainder is the `vis` invocation,
     // forwarded verbatim by the JS launcher.
-    let args: Vec<String> = env::args().skip(1).collect();
+    // The raw argv is kept for delegation, so a non-UTF-8 argument reaches Node unchanged
+    // instead of panicking; the `String` view is only for matching command names.
+    let raw_args: Vec<OsString> = env::args_os().skip(1).collect();
+    let args: Vec<String> = raw_args.iter().map(|argument| argument.to_string_lossy().into_owned()).collect();
     let first = args.first().map(String::as_str).unwrap_or("");
 
     match first {
@@ -99,7 +103,7 @@ fn main() {
                 exit(code);
             }
 
-            delegate(&args)
+            delegate(&raw_args)
         }
     }
 }
@@ -130,7 +134,7 @@ fn native_info() {
 
 /// Hand the full argv off to the Node CLI, inheriting stdio and forwarding the
 /// child's exit status. Never returns.
-fn delegate(args: &[String]) -> ! {
+fn delegate<S: AsRef<OsStr>>(args: &[S]) -> ! {
     let node = env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned());
 
     let entry = match env::var("VIS_FALLBACK_ENTRY") {

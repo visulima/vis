@@ -48,6 +48,11 @@ impl Repo {
 
     /// Run `vis <args>`; the stub Node entry answers `DELEGATED <args>` for anything not handled natively.
     fn vis(&self, args: &[&str]) -> Output {
+        self.vis_with_env(args, &[])
+    }
+
+    /// Like [`Repo::vis`], with extra variables set on the `vis` process.
+    fn vis_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let stub = self.root.join("stub-entry.sh");
 
         fs::write(&stub, "echo \"DELEGATED $*\"\n").expect("write stub");
@@ -57,6 +62,7 @@ impl Repo {
             .current_dir(&self.root)
             .env("VIS_NODE", "sh")
             .env("VIS_FALLBACK_ENTRY", &stub)
+            .envs(extra.iter().copied())
             .env_remove("VIS_HOOK_TRACE")
             .output()
             .expect("run binary")
@@ -327,7 +333,17 @@ fn hooks_do_not_inherit_the_launchers_delegation_variables() {
     repo.file("a.ts", "x\n")
         .config(r#"{"version":1,"stages":{"pre-commit":[{"id":"e","entry":"sh -c 'echo [${VIS_FALLBACK_ENTRY-unset}][${VIS_NODE-unset}][${VIS_VERSION-unset}][${VIS_LAUNCHER-unset}]'","passFilenames":false}]}}"#);
 
-    assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\n[unset][unset][unset][unset]\n");
+    // Every delegation variable is set on the `vis` process too, so the assertion proves the hook removes them.
+    let output = repo.vis_with_env(
+        &["hook", "run", "pre-commit"],
+        &[
+            ("VIS_FALLBACK_ENTRY_OVERRIDE", "/stale/override.js"),
+            ("VIS_LAUNCHER", "node"),
+            ("VIS_VERSION", "0.0.1-stale"),
+        ],
+    );
+
+    assert_eq!(stdout(&output), "Running pre-commit\n[unset][unset][unset][unset]\n");
 }
 
 #[test]

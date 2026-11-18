@@ -46,9 +46,10 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
     // `NODE_PATH` is dropped: pnpm sets it to the workspace's hoisted `node_modules`, which holds the real
     // platform package, so a copy under a temp dir would resolve it even when the test installs none.
     const install = (environment: Record<string, string> = {}, script = join(installed, "scripts", "install-native.cjs")) => {
-        const inherited: NodeJS.ProcessEnv = { ...process.env };
-
-        delete inherited.NODE_PATH;
+        // Ambient pnpm/npm state and the skip switch would change what the installer does in these fixtures.
+        const inherited = Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith("npm_") && !["INIT_CWD", "NODE_PATH", "VIS_SKIP_NATIVE_LINK"].includes(key)),
+        );
 
         return spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...inherited, ...environment } });
     };
@@ -192,16 +193,19 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         });
 
         it("keeps the launcher on `pnpm approve-builds`, which leaves the stale shim in place", () => {
-            expect.assertions(1);
+            expect.assertions(2);
 
-            install({ ...pnpm, INIT_CWD: root, npm_command: "approve-builds" });
+            const approved = install({ ...pnpm, INIT_CWD: root, npm_command: "approve-builds" });
 
+            expect(approved.status).toBe(0);
             expect(launcherKept()).toBe(true);
         });
 
         // Lays the package out inside pnpm's virtual store and returns its installed `bin/vis`.
         const installInPnpmStore = (modulesYaml: string, packageVersion = "1.0.0") => {
-            const store = join(root, "pnpm-project", "node_modules", ".pnpm", `@visulima+vis@${packageVersion}`, "node_modules", "@visulima");
+            // A project of its own per call: a link left by an earlier call would otherwise be written through.
+            const project = mkdtempSync(join(root, "pnpm-project-"));
+            const store = join(project, "node_modules", ".pnpm", `@visulima+vis@${packageVersion}`, "node_modules", "@visulima");
             const storedPackage = join(store, "vis");
 
             mkdirSync(join(storedPackage, "bin"), { recursive: true });
@@ -211,7 +215,7 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             writeFileSync(join(storedPackage, "package.json"), JSON.stringify({ name: "@visulima/vis", version: packageVersion }));
             mkdirSync(join(store, `vis-binding-${nativeTarget()}`), { recursive: true });
             copyFileSync(join(platformPackage, "vis-native-cli"), join(store, `vis-binding-${nativeTarget()}`, "vis-native-cli"));
-            writeFileSync(join(root, "pnpm-project", "node_modules", ".modules.yaml"), modulesYaml);
+            writeFileSync(join(project, "node_modules", ".modules.yaml"), modulesYaml);
 
             install({ ...pnpm, INIT_CWD: join(root, "other"), npm_command: "install" }, join(storedPackage, "scripts", "install-native.cjs"));
 

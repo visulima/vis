@@ -131,6 +131,8 @@ allowBuilds:
 }
 ```
 
+An explicit `trustedDependencies` list replaces bun's default list, so keep any other packages your project relies on in it.
+
 ### Binaries
 
 `@visulima/vis` installs four executables:

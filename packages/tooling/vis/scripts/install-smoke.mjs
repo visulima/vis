@@ -11,7 +11,7 @@
 // Each package manager is installed twice: with install scripts allowed (the
 // binary must be linked at `bin/vis`, `doctor` reports the native path) and with
 // them disabled (the Node launcher must still work, `doctor` reports the slower
-// path). pnpm gets a third row, "unapproved": pnpm 12 refuses to run a dependency's
+// path). pnpm gets a third row, "unapproved": by default pnpm 12 refuses to run a dependency's
 // install script until it is listed in `allowBuilds` and ends the install with
 // ERR_PNPM_IGNORED_BUILDS, yet the package is installed, so `vis` must still work
 // through the Node launcher. Never publishes anywhere but the local registry.
@@ -34,7 +34,15 @@ const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf
 
 const pmFlag = process.argv.indexOf("--pm");
 const explicitlyRequested = pmFlag !== -1;
-const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
+const knownManagers = ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
+const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : knownManagers;
+
+for (const name of requested) {
+    if (!knownManagers.includes(name)) {
+        console.error(`install-smoke: unknown package manager ${name}`);
+        process.exit(2);
+    }
+}
 
 const failures = [];
 const report = [];
@@ -64,13 +72,27 @@ const abort = (what, result) => {
     process.exit(2);
 };
 
-const have = (command) => run(command, ["--version"]).status === 0;
+// The spawn error of the most recent probe, when the executable was found but could not start (EACCES, …).
+let probeFailure;
+
+const have = (command) => {
+    const probe = run(command, ["--version"]);
+
+    // ENOENT is a missing executable; anything else means it exists but cannot run.
+    probeFailure = probe.error && probe.error.code !== "ENOENT" ? probe.error : undefined;
+
+    return probe.status === 0;
+};
 
 // The first lines of a command's output, joined for a one-line failure detail.
 const excerpt = (text, lines) => text.trim().split("\n").slice(0, lines).join(" | ");
 
 const work = mkdtempSync(join(tmpdir(), "vis-install-smoke-"));
 const tarballs = join(work, "tarballs");
+
+process.on("exit", () => {
+    rmSync(work, { force: true, recursive: true });
+});
 
 mkdirSync(tarballs);
 
@@ -127,10 +149,22 @@ log: { type: stdout, format: pretty, level: http }
 const [registryFile, registryArgs] = invoke("npx", ["--yes", VERDACCIO, "--config", join(registryDirectory, "config.yaml"), "--listen", String(REGISTRY_PORT)]);
 const registry = spawn(registryFile, registryArgs, {
     cwd: registryDirectory,
+    // A process group of its own, so stopping it also stops the Verdaccio process `npx` starts.
+    detached: !isWindows,
     shell: isWindows,
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: ["ignore", "pipe", "inherit"],
 });
 let registryExit;
+// Verdaccio logs "http address" once it listens. The tail keeps a match that is split across two chunks.
+let registryLog = "";
+let registryListening = false;
+
+registry.stdout.on("data", (chunk) => {
+    process.stdout.write(chunk);
+
+    registryLog = `${registryLog}${chunk}`.slice(-64);
+    registryListening ||= registryLog.includes("http address");
+});
 
 registry.on("error", (error) => {
     registryExit = `could not start (${error.message})`;
@@ -140,8 +174,15 @@ registry.on("exit", (code, signal) => {
 });
 
 const stop = () => {
-    registry.kill();
-    rmSync(work, { force: true, recursive: true });
+    if (isWindows) {
+        registry.kill();
+    } else {
+        try {
+            process.kill(-registry.pid);
+        } catch {
+            // The group is already gone.
+        }
+    }
 };
 
 process.on("exit", stop);
@@ -155,7 +196,7 @@ const waitForRegistry = async (timeoutMs = 120_000) => {
         try {
             const response = await fetch(REGISTRY, { signal: AbortSignal.timeout(2000) });
 
-            if (response.status < 500) {
+            if (registryListening && response.status < 500) {
                 return;
             }
         } catch {
@@ -271,11 +312,6 @@ const rows = [];
 for (const name of requested) {
     const manager = managers[name];
 
-    if (manager === undefined) {
-        console.error(`install-smoke: unknown package manager ${name}`);
-        process.exit(2);
-    }
-
     // Windows: the generated .cmd shim cannot exec the extensionless bin/vis, so the launcher is the
     // supported path there; one npm row proves it installs and runs. An explicit request for another
     // manager there cannot be honoured, so it fails rather than passing with nothing run.
@@ -289,6 +325,12 @@ for (const name of requested) {
     }
 
     if (!manager.available()) {
+        // Found but unable to start (EACCES and the like) is a failure, whether or not it was requested.
+        if (probeFailure !== undefined) {
+            check(name, "package manager starts", false, `${probeFailure.code}: ${probeFailure.message}`);
+            continue;
+        }
+
         // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
         if (explicitlyRequested) {
             check(name, "requested package manager is available", false);
@@ -390,7 +432,8 @@ for (const name of requested) {
         if (!isWindows) {
             // Only "enabled" runs the install script that links the native executable.
             const native = mode === "enabled";
-            const linked = isNativeFile(join(directory, "node_modules", "@visulima", "vis", "bin", "vis"));
+            const linkedFile = join(directory, "node_modules", "@visulima", "vis", "bin", "vis");
+            const linked = existsSync(linkedFile) && isNativeFile(linkedFile);
 
             check(row, native ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === native);
 

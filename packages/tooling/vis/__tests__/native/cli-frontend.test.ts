@@ -39,8 +39,13 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
     });
 
     const launcherEnvironment = (extra: Record<string, string> = {}) => {
+        const inherited: NodeJS.ProcessEnv = { ...process.env };
+
+        // An ambient VIS_NODE (set when the suite runs under a vis hook) would flip the FALLBACK/VIA-BINARY marker.
+        delete inherited.VIS_NODE;
+
         return {
-            ...process.env,
+            ...inherited,
             VIS_FALLBACK_ENTRY: fallbackStub,
             VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub,
             VIS_NATIVE_BIN: binary as string,
@@ -206,7 +211,8 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
             // pnpm sets NODE_PATH to the workspace's hoisted node_modules, which holds the real platform
             // package: without this the copy resolves it through the Node fallback paths.
             delete environment.NODE_PATH;
-            const result = spawnSync(process.execPath, [join(bareRoot, "bin", "vis.mjs"), "--help"], { encoding: "utf8", env: environment });
+            // The published `bin/vis` placeholder, which imports the launcher, is what a user runs.
+            const result = spawnSync(process.execPath, [join(bareRoot, "bin", "vis"), "--help"], { encoding: "utf8", env: environment });
 
             expect(result.stdout).toContain("FALLBACK:--help");
             expect(result.status).toBe(5);

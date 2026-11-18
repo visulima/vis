@@ -19,6 +19,7 @@ on: # yamllint disable-line rule:truthy
         paths:
             - "packages/tooling/vis/bin/**"
             - "packages/tooling/vis/npm/**"
+            - "packages/tooling/vis/index.js"
             - "packages/tooling/vis/package.json"
             - "packages/tooling/vis/scripts/install-native.cjs"
             - "packages/tooling/vis/scripts/install-smoke.mjs"
@@ -28,6 +29,8 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/vis-mcp/**"
             - ".github/actions/wait-for-native-build/**"
             - ".github/actions/native-release-artifacts/**"
+            - ".github/actions/native-test-artifacts/**"
+            - ".github/workflows/build-native.yml"
             - ".github/workflows/install-smoke.yml"
     push:
         branches:
@@ -35,6 +38,7 @@ on: # yamllint disable-line rule:truthy
         paths:
             - "packages/tooling/vis/bin/**"
             - "packages/tooling/vis/npm/**"
+            - "packages/tooling/vis/index.js"
             - "packages/tooling/vis/package.json"
             - "packages/tooling/vis/scripts/install-native.cjs"
             - "packages/tooling/vis/scripts/install-smoke.mjs"
@@ -44,6 +48,8 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/vis-mcp/**"
             - ".github/actions/wait-for-native-build/**"
             - ".github/actions/native-release-artifacts/**"
+            - ".github/actions/native-test-artifacts/**"
+            - ".github/workflows/build-native.yml"
             - ".github/workflows/install-smoke.yml"
 
 concurrency:

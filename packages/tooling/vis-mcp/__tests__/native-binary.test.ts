@@ -36,11 +36,29 @@ describe(isNativeExecutable, () => {
         ["Mach-O 32-bit big endian", [0xfe, 0xed, 0xfa, 0xce]],
         ["Mach-O 64-bit big endian", [0xfe, 0xed, 0xfa, 0xcf]],
         ["Mach-O universal", [0xca, 0xfe, 0xba, 0xbe]],
-        ["PE", [0x4d, 0x5a, 0x90, 0x00]],
     ])("should detect %s binaries", (name, bytes) => {
         expect.assertions(1);
 
         expect(isNativeExecutable(write(`bin-${name}`, Buffer.from(bytes)))).toBe(true);
+    });
+
+    it("should detect PE binaries by the signature at the offset stored in the DOS header", () => {
+        expect.assertions(1);
+
+        // A DOS stub whose e_lfanew (0x3C) points at the "PE\0\0" signature that follows it.
+        const image = Buffer.alloc(0x44);
+
+        image.write("MZ", 0, "ascii");
+        image.writeUInt32LE(0x40, 0x3c);
+        image.write("PE\0\0", 0x40, "binary");
+
+        expect(isNativeExecutable(write("bin-PE", image))).toBe(true);
+    });
+
+    it("should not treat a bare MZ header as a PE binary", () => {
+        expect.assertions(1);
+
+        expect(isNativeExecutable(write("bin-MZ-only", Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00])))).toBe(false);
     });
 
     it("should not treat a node script as native", () => {
