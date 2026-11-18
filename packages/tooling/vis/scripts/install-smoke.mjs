@@ -6,7 +6,8 @@
 //
 // Needs `dist/` built and the host platform package laid out with its
 // `vis-native-cli` and `.node` files (what the release job produces). A package
-// manager that is not available is reported as NOT RUN, never skipped silently.
+// manager that is not available is reported as NOT RUN, never skipped silently; when `--pm` names
+// it, its absence also fails the run.
 // Each package manager is installed twice: with install scripts allowed (the
 // binary must be linked at `bin/vis`, `doctor` reports the native path) and with
 // them disabled (the Node launcher must still work, `doctor` reports the slower
@@ -31,11 +32,9 @@ const PNPM = "pnpm@12.21.0";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-const requested = (() => {
-    const index = process.argv.indexOf("--pm");
-
-    return index === -1 ? ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"] : process.argv[index + 1].split(",");
-})();
+const pmFlag = process.argv.indexOf("--pm");
+const explicitlyRequested = pmFlag !== -1;
+const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
 
 const failures = [];
 const report = [];
@@ -237,6 +236,11 @@ for (const name of requested) {
 
     // Windows: the generated .cmd shim cannot exec the extensionless bin/vis, so the launcher is the
     // supported path there; one npm row proves it installs and runs.
+    if (!manager.available() && explicitlyRequested && !(isWindows && name !== "npm")) {
+        // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
+        check(name, "requested package manager is available", false);
+    }
+
     if (!manager.available() || (isWindows && name !== "npm")) {
         rows.push(`${name}: NOT RUN (${manager.available() ? "windows runs npm only" : "not available on this machine"})`);
         continue;
