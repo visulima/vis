@@ -38,6 +38,7 @@ mod pm_shim;
 mod surface;
 mod table;
 mod term;
+mod vis_config;
 mod width_tables;
 mod x;
 

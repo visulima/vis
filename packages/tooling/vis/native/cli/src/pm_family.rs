@@ -131,13 +131,13 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
 pub fn run(verb: &str, full_args: &[String]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    // vis.config can pin `install.backend` (e.g. aube) / `runtime`, which the
+    // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
     // native PM detector doesn't read. For these PM commands — especially the
     // mutating ones (remove/dedupe/link/unlink) — running the wrong PM is
-    // consequential, so when a vis.config is present we delegate to Node to honor
-    // the pinned backend. (exec/x make the opposite, documented cold-start
-    // trade-off; the pm family is marginal-value, so correctness wins here.)
-    if has_vis_config(&cwd) {
+    // consequential, so a config that may pin them is left to Node. A config that is
+    // plain data without those keys is read here and the command stays native.
+    // (exec/x make the opposite, documented cold-start trade-off.)
+    if crate::vis_config::requires_node(&crate::vis_config::read(&cwd)) {
         crate::delegate(full_args);
     }
 
