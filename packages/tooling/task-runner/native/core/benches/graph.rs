@@ -2,11 +2,11 @@
 //!
 //! Counterpart to nubjs/nub#17's `workspace/build_dep_graph` +
 //! `workspace/topological_chunks` criterion benches, pointed at OUR graph code
-//! (`src/graph.rs`). These run the pure Rust functions directly, so they measure
+//! (`core/src/graph.rs`). These run the pure Rust functions directly, so they measure
 //! the algorithm — not the Node-boot floor that the hyperfine/vitest harness in
 //! `packages/tooling/vis/__bench__` is bound by.
 //!
-//! Run: `cargo bench -p task-runner-native --bench graph`
+//! Run: `cargo bench -p task-runner-core --bench graph`
 //!
 //! The bench structure (synthetic DAG + topological-sort/cycle sweep) is adapted
 //! from nub, under the following license:
@@ -20,13 +20,13 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use task_runner_native::{find_all_cycles, get_transitive_deps, topological_sort, NativeTaskGraph};
+use task_runner_core::{find_all_cycles, get_transitive_deps, topological_sort, TaskGraph};
 
 /// Builds a synthetic layered DAG: `layers` layers of `width` nodes each, every
 /// node depending on every node in the previous layer. Acyclic by construction,
 /// so `topological_sort` always succeeds. `200` total nodes is the size nub
 /// benches at; we sweep a couple of sizes to expose super-linear behaviour.
-fn layered_dag(layers: usize, width: usize) -> NativeTaskGraph {
+fn layered_dag(layers: usize, width: usize) -> TaskGraph {
     let mut task_ids = Vec::with_capacity(layers * width);
     for layer in 0..layers {
         for node in 0..width {
@@ -45,7 +45,7 @@ fn layered_dag(layers: usize, width: usize) -> NativeTaskGraph {
         }
     }
 
-    NativeTaskGraph { task_ids, edges }
+    TaskGraph { task_ids, edges }
 }
 
 fn bench_topological_sort(c: &mut Criterion) {
@@ -56,12 +56,7 @@ fn bench_topological_sort(c: &mut Criterion) {
         let graph = layered_dag(layers, width);
         let nodes = layers * width;
         group.bench_with_input(BenchmarkId::from_parameter(nodes), &graph, |b, g| {
-            // Clone per iteration: topological_sort takes the graph by value.
-            b.iter_batched(
-                || clone_graph(g),
-                |g| black_box(topological_sort(g).unwrap()),
-                criterion::BatchSize::SmallInput,
-            );
+            b.iter(|| black_box(topological_sort(g).unwrap()));
         });
     }
     group.finish();
@@ -70,7 +65,7 @@ fn bench_topological_sort(c: &mut Criterion) {
 fn bench_find_all_cycles(c: &mut Criterion) {
     let graph = layered_dag(10, 20);
     c.bench_function("graph/find_all_cycles/200", |b| {
-        b.iter_batched(|| clone_graph(&graph), |g| black_box(find_all_cycles(g)), criterion::BatchSize::SmallInput);
+        b.iter(|| black_box(find_all_cycles(&graph)));
     });
 }
 
@@ -78,18 +73,8 @@ fn bench_transitive_deps(c: &mut Criterion) {
     let graph = layered_dag(10, 20);
     let root = graph.task_ids[0].clone();
     c.bench_function("graph/get_transitive_deps/200", |b| {
-        b.iter_batched(
-            || (clone_graph(&graph), root.clone()),
-            |(g, id)| black_box(get_transitive_deps(g, id)),
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| black_box(get_transitive_deps(&graph, &root)));
     });
-}
-
-/// `NativeTaskGraph` is a plain `#[napi(object)]` struct (no `Clone` derive), so
-/// rebuild it by hand for each batched iteration.
-fn clone_graph(g: &NativeTaskGraph) -> NativeTaskGraph {
-    NativeTaskGraph { task_ids: g.task_ids.clone(), edges: g.edges.clone() }
 }
 
 criterion_group!(benches, bench_topological_sort, bench_find_all_cycles, bench_transitive_deps);

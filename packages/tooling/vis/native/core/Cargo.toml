@@ -1,11 +1,7 @@
-# Shared pure logic for the vis native front-end. This crate holds the
-# package-manager detection + command-resolution logic the CLI binary needs,
-# ported faithfully (de-napi'd) from the addon's pm_detect.rs / pm_resolve.rs.
-#
-# It is a COPY, not an extraction: the addon keeps its own `#[napi]` copies
-# because the addon can't be rebuilt/verified in every environment (oxc needs a
-# newer toolchain). When the addon builds cleanly everywhere, the addon's napi
-# wrappers should be re-pointed at this crate to collapse the duplication.
+# Shared pure logic for the vis native front-end: package-manager detection and
+# command resolution. The `vis` CLI binary depends on this crate directly, and
+# the `vis-native` napi addon wraps it (`src/pm_detect.rs`, `src/pm_resolve.rs`),
+# so there is one implementation of each.
 #
 # Pure std + serde_json only — no napi, so the lean CLI build stays fast.
 [package]
@@ -20,3 +16,10 @@ crate-type = [ "rlib" ]
 
 [dependencies]
 serde_json = "1"
+
+# Proves the engine crates of the other native packages link into the CLI's
+# napi-free dependency graph (see tests/engines.rs). Dev-only: the `vis` binary does
+# not depend on them yet.
+[dev-dependencies]
+secret-scanner-core = { path = "../../../secret-scanner/native/core" }
+task-runner-core = { path = "../../../task-runner/native/core" }

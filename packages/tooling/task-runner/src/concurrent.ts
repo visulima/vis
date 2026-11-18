@@ -43,7 +43,7 @@ const killTrackedTree = (pid: number, signal: NodeJS.Signals): void => {
             spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
         } else {
             // Children are spawned in their own process group via setsid
-            // (see native/src/concurrent/process_group.rs), so signalling
+            // (see native/core/src/concurrent/process_group.rs), so signalling
             // -pid hits the whole group in one syscall.
             process.kill(-pid, signal);
         }

@@ -166,7 +166,6 @@ pub fn query<P: AsRef<Path>>(db_path: P, queries: &[QueryInput]) -> Result<Vec<A
 mod tests {
     use super::*;
     use crate::advisories::schema::ensure_schema;
-    use rusqlite::params;
 
     fn seed_db(path: &std::path::Path) {
         let conn = Connection::open(path).unwrap();

@@ -3,7 +3,7 @@
 // without a filesystem or network.
 
 // Kingfisher confidence is a quality signal; we mirror it onto `priority` so the
-// existing span-based dedup in `native/src/lib.rs` naturally prefers higher-confidence
+// existing span-based dedup in `native/core/src/finalize.rs` naturally prefers higher-confidence
 // rules when both gitleaks + kingfisher cover the same span. Preserves the string
 // value on `confidence` for user-facing filtering.
 export const CONFIDENCE_PRIORITY = { high: 2, low: 0, medium: 1 };

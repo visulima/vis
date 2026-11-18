@@ -143,7 +143,7 @@ jobs:
                   path: |
                       packages/tooling/task-runner/*.node
                       packages/tooling/task-runner/npm/linux-*/fspy-seccomp-helper
-                  key: "native-task-runner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/task-runner/native/Cargo.toml', 'packages/tooling/task-runner/native/Cargo.lock', 'packages/tooling/task-runner/native/build.rs', 'packages/tooling/task-runner/native/src/**', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.toml', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.lock', 'packages/tooling/task-runner/native/fspy_seccomp/src/**') }}"
+                  key: "native-task-runner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/task-runner/native/Cargo.toml', 'packages/tooling/task-runner/native/Cargo.lock', 'packages/tooling/task-runner/native/build.rs', 'packages/tooling/task-runner/native/src/**', 'packages/tooling/task-runner/native/core/**', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.toml', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.lock', 'packages/tooling/task-runner/native/fspy_seccomp/src/**') }}"
 
             - name: "Restore tui native build cache"
               id: "cache-tui"
@@ -162,14 +162,14 @@ jobs:
                       packages/tooling/vis/*.node
                       packages/tooling/vis/npm/*/vis-native-cli
                       packages/tooling/vis/npm/*/vis-native-cli.exe
-                  key: "native-vis-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/vis/native/Cargo.toml', 'packages/tooling/vis/native/Cargo.lock', 'packages/tooling/vis/native/build.rs', 'packages/tooling/vis/native/src/**', 'packages/tooling/vis/native/cli/**') }}"
+                  key: "native-vis-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/vis/native/Cargo.toml', 'packages/tooling/vis/native/Cargo.lock', 'packages/tooling/vis/native/build.rs', 'packages/tooling/vis/native/src/**', 'packages/tooling/vis/native/cli/**', 'packages/tooling/vis/native/core/**') }}"
 
             - name: "Restore secret-scanner native build cache"
               id: "cache-secret-scanner"
               uses: "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
               with:
                   path: "packages/tooling/secret-scanner/*.node"
-                  key: "native-secret-scanner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/secret-scanner/native/Cargo.toml', 'packages/tooling/secret-scanner/native/Cargo.lock', 'packages/tooling/secret-scanner/native/build.rs', 'packages/tooling/secret-scanner/native/src/**') }}"
+                  key: "native-secret-scanner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/secret-scanner/native/Cargo.toml', 'packages/tooling/secret-scanner/native/Cargo.lock', 'packages/tooling/secret-scanner/native/build.rs', 'packages/tooling/secret-scanner/native/src/**', 'packages/tooling/secret-scanner/native/core/**') }}"
 
             # Determine if any package actually needs building (not all cached)
             # A skipped cache step (package unchanged) has outcome='skipped' and empty cache-hit,

@@ -586,7 +586,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "secret-scanner-native"
+name = "secret-scanner-core"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
@@ -595,9 +595,6 @@ dependencies = [
  "flate2",
  "ignore",
  "memmap2",
- "napi",
- "napi-build",
- "napi-derive",
  "once_cell",
  "rayon",
  "regex",
@@ -606,9 +603,20 @@ dependencies = [
  "serde_json",
  "tar",
  "thiserror",
- "tokio",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "secret-scanner-native"
+version = "0.1.0"
+dependencies = [
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "secret-scanner-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

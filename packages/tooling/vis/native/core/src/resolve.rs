@@ -1,9 +1,10 @@
-//! Package-manager command resolution. De-napi'd copy of the relevant slice of
-//! the addon's `native/src/pm_resolve.rs` — ⚠️ KEEP IN SYNC: any fix to a
-//! `resolve_*` body, flag mapping, warning, or PM version branch must be mirrored
-//! in BOTH files (the addon needs a newer toolchain than this stable-Rust crate,
-//! so they can't yet share one crate). Each `resolve_*` maps a vis verb + the
+//! Package-manager command resolution. Each `resolve_*` maps a vis verb + the
 //! detected PM/version + options to the concrete `{bin, args}` to spawn.
+//!
+//! This is the single implementation: the `vis` CLI binary calls it directly and
+//! the napi addon's `pm_resolve.rs` wraps it (converting its JS option objects
+//! into these types), so a fix to a flag mapping, warning, or PM version branch
+//! lands in one place.
 
 /// The resolved command to spawn, plus any non-fatal warnings to surface.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,8 +22,8 @@ fn validate_pm(pm: &str) -> Result<(), String> {
     }
 }
 
-/// Options for `resolve_exec`, mirroring the addon's `ExecOptions`.
-#[derive(Default)]
+/// Options for `resolve_exec`.
+#[derive(Clone, Debug, Default)]
 pub struct ExecOptions {
     pub command: String,
     pub args: Vec<String>,
@@ -34,8 +35,7 @@ pub struct ExecOptions {
     pub filter: Vec<String>,
 }
 
-/// Resolve `vis exec <command>` to the PM-specific invocation. Faithful copy of
-/// the addon's `resolve_exec`.
+/// Resolve `vis exec <command>` to the PM-specific invocation.
 pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -133,9 +133,8 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
     Ok(ResolvedCommand { bin, args, warnings })
 }
 
-/// Resolve `vis pm <subcommand> [args]` to the PM-specific invocation. Faithful
-/// copy of the addon's `resolve_pm_command` (per-PM mapping for cache/list/pack/
-/// view + npm-only verbs, with a default pass-through).
+/// Resolve `vis pm <subcommand> [args]` to the PM-specific invocation (per-PM
+/// mapping for cache/list/pack/view + npm-only verbs, with a default pass-through).
 pub fn resolve_pm_command(
     pm: &str,
     version: &str,
@@ -302,8 +301,8 @@ fn is_path_like(target: &str) -> bool {
             && (target.as_bytes()[2] == b'/' || target.as_bytes()[2] == b'\\'))
 }
 
-/// Options for `resolve_remove` (mirrors the addon's `RemoveOptions`).
-#[derive(Default)]
+/// Options for `resolve_remove`.
+#[derive(Clone, Debug, Default)]
 pub struct RemoveOptions {
     pub packages: Vec<String>,
     pub save_dev: bool,
@@ -313,7 +312,7 @@ pub struct RemoveOptions {
     pub filter: Vec<String>,
 }
 
-/// Resolve `vis remove <packages>`. Faithful copy of the addon's `resolve_remove`.
+/// Resolve `vis remove <packages>`.
 pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -420,7 +419,7 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
-/// Resolve `vis dedupe`. Faithful copy of the addon's `resolve_dedupe`.
+/// Resolve `vis dedupe`.
 pub fn resolve_dedupe(pm: &str, version: &str, check: bool) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -466,7 +465,7 @@ pub fn resolve_dedupe(pm: &str, version: &str, check: bool) -> Result<ResolvedCo
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
-/// Resolve `vis link [target]`. Faithful copy of the addon's `resolve_link`.
+/// Resolve `vis link [target]`.
 pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -506,7 +505,7 @@ pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<R
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
-/// Resolve `vis unlink <packages>`. Faithful copy of the addon's `resolve_unlink`.
+/// Resolve `vis unlink <packages>`.
 pub fn resolve_unlink(
     pm: &str,
     version: &str,
@@ -563,8 +562,8 @@ pub fn resolve_unlink(
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
-/// Options for `resolve_outdated` (mirrors the addon's `OutdatedOptions`).
-#[derive(Default)]
+/// Options for `resolve_outdated`.
+#[derive(Clone, Debug, Default)]
 pub struct OutdatedOptions {
     pub packages: Vec<String>,
     pub long: bool,
@@ -579,7 +578,7 @@ pub struct OutdatedOptions {
     pub global: bool,
 }
 
-/// Resolve `vis outdated`. Faithful copy of the addon's `resolve_outdated`.
+/// Resolve `vis outdated`.
 pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -690,8 +689,8 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
-/// Options for `resolve_why` (mirrors the addon's `WhyOptions`).
-#[derive(Default)]
+/// Options for `resolve_why`.
+#[derive(Clone, Debug, Default)]
 pub struct WhyOptions {
     pub packages: Vec<String>,
     pub json: bool,
@@ -706,7 +705,7 @@ pub struct WhyOptions {
     pub filter: Vec<String>,
 }
 
-/// Resolve `vis why <packages>`. Faithful copy of the addon's `resolve_why`.
+/// Resolve `vis why <packages>`.
 pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -818,11 +817,448 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
 }
 
+/// Options for `resolve_install`.
+#[derive(Clone, Debug, Default)]
+pub struct InstallOptions {
+    pub frozen_lockfile: bool,
+    pub prod: bool,
+    pub dev: bool,
+    pub no_optional: bool,
+    pub force: bool,
+    pub ignore_scripts: bool,
+    pub lockfile_only: bool,
+    pub offline: bool,
+    pub silent: bool,
+    pub recursive: bool,
+    pub workspace_root: bool,
+    pub filter: Vec<String>,
+}
+
+/// Resolve `vis install`.
+pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<ResolvedCommand, String> {
+    validate_pm(pm)?;
+    let mut args = Vec::new();
+    let mut warnings = Vec::new();
+
+    match pm {
+        "pnpm" => {
+            for f in &opts.filter {
+                args.push("--filter".into());
+                args.push(f.clone());
+            }
+            if opts.workspace_root {
+                args.push("-w".into());
+            }
+            args.push("install".into());
+            if opts.frozen_lockfile {
+                args.push("--frozen-lockfile".into());
+            }
+            if opts.prod {
+                args.push("--prod".into());
+            }
+            if opts.dev {
+                args.push("--dev".into());
+            }
+            if opts.no_optional {
+                args.push("--no-optional".into());
+            }
+            if opts.force {
+                args.push("--force".into());
+            }
+            if opts.ignore_scripts {
+                args.push("--ignore-scripts".into());
+            }
+            if opts.lockfile_only {
+                args.push("--lockfile-only".into());
+            }
+            if opts.offline {
+                args.push("--offline".into());
+            }
+            if opts.silent {
+                args.push("--silent".into());
+            }
+        }
+        "npm" => {
+            if opts.frozen_lockfile && opts.lockfile_only {
+                warnings.push("npm ci and --package-lock-only are contradictory. Using ci.".into());
+            }
+            args.push(if opts.frozen_lockfile { "ci".into() } else { "install".into() });
+            if opts.prod {
+                args.push("--omit=dev".into());
+            }
+            if opts.no_optional {
+                args.push("--omit=optional".into());
+            }
+            for f in &opts.filter {
+                args.push("--workspace".into());
+                args.push(f.clone());
+            }
+            if opts.recursive {
+                args.push("--workspaces".into());
+            }
+            if opts.workspace_root {
+                args.push("--include-workspace-root".into());
+            }
+            if opts.ignore_scripts {
+                args.push("--ignore-scripts".into());
+            }
+            if opts.force {
+                args.push("--force".into());
+            }
+            if !opts.frozen_lockfile && opts.lockfile_only {
+                args.push("--package-lock-only".into());
+            }
+            if opts.offline {
+                args.push("--offline".into());
+            }
+            if opts.silent {
+                args.push("--loglevel".into());
+                args.push("silent".into());
+            }
+        }
+        "yarn" => {
+            if version.starts_with("1.") {
+                args.push("install".into());
+                if opts.frozen_lockfile {
+                    args.push("--frozen-lockfile".into());
+                }
+                if opts.prod {
+                    args.push("--production".into());
+                }
+                if opts.ignore_scripts {
+                    args.push("--ignore-scripts".into());
+                }
+                if opts.force {
+                    args.push("--force".into());
+                }
+                if opts.offline {
+                    args.push("--offline".into());
+                }
+                if opts.silent {
+                    args.push("--silent".into());
+                }
+            } else {
+                args.push("install".into());
+                if opts.frozen_lockfile {
+                    args.push("--immutable".into());
+                }
+                if opts.ignore_scripts {
+                    args.push("--mode".into());
+                    args.push("skip-build".into());
+                }
+                if opts.lockfile_only {
+                    args.push("--mode".into());
+                    args.push("update-lockfile".into());
+                }
+                if opts.prod {
+                    warnings.push("yarn berry --prod requires .yarnrc.yml configuration.".into());
+                }
+                if opts.offline {
+                    args.push("--cached".into());
+                }
+            }
+        }
+        "bun" => {
+            args.push("install".into());
+            if opts.frozen_lockfile {
+                args.push("--frozen-lockfile".into());
+            }
+            if opts.prod {
+                args.push("--production".into());
+            }
+            if opts.force {
+                args.push("--force".into());
+            }
+            if opts.ignore_scripts {
+                args.push("--ignore-scripts".into());
+            }
+            if opts.no_optional {
+                args.push("--no-optional".into());
+            }
+        }
+        _ => unreachable!(), // validate_pm already checked
+    }
+
+    Ok(ResolvedCommand { bin: pm.to_owned(), args, warnings })
+}
+
+/// Options for `resolve_add`.
+#[derive(Clone, Debug, Default)]
+pub struct AddOptions {
+    pub packages: Vec<String>,
+    pub save_dev: bool,
+    pub exact: bool,
+    pub peer: bool,
+    pub optional: bool,
+    pub global: bool,
+    pub workspace: bool,
+    pub workspace_root: bool,
+    pub filter: Vec<String>,
+}
+
+/// Resolve `vis add`.
+pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, String> {
+    validate_pm(pm)?;
+    let mut args = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Global packages use npm exclusively (except bun, which ships a
+    // native global-install path).
+    if opts.global && pm != "bun" {
+        args.push("install".into());
+        args.push("--global".into());
+        if opts.save_dev {
+            args.push("--save-dev".into());
+        }
+        if opts.exact {
+            args.push("--save-exact".into());
+        }
+        args.extend(opts.packages);
+        return Ok(ResolvedCommand { bin: "npm".into(), args, warnings });
+    }
+
+    match pm {
+        "pnpm" => {
+            for f in &opts.filter {
+                args.push("--filter".into());
+                args.push(f.clone());
+            }
+            if opts.workspace_root {
+                args.push("-w".into());
+            }
+            args.push("add".into());
+            if opts.save_dev {
+                args.push("-D".into());
+            }
+            if opts.exact {
+                args.push("-E".into());
+            }
+            if opts.peer {
+                args.push("--save-peer".into());
+            }
+            if opts.optional {
+                args.push("-O".into());
+            }
+            if opts.global {
+                args.push("-g".into());
+            }
+            if opts.workspace {
+                args.push("--workspace".into());
+            }
+            args.extend(opts.packages);
+        }
+        "npm" => {
+            args.push("install".into());
+            if opts.save_dev {
+                args.push("--save-dev".into());
+            }
+            if opts.exact {
+                args.push("--save-exact".into());
+            }
+            if opts.peer {
+                args.push("--save-peer".into());
+            }
+            if opts.optional {
+                args.push("--save-optional".into());
+            }
+            if opts.global {
+                args.push("--global".into());
+            }
+            for f in &opts.filter {
+                args.push("--workspace".into());
+                args.push(f.clone());
+            }
+            if opts.workspace_root {
+                args.push("-w".into());
+            }
+            args.extend(opts.packages);
+        }
+        "yarn" => {
+            if version.starts_with("1.") {
+                if opts.global {
+                    args.push("global".into());
+                }
+                if !opts.filter.is_empty() {
+                    args.push("workspace".into());
+                    args.push(opts.filter[0].clone());
+                }
+                args.push("add".into());
+                if opts.save_dev {
+                    args.push("--dev".into());
+                }
+                if opts.exact {
+                    args.push("--exact".into());
+                }
+                if opts.peer {
+                    args.push("--peer".into());
+                }
+                if opts.optional {
+                    args.push("--optional".into());
+                }
+                if opts.workspace_root {
+                    args.push("-W".into());
+                }
+                args.extend(opts.packages);
+            } else {
+                if opts.global {
+                    warnings.push("yarn berry does not support global packages. Using npm.".into());
+                    let mut a = vec!["install".into(), "--global".into()];
+                    a.extend(opts.packages);
+                    return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
+                }
+                args.push("add".into());
+                if opts.save_dev {
+                    args.push("--dev".into());
+                }
+                if opts.exact {
+                    args.push("--exact".into());
+                }
+                if opts.peer {
+                    args.push("--peer".into());
+                }
+                if opts.optional {
+                    args.push("--optional".into());
+                }
+                args.extend(opts.packages);
+            }
+        }
+        "bun" => {
+            args.push("add".into());
+            if opts.save_dev {
+                args.push("--dev".into());
+            }
+            if opts.exact {
+                args.push("--exact".into());
+            }
+            if opts.peer {
+                args.push("--peer".into());
+            }
+            if opts.optional {
+                args.push("--optional".into());
+            }
+            if opts.global {
+                args.push("--global".into());
+            }
+            args.extend(opts.packages);
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(ResolvedCommand { bin: pm.to_owned(), args, warnings })
+}
+
+/// Options for `resolve_dlx`.
+#[derive(Clone, Debug, Default)]
+pub struct DlxOptions {
+    pub package: String,
+    pub args: Vec<String>,
+    pub additional_packages: Vec<String>,
+    pub shell_mode: bool,
+    pub silent: bool,
+}
+
+/// Resolve `vis dlx`.
+pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
+    validate_pm(pm)?;
+    let mut args = Vec::new();
+    let mut warnings = Vec::new();
+    let mut bin = pm.to_owned();
+
+    match pm {
+        "pnpm" => {
+            args.push("dlx".into());
+            for pkg in &opts.additional_packages {
+                args.push("--package".into());
+                args.push(pkg.clone());
+            }
+            if opts.shell_mode {
+                args.push("-c".into());
+            }
+            if opts.silent {
+                args.push("--silent".into());
+            }
+            args.push(opts.package);
+            args.extend(opts.args);
+        }
+        "npm" => {
+            args.push("exec".into());
+            args.push("--yes".into());
+            for pkg in &opts.additional_packages {
+                args.push(format!("--package={pkg}"));
+            }
+            args.push(format!("--package={}", opts.package));
+            if opts.shell_mode {
+                args.push("-c".into());
+            }
+            if opts.silent {
+                args.push("--loglevel".into());
+                args.push("silent".into());
+            }
+            // Extract binary name: handle scoped packages like @scope/pkg@1.0
+            let without_version = opts
+                .package
+                .split('@')
+                .enumerate()
+                .take_while(|(i, _)| *i < 2) // keep @scope/pkg, drop @version
+                .map(|(_, s)| s)
+                .collect::<Vec<_>>()
+                .join("@");
+            let bin_name = without_version.rsplit('/').next().unwrap_or(&opts.package).to_string();
+            args.push("--".into());
+            args.push(if bin_name.is_empty() { opts.package.clone() } else { bin_name });
+            args.extend(opts.args);
+        }
+        "yarn" => {
+            if version.starts_with("1.") {
+                warnings.push("yarn v1 does not support dlx. Falling back to npx.".into());
+                bin = "npx".into();
+                args.push("--yes".into());
+                for pkg in &opts.additional_packages {
+                    args.push("--package".into());
+                    args.push(pkg.clone());
+                }
+                if opts.silent {
+                    args.push("--quiet".into());
+                }
+                args.push(opts.package);
+                args.extend(opts.args);
+            } else {
+                args.push("dlx".into());
+                for pkg in &opts.additional_packages {
+                    args.push("-p".into());
+                    args.push(pkg.clone());
+                }
+                if opts.shell_mode {
+                    warnings.push("yarn berry does not support shell mode for dlx.".into());
+                }
+                if opts.silent {
+                    args.push("--quiet".into());
+                }
+                args.push(opts.package);
+                args.extend(opts.args);
+            }
+        }
+        "bun" => {
+            args.push("x".into());
+            for pkg in &opts.additional_packages {
+                args.push("--package".into());
+                args.push(pkg.clone());
+            }
+            args.push(opts.package);
+            args.extend(opts.args);
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(ResolvedCommand { bin, args, warnings })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_dedupe, resolve_exec, resolve_link, resolve_outdated, resolve_pm_command, resolve_remove,
-        resolve_unlink, resolve_why, ExecOptions, OutdatedOptions, RemoveOptions, WhyOptions,
+        resolve_add, resolve_dedupe, resolve_dlx, resolve_exec, resolve_install, resolve_link, resolve_outdated,
+        resolve_pm_command, resolve_remove, resolve_unlink, resolve_why, AddOptions, DlxOptions, ExecOptions,
+        InstallOptions, OutdatedOptions, RemoveOptions, WhyOptions,
     };
 
     fn argv(list: &[&str]) -> Vec<String> {
@@ -977,5 +1413,74 @@ mod tests {
 
         assert_eq!(resolved.bin, "npm");
         assert_eq!(resolved.args, ["explain", "--json", "lodash"]);
+    }
+
+    #[test]
+    fn install_rejects_an_unknown_package_manager() {
+        let error = resolve_install("deno", "1.0.0", InstallOptions::default()).unwrap_err();
+
+        assert_eq!(error, "Unsupported package manager: 'deno'. Supported: pnpm, npm, yarn, bun");
+    }
+
+    #[test]
+    fn install_pnpm_frozen_lockfile() {
+        let opts = InstallOptions { frozen_lockfile: true, ..Default::default() };
+        let resolved = resolve_install("pnpm", "10.0.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "pnpm");
+        assert_eq!(resolved.args, ["install", "--frozen-lockfile"]);
+    }
+
+    #[test]
+    fn install_npm_frozen_lockfile_uses_ci() {
+        let opts = InstallOptions { frozen_lockfile: true, ..Default::default() };
+        let resolved = resolve_install("npm", "11.0.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "npm");
+        assert_eq!(resolved.args[0], "ci");
+    }
+
+    #[test]
+    fn add_pnpm_dev_dependency_with_filter_before_add() {
+        let opts =
+            AddOptions { packages: argv(&["react"]), save_dev: true, filter: argv(&["app"]), ..Default::default() };
+        let resolved = resolve_add("pnpm", "10.0.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "pnpm");
+        assert_eq!(resolved.args, ["--filter", "app", "add", "-D", "react"]);
+    }
+
+    #[test]
+    fn add_global_uses_npm_except_on_bun() {
+        let global = |pm: &str, version: &str| {
+            let opts = AddOptions { packages: argv(&["typescript"]), global: true, ..Default::default() };
+
+            resolve_add(pm, version, opts).unwrap()
+        };
+
+        let pnpm = global("pnpm", "10.0.0");
+
+        assert_eq!(pnpm.bin, "npm");
+        assert!(pnpm.args.contains(&"--global".to_owned()));
+        assert_eq!(global("bun", "1.0.0").bin, "bun");
+    }
+
+    #[test]
+    fn dlx_pnpm_and_bun() {
+        let opts = || DlxOptions { package: "create-vite".to_owned(), args: argv(&["my-app"]), ..Default::default() };
+
+        let pnpm = resolve_dlx("pnpm", "10.0.0", opts()).unwrap();
+        let bun = resolve_dlx("bun", "1.0.0", opts()).unwrap();
+
+        assert_eq!((pnpm.bin.as_str(), pnpm.args), ("pnpm", argv(&["dlx", "create-vite", "my-app"])));
+        assert_eq!((bun.bin.as_str(), bun.args[0].as_str()), ("bun", "x"));
+    }
+
+    #[test]
+    fn dlx_yarn_v1_falls_back_to_npx() {
+        let opts = DlxOptions { package: "create-vite".to_owned(), ..Default::default() };
+        let resolved = resolve_dlx("yarn", "1.22.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "npx");
     }
 }

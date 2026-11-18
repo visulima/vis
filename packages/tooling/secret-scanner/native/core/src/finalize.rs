@@ -1,13 +1,13 @@
-// Turns raw detector findings into the NAPI report: path relativisation, span dedup,
+// Turns raw detector findings into the scan report: path relativisation, span dedup,
 // stable ordering, redaction.
 
 use std::path::PathBuf;
 
 use crate::detector::RawFinding;
 use crate::skip::Skipped;
-use crate::{Finding, RequiredFinding, ScanReport, SkippedFile};
+use crate::types::{Finding, RequiredFinding, ScanReport, SkippedFile};
 
-/// Build the NAPI report: finalize findings, rewrite skipped paths like findings. `roots`
+/// Build the report: finalize findings, rewrite skipped paths like findings. `roots`
 /// are the scan roots that paths are made relative to; an in-memory scan passes `&[]` and
 /// keeps its paths as given.
 pub fn build_report(
@@ -29,13 +29,13 @@ pub fn build_report(
 
     let (active, suppressed) = finalize_findings(findings, &canon_roots);
     ScanReport {
-        findings: active.into_iter().map(|f| to_napi_finding(f, redact_secrets)).collect(),
+        findings: active.into_iter().map(|f| to_finding(f, redact_secrets)).collect(),
         // Every finding of the suppressed group carries its reason.
         suppressed: suppressed
             .into_iter()
             .filter_map(|f| {
                 let reason = f.suppressed_by?;
-                Some(to_napi_finding(f, redact_secrets).suppressed(reason))
+                Some(to_finding(f, redact_secrets).suppressed(reason))
             })
             .collect(),
         skipped,
@@ -188,7 +188,7 @@ fn redact(s: &str) -> String {
     out
 }
 
-fn to_napi_finding(f: RawFinding, redact_secrets: bool) -> Finding {
+fn to_finding(f: RawFinding, redact_secrets: bool) -> Finding {
     Finding {
         rule_id: f.rule_id,
         description: f.description,
