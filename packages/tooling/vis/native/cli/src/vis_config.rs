@@ -33,11 +33,8 @@ const NAMES: [&str; 7] = [
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigState {
-    /// No config file applies to the directory.
     Absent,
-    /// The config is plain data, read without running it.
     Static(Value),
-    /// The config exists but needs evaluation, or cannot be read as data.
     Dynamic,
 }
 
