@@ -1,0 +1,106 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32minstall[39m [positional arguments] [options] 
+
+[1mAlias(es)[22m
+
+    i 
+
+[1m[7m[32m Description [39m[27m[22m
+
+    Install dependencies using the detected package manager 
+
+[1mCommand Positional Arguments[22m
+
+  [1mpackages[22m        Optional package names. When provided, delegates to `vis add` (enables npm-style `alias npm='vis      
+  [4mstring[24m          install'` wrappers).                                                                                  
+
+[1m[7m[33m Command Options [39m[27m[22m
+
+  [1m[33m--ci[39m[22m [4mboolean[24m         Clean install: wipe node_modules then install with frozen lockfile                               
+  [1m-D[22m, [1m[33m--dev[39m[22m [4mboolean[24m    Install devDependencies only (no positional args) / add as dev (with positional args, npm-style) 
+  [1m-E[22m, [1m[33m--exact[39m[22m          Save exact version (only with positional args; mirrors `npm install -E`)                         
+  [4mboolean[24m                                                                                                               
+  [1m-F[22m, [1m[33m--filter[39m[22m         Filter by workspace package name                                                                 
+  [4mstring[][24m                                                                                                              
+  [1m-f[22m, [1m[33m--force[39m[22m          Force reinstall all dependencies                                                                 
+  [4mboolean[24m                                                                                                               
+  [1m[33m--frozen-lockfile[39m[22m    Use frozen lockfile (CI mode, maps to npm ci)                                                    
+  [4mboolean[24m                                                                                                               
+  [1m[33m--installer[39m[22m [4mstring[24m   Pick the installer explicitly. One of: auto, aube, pnpm, npm, yarn, bun. Overrides VIS_INSTALLER 
+                       and install.backend in vis.config.                                                               
+  [1m[33m--lockfile-only[39m[22m      Update lockfile without installing                                                               
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-aube[39m[22m [4mboolean[24m    Skip aube and use the lockfile-detected PM. Wins over --installer / VIS_INSTALLER /              
+                       install.backend.                                                                                 
+  [1m[33m--no-frozen-lockfile[39m[22m   Opt out of vis's default frozen-lockfile behavior and allow lockfile updates                     
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-marshall-check[39m[22m   Skip the offline marshall pipeline (only with positional args; mirrors `vis add                  
+  [4mboolean[24m              --no-marshall-check`)                                                                            
+  [1m[33m--no-optional[39m[22m        Skip optional dependencies                                                                       
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-socket-check[39m[22m    Skip Socket.dev security check (only with positional args; mirrors `vis add --no-socket-check`)  
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-typosquat-check[39m[22m   Skip typosquat name check                                                                        
+  [4mboolean[24m                                                                                                               
+  [1m[33m--offline[39m[22m [4mboolean[24m    Use only cached packages                                                                         
+  [1m[33m--prefer-offline[39m[22m     Prefer cached packages, fall back to network when missing                                        
+  [4mboolean[24m                                                                                                               
+  [1m-P[22m, [1m[33m--prod[39m[22m [4mboolean[24m   Skip devDependencies (no positional args) / add as peer (with positional args, npm-style)        
+  [1m-r[22m, [1m[33m--recursive[39m[22m      Install in all workspace packages                                                                
+  [4mboolean[24m                                                                                                               
+  [1m[33m--run-scripts[39m[22m        Run lifecycle scripts (opts out of vis's default block-by-default policy; allowlisted packages   
+  [4mboolean[24m              run via security.policies.installScripts.allow)                                                  
+  [1m[33m--save-optional[39m[22m      Add as optional dependency (only with positional args; mirrors `npm install -O`)                 
+  [4mboolean[24m                                                                                                               
+  [1m-s[22m, [1m[33m--silent[39m[22m         Suppress output                                                                                  
+  [4mboolean[24m                                                                                                               
+  [1m-w[22m,                  Target workspace root                                                                            
+  [1m[33m--workspace-root[39m[22m                                                                                                      
+  [4mboolean[24m                                                                                                               
+  [1m[33m--aube[39m[22m [4mboolean[24m       Inverse of --no-aube.                                                                            
+  [1m[33m--marshall-check[39m[22m     Inverse of --no-marshall-check.                                                                  
+  [4mboolean[24m                                                                                                               
+  [1m[33m--optional[39m[22m [4mboolean[24m   Inverse of --no-optional.                                                                        
+  [1m[33m--socket-check[39m[22m       Inverse of --no-socket-check.                                                                    
+  [4mboolean[24m                                                                                                               
+  [1m[33m--typosquat-check[39m[22m    Inverse of --no-typosquat-check.                                                                 
+  [4mboolean[24m                                                                                                               
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m, [1m[33m--verbose[39m[22m        Turn on verbose output                                                                           
+  [4mboolean[24m                                                                                                               
+  [1m[33m--debug[39m[22m [4mboolean[24m      Turn on debugging output                                                                         
+  [1m-h[22m, [1m[33m--help[39m[22m [4mboolean[24m   Print out helpful usage information                                                              
+  [1m-q[22m, [1m[33m--quiet[39m[22m          Silence output                                                                                   
+  [4mboolean[24m                                                                                                               
+  [1m-V[22m, [1m[33m--version[39m[22m        Print version info                                                                               
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-color[39m[22m [4mboolean[24m   Turn off colored output                                                                          
+  [1m[33m--color[39m[22m [4mboolean[24m      Force colored output                                                                             
+  [1m[33m--cwd[39m[22m [4mstring[24m         Override workspace root directory                                                                
+  [1m[33m--runtime[39m[22m [4mstring[24m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME and config; falls back to        
+                       lockfile detection.                                                                              
+  [1m[33m--config[39m[22m [4mstring[24m      Path to a vis config file (overrides discovery)                                                  
+  [1m[33m--ca-cert[39m[22m [4mstring[24m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate proxies. Equivalent to             
+                       NODE_EXTRA_CA_CERTS.                                                                             
+
+[1mExamples[22m
+
+    vis install                          Install all dependencies (frozen-lockfile by default when a lockfile is        
+                                         present)                                                                       
+    vis install react react-dom          Delegates to `vis add` — enables shell aliases like `alias npm='vis install'` 
+    vis i --no-frozen-lockfile           Allow lockfile updates (escape hatch for the default)                          
+    vis install --ci                     Clean install: wipe node_modules + frozen lockfile (mirrors npm ci / pnpm ci)  
+    vis install --prefer-offline         Use cached packages when available, fall back to network                       
+    vis install --prod                   Install production dependencies only                                           
+    vis install --filter app             Install for specific workspace package                                         
+    vis install --run-scripts            Run lifecycle scripts (opts out of vis's default block-by-default policy;      
+                                         allowlisted packages run via security.policies.installScripts.allow)           
+    vis install --no-typosquat-check     Skip typosquat name check                                                      
+    vis install --installer aube         Force aube as the installer (errors if not on PATH)                            
+    vis install --no-aube                Bypass aube; use the lockfile-detected PM                                      
+

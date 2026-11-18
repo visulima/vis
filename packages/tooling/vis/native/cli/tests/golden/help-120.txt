@@ -1,0 +1,254 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32m<command>[39m [positional arguments] [33m[options][39m 
+
+[1m [7m[32m Run & Execute [39m[27m[22m
+
+    [32mrun[39m           Run a target across workspace projects                                                                
+    [32mci[39m            Run affected targets in a CI-optimized pipeline                                                       
+    [32maffected[39m      Run a target only on projects affected by recent changes                                              
+    [32mstaged[39m        Run linters on staged files using config from vis.config.ts                                           
+    [32mdlx[39m           Execute a remote package without permanent installation                                               
+    [32mexec[39m          Execute a local node_modules/.bin command (no remote fallback)                                        
+    [32mx[39m             Run a TypeScript/JavaScript file directly under the selected runtime (node | bun)                     
+    [32mci ignore[39m     Exit with inverted codes for CI "Ignored Build Step" gating (Vercel/Netlify)                          
+
+[1m [7m[32m Workspace [39m[27m[22m
+
+    [32mgraph[39m                 Visualize the project dependency graph                                                        
+    [32maction-graph[39m          Show the execution plan for a target without running it                                       
+    [32mtask-why[39m              Explain why a task is included in the graph by walking its dependency chain to a root         
+    [32mreplay[39m                Replay a previous task run from .vis/runs/ — show task results without re-executing          
+    [32msort-package-json[39m     Sort package.json files across the workspace using the sort-package-json Rust crate           
+    [32mstatus[39m                Show a workspace health dashboard at a glance                                                 
+    [32mdashboard[39m             Open a browser dashboard with cache, run history, and cache-miss diffs                        
+    [32msync[39m                  Synchronise derived workspace artefacts (codeowners, package.json fields, tsconfig refs, …)   
+    [32mlist[39m                  List all workspace projects with metadata                                                     
+    [32mclean[39m                 Remove node_modules from all workspace projects                                               
+    [32msplit[39m                 Extract a package into a standalone git repo, preserving its history                          
+    [32mimport[39m                Import an external repo into the monorepo under a prefix, preserving history                  
+    [32moptimize[39m              Analyze and optimize dependencies using e18e replacements and @socketregistry overrides       
+    [32mcache list[39m            List all cache entries                                                                        
+    [32mcache clean[39m           Remove cache entries (defaults to all stores: workspace task cache, AI responses, Socket.dev  
+                          reports)                                                                                      
+    [32mcache prune[39m           Remove old and oversized cache entries                                                        
+    [32mcache size[39m            Print on-disk footprint and stats for one or more cache stores (task / ai / socket)           
+    [32mcache why[39m             Explain why a task missed the cache by diffing hash inputs against the previous run           
+    [32mcache hash[39m            Print the recorded hash and per-input hash details for a task                                 
+    [32mcache verify[39m          Verify cache restore fidelity: extract the cached entry into a tmp directory and diff each    
+                          file's content, mode, and mtime against the live workspace. Exits 1 on any drift (changed     
+                          content, mode, mtime) or if a cached output is missing from the workspace. With --scope=all,  
+                          the first cache directory containing the task is used.                                        
+    [32mcache doctor[39m          Probe the configured remote cache (HTTP HEAD or REAPI Capabilities) and report reachability,  
+                          latency, and negotiated capabilities                                                          
+    [32mservice start[39m         Start a service target detached so it survives across `vis run` invocations                   
+    [32mservice stop[39m          Stop a running service                                                                        
+    [32mservice list[39m          List services registered for this workspace                                                   
+    [32mservice status[39m        Re-run the readiness probe and report a service's health                                      
+    [32mservice restart[39m       Stop and re-start a running service                                                           
+    [32mservice logs[39m          Print or tail a service's captured stdout/stderr                                              
+    [32mdocker scaffold[39m       Build a minimal, cache-friendly Docker context for a focus project + its deps                 
+    [32mdocker prune[39m          Strip unfocused workspace projects from a scaffolded context (run inside a build stage)       
+    [32mdocker init[39m           Generate a multi-stage Dockerfile wired to the scaffold/prune flow (create-only)              
+    [32mdocker lint[39m           Lint a Dockerfile with hadolint (downloaded on demand); --fix applies safe autofixes          
+    [32mtoolchain status[39m      Show every detected manager + expected vs actual tool versions                                
+    [32mtoolchain detect[39m      Print the primary manager's name (for scripts)                                                
+    [32mtoolchain install[39m     Install pinned versions — per-tool delegation to the right manager                           
+    [32mtoolchain use[39m         Pin a version via the best manager for that tool                                              
+    [32mtoolchain which[39m       Print the resolved binary path a manager would launch for a tool                              
+
+[1m [7m[32m Scaffold & Config [39m[27m[22m
+
+    [32mignore[39m                Generate or merge an ignore file (.dockerignore/.vercelignore/.npmignore/.slugignore) without 
+                          duplicate entries                                                                             
+    [32minit[39m                  Initialize vis.config.ts with best-practice security defaults                                 
+    [32mcreate[39m                Create a new project from a template                                                          
+    [32mgenerate[39m              Scaffold files from an in-repo template                                                       
+    [32mdevcontainer[39m [dc]     Create or update .devcontainer/devcontainer.json interactively                                
+
+[1m [7m[32m Dependencies [39m[27m[22m
+
+    [32mupdate[39m [up]                    Update packages to their latest versions                                             
+    [32minstall[39m [i]                    Install dependencies using the detected package manager                              
+    [32madd[39m                            Add packages using the detected package manager                                      
+    [32mremove[39m [rm, un, uninstall]     Remove packages using the detected package manager                                   
+    [32mdedupe[39m                         Deduplicate dependencies using the detected package manager                          
+    [32mwhy[39m [explain]                  Show why a package is installed (dependency chain)                                   
+    [32minfo[39m [view]                    Show npm registry metadata for a package (alias of `npm view` / `pnpm view` / `yarn  
+                                   info` / `bun pm view`)                                                               
+    [32mlink[39m [ln]                      Link a local package for development                                                 
+    [32munlink[39m                         Unlink a previously linked package                                                   
+
+[1m [7m[32m Security & Health [39m[27m[22m
+
+    [32mcheck[39m [c, outdated]          Check for outdated dependencies, security vulnerabilities, and supply chain settings   
+    [32mdeps[39m                         Lint workspace dependency policies (workspace-protocol, banned-deps, redefine-root,    
+                                 workspace-versions, custom-types, empty-deps, root-private, root-package-manager,      
+                                 root-deps, missing-package-json, dead-workspace-patterns, types-in-deps, similar-deps) 
+    [32mapprove-builds[39m               Review and approve dependencies with build scripts                                     
+    [32maudit[39m                        Audit installed packages for vulnerabilities and supply chain risks                    
+    [32minspect[39m                      Run all marshalls against a package without installing it                              
+    [32mdoctor[39m                       Run a full project health check (outdated, security, duplicates, optimizations)        
+    [32msbom[39m                         Generate a CycloneDX 1.7 Software Bill of Materials for the workspace                  
+    [32madvisories sync[39m              Download and ingest one or more OSV ecosystem dumps into the local cache               
+    [32madvisories status[39m            Print the local advisory DB summary: path, schema version, ecosystems, row counts,     
+                                 last sync, ETag                                                                        
+    [32madvisories prune[39m             Delete the local advisory DB. The next `vis audit --offline` will fail until you       
+                                 re-sync                                                                                
+    [32madvisories bloom sync[39m        Fetch and verify the endevco/osv-bloom MAL-* prefilter into the local cache            
+    [32madvisories bloom status[39m      Print the local osv-bloom cache freshness: built-at, filter size, m/k parameters, set  
+                                 digest                                                                                 
+    [32msecurity list[39m                List build-script status — allowed, unapproved, and stale allowlist entries           
+    [32msecurity sync[39m                Push vis.config security settings to the package manager's native config               
+    [32msecurity run[39m                 Run lifecycle scripts for packages in security.policies.installScripts.allow (LavaMoat 
+                                 'run' parity)                                                                          
+    [32msecurity tripwire[39m            Install @lavamoat/preinstall-always-fail as a devDep so a missing ignore-scripts       
+                                 setting fails loudly                                                                   
+    [32msecurity keys-refresh[39m        Force-refresh the cached npm signing keys used by the signatures marshall              
+    [32msecurity verify-lockfile[39m     Verify the entire lockfile closure against supply-chain policies (firstSeen,           
+                                 publisherChange, blockExoticSubdeps)                                                   
+    [32mattest[39m                       Build an in-toto SLSA v1 provenance statement for an artifact and keyless-sign it via  
+                                 Sigstore                                                                               
+    [32mattest verify[39m                Verify inbound provenance + registry signatures across the locked dependency graph and 
+                                 gate on regressions                                                                    
+
+[1m [7m[32m System [39m[27m[22m
+
+    [32manalyze[39m              Analyze a single package update with AI                                                        
+    [32mpm[39m                   Package manager utilities (cache, publish, audit, list, config, etc.)                          
+    [32mself-update[39m          Update vis itself to the latest version                                                        
+    [32mimplode[39m              Remove vis from the system (self-uninstall)                                                    
+    [32mai[39m                   AI-assisted commands: provider detection and failure-fix proposals (cache management lives     
+                         under `vis cache`)                                                                             
+    [32mai discover-help[39m     Print the machine-readable AI subcommand catalogue (JSON to stdout, designed for AI agents)    
+    [32mai providers[39m         List detected AI providers and show which one is selected                                      
+    [32mai test[39m              Test the best available AI provider with a quick prompt                                        
+    [32mai fix[39m               Read a failed task's logs and propose a structured patch (Phase 1: local-only, no git)         
+    [32mai heal[39m              Diagnose the most recent failed task and post a structured patch as a PR/MR comment (or        
+                         Buildkite annotation)                                                                          
+    [32mai heal accept[39m       Re-run the proposed fix and commit it to the PR/MR branch when validation passes               
+
+[1m[7m[32m Available Commands [39m[27m[22m
+
+    [32mcompletion[39m         Generate shell completion scripts                                                                
+    [32mversion[39m [v, V]     Output the version number                                                                        
+    [32mhelp[39m                                                                                                                
+
+[1m [7m[32m Release [39m[27m[22m
+
+    [32mrelease[39m                   Version, changelog and publish workspace packages (unstable)                              
+    [32mrelease add[39m               Author a new change file (interactive, or non-interactive via --packages)                 
+    [32mrelease generate[39m          Auto-derive change files (one per bumped package) from branch commits                     
+                              (conventional-commits + path heuristics)                                                  
+    [32mrelease status[39m            Print pending release plan (which packages will bump and to what version)                 
+    [32mrelease plan[39m              Inspect the release plan; with --interactive, walk through and override bump levels       
+    [32mrelease changelog[39m         Render the would-be changelog entries without writing to disk                             
+    [32mrelease check[39m             Verify pending change files cover changed packages — CI / husky gate                     
+    [32mrelease doctor[39m            Preflight diagnostics for the release subsystem (workspace, PM, OIDC, NAPI, guards)       
+    [32mrelease next-version[39m      Print the next computed version for each package in the release plan. Read-only; no       
+                              mutations.                                                                                
+    [32mrelease version[39m           Apply pending change files to disk: bump versions + write CHANGELOG entries               
+    [32mrelease publish[39m           Pack-then-publish unpublished packages, push tags, create GH releases                     
+    [32mrelease snapshot[39m          Publish 0.0.0-<tag>-<sha> snapshot versions of affected packages                          
+    [32mrelease stage[39m             List, approve, or reject npm staged-publish records (RFC §13.6 — approve/reject need     
+                              2FA)                                                                                      
+    [32mrelease pre[39m               Enter / exit pre-release mode (changesets-compatible — every `version` produces a        
+                              prerelease until exit)                                                                    
+    [32mrelease pretrust[39m          Publish non-functional placeholder packages so npm Trusted Publishing (OIDC) can be       
+                              configured before the first release                                                       
+    [32mrelease init[39m              Scaffold .vis/release; migrate from changesets / bumpy / semantic-release                 
+    [32mrelease notifications[39m     Dry-run the configured notification channels (slack / discord / webhook / plugins) with a 
+                              synthetic release                                                                         
+    [32mrelease ci check[39m          CI: post or update a sticky PR comment with the pending release plan                      
+    [32mrelease ci plan[39m           CI: emit JSON plan + write to $GITHUB_OUTPUT for workflow gating                          
+    [32mrelease ci release[39m        CI: maintain a rolling version-PR (default) or version+publish inline (--auto-publish)    
+    [32mrelease ci rebase-pr[39m      CI: rebase the open version-PR onto the base branch and force-push                        
+    [32mrelease ci snapshot[39m       CI: publish snapshot of affected packages + post sticky PR comment with install           
+                              instructions                                                                              
+    [32mrelease ci setup[39m          CI: print setup checklist for tokens (VIS_GH_TOKEN, NPM_TOKEN, OIDC) and workflow         
+                              permissions                                                                               
+
+[1m [7m[32m Lint & Format [39m[27m[22m
+
+    [32mlint[39m     Orchestrate detected source-code linters (eslint, …) across the workspace                                  
+    [32mfmt[39m      Orchestrate detected formatters (prettier, …) across the workspace                                         
+
+[1m [7m[32m Security [39m[27m[22m
+
+    [32msecrets[39m     Scan a repository for hardcoded secrets and credentials                                                 
+
+[1m [7m[32m Git Hooks [39m[27m[22m
+
+    [32mhook install[39m       Install git hooks for the workspace (migrates husky / prek on prompt)                            
+    [32mhook uninstall[39m     Remove git hooks and reset core.hooksPath                                                        
+    [32mhook migrate[39m       Migrate from husky or prek to vis hooks (auto-detected)                                          
+    [32mhook list[39m          Show configured hooks grouped by stage                                                           
+    [32mhook validate[39m      Sanity-check installed hooks and the bundled runner                                              
+    [32mhook run[39m           Run a specific hook stage against tracked files                                                  
+    [32mhook add[39m           Add a managed hook snippet (e.g. `vis secrets --staged`)                                         
+
+[1m [7m[32m Migrate [39m[27m[22m
+
+    [32mmigrate all[39m              Run every applicable migration non-interactively (autodetected)                            
+    [32mmigrate deps[39m             Migrate dependencies and scripts to vis                                                    
+    [32mmigrate lint-staged[39m      Inline lint-staged configuration into vis                                                  
+    [32mmigrate nano-staged[39m      Inline nano-staged configuration into vis                                                  
+    [32mmigrate turborepo[39m        Migrate turborepo tasks/config to vis                                                      
+    [32mmigrate nx[39m               Migrate nx targets/config to vis                                                           
+    [32mmigrate moon[39m             Migrate moon tasks/templates to vis                                                        
+    [32mmigrate self[39m             Auto-rewrite vis.config.ts to use renamed fields (targetDefaults → tasks, taskDefaults → 
+                             scopedTasks, taskRunnerOptions → taskRunner)                                              
+    [32mmigrate gitleaks[39m         Migrate gitleaks config/baseline/hooks to `vis secrets`                                    
+    [32mmigrate kingfisher[39m       Migrate Kingfisher baseline/hooks/scripts to `vis secrets`                                 
+    [32mmigrate secretlint[39m       Replace secretlint with `vis secrets`                                                      
+    [32mmigrate syncpack[39m         Translate syncpack customTypes into vis policy and strip the syncpack dep/scripts          
+    [32mmigrate sherif[39m           Strip sherif config/dep/scripts and surface ignore-rules as a positive `vis lint --<rule>` 
+                             command                                                                                    
+    [32mmigrate verify[39m           Audit the workspace for stray gitleaks/secretlint/sherif/syncpack references (exit 1 on    
+                             issues)                                                                                    
+    [32mmigrate verify-graph[39m     Prove a turbo/nx/moon → vis migration preserved the task graph + cache-key surface (exit  
+                             1 on divergence)                                                                           
+
+[1m [7m[32m Runtime [39m[27m[22m
+
+    [32mshim install[39m       Install project-local PM shims (.vis/shims) that enforce the project's package manager           
+    [32mshim uninstall[39m     Remove the project-local PM shim dir (.vis/shims)                                                
+    [32mshim status[39m        Report whether the PM shims are installed and active on PATH                                     
+
+[1m[7m[33m Command Options [39m[27m[22m
+
+  [1m[33m--group[39m[22m [4mstring[24m   Display only the specified group 
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m, [1m[33m--verbose[39m[22m        Turn on verbose output                                                                           
+  [4mboolean[24m                                                                                                               
+  [1m[33m--debug[39m[22m [4mboolean[24m      Turn on debugging output                                                                         
+  [1m-h[22m, [1m[33m--help[39m[22m [4mboolean[24m   Print out helpful usage information                                                              
+  [1m-q[22m, [1m[33m--quiet[39m[22m          Silence output                                                                                   
+  [4mboolean[24m                                                                                                               
+  [1m-V[22m, [1m[33m--version[39m[22m        Print version info                                                                               
+  [4mboolean[24m                                                                                                               
+  [1m[33m--no-color[39m[22m [4mboolean[24m   Turn off colored output                                                                          
+  [1m[33m--color[39m[22m [4mboolean[24m      Force colored output                                                                             
+  [1m[33m--cwd[39m[22m [4mstring[24m         Override workspace root directory                                                                
+  [1m[33m--runtime[39m[22m [4mstring[24m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME and config; falls back to        
+                       lockfile detection.                                                                              
+  [1m[33m--config[39m[22m [4mstring[24m      Path to a vis config file (overrides discovery)                                                  
+  [1m[33m--ca-cert[39m[22m [4mstring[24m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate proxies. Equivalent to             
+                       NODE_EXTRA_CA_CERTS.                                                                             
+
+[1m[7m[35m Environment Variables [39m[27m[22m
+
+    CEREBRO_OUTPUT_LEVEL         Controls the verbosity level of output. Valid values: '16' (quiet), '32' (normal),     
+                                 '64' (verbose), '128' (debug)                                                          
+    CEREBRO_MIN_NODE_VERSION     Sets the minimum required Node.js version. Overrides the default minimum version check 
+    NO_UPDATE_NOTIFIER           When set, disables the update notifier check                                           
+    NODE_ENV                     Standard Node.js environment variable. When set to 'test', disables update notifier    
+    DEBUG                        When set, enables debug output (same as --debug flag)                                  
+    CEREBRO_TERMINAL_WIDTH       Sets the terminal width for table rendering. Useful for testing and consistent output  
+
+Run "[36mvis[39m [32mhelp <command>[39m" or "[36mvis[39m [32m<command>[39m [33m--help[39m" for help with a specific command.
+

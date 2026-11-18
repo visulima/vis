@@ -1,0 +1,57 @@
+vis v6.6.0
+
+[1m[7m[36m Usage [39m[27m[22m
+
+    [36mvis[39m [32mexec[39m [positional arguments] [options] 
+
+[1m[7m[32m Description [39m[27m[22m
+
+    Execute a local node_modules/.bin command (no remote fallback) 
+
+[1mCommand Positional Arguments[22m
+
+  [1mcommand[22m [4mstring[24m   Command to execute followed by arguments 
+
+[1m[7m[33m Command Options [39m[27m[22m
+
+  [1m-F[22m, [1m[33m--filter[39m[22m [4mstring[][24m          Filter packages by name pattern               
+  [1m[33m--parallel[39m[22m [4mboolean[24m             Run concurrently without topological ordering 
+  [1m-r[22m, [1m[33m--recursive[39m[22m [4mboolean[24m        Run in every workspace package                
+  [1m[33m--reverse[39m[22m [4mboolean[24m              Reverse topological execution order           
+  [1m-c[22m, [1m[33m--shell-mode[39m[22m [4mboolean[24m       Execute within shell environment              
+  [1m-w[22m, [1m[33m--workspace-root[39m[22m [4mboolean[24m   Run on workspace root only                    
+
+[1m[7m[33m Global Options [39m[27m[22m
+
+  [1m-v[22m,           Turn on verbose output                                          
+  [1m[33m--verbose[39m[22m                                                                     
+  [4mboolean[24m                                                                       
+  [1m[33m--debug[39m[22m       Turn on debugging output                                        
+  [4mboolean[24m                                                                       
+  [1m-h[22m, [1m[33m--help[39m[22m    Print out helpful usage information                             
+  [4mboolean[24m                                                                       
+  [1m-q[22m, [1m[33m--quiet[39m[22m   Silence output                                                  
+  [4mboolean[24m                                                                       
+  [1m-V[22m,           Print version info                                              
+  [1m[33m--version[39m[22m                                                                     
+  [4mboolean[24m                                                                       
+  [1m[33m--no-color[39m[22m    Turn off colored output                                         
+  [4mboolean[24m                                                                       
+  [1m[33m--color[39m[22m       Force colored output                                            
+  [4mboolean[24m                                                                       
+  [1m[33m--cwd[39m[22m         Override workspace root directory                               
+  [4mstring[24m                                                                        
+  [1m[33m--runtime[39m[22m     Target JS runtime: node (default) or bun. Overrides VIS_RUNTIME 
+  [4mstring[24m        and config; falls back to lockfile detection.                   
+  [1m[33m--config[39m[22m      Path to a vis config file (overrides discovery)                 
+  [4mstring[24m                                                                        
+  [1m[33m--ca-cert[39m[22m     Path to a CA bundle (PEM) to trust for HTTPS — for corporate   
+  [4mstring[24m        proxies. Equivalent to NODE_EXTRA_CA_CERTS.                     
+
+[1mExamples[22m
+
+    vis exec eslint .            Run local eslint                               
+    vis exec tsc --noEmit        Run local TypeScript check                     
+    vis exec -r -- eslint .      Run in all workspace packages                  
+    vis exec -c 'echo $PATH'     Shell mode                                     
+
