@@ -8,6 +8,7 @@ on: # yamllint disable-line rule:truthy
     push:
         branches:
             - "main"
+            - "next"
 
 permissions:
     actions: "read" # dawidd6 lists build-native.yml runs and downloads their artifacts

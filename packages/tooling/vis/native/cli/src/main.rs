@@ -143,11 +143,42 @@ fn delegate(args: &[String]) -> ! {
 
     // stdio is inherited by default, so the child shares the controlling
     // terminal and process group — Ctrl-C / SIGINT reach it directly.
-    match Command::new(&node).arg(&entry).args(args).status() {
-        Ok(status) => exit(forward_code(status)),
-        Err(error) => {
-            eprintln!("vis: failed to launch Node CLI ('{node}'): {error}");
-            exit(EX_SOFTWARE);
+    let mut command = Command::new(&node);
+
+    command.arg(&entry).args(args);
+
+    let error = run_in_place(&mut command);
+
+    eprintln!("vis: failed to launch Node CLI ('{node}'): {error}");
+    exit(EX_SOFTWARE);
+}
+
+/// Run `command` so that its process is the one the caller is waiting on, and
+/// never returns on success. On Unix this replaces this process with the child
+/// (`exec`), so a timeout or signal sent to the `vis` PID reaches the Node CLI
+/// itself; a parent that kills only the launcher would otherwise leave Node
+/// running with the caller's output pipes open. Elsewhere the child is spawned,
+/// waited for, and its status forwarded. Only returns the error if the child
+/// could not be started.
+pub fn run_in_place(command: &mut Command) -> std::io::Error {
+    use std::io::Write;
+
+    // `exec` skips Rust's stdio flush, so anything still buffered would be lost.
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        command.exec()
+    }
+
+    #[cfg(not(unix))]
+    {
+        match command.status() {
+            Ok(status) => exit(forward_code(status)),
+            Err(error) => error,
         }
     }
 }

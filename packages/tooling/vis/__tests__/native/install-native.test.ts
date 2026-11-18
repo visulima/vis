@@ -191,6 +191,14 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             expect(launcherKept()).toBe(true);
         });
 
+        it("keeps the launcher on `pnpm approve-builds`, which leaves the stale shim in place", () => {
+            expect.assertions(1);
+
+            install({ ...pnpm, INIT_CWD: root, npm_command: "approve-builds" });
+
+            expect(launcherKept()).toBe(true);
+        });
+
         // Lays the package out inside pnpm's virtual store and returns its installed `bin/vis`.
         const installInPnpmStore = (modulesYaml: string, packageVersion = "1.0.0") => {
             const store = join(root, "pnpm-project", "node_modules", ".pnpm", `@visulima+vis@${packageVersion}`, "node_modules", "@visulima");

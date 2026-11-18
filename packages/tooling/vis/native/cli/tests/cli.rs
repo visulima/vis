@@ -611,3 +611,42 @@ fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
         overridden.stdout
     );
 }
+
+/// Delegation must replace the native process rather than wait beside a child:
+/// a parent that signals only the `vis` PID (a timeout, a kill) then reaches the
+/// Node CLI itself. The stub "Node" prints its own PID, which must be the PID the
+/// caller spawned.
+#[cfg(unix)]
+#[test]
+fn delegation_replaces_the_native_process_so_the_child_has_its_pid() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let dir = std::env::temp_dir().join(format!("vis-cli-exec-in-place-{}", std::process::id()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let entry = dir.join("entry.sh");
+
+    std::fs::write(&entry, "echo $$\n").unwrap();
+
+    let mut child = binary()
+        .arg("run")
+        .env("VIS_NODE", "/bin/sh")
+        .env("VIS_FALLBACK_ENTRY", &entry)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn binary");
+    let pid = child.id();
+    let mut stdout = String::new();
+
+    child.stdout.take().unwrap().read_to_string(&mut stdout).unwrap();
+
+    let status = child.wait().expect("wait for binary");
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(status.success(), "status: {status:?}");
+    assert_eq!(stdout.trim(), pid.to_string(), "the delegated child must run as the spawned PID");
+}

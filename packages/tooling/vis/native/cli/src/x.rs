@@ -134,13 +134,10 @@ fn preload_path() -> Option<PathBuf> {
 }
 
 fn spawn_and_exit(mut command: Command) -> ! {
-    match command.status() {
-        Ok(status) => exit(crate::forward_code(status)),
-        Err(error) => {
-            eprintln!("vis x: failed to launch runtime: {error}");
-            exit(127);
-        }
-    }
+    let error = crate::run_in_place(&mut command);
+
+    eprintln!("vis x: failed to launch runtime: {error}");
+    exit(127);
 }
 
 /// Entry point. `args` is the full invocation including the leading `x` (so the

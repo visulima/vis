@@ -46,8 +46,16 @@ const check = (row, name, ok, detail = "") => {
     }
 };
 
-const run = (command, args, options = {}) =>
-    spawnSync(command, args, { encoding: "utf8", shell: isWindows, timeout: 300_000, ...options, env: { ...process.env, ...options.env } });
+// On Windows the command runs through cmd.exe, which splits its line on spaces; quote each word so a
+// temporary directory such as `C:\Users\Jane Doe` stays one argument. Elsewhere the argv is passed as is.
+const quoteWord = (word) => (/[\s"&()^%!<>|]/u.test(word) ? `"${word.replaceAll('"', '\\"')}"` : word);
+const invoke = (command, args) => (isWindows ? [[command, ...args].map(quoteWord).join(" "), []] : [command, args]);
+
+const run = (command, args, options = {}) => {
+    const [file, argv] = invoke(command, args);
+
+    return spawnSync(file, argv, { encoding: "utf8", shell: isWindows, timeout: 300_000, ...options, env: { ...process.env, ...options.env } });
+};
 
 // Setup failures end the run; a package manager may fail with an empty stderr, so say everything the spawn knows.
 const abort = (what, result) => {
@@ -116,10 +124,19 @@ log: { type: stdout, format: pretty, level: http }
 `,
 );
 
-const registry = spawn("npx", ["--yes", VERDACCIO, "--config", join(registryDirectory, "config.yaml"), "--listen", String(REGISTRY_PORT)], {
+const [registryFile, registryArgs] = invoke("npx", ["--yes", VERDACCIO, "--config", join(registryDirectory, "config.yaml"), "--listen", String(REGISTRY_PORT)]);
+const registry = spawn(registryFile, registryArgs, {
     cwd: registryDirectory,
     shell: isWindows,
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "inherit", "inherit"],
+});
+let registryExit;
+
+registry.on("error", (error) => {
+    registryExit = `could not start (${error.message})`;
+});
+registry.on("exit", (code, signal) => {
+    registryExit = `exited early (code ${code}, signal ${signal})`;
 });
 
 const stop = () => {
@@ -129,16 +146,35 @@ const stop = () => {
 
 process.on("exit", stop);
 
-await new Promise((resolveReady, reject) => {
-    registry.stdout.on("data", (chunk) => {
-        if (String(chunk).includes("http address")) {
-            resolveReady();
+// Polls the registry over HTTP until it answers, so a stalled `npx` cannot hang the job. Fails on a spawn
+// error, an early exit, or the deadline.
+const waitForRegistry = async (timeoutMs = 120_000) => {
+    const deadline = Date.now() + timeoutMs;
+
+    while (registryExit === undefined) {
+        try {
+            const response = await fetch(REGISTRY, { signal: AbortSignal.timeout(2000) });
+
+            if (response.status < 500) {
+                return;
+            }
+        } catch {
+            // Not listening yet: retry until the deadline.
         }
-    });
-    registry.on("exit", () => {
-        reject(new Error("registry exited before it was ready"));
-    });
-});
+
+        if (Date.now() >= deadline) {
+            throw new Error(`registry did not answer on ${REGISTRY} within ${timeoutMs / 1000}s`);
+        }
+
+        await new Promise((resolveDelay) => {
+            setTimeout(resolveDelay, 500);
+        });
+    }
+
+    throw new Error(`registry ${registryExit} before it was ready`);
+};
+
+await waitForRegistry();
 
 const user = await (
     await fetch(`${REGISTRY}-/user/org.couchdb.user:smoke`, {
@@ -149,13 +185,19 @@ const user = await (
 ).json();
 const publishConfig = join(work, "publish.npmrc");
 
-writeFileSync(publishConfig, `registry=${REGISTRY}\n//localhost:${REGISTRY_PORT}/:_authToken=${user.token}\n`);
+// `@visulima:registry` from a developer's global npm config would otherwise win over `--registry`, so the
+// scope is bound here and the global config is replaced by an empty file.
+writeFileSync(publishConfig, `registry=${REGISTRY}\n@visulima:registry=${REGISTRY}\n//localhost:${REGISTRY_PORT}/:_authToken=${user.token}\n`);
+
+const globalConfig = join(work, "global.npmrc");
+
+writeFileSync(globalConfig, "");
 
 // Platform packages first: the root's optionalDependencies must resolve the moment it is published.
 const published = [];
 
 for (const tarball of [...bindings, rootTarball]) {
-    const result = run("npm", ["publish", join(tarballs, tarball), "--userconfig", publishConfig, "--registry", REGISTRY, "--tag", "smoke", "--provenance=false"]);
+    const result = run("npm", ["publish", join(tarballs, tarball), "--userconfig", publishConfig, "--globalconfig", globalConfig, "--registry", REGISTRY, "--tag", "smoke", "--provenance=false"]);
 
     published.push(tarball);
 
@@ -235,14 +277,24 @@ for (const name of requested) {
     }
 
     // Windows: the generated .cmd shim cannot exec the extensionless bin/vis, so the launcher is the
-    // supported path there; one npm row proves it installs and runs.
-    if (!manager.available() && explicitlyRequested && !(isWindows && name !== "npm")) {
-        // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
-        check(name, "requested package manager is available", false);
+    // supported path there; one npm row proves it installs and runs. An explicit request for another
+    // manager there cannot be honoured, so it fails rather than passing with nothing run.
+    if (isWindows && name !== "npm") {
+        if (explicitlyRequested) {
+            check(name, "requested package manager runs on Windows", false, "the Windows smoke runs npm only");
+        }
+
+        rows.push(`${name}: NOT RUN (windows runs npm only)`);
+        continue;
     }
 
-    if (!manager.available() || (isWindows && name !== "npm")) {
-        rows.push(`${name}: NOT RUN (${manager.available() ? "windows runs npm only" : "not available on this machine"})`);
+    if (!manager.available()) {
+        // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
+        if (explicitlyRequested) {
+            check(name, "requested package manager is available", false);
+        }
+
+        rows.push(`${name}: NOT RUN (not available on this machine)`);
         continue;
     }
 

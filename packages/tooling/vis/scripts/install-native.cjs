@@ -89,7 +89,9 @@ const pnpmShimMayStartNode = () => {
         return false;
     }
 
-    if (process.env.npm_command === "rebuild") {
+    // `approve-builds` removes the package from `ignoredBuilds` before it runs this script,
+    // so it is not visible in `.modules.yaml` any more, but its shim is the same stale one.
+    if (process.env.npm_command === "rebuild" || process.env.npm_command === "approve-builds") {
         return true;
     }
 
