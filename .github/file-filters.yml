@@ -17,6 +17,7 @@ yaml_lintable:
 
 rust_lintable:
     - "**/native/src/**/*.rs"
+    - "**/native/core/**/*.rs"
     - "**/native/Cargo.toml"
     - "**/native/Cargo.lock"
     - "rustfmt.toml"

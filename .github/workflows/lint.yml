@@ -82,8 +82,11 @@ jobs:
                   set -euo pipefail
                   for manifest in \
                       packages/tooling/secret-scanner/native/Cargo.toml \
+                      packages/tooling/secret-scanner/native/core/Cargo.toml \
                       packages/tooling/task-runner/native/Cargo.toml \
+                      packages/tooling/task-runner/native/core/Cargo.toml \
                       packages/tooling/vis/native/Cargo.toml \
+                      packages/tooling/vis/native/core/Cargo.toml \
                       packages/terminal/tui/native/Cargo.toml; do
                     cargo fmt --check --manifest-path "$manifest"
                   done

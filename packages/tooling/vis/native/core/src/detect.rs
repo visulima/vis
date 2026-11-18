@@ -1,5 +1,5 @@
-//! Package-manager detection. De-napi'd copy of the addon's `pm_detect.rs`
-//! (keep in sync). Priority: packageManager field > lockfiles > config files >
+//! Package-manager detection (shared with the napi addon's `pm_detect.rs`, which
+//! wraps it). Priority: packageManager field > lockfiles > config files >
 //! `npm_config_user_agent` env var > default (pnpm).
 
 use std::fs;
@@ -28,7 +28,7 @@ struct PmInfo {
 /// Options controlling which detection sources to consult. All flags are
 /// `Option<bool>` so callers can omit them; `None` is treated as the default
 /// (use the source).
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DetectPackageManagerOptions {
     pub ignore_package_json: Option<bool>,
     pub ignore_lock_file: Option<bool>,

@@ -1,3 +1,9 @@
+## @visulima/vis [6.7.0](https://github.com/visulima/vis/compare/@visulima/vis@6.6.1...@visulima/vis@6.7.0) (2026-11-17)
+
+### Features
+
+* **vis-cli:** answer help, completion and unknown commands natively ([#101](https://github.com/visulima/vis/issues/101)) ([fa62ab8](https://github.com/visulima/vis/commit/fa62ab85a4b838ab6f6aa6bf72fde8949c708d4a))
+
 ## @visulima/vis [6.6.1](https://github.com/visulima/vis/compare/@visulima/vis@6.6.0...@visulima/vis@6.6.1) (2026-11-17)
 
 ### Performance Improvements

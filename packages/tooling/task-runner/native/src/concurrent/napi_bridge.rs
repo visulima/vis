@@ -3,7 +3,9 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use tokio::sync::mpsc;
 
-use super::runner::ConcurrentRunner;
+use task_runner_core::concurrent::runner::ConcurrentRunner;
+use task_runner_core::concurrent::types::ProcessEvent as CoreProcessEvent;
+
 use super::types::{ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent};
 
 /// Run commands concurrently with real-time event streaming.
@@ -19,14 +21,14 @@ pub async fn run_concurrent(
     options: ConcurrentRunnerOptions,
     #[napi(ts_arg_type = "(event: ProcessEvent) => void")] on_event: ThreadsafeFunction<ProcessEvent>,
 ) -> Result<ConcurrentRunResult> {
-    let runner = ConcurrentRunner::new(commands, &options);
+    let runner = ConcurrentRunner::new(commands.into_iter().map(Into::into).collect(), &options.into());
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<CoreProcessEvent>();
 
     // Spawn a task to forward events from the channel to the JS callback
     let forward_handle = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
-            on_event.call(Ok(event), ThreadsafeFunctionCallMode::NonBlocking);
+            on_event.call(Ok(event.into()), ThreadsafeFunctionCallMode::NonBlocking);
         }
     });
 
@@ -35,7 +37,7 @@ pub async fn run_concurrent(
     // Wait for all events to be forwarded
     let _ = forward_handle.await;
 
-    Ok(result)
+    Ok(result.into())
 }
 
 /// Run commands concurrently without per-line event streaming.
@@ -56,9 +58,9 @@ pub async fn run_concurrent_batch(
         ThreadsafeFunction<ProcessEvent>,
     >,
 ) -> Result<ConcurrentRunResult> {
-    let runner = ConcurrentRunner::new(commands, &options);
+    let runner = ConcurrentRunner::new(commands.into_iter().map(Into::into).collect(), &options.into());
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<CoreProcessEvent>();
 
     // Drain (and optionally forward) events on a background task so the
     // runner's unbounded channel never backs up. We always drain — even
@@ -74,7 +76,7 @@ pub async fn run_concurrent_batch(
                     // use `runConcurrent` instead.
                     let kind = event.kind.as_str();
                     if kind == "started" || kind == "close" || kind == "error" {
-                        cb.call(Ok(event), ThreadsafeFunctionCallMode::NonBlocking);
+                        cb.call(Ok(event.into()), ThreadsafeFunctionCallMode::NonBlocking);
                     }
                 }
             }
@@ -86,5 +88,5 @@ pub async fn run_concurrent_batch(
 
     let _ = forward_handle.await;
 
-    Ok(result)
+    Ok(result.into())
 }

@@ -5,7 +5,7 @@
 //! than blake3 for cache content). This pins the throughput so a future change
 //! to the hasher is a measured decision, not a guess.
 //!
-//! Run: `cargo bench -p task-runner-native --bench file_hasher`
+//! Run: `cargo bench -p task-runner-core --bench file_hasher`
 //!
 //! The bench structure (content-hash throughput sweep) is adapted from nub's
 //! `cache-hash` criterion bench, under the following license:
@@ -19,7 +19,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use task_runner_native::hash_bytes;
+use task_runner_core::hash_bytes;
 
 fn bench_hash_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("file_hasher/hash_bytes");
