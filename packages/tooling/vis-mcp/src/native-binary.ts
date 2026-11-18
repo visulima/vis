@@ -5,6 +5,19 @@ const MAGIC_BYTES = 4;
 // Mach-O (thin, both byte orders, 32/64-bit) and universal (fat) binaries, ELF, and PE ("MZ").
 const MACH_O_AND_ELF_MAGICS = new Set(["7f454c46", "cafebabe", "cefaedfe", "cffaedfe", "feedface", "feedfacf"]);
 
+// A PE image has its "PE\0\0" signature at the offset stored at 0x3C; the "MZ" stub alone is not enough.
+const hasPeSignature = (descriptor: number): boolean => {
+    const offsetBytes = Buffer.alloc(4);
+
+    if (readSync(descriptor, offsetBytes, 0, 4, 0x3c) !== 4) {
+        return false;
+    }
+
+    const signature = Buffer.alloc(4);
+
+    return readSync(descriptor, signature, 0, 4, offsetBytes.readUInt32LE(0)) === 4 && signature.toString("hex") === "50450000";
+};
+
 /**
  * True when `filePath` starts with an executable-format magic number, i.e. it is
  * a native binary that must be spawned directly instead of through Node. Any
@@ -20,7 +33,7 @@ export const isNativeExecutable = (filePath: string): boolean => {
         const bytesRead = readSync(descriptor, buffer, 0, MAGIC_BYTES, 0);
 
         if (bytesRead >= 2 && buffer[0] === 0x4d && buffer[1] === 0x5a) {
-            return true;
+            return hasPeSignature(descriptor);
         }
 
         return bytesRead === MAGIC_BYTES && MACH_O_AND_ELF_MAGICS.has(buffer.toString("hex"));

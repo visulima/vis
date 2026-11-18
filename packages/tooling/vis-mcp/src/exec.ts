@@ -1,5 +1,6 @@
 import type { SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
 
 import { visCommand } from "./native-binary";
 
@@ -112,15 +113,19 @@ export const execVis = async (visBin: string, args: ReadonlyArray<string>, optio
             reject(error);
         });
 
-        child.once("close", (code) => {
+        child.once("close", (code, signal) => {
             clearTimeout(timer);
 
             if (killTimer) {
                 clearTimeout(killTimer);
             }
 
+            // A signal-terminated child has no exit code. Report it as the shell does, 128 + signal number,
+            // so a SIGKILL reads as 137 whether the process was run natively or through the JS launcher.
+            const signalNumber = signal ? constants.signals[signal] : undefined;
+
             resolve({
-                exitCode: code ?? -1,
+                exitCode: code ?? (signalNumber === undefined ? -1 : 128 + signalNumber),
                 overflowed,
                 stderr,
                 stdout,

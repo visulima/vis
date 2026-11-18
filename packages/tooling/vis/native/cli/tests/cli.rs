@@ -602,6 +602,8 @@ fn a_binary_installed_in_a_package_overrides_inherited_delegation_variables() {
 
     let _ = std::fs::remove_dir_all(&package);
 
+    assert!(output.status.success(), "status: {:?}", output.status);
+    assert!(overridden.status.success(), "status: {:?}", overridden.status);
     assert!(stdout.contains(&entry.display().to_string()), "stdout was: {stdout}");
     assert!(stdout.contains("4.5.6"), "stdout was: {stdout}");
     assert!(!stdout.contains("stale"), "stdout was: {stdout}");
@@ -635,6 +637,8 @@ fn delegation_replaces_the_native_process_so_the_child_has_its_pid() {
         .arg("run")
         .env("VIS_NODE", "/bin/sh")
         .env("VIS_FALLBACK_ENTRY", &entry)
+        // Set both: when Cargo puts the binary under a built package, the located entry replaces VIS_FALLBACK_ENTRY.
+        .env("VIS_FALLBACK_ENTRY_OVERRIDE", &entry)
         .stdout(Stdio::piped())
         .spawn()
         .expect("spawn binary");

@@ -28,9 +28,10 @@ const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 // native executable that the install script normally puts at `bin/vis`.
 process.env.VIS_LAUNCHER = "node";
 
-// VIS_FALLBACK_ENTRY lets tests (and the native binary's own delegation) point
-// the Node entry elsewhere; production resolves it next to the package.
-const fallbackEntry = process.env.VIS_FALLBACK_ENTRY ?? join(packageRoot, "dist", "bin.js");
+// VIS_FALLBACK_ENTRY_OVERRIDE lets tests point the Node entry elsewhere. An inherited
+// VIS_FALLBACK_ENTRY is deliberately ignored: a nested `vis` would otherwise run the entry
+// of the install that started it. Production resolves the entry next to this package.
+const fallbackEntry = process.env.VIS_FALLBACK_ENTRY_OVERRIDE ?? join(packageRoot, "dist", "bin.js");
 
 const userArguments = process.argv.slice(2);
 
@@ -44,6 +45,7 @@ if (routesToNative(userArguments)) {
             env: {
                 ...process.env,
                 VIS_FALLBACK_ENTRY: fallbackEntry,
+                VIS_HANDOFF: "launcher",
                 VIS_LAUNCHER: "node",
                 VIS_NODE: process.execPath,
                 VIS_VERSION: version,

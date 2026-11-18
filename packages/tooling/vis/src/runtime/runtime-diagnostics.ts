@@ -560,14 +560,14 @@ export const checkLauncher = (): RuntimeDiagnostic => {
     }
 
     if (launcher === "node" && process.platform === "win32") {
-        return { id: "launcher", message: "Windows uses the Node launcher; the native fast path is not available there.", status: "skip" };
+        return { id: "launcher", message: "Started through the Node launcher on Windows (help and completion always run in Node there).", status: "skip" };
     }
 
     if (launcher === "node") {
         return {
             id: "launcher",
             message:
-                "Started through the Node launcher (slower path): the install script did not link the native binary. Allow install scripts for @visulima/vis (e.g. `pnpm approve-builds`, bun `trustedDependencies`) and reinstall from scratch to start commands without Node.",
+                "Started through the Node launcher (slower path). If the native binary should be in use, allow install scripts for @visulima/vis (e.g. `pnpm approve-builds`, bun `trustedDependencies`) and reinstall from scratch to start commands without Node.",
             status: "skip",
         };
     }

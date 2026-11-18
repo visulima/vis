@@ -13,7 +13,7 @@
 //! `node` from `PATH`.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,11 +27,18 @@ struct Layout {
 /// Fill in `VIS_FALLBACK_ENTRY`, `VIS_VERSION` and `VIS_LAUNCHER` for this process
 /// (and the Node CLI it spawns).
 pub fn init() {
+    // The JS launcher sets `VIS_HANDOFF=launcher` when it starts this binary itself, so
+    // the binary keeps the `node` launcher value it set. The marker is consumed here so
+    // no child inherits it: a stale marker from a parent would mislabel a direct run.
+    let handoff = env::var_os("VIS_HANDOFF").as_deref() == Some(OsStr::new("launcher"));
+
+    env::remove_var("VIS_HANDOFF");
+
     let exe = env::current_exe().and_then(fs::canonicalize).ok();
 
     match exe.as_deref().and_then(locate) {
         Some(layout) => {
-            for (key, value) in owned_env(&layout, env::var_os("VIS_FALLBACK_ENTRY_OVERRIDE")) {
+            for (key, value) in owned_env(&layout, env::var_os("VIS_FALLBACK_ENTRY_OVERRIDE"), handoff) {
                 match value {
                     Some(value) => env::set_var(key, value),
                     None => env::remove_var(key),
@@ -47,32 +54,46 @@ pub fn init() {
 }
 
 /// What a binary installed inside a package sets, `None` meaning "must be unset".
-fn owned_env(layout: &Layout, entry_override: Option<OsString>) -> [(&'static str, Option<OsString>); 3] {
+fn owned_env(
+    layout: &Layout,
+    entry_override: Option<OsString>,
+    handoff: bool,
+) -> [(&'static str, Option<OsString>); 4] {
+    let launcher = if handoff { "node" } else { "native" };
+
     [
         ("VIS_FALLBACK_ENTRY", Some(entry_override.unwrap_or_else(|| layout.entry.clone().into_os_string()))),
         ("VIS_VERSION", layout.version.as_ref().map(OsString::from)),
-        ("VIS_LAUNCHER", Some(OsString::from("native"))),
+        ("VIS_LAUNCHER", Some(OsString::from(launcher))),
+        // Consumed above; cleared so a `vis` started from a child process does not inherit it.
+        ("VIS_FALLBACK_ENTRY_OVERRIDE", None),
     ]
 }
 
-/// Find the package that owns `exe`: the binary installed at `<package>/bin/vis`,
-/// or a dev build copied to `<package>/vis-native-cli`. A package is recognised by
-/// the `dist/bin.js` it ships, so a binary inside a platform package (which has
-/// none) yields nothing and relies on the launcher's environment instead.
+/// Find the `@visulima/vis` package that owns `exe`: the binary installed at
+/// `<package>/bin/vis`, or a dev build copied to `<package>/vis-native-cli`. A
+/// package is recognised by its `dist/bin.js` and by a manifest named
+/// `@visulima/vis`, so an application that happens to ship a `dist/bin.js` is not
+/// adopted. A binary inside a platform package (which has neither) yields nothing
+/// and relies on the launcher's environment instead.
 fn locate(exe: &Path) -> Option<Layout> {
     let dir = exe.parent()?;
 
     [dir.parent(), Some(dir)].into_iter().flatten().find_map(|root| {
         let entry = root.join("dist").join("bin.js");
 
-        entry.is_file().then(|| Layout { entry, version: package_version(root) })
+        if !entry.is_file() {
+            return None;
+        }
+
+        let manifest: serde_json::Value = serde_json::from_slice(&fs::read(root.join("package.json")).ok()?).ok()?;
+
+        if manifest.get("name")?.as_str()? != "@visulima/vis" {
+            return None;
+        }
+
+        Some(Layout { entry, version: manifest.get("version").and_then(|version| version.as_str()).map(str::to_owned) })
     })
-}
-
-fn package_version(root: &Path) -> Option<String> {
-    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(root.join("package.json")).ok()?).ok()?;
-
-    manifest.get("version")?.as_str().map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -128,13 +149,24 @@ mod tests {
     }
 
     #[test]
-    fn omits_the_version_when_package_json_is_unreadable() {
+    fn ignores_a_dist_bin_js_that_belongs_to_another_package() {
+        let root = scratch("other-package");
+
+        fs::create_dir_all(root.join("dist")).unwrap();
+        fs::write(root.join("dist/bin.js"), "").unwrap();
+        fs::write(root.join("package.json"), r#"{"name":"my-app","version":"9.9.9"}"#).unwrap();
+
+        assert_eq!(locate(&root.join("vis-native-cli")), None);
+    }
+
+    #[test]
+    fn ignores_a_package_without_a_readable_manifest() {
         let root = scratch("no-manifest");
 
         fs::create_dir_all(root.join("dist")).unwrap();
         fs::write(root.join("dist/bin.js"), "").unwrap();
 
-        assert_eq!(locate(&root.join("vis-native-cli")).unwrap().version, None);
+        assert_eq!(locate(&root.join("vis-native-cli")), None);
     }
 
     #[test]
@@ -147,11 +179,12 @@ mod tests {
         let layout = locate(&root.join("bin").join("vis")).unwrap();
 
         assert_eq!(
-            owned_env(&layout, None),
+            owned_env(&layout, None, false),
             [
                 ("VIS_FALLBACK_ENTRY", Some(root.join("dist/bin.js").into_os_string())),
                 ("VIS_VERSION", Some(OsString::from("1.2.3"))),
                 ("VIS_LAUNCHER", Some(OsString::from("native"))),
+                ("VIS_FALLBACK_ENTRY_OVERRIDE", None),
             ]
         );
     }
@@ -160,7 +193,7 @@ mod tests {
     fn a_located_package_without_a_manifest_clears_an_inherited_version() {
         let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
 
-        assert_eq!(owned_env(&layout, None)[1], ("VIS_VERSION", None));
+        assert_eq!(owned_env(&layout, None, false)[1], ("VIS_VERSION", None));
     }
 
     #[test]
@@ -168,8 +201,15 @@ mod tests {
         let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
 
         assert_eq!(
-            owned_env(&layout, Some(OsString::from("/stub.mjs")))[0],
+            owned_env(&layout, Some(OsString::from("/stub.mjs")), false)[0],
             ("VIS_FALLBACK_ENTRY", Some(OsString::from("/stub.mjs")))
         );
+    }
+
+    #[test]
+    fn a_launcher_handoff_keeps_the_node_launcher_value() {
+        let layout = Layout { entry: PathBuf::from("/pkg/dist/bin.js"), version: None };
+
+        assert_eq!(owned_env(&layout, None, true)[2], ("VIS_LAUNCHER", Some(OsString::from("node"))));
     }
 }

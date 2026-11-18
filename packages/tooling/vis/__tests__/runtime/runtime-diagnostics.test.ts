@@ -465,7 +465,7 @@ describe(checkLauncher, () => {
             const result = checkLauncher();
 
             expect(result.status).toBe("skip");
-            expect(result.message).toContain("Windows uses the Node launcher");
+            expect(result.message).toContain("Started through the Node launcher on Windows");
             expect(result.message).not.toContain("npm");
         } finally {
             Object.defineProperty(process, "platform", platform);
