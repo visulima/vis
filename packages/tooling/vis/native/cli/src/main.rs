@@ -29,6 +29,7 @@ mod exec;
 mod help;
 mod hook;
 mod manifest;
+mod node_contract;
 mod pm;
 mod pm_family;
 mod pm_shim;
@@ -47,6 +48,8 @@ const NATIVE_INFO: &str = "__native-info";
 const EX_SOFTWARE: i32 = 70;
 
 fn main() {
+    node_contract::init();
+
     // argv[0] is the binary path; the remainder is the `vis` invocation,
     // forwarded verbatim by the JS launcher.
     let args: Vec<String> = env::args().skip(1).collect();

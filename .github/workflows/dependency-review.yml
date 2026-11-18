@@ -1,7 +1,7 @@
 name: "Dependency review"
 on:
     pull_request:
-        branches: ["main"]
+        branches: ["main", "next"]
 permissions: {}
 concurrency:
     group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"

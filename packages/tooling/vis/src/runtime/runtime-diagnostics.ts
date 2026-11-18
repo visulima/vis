@@ -539,11 +539,48 @@ export const checkGitLfsTracking = (workspaceRoot: string = process.cwd()): Runt
 };
 
 /**
+ * Reports how this process was started. The install script links the native
+ * executable at `bin/vis`, which sets `VIS_LAUNCHER=native`; the Node launcher
+ * (`bin/vis` as published, or `bin/vis.mjs`) sets `VIS_LAUNCHER=node` and pays a
+ * Node start-up on every command. Package managers that do not run dependency
+ * install scripts (pnpm 10+ without an allow-list, `--ignore-scripts`, bun without
+ * `trustedDependencies`) leave the launcher in place.
+ *
+ * `ok` for the native executable. `skip` (a hint, never a failure: `vis doctor
+ * --strict` fails on `warn`, and a package manager that blocks install scripts
+ * is a valid setup) for the launcher, with the fix in the message, and when
+ * neither started this process (running `dist/bin.js` directly, a dev checkout).
+ * On Windows, which always uses the launcher, the message says so.
+ */
+export const checkLauncher = (): RuntimeDiagnostic => {
+    const launcher = process.env["VIS_LAUNCHER"];
+
+    if (launcher === "native") {
+        return { id: "launcher", message: "Started by the native vis executable (fast path).", status: "ok" };
+    }
+
+    if (launcher === "node" && process.platform === "win32") {
+        return { id: "launcher", message: "Windows uses the Node launcher; the native fast path is not available there.", status: "skip" };
+    }
+
+    if (launcher === "node") {
+        return {
+            id: "launcher",
+            message:
+                "Started through the Node launcher (slower path): the install script did not link the native binary. Allow install scripts for @visulima/vis (e.g. `pnpm approve-builds`, bun `trustedDependencies`) and reinstall from scratch to start commands without Node.",
+            status: "skip",
+        };
+    }
+
+    return { id: "launcher", message: "Launcher check skipped (not started through the npm `vis` command).", status: "skip" };
+};
+
+/**
  * Runs every diagnostic and returns the results in a stable order.
  * The order matches the doctor's display order: inotify capacity
  * first (most likely to silently break watch), then TTY
  * (informational), then the VCS-scaling hints (Watchman / Git LFS),
- * then orphans (cleanup).
+ * then the launcher path, then orphans (cleanup).
  *
  * `workspaceRoot` is required by the Git LFS check to find the
  * root-level `.gitattributes`; omit it only in unit tests that don't
@@ -554,5 +591,6 @@ export const runRuntimeDiagnostics = (workspaceRoot?: string): RuntimeDiagnostic
     checkTtyAvailability(),
     checkWatchmanAvailability(),
     checkGitLfsTracking(workspaceRoot),
+    checkLauncher(),
     checkOrphanedRunners(),
 ];

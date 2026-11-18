@@ -180,7 +180,7 @@ const runNative = (root: string, spec: Case): Outcome & { delegated: boolean } =
     const result = spawnSync(binary as string, ["hook", "run", spec.stage ?? "pre-commit", ...(spec.args ?? []), ...(spec.flags ?? [])], {
         cwd: root,
         encoding: "utf8",
-        env: { ...process.env, VIS_FALLBACK_ENTRY: stub, VIS_HOOK_TRACE: "1", VIS_NODE: "sh" },
+        env: { ...process.env, VIS_FALLBACK_ENTRY: stub, VIS_FALLBACK_ENTRY_OVERRIDE: stub, VIS_HOOK_TRACE: "1", VIS_NODE: "sh" },
     });
 
     rmSync(stub, { force: true });

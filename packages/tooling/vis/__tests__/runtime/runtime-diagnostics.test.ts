@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
     checkGitLfsTracking,
     checkInotifyCapacity,
+    checkLauncher,
     checkOrphanedRunners,
     checkTtyAvailability,
     checkWatchmanAvailability,
@@ -423,20 +424,77 @@ describe("orphans diagnostic id constant", () => {
     });
 });
 
+describe(checkLauncher, () => {
+    const original = process.env["VIS_LAUNCHER"];
+
+    afterEach(() => {
+        if (original === undefined) {
+            delete process.env["VIS_LAUNCHER"];
+        } else {
+            process.env["VIS_LAUNCHER"] = original;
+        }
+    });
+
+    it("reports ok when the native executable started the process", () => {
+        expect.assertions(2);
+
+        process.env["VIS_LAUNCHER"] = "native";
+
+        expect(checkLauncher().status).toBe("ok");
+        expect(checkLauncher().id).toBe("launcher");
+    });
+
+    it.skipIf(process.platform === "win32")("reports the slower Node launcher as a hint (not a warning), naming the fix", () => {
+        expect.assertions(2);
+
+        process.env["VIS_LAUNCHER"] = "node";
+
+        expect(checkLauncher().status).toBe("skip");
+        expect(checkLauncher().message).toContain("slower path");
+    });
+
+    it("says Windows uses the Node launcher instead of blaming the start command", () => {
+        expect.assertions(3);
+
+        const platform = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+
+        Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+        process.env["VIS_LAUNCHER"] = "node";
+
+        try {
+            const result = checkLauncher();
+
+            expect(result.status).toBe("skip");
+            expect(result.message).toContain("Windows uses the Node launcher");
+            expect(result.message).not.toContain("npm");
+        } finally {
+            Object.defineProperty(process, "platform", platform);
+        }
+    });
+
+    it("skips when neither launcher started the process", () => {
+        expect.assertions(1);
+
+        delete process.env["VIS_LAUNCHER"];
+
+        expect(checkLauncher().status).toBe("skip");
+    });
+});
+
 describe(runRuntimeDiagnostics, () => {
     // 60s timeout: the orphans diagnostic shells out to `tasklist` on
     // Windows; 30s wasn't enough on cold CI runners (run 26414217132).
-    it("returns inotify, tty, watchman, git-lfs, and orphans diagnostics in a stable order", { timeout: 60_000 }, () => {
+    it("returns inotify, tty, watchman, git-lfs, launcher, and orphans diagnostics in a stable order", { timeout: 60_000 }, () => {
         expect.assertions(3);
 
         const diagnostics = runRuntimeDiagnostics();
 
-        expect(diagnostics.map((d) => d.id)).toStrictEqual(["inotify", "tty", "watchman", "git-lfs", "orphans"]);
+        expect(diagnostics.map((d) => d.id)).toStrictEqual(["inotify", "tty", "watchman", "git-lfs", "launcher", "orphans"]);
         // Every diagnostic must have a recognized status — guards against
         // a future check accidentally returning a typo'd value.
 
         expect(diagnostics.every((d) => ["ok", "skip", "warn"].includes(d.status))).toBe(true);
-        expect(diagnostics).toHaveLength(5);
+        expect(diagnostics).toHaveLength(6);
     });
 
     it("each diagnostic has a non-empty message and id", { timeout: 60_000 }, () => {

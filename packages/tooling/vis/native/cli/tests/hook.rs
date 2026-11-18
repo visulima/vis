@@ -325,9 +325,9 @@ fn hooks_do_not_inherit_the_launchers_delegation_variables() {
     let repo = Repo::new("env");
 
     repo.file("a.ts", "x\n")
-        .config(r#"{"version":1,"stages":{"pre-commit":[{"id":"e","entry":"sh -c 'echo [${VIS_FALLBACK_ENTRY-unset}][${VIS_NODE-unset}]'","passFilenames":false}]}}"#);
+        .config(r#"{"version":1,"stages":{"pre-commit":[{"id":"e","entry":"sh -c 'echo [${VIS_FALLBACK_ENTRY-unset}][${VIS_NODE-unset}][${VIS_VERSION-unset}][${VIS_LAUNCHER-unset}]'","passFilenames":false}]}}"#);
 
-    assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\n[unset][unset]\n");
+    assert_eq!(stdout(&repo.vis(&["hook", "run", "pre-commit"])), "Running pre-commit\n[unset][unset][unset][unset]\n");
 }
 
 #[test]
