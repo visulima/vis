@@ -46,8 +46,16 @@ const check = (row, name, ok, detail = "") => {
     }
 };
 
-const run = (command, args, options = {}) =>
-    spawnSync(command, args, { encoding: "utf8", shell: isWindows, timeout: 300_000, ...options, env: { ...process.env, ...options.env } });
+// On Windows the command runs through cmd.exe, which splits its line on spaces; quote each word so a
+// temporary directory such as `C:\\Users\\Jane Doe` stays one argument. Elsewhere the argv is passed as is.
+const quoteWord = (word) => (/[\s"&()^%!<>|]/u.test(word) ? `"${word.replaceAll('"', '\\"')}"` : word);
+const invoke = (command, args) => (isWindows ? [[command, ...args].map(quoteWord).join(" "), []] : [command, args]);
+
+const run = (command, args, options = {}) => {
+    const [file, argv] = invoke(command, args);
+
+    return spawnSync(file, argv, { encoding: "utf8", shell: isWindows, timeout: 300_000, ...options, env: { ...process.env, ...options.env } });
+};
 
 // Setup failures end the run; a package manager may fail with an empty stderr, so say everything the spawn knows.
 const abort = (what, result) => {
@@ -116,10 +124,19 @@ log: { type: stdout, format: pretty, level: http }
 `,
 );
 
-const registry = spawn("npx", ["--yes", VERDACCIO, "--config", join(registryDirectory, "config.yaml"), "--listen", String(REGISTRY_PORT)], {
+const [registryFile, registryArgs] = invoke("npx", ["--yes", VERDACCIO, "--config", join(registryDirectory, "config.yaml"), "--listen", String(REGISTRY_PORT)]);
+const registry = spawn(registryFile, registryArgs, {
     cwd: registryDirectory,
     shell: isWindows,
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "inherit", "inherit"],
+});
+let registryExit;
+
+registry.on("error", (error) => {
+    registryExit = `could not start (${error.message})`;
+});
+registry.on("exit", (code, signal) => {
+    registryExit = `exited early (code ${code}, signal ${signal})`;
 });
 
 const stop = () => {
@@ -129,16 +146,35 @@ const stop = () => {
 
 process.on("exit", stop);
 
-await new Promise((resolveReady, reject) => {
-    registry.stdout.on("data", (chunk) => {
-        if (String(chunk).includes("http address")) {
-            resolveReady();
+// Polls the registry over HTTP until it answers, so a stalled `npx` cannot hang the job. Fails on a spawn
+// error, an early exit, or the deadline.
+const waitForRegistry = async (timeoutMs = 120_000) => {
+    const deadline = Date.now() + timeoutMs;
+
+    while (registryExit === undefined) {
+        try {
+            const response = await fetch(REGISTRY, { signal: AbortSignal.timeout(2000) });
+
+            if (response.status < 500) {
+                return;
+            }
+        } catch {
+            // Not listening yet: retry until the deadline.
         }
-    });
-    registry.on("exit", () => {
-        reject(new Error("registry exited before it was ready"));
-    });
-});
+
+        if (Date.now() >= deadline) {
+            throw new Error(`registry did not answer on ${REGISTRY} within ${timeoutMs / 1000}s`);
+        }
+
+        await new Promise((resolveDelay) => {
+            setTimeout(resolveDelay, 500);
+        });
+    }
+
+    throw new Error(`registry ${registryExit} before it was ready`);
+};
+
+await waitForRegistry();
 
 const user = await (
     await fetch(`${REGISTRY}-/user/org.couchdb.user:smoke`, {
@@ -149,13 +185,31 @@ const user = await (
 ).json();
 const publishConfig = join(work, "publish.npmrc");
 
-writeFileSync(publishConfig, `registry=${REGISTRY}\n//localhost:${REGISTRY_PORT}/:_authToken=${user.token}\n`);
+// `@visulima:registry` from a developer's global npm config would otherwise win over `--registry`, so the
+// scope is bound here and the global config is replaced by an empty file.
+writeFileSync(publishConfig, `registry=${REGISTRY}\n@visulima:registry=${REGISTRY}\n//localhost:${REGISTRY_PORT}/:_authToken=${user.token}\n`);
+
+const globalConfig = join(work, "global.npmrc");
+
+writeFileSync(globalConfig, "");
 
 // Platform packages first: the root's optionalDependencies must resolve the moment it is published.
 const published = [];
 
 for (const tarball of [...bindings, rootTarball]) {
-    const result = run("npm", ["publish", join(tarballs, tarball), "--userconfig", publishConfig, "--registry", REGISTRY, "--tag", "smoke", "--provenance=false"]);
+    const result = run("npm", [
+        "publish",
+        join(tarballs, tarball),
+        "--userconfig",
+        publishConfig,
+        "--globalconfig",
+        globalConfig,
+        "--registry",
+        REGISTRY,
+        "--tag",
+        "smoke",
+        "--provenance=false",
+    ]);
 
     published.push(tarball);
 
@@ -164,7 +218,11 @@ for (const tarball of [...bindings, rootTarball]) {
     }
 }
 
-check("publish", "platform packages are published before the root", published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")));
+check(
+    "publish",
+    "platform packages are published before the root",
+    published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")),
+);
 
 const spec = `@visulima/vis@${manifest.version}`;
 const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
@@ -174,7 +232,15 @@ const managers = {
     bun: {
         available: () => have("bun"),
         launch: { run: ["bun", "run", "v"] },
-        install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
+        install: (mode) => ({
+            args: ["add", "-d", spec],
+            command: "bun",
+            extra: {
+                packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`,
+                ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}),
+            },
+            files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` },
+        }),
     },
     npm: {
         available: () => have("npm"),
@@ -209,12 +275,20 @@ const managers = {
     "yarn-berry": {
         available: () => have("npx"),
         launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },
-        install: (mode) => ({ args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec], command: "npx", files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" } }),
+        install: (mode) => ({
+            args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec],
+            command: "npx",
+            files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" },
+        }),
     },
     "yarn-classic": {
         available: () => have("npx"),
         launch: { run: ["npx", "--yes", "yarn@1.22.22", "run", "v"] },
-        install: (mode) => ({ args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npx", files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` } }),
+        install: (mode) => ({
+            args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
+            command: "npx",
+            files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` },
+        }),
     },
 };
 
@@ -235,14 +309,24 @@ for (const name of requested) {
     }
 
     // Windows: the generated .cmd shim cannot exec the extensionless bin/vis, so the launcher is the
-    // supported path there; one npm row proves it installs and runs.
-    if (!manager.available() && explicitlyRequested && !(isWindows && name !== "npm")) {
-        // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
-        check(name, "requested package manager is available", false);
+    // supported path there; one npm row proves it installs and runs. An explicit request for another
+    // manager there cannot be honoured, so it fails rather than passing with nothing run.
+    if (isWindows && name !== "npm") {
+        if (explicitlyRequested) {
+            check(name, "requested package manager runs on Windows", false, "the Windows smoke runs npm only");
+        }
+
+        rows.push(`${name}: NOT RUN (windows runs npm only)`);
+        continue;
     }
 
-    if (!manager.available() || (isWindows && name !== "npm")) {
-        rows.push(`${name}: NOT RUN (${manager.available() ? "windows runs npm only" : "not available on this machine"})`);
+    if (!manager.available()) {
+        // CI names the managers it expects; one that is missing must fail the run, not pass as NOT RUN.
+        if (explicitlyRequested) {
+            check(name, "requested package manager is available", false);
+        }
+
+        rows.push(`${name}: NOT RUN (not available on this machine)`);
         continue;
     }
 
@@ -252,7 +336,14 @@ for (const name of requested) {
         const plan = manager.install(mode, directory);
 
         mkdirSync(join(directory, "packages", "a"), { recursive: true });
-        writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra }, null, 2));
+        writeFileSync(
+            join(directory, "package.json"),
+            JSON.stringify(
+                { name: "consumer", private: true, scripts: { v: "vis --version" }, version: "1.0.0", workspaces: ["packages/*"], ...plan.extra },
+                null,
+                2,
+            ),
+        );
         writeFileSync(join(directory, "packages", "a", "package.json"), JSON.stringify({ name: "a", scripts: { build: "echo a" }, version: "1.0.0" }));
 
         for (const [file, content] of Object.entries(plan.files)) {
@@ -263,7 +354,13 @@ for (const name of requested) {
         mkdirSync(join(directory, ".vis", "hooks"), { recursive: true });
         writeFileSync(join(directory, ".vis", "hooks", "config.json"), JSON.stringify({ stages: { "pre-commit": [{ entry: "true", id: "a" }] }, version: 1 }));
 
-        const environment = { CI: "1", NO_COLOR: "1", npm_config_cache: join(work, "npm-cache"), npm_config_userconfig: publishConfig, YARN_CACHE_FOLDER: join(directory, ".yarn-cache") };
+        const environment = {
+            CI: "1",
+            NO_COLOR: "1",
+            npm_config_cache: join(work, "npm-cache"),
+            npm_config_userconfig: publishConfig,
+            YARN_CACHE_FOLDER: join(directory, ".yarn-cache"),
+        };
         const installed = run(plan.command, plan.args, { cwd: directory, env: environment });
 
         const installOutput = `${installed.stderr}${installed.stdout}`;
@@ -275,7 +372,12 @@ for (const name of requested) {
                 continue;
             }
         } else {
-            check(row, `install ends with ${plan.expectInstall}`, installed.status !== 0 && installOutput.includes(plan.expectInstall), excerpt(installOutput, 14));
+            check(
+                row,
+                `install ends with ${plan.expectInstall}`,
+                installed.status !== 0 && installOutput.includes(plan.expectInstall),
+                excerpt(installOutput, 14),
+            );
         }
 
         const vis = join(directory, "node_modules", ".bin", "vis");
@@ -289,13 +391,23 @@ for (const name of requested) {
 
         const version = execute("--version");
 
-        check(row, "`vis --version` prints the package version", version.status === 0 && version.stdout.trim() === manifest.version, `${version.stdout.trim()} ${version.stderr.trim()}`.trim());
+        check(
+            row,
+            "`vis --version` prints the package version",
+            version.status === 0 && version.stdout.trim() === manifest.version,
+            `${version.stdout.trim()} ${version.stderr.trim()}`.trim(),
+        );
 
         // The shim each package manager generates is what a user's `run` script or `exec` invocation goes through.
         for (const [how, command] of Object.entries(manager.launch)) {
             const launched = run(command[0], command.slice(1), { cwd: directory, env: environment });
 
-            check(row, `\`${how}\` starts vis through the package manager's own path`, launched.status === 0 && launched.stdout.split("\n").some((line) => line.trim() === manifest.version), `${launched.stdout.trim().slice(-80)} ${launched.stderr.trim().slice(0, 120)}`.trim());
+            check(
+                row,
+                `\`${how}\` starts vis through the package manager's own path`,
+                launched.status === 0 && launched.stdout.split("\n").some((line) => line.trim() === manifest.version),
+                `${launched.stdout.trim().slice(-80)} ${launched.stderr.trim().slice(0, 120)}`.trim(),
+            );
         }
 
         const help = execute("--help");
@@ -304,13 +416,23 @@ for (const name of requested) {
 
         const hook = execute("hook", "run", "pre-push");
 
-        check(row, "`vis hook run pre-push` succeeds", hook.status === 0 && hook.stdout.includes('No hooks configured for stage "pre-push"'), hook.stderr.trim().slice(0, 120));
+        check(
+            row,
+            "`vis hook run pre-push` succeeds",
+            hook.status === 0 && hook.stdout.includes('No hooks configured for stage "pre-push"'),
+            hook.stderr.trim().slice(0, 120),
+        );
 
         // `--help` is answered natively on every row. Script generation is Node's, so the generated
         // script proves the hand-off (from the binary, or from the launcher) without needing a workspace.
         const completion = execute("completion", "--shell=bash");
 
-        check(row, "delegated `vis completion` runs through Node", completion.status === 0 && completion.stdout.includes("vis complete --"), completion.stderr.trim().slice(0, 120));
+        check(
+            row,
+            "delegated `vis completion` runs through Node",
+            completion.status === 0 && completion.stdout.includes("vis complete --"),
+            completion.stderr.trim().slice(0, 120),
+        );
 
         // `list` and `doctor` need a workspace root, which vis does not detect in a bun-managed
         // project (an existing limitation, unrelated to how the binary is installed): bun only gets
@@ -320,7 +442,12 @@ for (const name of requested) {
         if (needsWorkspace) {
             const delegated = execute("list");
 
-            check(row, "delegated `vis list` runs through Node", delegated.status === 0 && delegated.stdout.includes("project(s)"), delegated.stderr.trim().slice(0, 120));
+            check(
+                row,
+                "delegated `vis list` runs through Node",
+                delegated.status === 0 && delegated.stdout.includes("project(s)"),
+                delegated.stderr.trim().slice(0, 120),
+            );
         }
 
         const launcher = (() => {
@@ -343,7 +470,12 @@ for (const name of requested) {
             check(row, native ? "bin/vis is the native executable" : "bin/vis stays the Node launcher", linked === native);
 
             if (needsWorkspace) {
-                check(row, `doctor reports the ${native ? "native" : "slower"} path`, native ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true, JSON.stringify(launcher));
+                check(
+                    row,
+                    `doctor reports the ${native ? "native" : "slower"} path`,
+                    native ? launcher?.status === "ok" : launcher?.message?.includes("slower path") === true,
+                    JSON.stringify(launcher),
+                );
             }
         }
 
