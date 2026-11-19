@@ -1,0 +1,1 @@
+{"name":"gamma","dependencies":{"alpha":"workspace:*"},"scripts":{"build":"echo hi"}}

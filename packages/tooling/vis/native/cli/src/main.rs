@@ -29,9 +29,11 @@ mod advisories;
 mod clean;
 mod complete;
 mod exec;
+mod graph;
 mod help;
 mod hook;
 mod ignore;
+mod list;
 mod manifest;
 mod node_contract;
 mod pm;
@@ -45,10 +47,6 @@ mod targets;
 mod term;
 mod vis_config;
 mod width_tables;
-// Not routed to any command yet; the command ports call it.
-#[cfg_attr(not(test), allow(dead_code))]
-mod graph;
-#[cfg_attr(not(test), allow(dead_code))]
 mod workspace;
 mod x;
 
@@ -111,6 +109,9 @@ fn main() {
         // `vis clean` — the default and `--dry-run`/`--lockfile` shapes are answered natively;
         // every other shape (and `--help`, left to the arm below) goes to Node.
         "clean" if !surface::asks_for_help(&args) => clean::run(&raw_args),
+        // `vis list` — the plain project listing, native for a JS-only workspace in CI. Every
+        // other shape, and every root the gates reject, is delegated inside `list::run`.
+        "list" if !surface::asks_for_help(&args) => list::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

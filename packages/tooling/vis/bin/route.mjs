@@ -132,6 +132,12 @@ const routesToNative = (
         return ignoreMayRunNatively(platform, environment, cwd, interactive);
     }
 
+    // `list` is native for the plain listing only, and the binary hands every other shape
+    // to Node. Windows keeps the Node path, since the native listing never answers there.
+    if (command === "list") {
+        return platform !== "win32";
+    }
+
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
     // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
     // stdout stays in Node too: pail colours its output there, and the binary does not.
