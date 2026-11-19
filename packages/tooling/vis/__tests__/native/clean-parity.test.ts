@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,13 +82,15 @@ const workspaceFor = (name: string): string => {
 const configOf = (name: string): CaseConfig => JSON.parse(readFileSync(join(fixturesRoot, name, "case.json"), "utf8")) as CaseConfig;
 
 /** Environment that keeps Node's notices off, with CI either set or cleared. */
-const environment = (ci: boolean, extra: Record<string, string> = {}): Record<string, string> => ({
-    HOME: process.env["HOME"] ?? "",
-    PATH: process.env["PATH"] ?? "",
-    VIS_NO_UPDATE_CHECK: "1",
-    ...(ci ? { CI: "1" } : {}),
-    ...extra,
-});
+const environment = (ci: boolean, extra: Record<string, string> = {}): Record<string, string> => {
+    return {
+        HOME: process.env["HOME"] ?? "",
+        PATH: process.env["PATH"] ?? "",
+        VIS_NO_UPDATE_CHECK: "1",
+        ...(ci ? { CI: "1" } : {}),
+        ...extra,
+    };
+};
 
 const runNode = (args: string[], cwd: string) =>
     spawnSync(process.execPath, [nodeEntry, "clean", ...args], { cwd, encoding: "utf8", env: environment(true) });
@@ -105,7 +107,7 @@ const removedBy = (root: string, before: Set<string>): string[] => [...before].f
 /** Replaces the workspace root and the clock, which differ between runs. */
 const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
 
-const delegation = (): Record<string, string> => ({ VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
+const delegation = (): Record<string, string> => { return { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }; };
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis clean: native vs Node", () => {
     beforeAll(() => {
