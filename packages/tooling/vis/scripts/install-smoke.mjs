@@ -189,7 +189,8 @@ process.on("exit", stop);
 
 // Polls the registry over HTTP until it answers, so a stalled `npx` cannot hang the job. Fails on a spawn
 // error, an early exit, or the deadline.
-const waitForRegistry = async (timeoutMs = 120_000) => {
+// Fetching Verdaccio through `npx` on a cold runner takes minutes, so the deadline is generous.
+const waitForRegistry = async (timeoutMs = 600_000) => {
     const deadline = Date.now() + timeoutMs;
 
     while (registryExit === undefined) {
