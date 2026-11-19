@@ -370,6 +370,37 @@ mod tests {
             checked += 1;
         }
 
-        assert!(checked >= 8, "fixtures went missing: {checked}");
+        assert_eq!(checked, 9, "fixture count changed");
+    }
+
+    /// A temporary project whose only candidate is `pkgs/a` with the given manifest text. Slice 1 accepts
+    /// it (the name is a string), so any delegation comes from this module's own checks.
+    fn project_with_candidate(manifest: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("vis-graph-{}-{}", std::process::id(), manifest.len()));
+        let _ = fs::remove_dir_all(&root);
+
+        fs::create_dir_all(root.join("pkgs/a")).unwrap();
+        fs::write(root.join("package.json"), r#"{"name":"root","workspaces":["pkgs/*"]}"#).unwrap();
+        fs::write(root.join("pkgs/a/package.json"), manifest).unwrap();
+
+        root
+    }
+
+    #[test]
+    fn an_empty_project_name_delegates() {
+        let root = project_with_candidate(r#"{"name":""}"#);
+
+        assert_eq!(project_graph(&root), GraphResult::Delegate);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_proto_project_name_delegates() {
+        let root = project_with_candidate(r#"{"name":"__proto__"}"#);
+
+        assert_eq!(project_graph(&root), GraphResult::Delegate);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
