@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
-use vis_core::detect::detect_package_manager;
+use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
     resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
     RemoveOptions, ResolvedCommand, WhyOptions,
@@ -183,7 +183,14 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     // (exec/x make the opposite, documented cold-start trade-off.)
     let config = crate::vis_config::read(&cwd);
 
+    // A plain `install.backend` of npm, pnpm or bun runs here, but only where Node reads the same
+    // config (a monorepo root) and never for `outdated`, whose Node form is the `check` command.
+    // Any other pin is left to Node.
+    let pinned = crate::vis_config::native_backend_pin(&config);
+    let pin = pinned.filter(|_| verb != "outdated" && crate::vis_config::node_reads_pin(&cwd));
+
     if crate::vis_config::requires_node(&config)
+        || (pinned.is_some() && pin.is_none())
         || (config != crate::vis_config::ConfigState::Absent
             && (installer_selected_by_environment()
                 || uses_global_option(full_args)
@@ -193,7 +200,10 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };
-    let detected = detect_package_manager(&cwd.to_string_lossy(), None);
+    let detected = detect_package_manager(
+        &cwd.to_string_lossy(),
+        Some(DetectPackageManagerOptions { backend: pin.map(str::to_owned), ..Default::default() }),
+    );
     let pm = detected.name;
     let version = detected.version.unwrap_or_default();
 
