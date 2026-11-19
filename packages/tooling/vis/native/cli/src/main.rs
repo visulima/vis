@@ -110,7 +110,7 @@ fn main() {
         "ignore" if !surface::asks_for_help(&args) => ignore::run(&args, &raw_args),
         // `vis clean` — the default and `--dry-run`/`--lockfile` shapes are answered natively;
         // every other shape (and `--help`, left to the arm below) goes to Node.
-        "clean" if !surface::asks_for_help(&args) => clean::run(&args),
+        "clean" if !surface::asks_for_help(&args) => clean::run(&raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

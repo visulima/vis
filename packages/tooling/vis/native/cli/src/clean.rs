@@ -17,6 +17,7 @@
 //! Node. Every check runs before anything is removed, so a delegation never follows a removal.
 
 use std::env;
+use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -33,6 +34,14 @@ const MIN_WIDTH: usize = 40;
 
 const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
 
+/// What one run prints, split the way pail splits it: error blocks go to stderr, the rest to
+/// stdout.
+#[derive(Default)]
+struct Output {
+    stdout: String,
+    stderr: String,
+}
+
 struct Plan {
     dry_run: bool,
     lockfile: bool,
@@ -44,12 +53,17 @@ struct Plan {
 }
 
 /// Answer `vis clean` natively, or delegate to Node. Never returns.
-pub fn run(args: &[String]) -> ! {
-    let Some(plan) = plan(args) else {
-        crate::delegate(args);
+///
+/// `raw` is the untouched argv, forwarded as it arrived on delegation. The lossy `String` view
+/// is only used to match arguments.
+pub fn run(raw: &[OsString]) -> ! {
+    let args: Vec<String> = raw.iter().map(|argument| argument.to_string_lossy().into_owned()).collect();
+
+    let Some(plan) = plan(&args) else {
+        crate::delegate(raw);
     };
 
-    let mut out = String::new();
+    let mut out = Output::default();
 
     let mut exit_code = 0;
 
@@ -61,17 +75,28 @@ pub fn run(args: &[String]) -> ! {
         exit_code = removal_output(&plan, &outcome, &mut out);
     }
 
-    let mut stdout = io::stdout().lock();
+    // Each stream is written even when the other fails, so a closed stdout does not hide errors.
+    let stdout = write_stream(&mut io::stdout().lock(), &out.stdout);
+    let stderr = write_stream(&mut io::stderr().lock(), &out.stderr);
 
-    match stdout.write_all(out.as_bytes()).and_then(|()| stdout.flush()) {
-        Ok(()) => exit(exit_code),
-        // A closed pipe is not an error worth reporting.
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(exit_code),
-        Err(error) => {
-            eprintln!("vis clean: failed to write the output: {error}");
-            exit(1);
+    for result in [stdout, stderr] {
+        match result {
+            Ok(()) => {}
+            // A closed pipe is not an error worth reporting.
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+            Err(error) => {
+                eprintln!("vis clean: failed to write the output: {error}");
+                exit(1);
+            }
         }
     }
+
+    exit(exit_code)
+}
+
+fn write_stream(stream: &mut impl Write, text: &str) -> io::Result<()> {
+    stream.write_all(text.as_bytes())?;
+    stream.flush()
 }
 
 /// The removal plan when the invocation is native, or `None` to delegate.
@@ -84,7 +109,7 @@ fn plan(args: &[String]) -> Option<Plan> {
     let (dry_run, lockfile) = flags(args)?;
 
     // pail colours its output on a terminal or under FORCE_COLOR; the native path does not.
-    if crate::term::color_enabled(args) || !in_ci() || io::stderr().is_terminal() {
+    if crate::term::color_enabled(args) || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return None;
     }
 
@@ -169,26 +194,26 @@ fn is_plain(path: &Path) -> bool {
     path.to_str().is_some_and(|text| text.bytes().all(|byte| byte.is_ascii_graphic()))
 }
 
-fn dry_run_output(plan: &Plan, out: &mut String) {
+fn dry_run_output(plan: &Plan, out: &mut Output) {
     if plan.directories.is_empty() {
         pail(plan, out, "INFO", "No node_modules directories found.");
     } else {
         pail(plan, out, "INFO", "Would remove:");
 
         for directory in &plan.directories {
-            out.push_str(&format!("  {}\n", directory.display()));
+            out.stdout.push_str(&format!("  {}\n", directory.display()));
         }
     }
 
     if plan.lockfile {
         for lockfile in &plan.lockfiles {
-            out.push_str(&format!("  {}\n", lockfile.display()));
+            out.stdout.push_str(&format!("  {}\n", lockfile.display()));
         }
     }
 }
 
 /// Prints the removal results the way the Node handler does, and returns the exit code.
-fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut String) -> i32 {
+fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut Output) -> i32 {
     for directory in &outcome.removed {
         pail(plan, out, "SUCCESS", &format!("Removed {directory}"));
     }
@@ -218,18 +243,20 @@ fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut String) -> i32 
 }
 
 /// One pail block: a header with the local time and the label, filled with dots to the line
-/// width, a blank line, then the message word-wrapped to the same width.
-fn pail(plan: &Plan, out: &mut String, label: &str, message: &str) {
+/// width, a blank line, then the message word-wrapped to the same width. pail sends the error
+/// level to stderr and every other level to stdout.
+fn pail(plan: &Plan, out: &mut Output, label: &str, message: &str) {
+    let buffer = if label == "ERROR" { &mut out.stderr } else { &mut out.stdout };
     let limit = plan.width - 3;
     let head = format!("{} {label} ", clock());
 
-    out.push_str(&head);
-    out.push_str(&".".repeat(limit.saturating_sub(head.len())));
-    out.push_str("\n\n");
+    buffer.push_str(&head);
+    buffer.push_str(&".".repeat(limit.saturating_sub(head.len())));
+    buffer.push_str("\n\n");
 
     for line in wrap(message, limit) {
-        out.push_str(&line);
-        out.push('\n');
+        buffer.push_str(&line);
+        buffer.push('\n');
     }
 }
 

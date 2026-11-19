@@ -82,6 +82,8 @@ const routesToNative = (
     cwd = process.cwd(),
     interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
 ) => {
+// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`.
+const routesToNative = (args, platform = process.platform, stdoutIsTTY = process.stdout.isTTY === true) => {
     const [command = "", subcommand] = args;
 
     if (NATIVE_COMMANDS.has(command)) {
@@ -111,9 +113,10 @@ const routesToNative = (
 
         return ignoreMayRunNatively(platform, environment, cwd, interactive);
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
-    // other shape to Node itself. Help stays in Node on Windows, as for `advisories`.
+    // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
+    // stdout stays in Node too: pail colours its output there, and the binary does not.
     if (command === "clean") {
-        return platform !== "win32" || !asksForHelp(args);
+        return !stdoutIsTTY && (platform !== "win32" || !asksForHelp(args));
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on

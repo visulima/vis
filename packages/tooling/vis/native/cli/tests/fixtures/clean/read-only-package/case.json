@@ -1,0 +1,9 @@
+{
+  "materialize": [
+    "packages/locked/node_modules",
+    "packages/free/node_modules"
+  ],
+  "readOnly": [
+    "packages/locked"
+  ]
+}

@@ -73,6 +73,15 @@ describe("launcher routing (bin/route.mjs)", () => {
         },
     );
 
+    it.each([[["clean"]], [["clean", "--dry-run"]], [["clean", "--lockfile"]]])(
+        "keeps `vis %j` in Node when stdout is a terminal",
+        (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", true)).toBe(false);
+        },
+    );
+
     it("still routes the native commands on Windows", () => {
         expect.assertions(3);
 

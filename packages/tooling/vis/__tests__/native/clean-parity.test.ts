@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 
@@ -25,22 +25,21 @@ const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const fixturesRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "clean");
 
-const scratch = mkdtempSync(join(tmpdir(), "vis-clean-parity-"));
+// Scratch space is created in `beforeAll`, which does not run when the suite is skipped, so a
+// skipped run leaves nothing behind.
+let scratch = "";
 
 // A copy outside the package: a binary inside it reads its own location and hands declined
 // invocations to `dist/bin.js` itself, which would make the native path look like it answered.
-const nativeBinary = join(scratch, "bin", "vis");
-
-if (binary) {
-    mkdirSync(join(scratch, "bin"));
-    copyFileSync(binary as string, nativeBinary);
-}
+let nativeBinary = "";
 
 interface CaseConfig {
     /** The native path must decline this case, so the binary has to hand it to Node. */
     delegates?: boolean;
     /** Directories, relative to the workspace, to create with a placeholder file. */
     materialize: string[];
+    /** Directories, relative to the workspace, made read-only so removing their children fails. */
+    readOnly?: string[];
 }
 
 const FLAG_SETS: [string, string[]][] = [
@@ -56,6 +55,9 @@ const cases = readdirSync(fixturesRoot)
 
 let counter = 0;
 
+/** Read-only directories of the copies made so far, restored before the scratch space is removed. */
+const lockedDirectories: string[] = [];
+
 /** A fresh copy of a fixture, with its `node_modules` directories created. */
 const workspaceFor = (name: string): string => {
     const root = join(scratch, `${name}-${String(counter++)}`);
@@ -67,6 +69,11 @@ const workspaceFor = (name: string): string => {
     for (const directory of config.materialize) {
         mkdirSync(join(root, directory), { recursive: true });
         writeFileSync(join(root, directory, "index.js"), "");
+    }
+
+    for (const directory of config.readOnly ?? []) {
+        lockedDirectories.push(join(root, directory));
+        chmodSync(join(root, directory), 0o555);
     }
 
     return realpathSync(root);
@@ -101,7 +108,19 @@ const normalize = (text: string, root: string): string => text.replaceAll(root, 
 const delegation = (): Record<string, string> => ({ VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis clean: native vs Node", () => {
+    beforeAll(() => {
+        scratch = mkdtempSync(join(tmpdir(), "vis-clean-parity-"));
+        nativeBinary = join(scratch, "bin", "vis");
+
+        mkdirSync(join(scratch, "bin"));
+        copyFileSync(binary as string, nativeBinary);
+    });
+
     afterAll(() => {
+        for (const directory of lockedDirectories) {
+            chmodSync(directory, 0o755);
+        }
+
         rmSync(scratch, { force: true, recursive: true });
     });
 
@@ -110,7 +129,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
     describe.each(nativeCases)("case %s", (name) => {
         it.each(FLAG_SETS)("`clean %s` prints and removes what Node does, without delegating", (_label: string, flags: string[]) => {
-            expect.assertions(4);
+            expect.assertions(5);
 
             const nodeRoot = workspaceFor(name);
             const nativeRoot = workspaceFor(name);
@@ -121,8 +140,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             // No VIS_FALLBACK_ENTRY: a declined invocation would exit 70 here instead of passing.
             const native = runNative(flags, nativeRoot);
 
-            expect(native.status).toBe(0);
+            // A removal error exits 1 on both paths, so the status is compared with Node's.
+            expect(native.status).toBe(node.status);
             expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
+            // Error blocks are written to stderr by pail, so the two streams are compared apart.
+            expect(normalize(native.stderr, nativeRoot)).toBe(normalize(node.stderr, nodeRoot));
             expect(removedBy(nativeRoot, nativeBefore)).toEqual(removedBy(nodeRoot, nodeBefore));
             expect(node.status).toBe(native.status);
         });
@@ -152,6 +174,17 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
             expect(removedBy(nativeRoot, nativeBefore)).toEqual(removedBy(nodeRoot, nodeBefore));
         });
+    });
+
+    it("writes a removal error to stderr and the successful removals to stdout", () => {
+        expect.assertions(3);
+
+        const root = workspaceFor("read-only-package");
+        const native = runNative([], root);
+
+        expect(native.status).toBe(1);
+        expect(native.stderr).toMatch(/ERROR \.+\n\n.*packages\/locked\/node_modules/);
+        expect(native.stdout).not.toContain("ERROR");
     });
 
     it("hands a run outside CI to Node, with Node's output", () => {
