@@ -248,7 +248,6 @@ fn read_text(path: &Path) -> Option<Option<String>> {
     }
 }
 
-/// Key order of `parseManifest`'s return value.
 const MANIFEST_ORDER: [&str; 12] = [
     "advisoryCount",
     "bloomByteLen",
@@ -264,7 +263,6 @@ const MANIFEST_ORDER: [&str; 12] = [
     "targetFpr",
 ];
 
-/// A JSON object at the given indent, with keys in the order given.
 fn object(pairs: &[(&str, String)]) -> String {
     let body: Vec<String> = pairs.iter().map(|(key, value)| format!("    \"{key}\": {value}")).collect();
 
