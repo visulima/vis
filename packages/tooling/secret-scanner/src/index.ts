@@ -187,6 +187,7 @@ export type {
     RequiredFinding,
     RuleInfo,
     ScanOptions,
+    ScanOverride,
     ScanResult,
     SkippedFile,
     SkippedRule,

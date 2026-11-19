@@ -1074,6 +1074,60 @@
                     "additionalProperties": false,
                     "description": "Where the ruleset comes from. Omit for the bundled gitleaks default."
                 },
+                "overrides": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "files": {
+                                "anyOf": [
+                                    {
+                                        "type": "string"
+                                    },
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    }
+                                ],
+                                "description": "Gitignore-syntax globs, e.g. `*.env` or `src/**`."
+                            },
+                            "rules": {
+                                "type": "object",
+                                "properties": {
+                                    "enable": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Enable opt-in rules for matching files only."
+                                    },
+                                    "exclude": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Drop these rules for matching files."
+                                    },
+                                    "include": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Restrict matching files to these rules."
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "files"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "description": "File-specific rule filters, applied after the global `rules` filters."
+                },
                 "redact": {
                     "type": "boolean",
                     "description": "Redact secret values in findings."

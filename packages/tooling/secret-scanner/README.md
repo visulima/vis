@@ -375,6 +375,20 @@ interface ScanOptions {
         include?: string[];
     };
 
+    /** File-specific rule filters, applied in listed order after the global `rules` filters. */
+    overrides?: {
+        /** Gitignore-syntax globs, e.g. `*.env` or `src/**`. */
+        files: string | string[];
+        rules?: {
+            /** Enable opt-in rules for matching files only. */
+            enable?: string[];
+            /** Drop these rules for matching files. */
+            exclude?: string[];
+            /** Restrict matching files to these rules. */
+            include?: string[];
+        };
+    }[];
+
     /** Print diagnostics (skipped rules) to stderr on first run. */
     verbose?: boolean;
 

@@ -56,6 +56,15 @@ describe("resolveScanOptions presets shorthand", () => {
         expect(opts.rules?.enable).toStrictEqual(["from-flag", "tag:preset:exposed-files"]);
     });
 
+    it("passes per-file overrides through to the scanner", () => {
+        expect.assertions(1);
+
+        const overrides = [{ files: "*.env", rules: { exclude: ["generic-api-key"] } }];
+        const opts = resolveScanOptions(NO_FLAGS, { overrides }, ROOT);
+
+        expect(opts.overrides).toStrictEqual(overrides);
+    });
+
     it("returns `enable: undefined` when neither flags, `rules.enable`, nor presets are set", () => {
         expect.assertions(1);
 

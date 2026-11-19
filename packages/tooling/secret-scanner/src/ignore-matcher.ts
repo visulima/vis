@@ -15,6 +15,19 @@ type IgnoreFactory = () => IgnoreMatcher;
 
 const ignore: IgnoreFactory = (ignoreModule as { default?: IgnoreFactory }).default ?? ignoreModule;
 
+/** Build a matcher from a set of gitignore-syntax patterns. */
+export const createIgnoreMatcher = (patterns: string | string[]): IgnoreMatcher | undefined => {
+    if (patterns.length === 0) {
+        return undefined;
+    }
+
+    const matcher = ignore();
+
+    matcher.add(patterns);
+
+    return matcher;
+};
+
 /**
  * Build a gitignore matcher for the `scanFiles` path — it bypasses the native
  * walker and therefore has to filter paths itself. Returns `undefined` when the

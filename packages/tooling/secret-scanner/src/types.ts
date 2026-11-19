@@ -28,6 +28,20 @@ export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
  */
 export type ValidationStatus = "error" | "rejected" | "skipped" | "verified";
 
+/** Rule filters applied only to findings in files matching `files`. */
+export interface ScanOverride {
+    /** Gitignore-syntax globs (e.g. `*.env`, `src/**`). */
+    files: string | string[];
+    rules?: {
+        /** Enable opt-in rules for matching files without restricting output. */
+        enable?: string[];
+        /** Drop these rules for matching files. */
+        exclude?: string[];
+        /** Restrict matching files to these rules. */
+        include?: string[];
+    };
+}
+
 /**
  * Grouped scan options. Keys are namespaced by concern — config source, walker,
  * rule filters, output, baseline — so autocomplete surfaces only related settings
@@ -188,6 +202,9 @@ export interface ScanOptions {
      * file. Default: `2`. `0` disables decoding.
      */
     maxDecodeDepth?: number;
+
+    /** File-specific rule filters, applied in order after the global filters. */
+    overrides?: ScanOverride[];
 
     /**
      * Mask `match` / `secret` strings in every emitted finding. Default `true`;

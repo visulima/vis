@@ -747,6 +747,20 @@ export interface VisConfig {
             presets?: string[];
         };
 
+        /** File-specific rule filters, applied after the global `rules` filters. */
+        overrides?: {
+            /** Gitignore-syntax globs, e.g. `*.env` or `src/**`. */
+            files: string | string[];
+            rules?: {
+                /** Enable opt-in rules for matching files only. */
+                enable?: string[];
+                /** Drop these rules for matching files. */
+                exclude?: string[];
+                /** Restrict matching files to these rules. */
+                include?: string[];
+            };
+        }[];
+
         /** Mask secret values in findings and reports. Default `true`; `false` reveals them. */
         redact?: boolean;
 

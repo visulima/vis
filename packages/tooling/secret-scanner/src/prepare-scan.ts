@@ -9,7 +9,9 @@ import type { Native } from "./binding";
 import type { ChecksumSpec } from "./checksum";
 import type { GitleaksConfig } from "./config-loader";
 import { expandTagFilters, gateOptInRules, resolveConfig } from "./config-loader";
-import type { ScanOptions } from "./types";
+import type { IgnoreMatcher } from "./ignore-matcher";
+import { createIgnoreMatcher } from "./ignore-matcher";
+import type { ScanOptions, ScanOverride } from "./types";
 
 /**
  * Normalise `depends_on_rule` entries from Kingfisher YAML. Upstream uses
@@ -33,16 +35,27 @@ const asDepCandidate = (entry: unknown): DepCandidate => {
  */
 export interface RuleMeta {
     checksum?: ChecksumSpec;
+    defaultEnabled?: boolean;
     dependsOnRule?: { ruleId: string; variable: string }[];
     pattern?: string;
     validation?: unknown;
 }
 
+/** A file override with its tag filters expanded and its glob matcher compiled. */
+export interface CompiledOverride {
+    enableIds?: string[];
+    excludeIds?: string[];
+    includeIds?: string[];
+    matcher: IgnoreMatcher;
+}
+
 /** The config-derived part of a prepared scan; memoised across calls. */
 interface PreparedConfig {
     config: GitleaksConfig;
+    enableIds?: string[];
     excludeIds?: string[];
     includeIds?: string[];
+    overrides?: CompiledOverride[];
     ruleMeta: Map<string, RuleMeta>;
 }
 
@@ -65,6 +78,7 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
         }
 
         const record = rule as {
+            defaultEnabled?: unknown;
             dependsOnRule?: unknown;
             id?: unknown;
             patternRequirements?: { checksum?: ChecksumSpec };
@@ -105,6 +119,7 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
 
         map.set(record.id, {
             checksum: record.patternRequirements?.checksum,
+            defaultEnabled: typeof record.defaultEnabled === "boolean" ? record.defaultEnabled : undefined,
             dependsOnRule: deps && deps.length > 0 ? deps : undefined,
             pattern: typeof record.regex === "string" ? record.regex : undefined,
             validation: record.validation,
@@ -152,8 +167,32 @@ const preparedCacheKey = (options: ScanOptions | undefined): string | undefined 
         configMtimeMs: configStat?.mtimeMs,
         configSize: configStat?.size,
         extendBundled: options?.config?.extendBundled,
+        overrides: options?.overrides,
         path: options?.config?.path,
         rules: options?.rules,
+    });
+};
+
+const compileOverrides = (overrides: ScanOverride[] | undefined, allRules: GitleaksConfig["rules"]): CompiledOverride[] | undefined => {
+    if (overrides === undefined || overrides.length === 0) {
+        return undefined;
+    }
+
+    return overrides.flatMap((override) => {
+        const matcher = createIgnoreMatcher(override.files);
+
+        if (matcher === undefined) {
+            return [];
+        }
+
+        return [
+            {
+                enableIds: expandTagFilters(override.rules?.enable, allRules ?? [], "overrides.enable"),
+                excludeIds: expandTagFilters(override.rules?.exclude, allRules ?? [], "overrides.exclude"),
+                includeIds: expandTagFilters(override.rules?.include, allRules ?? [], "overrides.include"),
+                matcher,
+            },
+        ];
     });
 };
 
@@ -167,13 +206,18 @@ const buildPreparedConfig = (options: ScanOptions | undefined): PreparedConfig =
     const enableIds = expandTagFilters(options?.rules?.enable, allRules, "rules.enable");
     const includeIds = expandTagFilters(options?.rules?.include, allRules, "rules.include");
     const excludeIds = expandTagFilters(options?.rules?.exclude, allRules, "rules.exclude");
+    const overrides = compileOverrides(options?.overrides, allRules);
 
     // `enable` and `include` both imply enablement: you can't filter to a rule
     // that's off. `exclude` is filter-only — it never turns anything on.
-    const enabledSet = new Set<string>([...(enableIds ?? []), ...(includeIds ?? [])]);
+    const enabledSet = new Set<string>([
+        ...(enableIds ?? []),
+        ...(includeIds ?? []),
+        ...(overrides?.flatMap((override) => [...(override.enableIds ?? []), ...(override.includeIds ?? [])]) ?? []),
+    ]);
     const config = gateOptInRules(base, enabledSet);
 
-    return { config, excludeIds, includeIds, ruleMeta: buildRuleMeta(config) };
+    return { config, enableIds, excludeIds, includeIds, overrides, ruleMeta: buildRuleMeta(config) };
 };
 
 const preparedConfig = (options: ScanOptions | undefined): PreparedConfig => {

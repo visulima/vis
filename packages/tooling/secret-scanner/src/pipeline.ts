@@ -2,7 +2,7 @@
 // Post-scan pipeline: runs after the native detector returns raw findings.
 //
 //   0. `dropShadowedGenericFindings` — generic-api-key yields to any overlapping finding.
-//   1. `applyRuleFilter`      — `rules.include` / `rules.exclude` (tag-expanded upstream).
+//   1. `applyRuleFilter`      — `rules.include` / `rules.exclude` and per-file `overrides`.
 //   2. `applyChecksumFilter`  — drops findings whose CRC-style checksum fails.
 //   3. `applyValidation`      — populates `finding.validation` via HTTP / transport validators.
 //   4. `applyOnlyVerified`    — keeps only `"verified"` when `config.onlyVerified`.
@@ -26,6 +26,7 @@ import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from 
 import { PerHostLimiter, validateFinding } from "./validator";
 
 const VALIDATOR_CONCURRENCY = 8;
+const WINDOWS_ABSOLUTE_PATH = /^[a-z]:/i;
 
 /**
  * Drop findings the heuristic false-positive suite flags (detect-secrets
@@ -133,6 +134,68 @@ const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] 
         }
 
         return true;
+    });
+};
+
+/**
+ * Layer file-specific rule filters over the global ones. An override's
+ * `include` replaces the effective filter for that file (and clears earlier
+ * exclusions); `exclude` adds to it, so a broad rule can be narrowed further
+ * for one file without affecting the rest of the scan. Opt-in rules enabled
+ * only by an override stay confined to its matching files.
+ */
+const applyFileOverrides = <F extends Finding>(findings: F[], prepared: PreparedScan): F[] => {
+    const { overrides } = prepared;
+
+    if (overrides === undefined || overrides.length === 0) {
+        return findings;
+    }
+
+    const globallyEnabled = new Set([...(prepared.enableIds ?? []), ...(prepared.includeIds ?? [])]);
+
+    return findings.filter((finding) => {
+        const file = finding.file.replaceAll("\\", "/");
+
+        // Absolute paths have no scan-root-relative meaning for glob patterns.
+        if (file.startsWith("/") || WINDOWS_ABSOLUTE_PATH.test(file)) {
+            return true;
+        }
+
+        let include = prepared.includeIds;
+        let exclude = prepared.excludeIds;
+        const matched: (typeof overrides)[number][] = [];
+
+        for (const override of overrides) {
+            if (!override.matcher.ignores(file)) {
+                continue;
+            }
+
+            matched.push(override);
+
+            if (override.includeIds !== undefined) {
+                include = override.includeIds;
+                // An explicit include is authoritative for the matching file;
+                // earlier exclusions must not cancel it out again.
+                exclude = [];
+            }
+
+            if (override.excludeIds !== undefined) {
+                exclude = [...new Set([...(exclude ?? []), ...override.excludeIds])];
+            }
+        }
+
+        // The native scan compiles opt-in rules once for the whole scan. Hide
+        // findings from rules that only an override turned on when the file
+        // doesn't match that override.
+        if (
+            prepared.ruleMeta.get(finding.ruleId)?.defaultEnabled === false &&
+            !globallyEnabled.has(finding.ruleId) &&
+            !matched.some((override) => [...(override.enableIds ?? []), ...(override.includeIds ?? [])].includes(finding.ruleId))
+        ) {
+            return false;
+        }
+
+        return applyRuleFilter([finding], include, exclude).length === 1;
     });
 };
 
@@ -323,7 +386,7 @@ export const resetPipelineWarningsForTests = (): void => {
 
 /** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
 const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined): F[] => {
-    const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
+    const filtered = applyFileOverrides(applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds), prepared);
     const heuristicsFiltered = applyHeuristicFilters(filtered, options);
 
     return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta);
