@@ -1,0 +1,4 @@
+{
+  "delegates": true,
+  "materialize": ["node_modules/y"]
+}

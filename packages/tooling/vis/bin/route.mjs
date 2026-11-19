@@ -110,6 +110,10 @@ const routesToNative = (
         }
 
         return ignoreMayRunNatively(platform, environment, cwd, interactive);
+    // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
+    // other shape to Node itself. Help stays in Node on Windows, as for `advisories`.
+    if (command === "clean") {
+        return platform !== "win32" || !asksForHelp(args);
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
