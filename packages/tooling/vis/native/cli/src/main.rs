@@ -25,6 +25,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::process::{exit, Command, ExitStatus};
 
+mod advisories;
 mod complete;
 mod exec;
 mod help;
@@ -84,6 +85,15 @@ fn main() {
         // is not certain about, is delegated to Node by `hook::run` itself.
         // `hook run --help` is the manifest's to answer (the `_` arm below).
         "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
+        // `vis advisories bloom status --format json --cache-dir <dir>` — read-only osv-bloom
+        // status. Every other shape (table output, `sync`, `prune`, help) goes to the arm below.
+        "advisories"
+            if args.get(1).map(String::as_str) == Some("bloom")
+                && args.get(2).map(String::as_str) == Some("status")
+                && !surface::asks_for_help(&args) =>
+        {
+            advisories::run(&args)
+        }
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

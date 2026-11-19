@@ -26,6 +26,10 @@ describe("launcher routing (bin/route.mjs)", () => {
         // Only `hook run` is native.
         [["hook", "run", "pre-commit"], true],
         [["hook", "install"], false],
+        // Only `advisories bloom status` is native; the other advisories subcommands are not.
+        [["advisories", "bloom", "status", "--format", "json"], true],
+        [["advisories", "bloom", "sync"], false],
+        [["advisories", "status"], false],
         // Natively implemented commands.
         [["--version"], true],
         [["-V"], true],

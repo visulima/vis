@@ -43,7 +43,7 @@ fn finish(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> ! {
 }
 
 /// Walk up from `cwd` looking for a `vis.config.*` file.
-fn has_vis_config(cwd: &Path) -> bool {
+pub(crate) fn has_vis_config(cwd: &Path) -> bool {
     const NAMES: [&str; 7] = [
         "vis.config.ts",
         "vis.config.mts",
