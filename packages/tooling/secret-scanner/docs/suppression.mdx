@@ -19,6 +19,17 @@ const third = "ghp_bB4cC5dD6eE7fF8gG9hH0iI1jJ2kK3lL4mM5nN6o"; // pragma: allowli
 
 `pragma: allowlist secret` is the [detect-secrets](https://github.com/Yelp/detect-secrets) marker, accepted for smooth migrations. The other two are the historical gitleaks + Visulima forms.
 
+### Rule-scoped markers
+
+A bare marker suppresses every rule on the line. Append one or more active rule ids to suppress only those rules:
+
+```typescript
+const token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"; // gitleaks:allow github-pat
+const other = "ghp_zY9xW8vU7tS6rQ5pO4nM3lK2jI1hG0fE9dC8bA7a"; // secret-scanner:allow github-pat, aws-access-token
+```
+
+Rule ids are compared case-sensitively against the active ruleset; an unknown id suppresses nothing. Marker text stays case-insensitive. Plain prose after a bare marker leaves it bare, so `// gitleaks:allow safe in tests` still suppresses every rule on that line.
+
 ## 2. Block region — `gitleaks:allow-start` / `-end`
 
 Suppresses every finding between two markers. Use for fixture blocks, test data, migration scripts and the like.
@@ -36,6 +47,8 @@ Unpaired start markers are ignored — a stray `allow-start` never silently swal
 
 Both `gitleaks:...` and `secret-scanner:...` are accepted for every variant (inline, start, end). Case-insensitive.
 
+Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`.
+
 ## 3. Previous-line pragma — `pragma: allowlist nextline secret`
 
 Covers the cases where an inline comment on the secret line is awkward (YAML block scalars) or impossible (PEM bodies, multi-line base64 blobs). Place the marker on the line **immediately before** the finding:
@@ -51,7 +64,7 @@ token: |
 STRIPE_KEY = "sk_live_fakefakefakefakefakefakefake"
 ```
 
-Only the immediately preceding line is checked — markers two or more lines up have no effect. For larger regions, use the `allow-start` / `allow-end` block form instead.
+Only the immediately preceding line is checked — markers two or more lines up have no effect. For larger regions, use the `allow-start` / `allow-end` block form instead. Append a rule id to scope this pragma too: `# pragma: allowlist nextline secret github-pat`.
 
 ## 4. Baseline JSON
 

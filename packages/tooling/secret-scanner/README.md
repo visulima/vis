@@ -235,6 +235,8 @@ const other = "ghp_..."; // secret-scanner:allow
 const third = "ghp_..."; // pragma: allowlist secret   # detect-secrets compat
 ```
 
+Append active rule ids to suppress only those rules: `// gitleaks:allow github-pat` or `// secret-scanner:allow github-pat, aws-access-token`. A bare marker suppresses every rule on the line; an unknown id suppresses nothing.
+
 **Block region** (suppresses everything between markers)
 
 ```ts

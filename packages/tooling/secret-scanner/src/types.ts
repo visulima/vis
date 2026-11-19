@@ -155,8 +155,9 @@ export interface ScanOptions {
     /**
      * Honour inline suppressions — `gitleaks:allow`, `secret-scanner:allow`,
      * `pragma: allowlist secret`, `pragma: allowlist nextline secret` and
-     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Default `true`.
-     * Set `false` in CI to audit what developers suppressed in code.
+     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Append rule ids to
+     * a marker to scope it to those rules. Default `true`. Set `false` in CI
+     * to audit what developers suppressed in code.
      */
     inlineAllow?: boolean;
 

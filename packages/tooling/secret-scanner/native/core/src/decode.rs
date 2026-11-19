@@ -21,7 +21,7 @@ use crate::detector::{detect, DecodeOrigin, DetectOptions, Pass, RawFinding};
 use crate::lines::{compute_line_offsets, offset_to_line_col};
 use crate::rules::CompiledRuleset;
 use crate::scanner::TextScanOptions;
-use crate::suppression::{find_allow_regions, inline_suppressed, SuppressionReason};
+use crate::suppression::{find_allow_regions, inline_suppressed, AllowRegion, SuppressionReason};
 
 /// Default recursion depth. 2 covers "base64 in a k8s Secret" and one extra wrapping
 /// layer without the blow-up of deeper recursion.
@@ -126,9 +126,10 @@ pub fn scan_text_with_decoding(
     }
 
     let line_offsets = compute_line_offsets(content);
-    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let known_rule = |id: &str| ruleset.rules.iter().any(|rule| rule.id == id);
+    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content, &known_rule) } else { Vec::new() };
     let original =
-        Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts };
+        Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts, ruleset };
 
     let (mut buf, mut fragments) = first_level(content, segments);
     for depth in 1..=decode.max_depth {
@@ -174,8 +175,9 @@ fn already_reported(out: &[RawFinding], f: &RawFinding) -> bool {
 struct Original<'a> {
     content: &'a str,
     line_offsets: &'a [usize],
-    allow_regions: &'a [(usize, usize)],
+    allow_regions: &'a [AllowRegion],
     detect: DetectOptions<'a>,
+    ruleset: &'a CompiledRuleset,
 }
 
 /// Find decodable segments in `text[from..to]`. Returned offsets are absolute in `text`,
@@ -517,8 +519,17 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
     // Suppression markers live on the original line, which the decoded buffer may not
     // fully contain — re-check them against the original content.
     let (sl, sc, el, ec) = offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
+    let known_rule = |id: &str| original.ruleset.rules.iter().any(|rule| rule.id == id);
     let inline_allowed = original.detect.inline_allow
-        && inline_suppressed(original.content, original.line_offsets, original.allow_regions, sl, orig_start);
+        && inline_suppressed(
+            original.content,
+            original.line_offsets,
+            original.allow_regions,
+            &known_rule,
+            &f.rule_id,
+            sl,
+            orig_start,
+        );
     if inline_allowed {
         if !original.detect.report_suppressed {
             return None;
@@ -691,6 +702,15 @@ mod tests {
     #[test]
     fn allow_comment_on_original_line_suppresses_decoded_finding() {
         assert!(scan(&format!("value: {} # gitleaks:allow\n", b64(KEY)), 2).is_empty());
+    }
+
+    #[test]
+    fn scoped_allow_comment_on_original_line_is_rule_specific() {
+        let matching = format!("value: {} # gitleaks:allow openrouter\n", b64(KEY));
+        let other_rule = format!("value: {} # gitleaks:allow github-pat\n", b64(KEY));
+
+        assert!(scan(&matching, 2).is_empty());
+        assert_eq!(scan(&other_rule, 2).len(), 1);
     }
 
     #[test]

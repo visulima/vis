@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
 use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
-use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, SuppressionReason};
+use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, AllowRegion, SuppressionReason};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
 /// windowed scanning kicks in. Covers the entire span of every kingfisher +
@@ -148,7 +148,8 @@ pub fn detect(
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let allow_regions = if opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let known_rule = |id: &str| ruleset.rules.iter().any(|rule| rule.id == id);
+    let allow_regions = if opts.inline_allow { find_allow_regions(content, &known_rule) } else { Vec::new() };
 
     // 1) Candidate rules via AC keyword prefilter on the whole file. Empty-keywords rules
     //    are pre-marked so they always run. We use a bitmap indexed by rule id — O(rules)
@@ -421,7 +422,7 @@ struct MatchCtx<'a> {
     /// The text the rule ran over (post `preRegexReplace`) and its line offsets.
     text: &'a str,
     line_offsets: &'a [usize],
-    allow_regions: &'a [(usize, usize)],
+    allow_regions: &'a [AllowRegion],
     opts: DetectOptions<'a>,
 }
 
@@ -484,8 +485,17 @@ impl MatchCtx<'_> {
         // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
         // `pragma: allowlist nextline secret` on the line preceding the match.
         // `inline_allow: false` disables all three so CI can audit them.
+        let known_rule = |id: &str| self.ruleset.rules.iter().any(|rule| rule.id == id);
         let inline_allowed = self.opts.inline_allow
-            && inline_suppressed(self.text, self.line_offsets, self.allow_regions, sl, span.match_start);
+            && inline_suppressed(
+                self.text,
+                self.line_offsets,
+                self.allow_regions,
+                &known_rule,
+                &self.rule.id,
+                sl,
+                span.match_start,
+            );
 
         // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
         let allowlisted = |lists: &[CompiledAllowlist]| {
