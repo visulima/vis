@@ -10,15 +10,22 @@ use std::path::{Path, PathBuf};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrayExpressionElement, Expression, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
+    ArrayExpressionElement, Expression, ImportDeclarationSpecifier, ImportOrExportKind, ModuleExportName,
+    ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
 };
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
 
-/// Top-level keys the Node loader rejects (`src/config/deprecation.ts`). Any of them
-/// makes the Node loader fail, so a native command must not run past them.
-const DEPRECATED_KEYS: [&str; 4] = ["targetDefaults", "taskRunnerOptions", "taskDefaults", "scopedTasks"];
+/// Top-level keys the native path must leave to Node. `runtime` and `extends` change what
+/// the Node loader resolves, `versionConstraint` can fail the run, and the four removed keys
+/// (`src/config/deprecation.ts`) make the Node loader fail.
+const NODE_ONLY_KEYS: [&str; 7] =
+    ["runtime", "extends", "versionConstraint", "targetDefaults", "taskRunnerOptions", "taskDefaults", "scopedTasks"];
+
+/// The module `defineConfig` is imported from. Its evaluation is harmless, so a value import
+/// from it is allowed, and only a `defineConfig` bound to it is unwrapped.
+const VIS_CONFIG_MODULE: &str = "@visulima/vis/config";
 
 /// Config file names in the order the Node loader tries them within one directory.
 const NAMES: [&str; 7] = [
@@ -40,8 +47,14 @@ pub enum ConfigState {
 
 /// Read the config that applies to `cwd`, walking up like the Node loader does.
 pub fn read(cwd: &Path) -> ConfigState {
-    let Some(path) = find(cwd) else {
-        return ConfigState::Absent;
+    let mut paths = configs(cwd);
+
+    // Node loads the config of the workspace root, which is not known here. With several
+    // config files on the way up, which one applies is a question only Node can answer.
+    let path = match paths.len() {
+        0 => return ConfigState::Absent,
+        1 => paths.remove(0),
+        _ => return ConfigState::Dynamic,
     };
 
     let Ok(source) = fs::read_to_string(&path) else {
@@ -60,17 +73,15 @@ pub fn read(cwd: &Path) -> ConfigState {
     }
 }
 
-/// Whether the native path must hand the command to Node. Node owns three things a
-/// native path cannot reproduce: the package manager a config pins (`install.backend`,
-/// `install.corepack`, `runtime`), a config it cannot read as data at all, and the
-/// removed keys its loader rejects with an error (`DEPRECATED_KEYS`).
+/// Whether the native path must hand the command to Node. Node owns the package manager a
+/// config pins (`install.backend`, `install.corepack`), the keys in `NODE_ONLY_KEYS`, and any
+/// config it cannot read as data at all.
 pub fn requires_node(state: &ConfigState) -> bool {
     match state {
         ConfigState::Absent => false,
         ConfigState::Dynamic => true,
         ConfigState::Static(value) => {
-            value.get("runtime").is_some()
-                || DEPRECATED_KEYS.iter().any(|key| value.get(*key).is_some())
+            NODE_ONLY_KEYS.iter().any(|key| value.get(*key).is_some())
                 || value.get("install").is_some_and(|install| {
                     !install.is_object() || install.get("backend").is_some() || install.get("corepack").is_some()
                 })
@@ -78,23 +89,26 @@ pub fn requires_node(state: &ConfigState) -> bool {
     }
 }
 
-fn find(cwd: &Path) -> Option<PathBuf> {
+/// The config file of each directory from `cwd` up to the root, nearest first.
+fn configs(cwd: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
     let mut current = Some(cwd.to_path_buf());
 
     while let Some(directory) = current {
         if let Some(path) = NAMES.iter().map(|name| directory.join(name)).find(|path| path.exists()) {
-            return Some(path);
+            found.push(path);
         }
 
         current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
     }
 
-    None
+    found
 }
 
 /// The value of the single `export default`, with an optional `defineConfig(...)` wrapper.
-/// Imports are skipped: a binding from one can only be used through an identifier, which
-/// is not static. Any other statement may have effects, so it makes the file dynamic.
+/// Type-only imports are erased. Any other import runs a module, and any other statement
+/// may have effects, so either makes the file dynamic. The one exception is the
+/// `defineConfig` helper from `VIS_CONFIG_MODULE`.
 fn static_default_export(path: &Path, source: &str) -> Option<Value> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).ok()?;
@@ -105,16 +119,34 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
     }
 
     let mut default = None;
+    let mut define_config_names = Vec::new();
 
     for statement in &parsed.program.body {
         match statement {
-            Statement::ImportDeclaration(_) => {}
+            Statement::ImportDeclaration(import) if import.import_kind == ImportOrExportKind::Type => {}
+            Statement::ImportDeclaration(import) => {
+                if import.source.value != VIS_CONFIG_MODULE {
+                    return None;
+                }
+
+                for specifier in import.specifiers.iter().flatten() {
+                    if let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier {
+                        if matches!(&specifier.imported, ModuleExportName::IdentifierName(name) if name.name == "defineConfig")
+                        {
+                            define_config_names.push(specifier.local.name.to_string());
+                        }
+                    }
+                }
+            }
             Statement::ExportDefaultDeclaration(export) => {
                 if default.is_some() {
                     return None;
                 }
 
-                default = Some(static_value(unwrap_define_config(export.declaration.as_expression()?))?);
+                default = Some(static_value(unwrap_define_config(
+                    export.declaration.as_expression()?,
+                    &define_config_names,
+                ))?);
             }
             _ => return None,
         }
@@ -123,10 +155,11 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
     default
 }
 
-fn unwrap_define_config<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+/// Unwraps `defineConfig(x)` only when `defineConfig` is bound to the vis config module.
+fn unwrap_define_config<'a, 'b>(expression: &'b Expression<'a>, names: &[String]) -> &'b Expression<'a> {
     if let Expression::CallExpression(call) = expression {
         if let (Expression::Identifier(callee), [argument]) = (&call.callee, call.arguments.as_slice()) {
-            if callee.name == "defineConfig" {
+            if names.iter().any(|name| callee.name == name.as_str()) {
                 if let Some(inner) = argument.as_expression() {
                     return inner;
                 }
@@ -312,5 +345,68 @@ mod tests {
         assert!(needs(serde_json::json!({ "install": "npm" })));
         assert!(needs(serde_json::json!({ "targetDefaults": {} })));
         assert!(needs(serde_json::json!({ "scopedTasks": [] })));
+    }
+
+    #[test]
+    fn extends_and_version_constraint_need_node() {
+        let needs = |value: Value| requires_node(&ConfigState::Static(value));
+
+        assert!(needs(serde_json::json!({ "extends": "./base.ts" })));
+        assert!(needs(serde_json::json!({ "extends": ["./base.ts"] })));
+        assert!(needs(serde_json::json!({ "versionConstraint": ">=1" })));
+    }
+
+    #[test]
+    fn a_define_config_from_another_module_is_dynamic() {
+        assert_eq!(
+            config(
+                "alias",
+                "vis.config.ts",
+                "import { defineConfig } from 'other-lib';\nexport default defineConfig({ lint: {} });\n"
+            ),
+            ConfigState::Dynamic,
+        );
+    }
+
+    #[test]
+    fn an_unbound_define_config_call_is_dynamic() {
+        assert_eq!(
+            config("unbound", "vis.config.ts", "export default defineConfig({ lint: {} });\n"),
+            ConfigState::Dynamic
+        );
+    }
+
+    #[test]
+    fn a_side_effect_import_is_dynamic() {
+        assert_eq!(
+            config("side-import", "vis.config.ts", "import './setup';\nexport default {};\n"),
+            ConfigState::Dynamic
+        );
+    }
+
+    #[test]
+    fn type_only_imports_are_read() {
+        assert_eq!(
+            config(
+                "type-import",
+                "vis.config.ts",
+                "import type { Config } from './types';\nexport default { lint: {} };\n"
+            ),
+            ConfigState::Static(serde_json::json!({ "lint": {} })),
+        );
+    }
+
+    #[test]
+    fn several_config_files_on_the_way_up_are_dynamic() {
+        let root = scratch("nested");
+        let package = root.join("packages").join("app");
+
+        fs::create_dir_all(&package).unwrap();
+        fs::write(root.join("vis.config.ts"), "export default { install: { backend: 'npm' } };\n").unwrap();
+        fs::write(package.join("vis.config.ts"), "export default { lint: {} };\n").unwrap();
+
+        assert_eq!(read(&package), ConfigState::Dynamic);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

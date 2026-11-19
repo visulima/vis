@@ -126,6 +126,23 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
     parsed.values.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
 }
 
+/// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
+/// lockfiles, so a native choice from the lockfile would differ.
+fn installer_selected_by_environment() -> bool {
+    env::var_os("VIS_INSTALLER").is_some()
+        || env::var_os("PATH")
+            .is_some_and(|path| env::split_paths(&path).any(|directory| directory.join("aube").is_file()))
+}
+
+/// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
+/// argument parsing does not apply them, so they must reach Node.
+fn uses_global_option(args: &[String]) -> bool {
+    const OPTIONS: [&str; 3] = ["--config", "--cwd", "--runtime"];
+
+    args.iter()
+        .any(|argument| OPTIONS.iter().any(|option| argument == option || argument.starts_with(&format!("{option}="))))
+}
+
 /// Entry point. `verb` is the command name, `full_args` is the FULL invocation
 /// (including the leading verb) so the config-delegation path can replay it.
 pub fn run(verb: &str, full_args: &[String]) -> ! {
@@ -135,9 +152,15 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     // native PM detector doesn't read. For these PM commands — especially the
     // mutating ones (remove/dedupe/link/unlink) — running the wrong PM is
     // consequential, so a config that may pin them is left to Node. A config that is
-    // plain data without those keys is read here and the command stays native.
+    // plain data without those keys stays native, unless the environment or a global
+    // option can change which installer or workspace Node would use.
     // (exec/x make the opposite, documented cold-start trade-off.)
-    if crate::vis_config::requires_node(&crate::vis_config::read(&cwd)) {
+    let config = crate::vis_config::read(&cwd);
+
+    if crate::vis_config::requires_node(&config)
+        || (config != crate::vis_config::ConfigState::Absent
+            && (installer_selected_by_environment() || uses_global_option(full_args)))
+    {
         crate::delegate(full_args);
     }
 
