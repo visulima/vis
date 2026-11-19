@@ -10,7 +10,8 @@
 
 use std::collections::HashSet;
 use std::env;
-use std::fs;
+use std::ffi::OsString;
+use std::fs::{self, OpenOptions};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -215,18 +216,19 @@ fn colour_may_be_forced() -> bool {
     })
 }
 
-/// Answer the invocation, or delegate to Node. Never returns.
-pub fn run(args: &[String]) -> ! {
+/// Answer the invocation, or delegate to Node. `args` is the lossy view used for parsing;
+/// `raw_args` is the untouched argv handed to Node, so non-UTF-8 bytes arrive unchanged. Never returns.
+pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(cwd) = env::current_dir().ok() else {
-        crate::delegate(args);
+        crate::delegate(raw_args);
     };
 
     let Some(options) = parse(args).filter(|_| native_context(&cwd)) else {
-        crate::delegate(args);
+        crate::delegate(raw_args);
     };
 
     let Some(text) = execute(&options, &cwd) else {
-        crate::delegate(args);
+        crate::delegate(raw_args);
     };
 
     let mut stdout = io::stdout().lock();
@@ -264,7 +266,7 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
             return Some(format!("{} is already up to date (no new patterns).\n", options.filename));
         }
 
-        fs::write(&path, &merged.content).ok()?;
+        write_atomically(&write_target(&path)?, &merged.content).ok()?;
 
         return Some(format!("Added {} pattern(s) to {}.\n", merged.added.len(), options.filename));
     }
@@ -279,6 +281,51 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
     ));
 
     Some(text)
+}
+
+/// The file a write to `path` lands in. `fs::write` follows a symlink and writes its target, so the
+/// rename must target the resolved path too, or the link would be replaced by a regular file.
+/// A dangling link is `None`: Node would create the target, so the write goes there instead.
+fn write_target(path: &Path) -> Option<PathBuf> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => fs::canonicalize(path).ok(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Some(path.to_owned()),
+        Err(_) => None,
+    }
+}
+
+/// A sibling of `path` that only this process names, so a concurrent writer cannot pick it.
+fn temp_path(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+
+    path.with_file_name(format!(".{name}.vis-{}.tmp", std::process::id()))
+}
+
+/// Replaces `path` with `contents` through a temporary file in the same directory and a rename, so
+/// a failed write never leaves a truncated ignore file. The temporary file is removed when a step
+/// after its creation fails; the caller delegates to Node, which reports the error.
+fn write_atomically(path: &Path, contents: &str) -> io::Result<()> {
+    let temp = temp_path(path);
+    let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
+
+    let result = (|| {
+        file.write_all(contents.as_bytes())?;
+
+        // A rename brings in the temporary file's mode, so keep the mode the target had.
+        if let Ok(metadata) = fs::metadata(path) {
+            file.set_permissions(metadata.permissions())?;
+        }
+
+        file.sync_all()?;
+
+        fs::rename(&temp, path)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+
+    result
 }
 
 /// `JSON.stringify({ added, file, target }, null, 2)` plus a newline. Every string is a constant
@@ -444,5 +491,60 @@ mod tests {
 
         assert_eq!(patterns.iter().filter(|pattern| **pattern == ".git").count(), 1);
         assert_eq!(patterns.last(), Some(&"node_modules"));
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = env::temp_dir().join(format!("vis-ignore-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+
+        directory
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_original_file_untouched() {
+        let directory = scratch("write-failure");
+        let target = directory.join(".dockerignore");
+
+        fs::write(&target, "original\n").unwrap();
+        // Another writer already holds the temporary name, so creating it fails before the target is touched.
+        fs::write(temp_path(&target), "theirs\n").unwrap();
+
+        assert!(write_atomically(&target, "replacement\n").is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
+        // The file was not created by this write, so the failed write must not remove it.
+        assert_eq!(fs::read_to_string(temp_path(&target)).unwrap(), "theirs\n");
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_failed_rename_removes_the_temporary_file() {
+        let directory = scratch("rename-failure");
+        let target = directory.join(".dockerignore");
+
+        // A file cannot be renamed over a directory, so the rename after the temporary write fails.
+        fs::create_dir(&target).unwrap();
+
+        assert!(write_atomically(&target, "replacement\n").is_err());
+        assert!(!temp_path(&target).exists());
+        assert!(target.is_dir());
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_successful_write_replaces_the_file_and_leaves_no_temporary_file() {
+        let directory = scratch("write-success");
+        let target = directory.join(".dockerignore");
+
+        fs::write(&target, "old\n").unwrap();
+        write_atomically(&target, "new\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new\n");
+        assert!(!temp_path(&target).exists());
+
+        fs::remove_dir_all(&directory).unwrap();
     }
 }

@@ -106,7 +106,7 @@ fn main() {
         }
         // `vis ignore` — the plain `--target` / `--json` / `--write` shapes in a CI context;
         // help and everything else falls through to the arm below.
-        "ignore" if !surface::asks_for_help(&args) => ignore::run(&args),
+        "ignore" if !surface::asks_for_help(&args) => ignore::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
