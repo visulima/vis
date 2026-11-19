@@ -37,7 +37,6 @@ const PROTOTYPE_NAMES: [&str; 12] = [
     "__lookupSetter__",
 ];
 
-/// One project's script targets, keyed by target name.
 #[derive(Debug, PartialEq)]
 pub struct ProjectTargets {
     pub directory: String,
