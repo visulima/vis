@@ -18,15 +18,12 @@ pub const LOCKFILE_NAMES: [&str; 6] =
 /// What a removal did, in the order it happened.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct CleanOutcome {
-    /// `node_modules` directories that were removed.
     pub removed: Vec<String>,
     /// Failures, each formatted as `<path>: <io error>`.
     pub errors: Vec<String>,
-    /// Lockfiles that were removed.
     pub lockfiles_removed: Vec<String>,
 }
 
-/// Directory names the walks never descend into.
 fn skipped_by_walk(name: &str) -> bool {
     name == ".git" || name == ".hg"
 }
