@@ -120,7 +120,7 @@ pub fn run(args: &[String]) -> ! {
 /// root is then known to be truthy. Node also warns about a missing `vis.config` and about Deno
 /// files, but only outside CI, and it prints tips and notices on a terminal. So the native path
 /// needs CI, a non-terminal stderr, and no config or Deno file at or above either directory.
-fn native_context() -> bool {
+pub(crate) fn native_context() -> bool {
     let Some(cwd) = env::current_dir().ok() else {
         return false;
     };
@@ -129,13 +129,17 @@ fn native_context() -> bool {
         return false;
     };
 
+    quiet_context(&cwd, &root)
+}
+
+/// Whether Node would print nothing to stderr for a command run from `cwd` under the workspace
+/// root `root`: CI, a non-terminal stderr, and no config or Deno file at or above either one.
+pub(crate) fn quiet_context(cwd: &Path, root: &Path) -> bool {
     if !in_ci() || io::stderr().is_terminal() {
         return false;
     }
 
-    [cwd.as_path(), root.as_path()]
-        .iter()
-        .all(|directory| !has_vis_config(directory) && !any_ancestor_has(directory, &DENO_FILES))
+    [cwd, root].iter().all(|directory| !has_vis_config(directory) && !any_ancestor_has(directory, &DENO_FILES))
 }
 
 /// `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.

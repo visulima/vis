@@ -1,0 +1,1 @@
+{"name":"alpha","scripts":{"build":"tsc","test":"vitest","lint":"eslint .","typecheck":"tsc --noEmit","dev":"x","clean":"rm -rf dist"}}

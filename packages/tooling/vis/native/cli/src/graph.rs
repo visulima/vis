@@ -30,6 +30,8 @@ pub struct ProjectGraph {
     /// Edges per source project, in the order Node emits them: `dependencies`, then
     /// `devDependencies`, then `peerDependencies`, each in key order, with a target kept once.
     pub dependencies: BTreeMap<String, Vec<Edge>>,
+    /// Project directory, relative to the root, of each project name.
+    pub directories: BTreeMap<String, String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +69,7 @@ pub enum EdgeKind {
     PeerDependency,
 }
 
+#[cfg(test)]
 impl EdgeKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -170,7 +173,7 @@ fn resolve(root: &Path) -> Option<GraphResult> {
         return None;
     };
 
-    let mut projects: Vec<(String, Manifest)> = Vec::new();
+    let mut projects: Vec<(String, Manifest, String)> = Vec::new();
     let mut names: BTreeSet<String> = BTreeSet::new();
 
     for directory in &directories {
@@ -182,13 +185,16 @@ fn resolve(root: &Path) -> Option<GraphResult> {
             return None;
         }
 
-        projects.push((name, manifest));
+        projects.push((name, manifest, directory.clone()));
     }
 
     let mut nodes = BTreeMap::new();
     let mut dependencies = BTreeMap::new();
+    let mut directories = BTreeMap::new();
 
-    for (name, manifest) in &projects {
+    for (name, manifest, directory) in &projects {
+        directories.insert(name.clone(), directory.clone());
+
         let project_type = if manifest.bin.0 { ProjectType::Application } else { ProjectType::Library };
 
         nodes.insert(name.clone(), Node { name: name.clone(), project_type });
@@ -216,7 +222,7 @@ fn resolve(root: &Path) -> Option<GraphResult> {
         dependencies.insert(name.clone(), edges);
     }
 
-    Some(GraphResult::Native(ProjectGraph { nodes, dependencies }))
+    Some(GraphResult::Native(ProjectGraph { dependencies, directories, nodes }))
 }
 
 /// `None` when the file is missing, unreadable, or not a manifest this module reproduces.

@@ -11,3 +11,4 @@ packages/tooling/vis/native/cli/tests/fixtures/clean
 **/CHANGELOG.md
 **/README.md
 packages/tooling/vis/native/cli/tests/fixtures/ignore/
+packages/tooling/vis/native/cli/tests/fixtures/list

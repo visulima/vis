@@ -40,10 +40,13 @@ describe("launcher routing (bin/route.mjs)", () => {
         [["exec", "tsc"], true],
         [["pm", "list"], true],
         [["why", "left-pad"], true],
+        // `list` is routed; the binary delegates the shapes it does not answer.
+        [["list"], true],
+        [["list", "--json"], true],
+        [["list", "--deps"], true],
         // Everything else stays in-process.
         [["status", "--json"], false],
         [["run", "build"], false],
-        [["list"], false],
         [["-v"], false],
     ])("routes `vis %j` to native: %s", (args: string[], expected: boolean) => {
         expect.assertions(1);
@@ -84,6 +87,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(["--version"], "win32")).toBe(true);
         expect(routesToNative(["clean", "--dry-run"], "win32", process.env, "/work/app", false)).toBe(false);
         expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
+        expect(routesToNative(["list"], "win32")).toBe(false);
     });
 
     describe("`vis clean` gate (plan in clean.rs)", () => {
