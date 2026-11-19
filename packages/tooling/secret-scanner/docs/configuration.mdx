@@ -54,17 +54,17 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option             | Type              | Default | Description                                                                                                                                         |
-| ------------------ | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                   |
-| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                  |
-| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                       |
-| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                         |
-| `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
-| `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
-| `redact`           | `boolean`         | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
-| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                              |
-| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
+| Option             | Type              | Default | Description                                                                                                                                                             |
+| ------------------ | ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                                       |
+| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                                      |
+| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                                           |
+| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                                             |
+| `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                     |
+| `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                   |
+| `redact`           | `boolean`         | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values. |
+| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                  |
+| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                             |
 
 ### `maxArchiveDepth`
 
@@ -161,7 +161,7 @@ Supported today: Kingfisher-style HTTP validators with `StatusMatch` / `WordMatc
 
 `onlyVerified: true` then filters the emitted set down to findings whose `validation === "verified"` — useful for CI gating where a suspect match that can't be verified is not a blocker.
 
-> **Warning:** `validate: true` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test.
+> **Warning:** `validate: true` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test. Masking (`redact`, on by default) does not prevent this: validation runs on the real value before findings are masked for output.
 
 ## `walk` — filesystem traversal
 

@@ -119,7 +119,7 @@ path:test/a.ts:rule:generic-api-key:secret:not-a-real-token-1234
 - Paths are relative to the directory that holds the ignore file, whatever spelling the scan root had (`.`, an absolute path, a subdirectory, a symlinked path).
 - Commit fingerprints only match findings from `scanGitHistory`; the commit may be abbreviated (7+ hex characters) or `*`. Plain `file:rule:line` entries match history findings too.
 - `*` matches any run of characters, `/` included.
-- Secret-value entries need the real secret, so with `redact: true` the scan runs unredacted internally and masks the output afterwards.
+- Secret-value entries need the real secret. Masking only applies to reported findings, so these entries match even with the default `redact: true`.
 - Entries that matched nothing come back as `unusedIgnores` from the `*Detailed` scans (gitleaks #2130); lines that can't be parsed are ignored.
 - The ignore file itself is never reported, even when a scoped secret entry puts a real secret in it (staged and history scans read dotfiles).
 

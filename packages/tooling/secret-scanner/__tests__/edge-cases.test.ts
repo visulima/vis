@@ -147,7 +147,7 @@ leaked = "${secret2}"
 `,
         );
 
-        const findings = await scan([tmpDir]);
+        const findings = await scan([tmpDir], { redact: false });
 
         // Only the second secret (outside the allow region) should be reported.
         expect(findings).toHaveLength(1);
@@ -600,6 +600,7 @@ leaked = "${secret2}"
                     ],
                 },
             },
+            redact: false,
         });
 
         expect(findings.length).toBeGreaterThan(0);

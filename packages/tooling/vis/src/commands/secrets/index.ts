@@ -172,11 +172,11 @@ const secretsOptionDefinitions = {
         description: "Suppress all progress output (only emit findings)",
         type: Boolean,
     },
-    redact: {
-        defaultValue: false,
-        description: "Mask secret values in output",
+    ...negatable({
+        description: "Mask secret values in output (default; use --no-redact to reveal them)",
+        name: "redact",
         type: Boolean,
-    },
+    }),
     "replace-baseline": {
         defaultValue: false,
         description: "With --update-baseline, replace rather than merge",
@@ -184,7 +184,7 @@ const secretsOptionDefinitions = {
     },
     report: {
         description:
-            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact (--history reports always, as commit messages are not masked).",
+            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless findings are masked (--no-redact reveals them); --history reports are always owner-only, as commit messages are not masked.",
         multiple: true,
         type: String,
     },
@@ -230,7 +230,8 @@ const secrets = defineCommand({
         ["vis secrets --history", "Scan the full git history for secrets that were committed then removed"],
         ["vis secrets --history --history-range main..HEAD", "Scan only commits on the current branch since main"],
         ["vis secrets --history --all", "Scan every branch and tag, including unmerged ones"],
-        ["vis secrets --history --max-commits 100 --redact", "Scan the last 100 commits, masking any secret values"],
+        ["vis secrets --history --max-commits 100", "Scan the last 100 commits with secret values masked"],
+        ["vis secrets --no-redact", "Scan and show the full secret values (use with care)"],
         ["vis secrets --init", "Write an initial baseline from current findings"],
         ["vis secrets --list-rules", "Print all bundled detection rules"],
         ["vis secrets --list-validators", "Print non-HTTP validator types in the ruleset + install hints for each"],

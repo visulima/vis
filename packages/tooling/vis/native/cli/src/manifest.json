@@ -4486,8 +4486,12 @@
           "Scan every branch and tag, including unmerged ones"
         ],
         [
-          "vis secrets --history --max-commits 100 --redact",
-          "Scan the last 100 commits, masking any secret values"
+          "vis secrets --history --max-commits 100",
+          "Scan the last 100 commits with secret values masked"
+        ],
+        [
+          "vis secrets --no-redact",
+          "Scan and show the full secret values (use with care)"
         ],
         [
           "vis secrets --init",
@@ -4773,7 +4777,13 @@
           "type": "boolean"
         },
         {
-          "description": "Mask secret values in output",
+          "description": "Disable --redact.",
+          "hidden": true,
+          "name": "no-redact",
+          "type": "boolean"
+        },
+        {
+          "description": "Mask secret values in output (default; use --no-redact to reveal them)",
           "name": "redact",
           "type": "boolean"
         },
@@ -4783,7 +4793,7 @@
           "type": "boolean"
         },
         {
-          "description": "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact (--history reports always, as commit messages are not masked).",
+          "description": "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless findings are masked (--no-redact reveals them); --history reports are always owner-only, as commit messages are not masked.",
           "multiple": true,
           "name": "report",
           "type": "string"

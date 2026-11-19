@@ -75,12 +75,12 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
 /**
  * Print the `--format` report to stdout and write every `--report` file.
  *
- * With `--redact` the scanner has already masked every secret-bearing field,
+ * By default the scanner has already masked every secret-bearing field,
  * composite `requiredFindings` included, so the findings are rendered as is.
  */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
     const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
-    const shouldRedact = scanOptions.redact === true;
+    const shouldRedact = scanOptions.redact !== false;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
     const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };

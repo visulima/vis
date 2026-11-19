@@ -15,10 +15,11 @@ Recursively scan one or more paths for secrets. Runs the detector on a Rust thre
 import { scan } from "@visulima/secret-scanner";
 
 const findings = await scan([process.cwd()], {
-    redact: true,
     walk: { gitignore: true, maxFileSize: 5 * 1024 * 1024 },
 });
 ```
+
+Findings are masked by default. Pass `redact: false` when you need the full `match` and `secret` values.
 
 - Respects `.gitignore`, `.ignore` and global excludes by default.
 - Walker-level exclusions come from `walk.excludePatterns` and `walk.excludeFromFiles`.

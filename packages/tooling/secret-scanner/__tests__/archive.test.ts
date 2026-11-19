@@ -125,7 +125,7 @@ describe("archive scanning (maxArchiveDepth)", () => {
 
         await writeFile(resolve(tmp, "bundle.zip"), zipOf([["config/app.env", LEAK]]));
 
-        const findings = await scan([tmp], { config, maxArchiveDepth: 1 });
+        const findings = await scan([tmp], { config, maxArchiveDepth: 1, redact: false });
 
         expect(files(findings)).toStrictEqual(["bundle.zip!config/app.env"]);
         expect(findings[0]?.secret).toBe(TOKEN);
