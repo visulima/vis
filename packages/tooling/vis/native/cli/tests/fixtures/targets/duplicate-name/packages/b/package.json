@@ -1,0 +1,6 @@
+{
+  "name": "dup",
+  "scripts": {
+    "build": "node b.js"
+  }
+}

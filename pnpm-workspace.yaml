@@ -8,6 +8,7 @@ packages:
   - "!packages/tooling/vis/__bench__/cli/fixtures/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/workspace/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/graph/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/targets/**"
 
 allowBuilds:
   '@firebase/util': false

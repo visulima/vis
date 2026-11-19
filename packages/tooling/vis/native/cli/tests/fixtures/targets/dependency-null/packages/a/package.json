@@ -1,0 +1,7 @@
+{
+  "name": "a",
+  "dependencies": null,
+  "scripts": {
+    "build": "node x.js"
+  }
+}

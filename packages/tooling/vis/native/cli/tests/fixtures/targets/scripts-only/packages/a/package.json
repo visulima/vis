@@ -1,0 +1,8 @@
+{
+  "name": "@fixture/a",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node build.mjs",
+    "lint:fix": "eslint --fix ."
+  }
+}

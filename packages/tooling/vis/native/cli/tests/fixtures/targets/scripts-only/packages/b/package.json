@@ -1,0 +1,7 @@
+{
+  "name": "b",
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.mjs && node post.mjs"
+  }
+}
