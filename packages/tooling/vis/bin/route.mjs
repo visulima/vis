@@ -42,6 +42,12 @@ const routesToNative = (args, platform = process.platform) => {
         return platform !== "win32" || !asksForHelp(args);
     }
 
+    // `ignore` is native for its plain shapes (`native/cli/src/ignore.rs`); the binary hands
+    // everything else to Node. Help stays in Node on Windows, as for `advisories bloom status`.
+    if (command === "ignore") {
+        return platform !== "win32" || !asksForHelp(args);
+    }
+
     // `complete --` is the dynamic endpoint the generated completion scripts call on
     // every <TAB>; any other `complete` shape is not a native command, so it stays
     // in-process (script generation is `vis completion --shell=<shell>`, Node's too).

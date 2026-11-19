@@ -30,6 +30,11 @@ describe("launcher routing (bin/route.mjs)", () => {
         [["advisories", "bloom", "status", "--format", "json"], true],
         [["advisories", "bloom", "sync"], false],
         [["advisories", "status"], false],
+        // `ignore` is native for its plain shapes; help is answered by the binary too.
+        [["ignore"], true],
+        [["ignore", "--target=npm", "--write"], true],
+        [["ignore", "--help"], true],
+        [["ignore-all"], false],
         // Natively implemented commands.
         [["--version"], true],
         [["-V"], true],
@@ -47,7 +52,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(args, "linux")).toBe(expected);
     });
 
-    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]]])(
+    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]]])(
         "keeps the help surface `vis %j` in Node on Windows",
         (args: string[]) => {
             expect.assertions(1);
@@ -57,9 +62,10 @@ describe("launcher routing (bin/route.mjs)", () => {
     );
 
     it("still routes the native commands on Windows", () => {
-        expect.assertions(2);
+        expect.assertions(3);
 
         expect(routesToNative(["--version"], "win32")).toBe(true);
         expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
+        expect(routesToNative(["ignore", "--target=npm", "--write"], "win32")).toBe(true);
     });
 });

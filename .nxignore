@@ -9,3 +9,4 @@ dist
 
 **/CHANGELOG.md
 **/README.md
+packages/tooling/vis/native/cli/tests/fixtures/ignore/

@@ -9,6 +9,7 @@ packages:
   - "!packages/tooling/vis/native/cli/tests/fixtures/workspace/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/graph/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/targets/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/ignore/**"
 
 allowBuilds:
   '@firebase/util': false
