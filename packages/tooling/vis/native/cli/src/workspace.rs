@@ -340,7 +340,6 @@ fn valid_path(path: &str) -> bool {
         })
 }
 
-/// Anchored match where `*` is any run of characters and everything else is literal.
 fn star_match(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
     let (mut p, mut t) = (0, 0);
