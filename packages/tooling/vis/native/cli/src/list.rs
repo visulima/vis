@@ -66,7 +66,8 @@ fn parse(args: &[String]) -> Option<Format> {
 }
 
 /// Script targets of one project, in file order. Duplicate, integer-like and non-string
-/// entries are left to Node, since JS key order and last-wins parsing are not reproduced here.
+/// entries, empty commands and reserved names are left to Node, since JS key order, last-wins
+/// parsing and prototype-sensitive assignment are not reproduced here.
 #[derive(Default)]
 struct Scripts(Vec<(String, String)>);
 
@@ -75,6 +76,25 @@ impl<'de> Deserialize<'de> for Scripts {
         deserializer.deserialize_any(ScriptsVisitor)
     }
 }
+
+/// Script names the Node path treats specially. `__proto__` is assigned through the prototype
+/// setter, so it never becomes a listed target. The rest name `Object.prototype` members that
+/// `projectTargets[name]` and `defaults[name]` resolve to inherited values. Node answers for them.
+const RESERVED_SCRIPT_NAMES: &[&str] = &[
+    "__proto__",
+    "constructor",
+    "prototype",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toString",
+    "valueOf",
+    "toLocaleString",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+];
 
 struct ScriptsVisitor;
 
@@ -91,8 +111,14 @@ impl<'de> Visitor<'de> for ScriptsVisitor {
         while let Some(key) = map.next_key::<String>()? {
             let value = map.next_value::<String>()?;
 
+            // Node's mergeTarget sets `command` only for a truthy script, so an empty value has no
+            // command there and the listing omits the property, which JsonTarget cannot reproduce.
             if key.is_empty() || key.bytes().all(|byte| byte.is_ascii_digit()) || !key.is_ascii() {
                 return Err(de::Error::custom("script name left to Node"));
+            }
+
+            if value.is_empty() || RESERVED_SCRIPT_NAMES.contains(&key.as_str()) {
+                return Err(de::Error::custom("script left to Node"));
             }
 
             if scripts.iter().any(|(name, _)| *name == key) {
@@ -471,6 +497,18 @@ mod tests {
         assert_eq!(targets_cell(&names(&[])), "—");
         assert_eq!(targets_cell(&names(&["a", "b"])), "a, b");
         assert_eq!(targets_cell(&names(&["a", "b", "c", "d", "e"])), "a, b, c, d… (5)");
+    }
+
+    #[test]
+    fn scripts_with_empty_or_reserved_entries_are_left_to_node() {
+        let parses = |json: &str| serde_json::from_str::<Scripts>(json).is_ok();
+
+        assert!(parses(r#"{"build":"tsc","lint":"eslint ."}"#));
+        assert!(!parses(r#"{"build":"tsc","lint":""}"#));
+
+        for name in RESERVED_SCRIPT_NAMES {
+            assert!(!parses(&format!(r#"{{"{name}":"echo"}}"#)), "{name}");
+        }
     }
 
     #[test]
