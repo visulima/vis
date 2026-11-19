@@ -31,7 +31,7 @@ regex = { version = "1", default-features = false, features = [
   "perf"
 ] }
 serde = { version = "1", features = [ "derive" ] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = [ "float_roundtrip" ] }
 # Reads `vis.config.*` as data (see src/vis_config.rs). Pinned like the addon's copies.
 oxc_allocator = "=0.154.0"
 oxc_ast = "=0.154.0"
