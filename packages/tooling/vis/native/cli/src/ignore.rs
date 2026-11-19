@@ -305,6 +305,12 @@ fn temp_path(path: &Path) -> PathBuf {
 /// a failed write never leaves a truncated ignore file. The temporary file is removed when a step
 /// after its creation fails; the caller delegates to Node, which reports the error.
 fn write_atomically(path: &Path, contents: &str) -> io::Result<()> {
+    // The rename below would replace a read-only destination that a direct write refuses, so
+    // check the destination can be written first. Opening without truncating leaves it intact.
+    if path.exists() {
+        OpenOptions::new().write(true).open(path)?;
+    }
+
     let temp = temp_path(path);
     let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
 
@@ -515,6 +521,23 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
         // The file was not created by this write, so the failed write must not remove it.
         assert_eq!(fs::read_to_string(temp_path(&target)).unwrap(), "theirs\n");
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_destination_is_refused_and_left_untouched() {
+        let directory = scratch("read-only");
+        let target = directory.join(".dockerignore");
+
+        fs::write(&target, "original\n").unwrap();
+        let mut permissions = fs::metadata(&target).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&target, permissions).unwrap();
+
+        assert!(write_atomically(&target, "replacement\n").is_err());
+        assert!(!temp_path(&target).exists());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
 
         fs::remove_dir_all(&directory).unwrap();
     }
