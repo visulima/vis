@@ -162,8 +162,11 @@ let registryListening = false;
 registry.stdout.on("data", (chunk) => {
     process.stdout.write(chunk);
 
-    registryLog = `${registryLog}${chunk}`.slice(-64);
-    registryListening ||= registryLog.includes("http address");
+    // Check the whole text before trimming: one chunk can hold the marker and much more output after it.
+    const text = `${registryLog}${chunk}`;
+
+    registryListening ||= text.includes("http address");
+    registryLog = text.slice(-64);
 });
 
 registry.on("error", (error) => {
