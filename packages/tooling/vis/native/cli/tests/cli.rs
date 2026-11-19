@@ -801,3 +801,38 @@ fn delegation_replaces_the_native_process_so_the_child_has_its_pid() {
     assert!(status.success(), "status: {status:?}");
     assert_eq!(stdout.trim(), pid.to_string(), "the delegated child must run as the spawned PID");
 }
+
+#[cfg(unix)]
+#[test]
+fn delegated_clean_forwards_a_non_utf8_argument_unchanged() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = std::env::temp_dir().join(format!("vis-clean-raw-argv-{}", std::process::id()));
+
+    std::fs::create_dir_all(&dir).expect("mkdir");
+
+    // The stub Node entry records its argv, NUL-separated, so the bytes can be compared exactly.
+    let stub = dir.join("stub-entry.sh");
+    let record = dir.join("argv");
+
+    std::fs::write(&stub, "printf '%s\\0' \"$@\" > \"$VIS_STUB_RECORD\"\n").expect("write stub");
+
+    let bad = OsStr::from_bytes(b"caf\xe9");
+
+    let status = binary()
+        .args([OsStr::new("clean"), bad])
+        .env("VIS_NODE", "/bin/sh")
+        .env("VIS_FALLBACK_ENTRY", &stub)
+        .env("VIS_STUB_RECORD", &record)
+        .status()
+        .expect("run binary");
+
+    assert!(status.success(), "status was {status}");
+
+    let recorded = std::fs::read(&record).expect("read record");
+
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert_eq!(recorded, b"clean\0caf\xe9\0", "argv reached the stub as {recorded:?}");
+}

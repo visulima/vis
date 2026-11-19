@@ -6,6 +6,7 @@ packages/tooling/vis/native/cli/tests/fixtures
 storybook-static
 node_modules
 dist
+packages/tooling/vis/native/cli/tests/fixtures/clean
 
 **/CHANGELOG.md
 **/README.md
