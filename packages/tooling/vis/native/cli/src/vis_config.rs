@@ -125,17 +125,29 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
         match statement {
             Statement::ImportDeclaration(import) if import.import_kind == ImportOrExportKind::Type => {}
             Statement::ImportDeclaration(import) => {
+                // Only `defineConfig` from the config module is allowed. Its resolution and exports are
+                // not checked here, so any other binding, and any side-effect import, is left to Node.
                 if import.source.value != VIS_CONFIG_MODULE {
                     return None;
                 }
 
-                for specifier in import.specifiers.iter().flatten() {
-                    if let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier {
-                        if matches!(&specifier.imported, ModuleExportName::IdentifierName(name) if name.name == "defineConfig")
-                        {
-                            define_config_names.push(specifier.local.name.to_string());
-                        }
+                let specifiers = import.specifiers.as_ref().filter(|specifiers| !specifiers.is_empty())?;
+
+                for specifier in specifiers.iter() {
+                    let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier else {
+                        return None;
+                    };
+
+                    if specifier.import_kind == ImportOrExportKind::Type {
+                        continue;
                     }
+
+                    if !matches!(&specifier.imported, ModuleExportName::IdentifierName(name) if name.name == "defineConfig")
+                    {
+                        return None;
+                    }
+
+                    define_config_names.push(specifier.local.name.to_string());
                 }
             }
             Statement::ExportDefaultDeclaration(export) => {
@@ -408,5 +420,37 @@ mod tests {
         assert_eq!(read(&package), ConfigState::Dynamic);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_inline_type_only_define_config_is_not_a_helper() {
+        assert_eq!(
+            config(
+                "inline-type",
+                "vis.config.ts",
+                "import { type defineConfig } from '@visulima/vis/config';\nexport default defineConfig({});\n"
+            ),
+            ConfigState::Dynamic,
+        );
+    }
+
+    #[test]
+    fn other_bindings_and_side_effect_imports_from_the_config_module_are_dynamic() {
+        assert_eq!(
+            config(
+                "other-binding",
+                "vis.config.ts",
+                "import { other } from '@visulima/vis/config';\nexport default { lint: {} };\n"
+            ),
+            ConfigState::Dynamic,
+        );
+        assert_eq!(
+            config(
+                "side-effect-config",
+                "vis.config.ts",
+                "import '@visulima/vis/config';\nexport default { lint: {} };\n"
+            ),
+            ConfigState::Dynamic,
+        );
     }
 }

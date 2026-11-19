@@ -7,6 +7,7 @@
 //! forwarded to the PM in order (the Node handlers were fixed to match).
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
@@ -129,9 +130,34 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
 /// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
 /// lockfiles, so a native choice from the lockfile would differ.
 fn installer_selected_by_environment() -> bool {
+    const AUBE_NAMES: [&str; 4] = ["aube", "aube.exe", "aube.cmd", "aube.bat"];
+
     env::var_os("VIS_INSTALLER").is_some()
-        || env::var_os("PATH")
-            .is_some_and(|path| env::split_paths(&path).any(|directory| directory.join("aube").is_file()))
+        || env::var_os("VIS_RUNTIME").is_some()
+        || env::var_os("PATH").is_some_and(|path| {
+            env::split_paths(&path).any(|directory| AUBE_NAMES.iter().any(|name| directory.join(name).is_file()))
+        })
+}
+
+/// Node runs the installer a `packageManager` pin names through Corepack, which can differ from the
+/// one native finds. Any pin in an ancestor `package.json` leaves the command to Node.
+fn ancestor_pins_package_manager(cwd: &Path) -> bool {
+    let mut current = Some(cwd.to_path_buf());
+
+    while let Some(directory) = current {
+        let pinned = fs::read_to_string(directory.join("package.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|manifest| manifest.get("packageManager").is_some());
+
+        if pinned {
+            return true;
+        }
+
+        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
+    }
+
+    false
 }
 
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
@@ -159,7 +185,9 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
 
     if crate::vis_config::requires_node(&config)
         || (config != crate::vis_config::ConfigState::Absent
-            && (installer_selected_by_environment() || uses_global_option(full_args)))
+            && (installer_selected_by_environment()
+                || uses_global_option(full_args)
+                || ancestor_pins_package_manager(&cwd)))
     {
         crate::delegate(full_args);
     }

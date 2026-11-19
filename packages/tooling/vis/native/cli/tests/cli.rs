@@ -470,6 +470,43 @@ fn pm_family_delegates_for_a_global_option_with_a_plain_vis_config() {
     assert!(stdout.contains("NODE:"), "stayed native: {stdout}");
 }
 
+/// An ancestor `packageManager` pin makes Node run through Corepack, so a plain config stays with Node.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_for_an_ancestor_package_manager_pin() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-cfg-pin-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(base.join("package.json"), r#"{"packageManager":"pnpm@9.0.0"}"#).unwrap();
+    std::fs::write(project.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+    std::fs::write(project.join("vis.config.ts"), "export default { lint: { enabled: true } };\n").unwrap();
+
+    let stub_node = bindir.join("node");
+    std::fs::write(&stub_node, "#!/bin/sh\necho \"NODE:$*\"\n").unwrap();
+    std::fs::set_permissions(&stub_node, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", &stub_node)
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("VIS_RUNTIME")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("NODE:"), "stayed native: {stdout}");
+}
+
 #[test]
 fn delegate_without_fallback_entry_exits_ex_software() {
     let output = binary().arg("run").env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
