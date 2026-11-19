@@ -4554,6 +4554,10 @@
           "SARIF output for GitHub code-scanning"
         ],
         [
+          "vis secrets --format github",
+          "GitHub Actions annotations on stdout"
+        ],
+        [
           "vis secrets --report sarif=secrets.sarif --report gitlab-code-quality=gl-code-quality.json",
           "Write several report formats in one run"
         ],
@@ -4656,7 +4660,7 @@
         },
         {
           "defaultValue": "text",
-          "description": "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality",
+          "description": "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality, github",
           "name": "format",
           "type": "string"
         },

@@ -70,7 +70,7 @@ const secretsOptionDefinitions = {
     }),
     format: {
         defaultValue: "text",
-        description: "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality",
+        description: "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality, github",
         type: String,
     },
     ...negatable({
@@ -247,6 +247,7 @@ const secrets = defineCommand({
         ["vis secrets --baseline .secrets-baseline.json", "Suppress known findings; print diff vs. baseline"],
         ["vis secrets --update-baseline", "Merge current findings into the baseline (use --replace-baseline to overwrite)"],
         ["vis secrets --format sarif > report.sarif", "SARIF output for GitHub code-scanning"],
+        ["vis secrets --format github", "GitHub Actions annotations on stdout"],
         ["vis secrets --report sarif=secrets.sarif --report gitlab-code-quality=gl-code-quality.json", "Write several report formats in one run"],
         ["vis secrets --no-inline-allow --log-ignored", "Audit suppressions: ignore inline markers and list everything still suppressed"],
         ["vis secrets --fail-on-unreadable --fail-on-unused-ignores", "CI: fail on unreadable files and stale .gitleaksignore entries"],

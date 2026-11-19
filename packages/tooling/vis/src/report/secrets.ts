@@ -1,5 +1,6 @@
 /**
- * Report emitters for `vis secrets`: CSV, JUnit XML and GitLab Code Quality.
+ * Report emitters for `vis secrets`: CSV, JUnit XML, GitLab Code Quality and
+ * GitHub Actions annotations.
  *
  * Findings arrive with paths already relative to the workspace root (see
  * `toRelativeFinding`) and already masked when `--redact` is on. History
@@ -11,6 +12,7 @@ import { createHash } from "node:crypto";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
+import { encodeWorkflowMessage, encodeWorkflowProperty } from "./github";
 import { cdata, escapeAttribute } from "./junit-audit";
 
 type SecretsFinding = Finding & Partial<Pick<GitFinding, "commit">>;
@@ -163,3 +165,31 @@ export const emitSecretsGitlabCodeQuality = (findings: SecretsFinding[]): string
 
     return `${JSON.stringify(issues, undefined, 2)}\n`;
 };
+
+/**
+ * GitHub Actions annotations: one `::error` command per finding, with the
+ * exact span GitHub can anchor to a file in the checked-out tree. Annotations
+ * are visible to anyone who can read the PR, so the secret is always masked —
+ * even when `--redact` is off. Commit messages are never included; history
+ * findings carry only the commit sha.
+ */
+export const emitSecretsGitHub = (findings: SecretsFinding[]): string =>
+    findings
+        .map((finding) => {
+            const properties = [
+                `file=${encodeWorkflowProperty(finding.file)}`,
+                `line=${String(finding.startLine)}`,
+                `endLine=${String(finding.endLine)}`,
+                `col=${String(finding.startColumn)}`,
+                `endColumn=${String(finding.endColumn)}`,
+                `title=${encodeWorkflowProperty(finding.ruleId)}`,
+            ];
+            const details = [
+                finding.description || finding.ruleId,
+                `Secret: ${maskSecret(finding.secret)}`,
+                ...(finding.commit ? [`Commit: ${finding.commit.sha}`] : []),
+            ].join("\n");
+
+            return `::error ${properties.join(",")}::${encodeWorkflowMessage(details)}\n`;
+        })
+        .join("");

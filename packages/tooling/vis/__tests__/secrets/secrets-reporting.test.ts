@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
 import { assertReportingFlags } from "../../src/commands/secrets/flags";
 import execute from "../../src/commands/secrets/handler";
-import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
+import { csvCell, emitSecretsCsv, emitSecretsGitHub, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
 import { formatSuppressed, formatUnusedIgnores, parseReportTargets } from "../../src/secrets/report";
@@ -130,6 +130,44 @@ describe("report emitters", () => {
         }[];
 
         expect(first?.fingerprint).toBe(second?.fingerprint);
+    });
+
+    it("emits GitHub annotations with the finding span and a masked secret", () => {
+        expect.assertions(4);
+
+        const annotation = emitSecretsGitHub([finding()]);
+
+        expect(annotation).toBe(
+            `::error file=src/a.ts,line=3,endLine=3,col=10,endColumn=50,title=github-pat::GitHub PAT%0ASecret: ghp${"*".repeat(PAT_A.length - 6)}xY4\n`,
+        );
+        expect(annotation).not.toContain(PAT_A);
+        expect(emitSecretsGitHub([])).toBe("");
+        expect(
+            emitSecretsGitHub([finding(), finding({ file: "b.ts" })])
+                .split("\n")
+                .filter(Boolean),
+        ).toHaveLength(2);
+    });
+
+    it("percent-encodes GitHub workflow-command properties and message bodies", () => {
+        expect.assertions(3);
+
+        const annotation = emitSecretsGitHub([finding({ description: "first line%\nsecond: line", file: "src/a,b:c%.ts", ruleId: "rule:1,x" })]);
+
+        expect(annotation).toContain("::error file=src/a%2Cb%3Ac%25.ts,");
+        expect(annotation).toContain(",title=rule%3A1%2Cx::");
+        expect(annotation).toContain("first line%25%0Asecond: line");
+    });
+
+    it("adds the commit sha to history annotations without leaking the commit message", () => {
+        expect.assertions(2);
+
+        const annotation = emitSecretsGitHub([
+            finding({ commit: { authorEmail: "e@x", authorName: "A", date: "2026-01-01", message: `leaked ${PAT_A}`, sha: "a".repeat(40) } }),
+        ]);
+
+        expect(annotation).toContain(`Commit: ${"a".repeat(40)}`);
+        expect(annotation).not.toContain(PAT_A);
     });
 });
 
@@ -409,6 +447,22 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(JSON.parse(readFileSync(join(root, "out", "s.sarif"), "utf8")).version).toBe("2.1.0");
         expect(readFileSync(join(root, "out", "s.csv"), "utf8")).toContain(PAT_A);
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
+    }, 60_000);
+
+    it("prints GitHub annotations on stdout without the raw secret and can write them to a report", async () => {
+        expect.assertions(5);
+
+        const root = workspace();
+
+        await runSecrets({ format: "github", report: ["github=out/annotations.txt"] }, root);
+
+        const annotations = stdout.join("");
+
+        expect(annotations).toMatch(/^::error file=a\.ts,line=1,endLine=1,col=\d+,endColumn=\d+,title=github-pat::/u);
+        expect(annotations).not.toContain(PAT_A);
+        expect(annotations.split("\n").filter(Boolean)).toHaveLength(1);
+        expect(stderr.join("")).not.toContain("::error");
+        expect(readFileSync(join(root, "out", "annotations.txt"), "utf8")).toBe(annotations);
     }, 60_000);
 
     it("never prints or writes a raw secret by default", async () => {

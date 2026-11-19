@@ -3,11 +3,11 @@ import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SuppressedFind
 import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../errors/vis-user-error";
-import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
+import { emitSecretsCsv, emitSecretsGitHub, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
 import { toRelativeFinding } from "./baseline";
 import { formatHistoryText, formatSarif, formatText } from "./format";
 
-export const REPORT_FORMATS = ["text", "json", "sarif", "csv", "junit", "gitlab-code-quality"] as const;
+export const REPORT_FORMATS = ["text", "json", "sarif", "csv", "junit", "gitlab-code-quality", "github"] as const;
 
 export type ReportFormat = (typeof REPORT_FORMATS)[number];
 
@@ -68,6 +68,9 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
     switch (format) {
         case "csv": {
             return emitSecretsCsv(relativeFindings());
+        }
+        case "github": {
+            return emitSecretsGitHub(relativeFindings());
         }
         case "gitlab-code-quality": {
             return emitSecretsGitlabCodeQuality(relativeFindings());

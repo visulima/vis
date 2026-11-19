@@ -11,6 +11,7 @@
  * tree (GitHub anchors on repo-relative paths).
  */
 
+import { encodeWorkflowMessage, encodeWorkflowProperty } from "../../report/github";
 import type { Finding, FindingSeverity } from "../config-types";
 
 export interface GitHubAdapterRun {
@@ -34,15 +35,6 @@ const commandFor = (severity: FindingSeverity): "error" | "notice" | "warning" =
     return "notice";
 };
 
-// GitHub's workflow-command parser requires `%`, `\r` and `\n` to be
-// percent-encoded inside the message body so multi-line annotations
-// don't terminate the command prematurely.
-const encodeMessage = (value: string): string => value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
-
-// Property values (file, title) are comma- and colon-sensitive — same
-// percent encoding plus `,`, `:`, `=`.
-const encodeProperty = (value: string): string => encodeMessage(value).replaceAll(",", "%2C").replaceAll(":", "%3A").replaceAll("=", "%3D");
-
 const relativeFile = (file: string, workspaceRoot: string | undefined): string => {
     if (workspaceRoot && file.startsWith(`${workspaceRoot}/`)) {
         return file.slice(workspaceRoot.length + 1);
@@ -64,7 +56,7 @@ const renderFinding = (finding: Finding, workspaceRoot: string | undefined): str
     const file = relativeFile(finding.file, workspaceRoot);
     const title = finding.ruleId ? `${finding.adapter}(${finding.ruleId})` : finding.adapter;
 
-    const properties: string[] = [`file=${encodeProperty(file)}`];
+    const properties: string[] = [`file=${encodeWorkflowProperty(file)}`];
 
     if (finding.line !== undefined) {
         properties.push(`line=${String(finding.line)}`);
@@ -82,9 +74,9 @@ const renderFinding = (finding: Finding, workspaceRoot: string | undefined): str
         properties.push(`endColumn=${String(finding.endColumn)}`);
     }
 
-    properties.push(`title=${encodeProperty(title)}`);
+    properties.push(`title=${encodeWorkflowProperty(title)}`);
 
-    return `::${command} ${properties.join(",")}::${encodeMessage(finding.message)}\n`;
+    return `::${command} ${properties.join(",")}::${encodeWorkflowMessage(finding.message)}\n`;
 };
 
 /**
