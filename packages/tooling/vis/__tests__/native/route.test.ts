@@ -82,7 +82,7 @@ describe("launcher routing (bin/route.mjs)", () => {
     );
 
     it("still routes the native commands on Windows", () => {
-        expect.assertions(3);
+        expect.assertions(4);
 
         expect(routesToNative(["--version"], "win32")).toBe(true);
         expect(routesToNative(["clean", "--dry-run"], "win32", process.env, "/work/app", false)).toBe(false);
