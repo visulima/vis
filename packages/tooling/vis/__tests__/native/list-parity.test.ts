@@ -76,6 +76,8 @@ const runNode = (fixture: string, args: string[], ci: boolean) =>
         env: contextEnvironment(fixture, ci),
     });
 
+// `vis list` computes its root from the working directory and never reads `VIS_MONOREPO_ROOT`. The
+// native runs get a stale value on purpose, so a regression that trusted it would show up as a mismatch.
 const runNative = (fixture: string, args: string[], ci: boolean, entry: string) =>
     spawnSync(binary as string, ["list", ...args], {
         cwd: fixture,
@@ -86,6 +88,7 @@ const runNative = (fixture: string, args: string[], ci: boolean, entry: string) 
             ...contextEnvironment(fixture, ci),
             VIS_FALLBACK_ENTRY: entry,
             VIS_FALLBACK_ENTRY_OVERRIDE: entry,
+            VIS_MONOREPO_ROOT: dirname(fixture),
             VIS_NODE: process.execPath,
             VIS_VERSION: version,
         },

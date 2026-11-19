@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 // Which `vis` invocations the Node launcher (`bin/vis.mjs`) hands to the native
 // binary. Kept free of side effects so the routing table is unit-testable without
 // a binary, the same way `resolve-binary.mjs` is shared.
@@ -45,9 +48,44 @@ const IGNORE_COLOUR_ENVIRONMENT = [
     "CI_NAME",
 ];
 
+// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads. Same list
+// as `ROOT_MARKERS` in `native/cli/src/advisories.rs`; keep them in step.
+const ROOT_MARKERS = [
+    "lerna.json",
+    "turbo.json",
+    "pnpm-workspace.yaml",
+    "package.json",
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+];
+
+const holdsRootMarker = (directory) => ROOT_MARKERS.some((name) => existsSync(join(directory, name)));
+
+// Whether Node's root search would return `cwd` itself: a marker in `cwd` and none above it. Walks
+// to the filesystem root, as the Rust `ancestors()` does, so `/` is checked too.
+const rootIsCwd = (cwd, holdsMarker = holdsRootMarker) => {
+    if (!holdsMarker(cwd)) {
+        return false;
+    }
+
+    for (let directory = dirname(cwd); ; directory = dirname(directory)) {
+        if (holdsMarker(directory)) {
+            return false;
+        }
+
+        if (dirname(directory) === directory) {
+            return true;
+        }
+    }
+};
+
 // Whether `vis ignore` can pass the binary's native gate (`native_context` in `ignore.rs`). The
 // binary re-checks everything; this only skips the extra process when it would delegate anyway.
-const ignoreMayRunNatively = (platform, environment, cwd, interactive) => {
+const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMarker) => {
     if (platform === "win32" || interactive) {
         return false;
     }
@@ -58,9 +96,14 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive) => {
         return false;
     }
 
-    const root = environment.VIS_MONOREPO_ROOT;
+    // The inherited variable is only a reason to delegate, never the root itself.
+    const inheritedRoot = environment.VIS_MONOREPO_ROOT;
 
-    if (!root || root !== cwd) {
+    if (inheritedRoot && inheritedRoot !== cwd) {
+        return false;
+    }
+
+    if (!rootIsCwd(cwd, holdsMarker)) {
         return false;
     }
 
@@ -95,7 +138,7 @@ const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
 
 // The routing of the commands that have their own native shapes: `true` or `false` when the
 // command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
-const routesCommandToNative = (args, platform, environment, cwd, interactive) => {
+const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker) => {
     const [command = "", subcommand] = args;
 
     if (NATIVE_COMMANDS.has(command)) {
@@ -123,7 +166,7 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive) =>
             return platform !== "win32";
         }
 
-        return ignoreMayRunNatively(platform, environment, cwd, interactive);
+        return ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker);
     }
 
     // `list` is native for the plain listing only, and the binary hands every other shape
@@ -165,8 +208,9 @@ const routesToNative = (
     environment = process.env,
     cwd = process.cwd(),
     interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
+    holdsMarker = holdsRootMarker,
 ) => {
-    const decided = routesCommandToNative(args, platform, environment, cwd, interactive);
+    const decided = routesCommandToNative(args, platform, environment, cwd, interactive, holdsMarker);
 
     if (decided !== undefined) {
         return decided;

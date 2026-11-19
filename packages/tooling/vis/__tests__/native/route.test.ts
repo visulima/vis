@@ -134,14 +134,22 @@ describe("launcher routing (bin/route.mjs)", () => {
     describe("`vis ignore` gate (native_context in ignore.rs)", () => {
         const cwd = "/work/app";
         const ciEnvironment = { CI: "1", PATH: "/usr/bin", VIS_MONOREPO_ROOT: cwd };
-        const route = (args: string[], overrides: Partial<{ cwd: string; environment: Record<string, string>; interactive: boolean; platform: string }> = {}) =>
-            routesToNative(
+        // Directories that hold a root marker. Only `cwd` by default, so the working directory is the root.
+        const route = (
+            args: string[],
+            overrides: Partial<{ cwd: string; environment: Record<string, string>; interactive: boolean; markers: string[]; platform: string }> = {},
+        ) => {
+            const markedDirectories = new Set(overrides.markers ?? [cwd]);
+
+            return routesToNative(
                 args,
                 overrides.platform ?? "linux",
                 overrides.environment ?? ciEnvironment,
                 overrides.cwd ?? cwd,
                 overrides.interactive ?? false,
+                (directory: string) => markedDirectories.has(directory),
             );
+        };
 
         it.each([[["ignore"]], [["ignore", "--target=npm", "--write"]], [["ignore", "--json"]], [["ignore", "--target", "slug"]]])(
             "routes `vis %j` to native when the gate can pass",
@@ -156,8 +164,6 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["CI is unset", { VIS_MONOREPO_ROOT: cwd }],
             ["CI is 0", { CI: "0", VIS_MONOREPO_ROOT: cwd }],
             ["CI is false", { CI: "false", VIS_MONOREPO_ROOT: cwd }],
-            ["VIS_MONOREPO_ROOT is unset", { CI: "1" }],
-            ["VIS_MONOREPO_ROOT is empty", { CI: "1", VIS_MONOREPO_ROOT: "" }],
             ["VIS_MONOREPO_ROOT is another directory", { CI: "1", VIS_MONOREPO_ROOT: "/work" }],
             ["FORCE_COLOR is set", { CI: "1", FORCE_COLOR: "1", VIS_MONOREPO_ROOT: cwd }],
             ["CLICOLOR_FORCE is set", { CI: "1", CLICOLOR_FORCE: "1", VIS_MONOREPO_ROOT: cwd }],
@@ -167,6 +173,26 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect.assertions(1);
 
             expect(route(["ignore"], { environment })).toBe(false);
+        });
+
+        it.each([
+            ["VIS_MONOREPO_ROOT is unset", { CI: "1" }],
+            ["VIS_MONOREPO_ROOT is empty", { CI: "1", VIS_MONOREPO_ROOT: "" }],
+        ])("routes `vis ignore` when %s, since the gate computes the root itself", (_label: string, environment: Record<string, string>) => {
+            expect.assertions(1);
+
+            expect(route(["ignore"], { environment })).toBe(true);
+        });
+
+        it.each([
+            ["an ancestor holds a marker", { markers: [cwd, "/work"] }],
+            ["the filesystem root holds a marker", { markers: [cwd, "/"] }],
+            ["the working directory holds no marker", { markers: ["/work"] }],
+            ["no directory holds a marker", { markers: [] }],
+        ])("delegates `vis ignore` in Node when %s", (_label: string, overrides: { markers: string[] }) => {
+            expect.assertions(1);
+
+            expect(route(["ignore"], overrides)).toBe(false);
         });
 
         it("routes when TERM is dumb or mono", () => {
