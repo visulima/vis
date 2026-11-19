@@ -99,11 +99,15 @@ pub fn run(args: &[String]) -> ! {
         Some(text) => {
             let mut stdout = io::stdout().lock();
 
-            // A closed pipe is not an error worth reporting.
-            let _ = stdout.write_all(text.as_bytes());
-            let _ = stdout.flush();
-
-            exit(0);
+            match stdout.write_all(text.as_bytes()).and_then(|()| stdout.flush()) {
+                Ok(()) => exit(0),
+                // A closed pipe is not an error worth reporting.
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
+                Err(error) => {
+                    eprintln!("vis advisories: failed to write the status: {error}");
+                    exit(1);
+                }
+            }
         }
         None => crate::delegate(args),
     }
@@ -322,6 +326,15 @@ fn js_number(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_numbers_round_trip_like_javascript() {
+        // JavaScript's JSON.parse and Rust's correctly rounded parser agree on this value; serde_json's
+        // default float parsing does not, unless `float_roundtrip` is enabled.
+        let value: Value = serde_json::from_str("{\"n\":1.5777777777770001}").unwrap();
+
+        assert_eq!(value["n"].as_f64(), Some("1.5777777777770001".parse::<f64>().unwrap()));
+    }
 
     fn argv(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_owned()).collect()
