@@ -139,16 +139,16 @@ fn native_context() -> bool {
 }
 
 /// `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.
-fn in_ci() -> bool {
+pub(crate) fn in_ci() -> bool {
     ["CI", "CONTINUOUS_INTEGRATION"]
         .iter()
         .any(|key| env::var_os(key).is_some_and(|value| value != "0" && value != "false"))
 }
 
-const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
+pub(crate) const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
 
 /// Whether `directory` or one of its ancestors holds a file named in `names`.
-fn any_ancestor_has(directory: &Path, names: &[&str]) -> bool {
+pub(crate) fn any_ancestor_has(directory: &Path, names: &[&str]) -> bool {
     directory.ancestors().any(|ancestor| names.iter().any(|name| ancestor.join(name).exists()))
 }
 

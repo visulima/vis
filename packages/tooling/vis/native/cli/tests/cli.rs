@@ -146,6 +146,41 @@ fn pm_passthrough_resolves_and_forwards_flags() {
 
 #[cfg(unix)]
 #[test]
+fn ignore_delegates_non_utf8_argv_to_node_unchanged() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-ignore-raw-{}", std::process::id()));
+    let project = base.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+
+    // Stub "node" that prints each argument after the entry, NUL-terminated, as raw bytes.
+    let stub_node = base.join("node");
+    std::fs::write(&stub_node, "#!/bin/sh\nshift\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done\n").unwrap();
+    std::fs::set_permissions(&stub_node, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // `--cwd` is not a native shape, so the invocation is delegated with its bytes intact.
+    let non_utf8 = OsString::from_vec(vec![b'x', 0xff]);
+
+    let output = binary()
+        .arg("ignore")
+        .arg("--cwd")
+        .arg(&non_utf8)
+        .current_dir(&project)
+        .env("VIS_NODE", &stub_node)
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .output()
+        .expect("run binary");
+
+    std::fs::remove_dir_all(&base).ok();
+
+    assert!(output.status.success(), "delegation failed: {:?}", output);
+    assert_eq!(output.stdout, b"ignore\0--cwd\0x\xff\0".to_vec());
+}
+
+#[cfg(unix)]
+#[test]
 fn x_spawns_node_with_the_preload_import() {
     use std::os::unix::fs::PermissionsExt;
 

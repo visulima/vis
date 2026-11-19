@@ -21,8 +21,67 @@ const asksForHelp = (args) => {
     return optionArguments.some((argument) => argument === "--help" || argument === "-h");
 };
 
-// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`.
-const routesToNative = (args, platform = process.platform) => {
+// Environment variables that turn on colour in Node for the stdout log lines. Mirrors
+// `COLOUR_ENVIRONMENT` in `native/cli/src/ignore.rs`, plus `CLICOLOR_FORCE`, which the binary
+// does not check. The launcher only pre-filters, so a superset here is safe: Node answers.
+const IGNORE_COLOUR_ENVIRONMENT = [
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERMINAL_EMULATOR",
+    "TEAMCITY_VERSION",
+    "TF_BUILD",
+    "PM2_HOME",
+    "GITEA_ACTIONS",
+    "CIRCLECI",
+    "GITHUB_WORKFLOW",
+    "GITHUB_ACTIONS",
+    "TRAVIS",
+    "APPVEYOR",
+    "GITLAB_CI",
+    "BUILDKITE",
+    "DRONE",
+    "CI_NAME",
+];
+
+// Whether `vis ignore` can pass the binary's native gate (`native_context` in `ignore.rs`). The
+// binary re-checks everything; this only skips the extra process when it would delegate anyway.
+const ignoreMayRunNatively = (platform, environment, cwd, interactive) => {
+    if (platform === "win32" || interactive) {
+        return false;
+    }
+
+    const inCi = ["CI", "CONTINUOUS_INTEGRATION"].some((key) => environment[key] !== undefined && environment[key] !== "0" && environment[key] !== "false");
+
+    if (!inCi) {
+        return false;
+    }
+
+    const root = environment["VIS_MONOREPO_ROOT"];
+
+    if (!root || root !== cwd) {
+        return false;
+    }
+
+    if (IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined)) {
+        return false;
+    }
+
+    const term = environment["TERM"]?.toLowerCase();
+
+    return term === undefined || term.includes("dumb") || term.includes("mono");
+};
+
+// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
+// parameters default to the running process; tests pass their own.
+const routesToNative = (
+    args,
+    platform = process.platform,
+    environment = process.env,
+    cwd = process.cwd(),
+    interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
+) => {
     const [command = "", subcommand] = args;
 
     if (NATIVE_COMMANDS.has(command)) {
@@ -40,6 +99,17 @@ const routesToNative = (args, platform = process.platform) => {
     // The binary hands every other shape of it to Node itself, as it does for `hook run`.
     if (command === "advisories" && subcommand === "bloom" && args[2] === "status") {
         return platform !== "win32" || !asksForHelp(args);
+    }
+
+    // `ignore` is native for its plain shapes in a CI context (`native/cli/src/ignore.rs`); any
+    // other run would be delegated by the binary, which costs a second Node boot. Help is
+    // answered by the binary everywhere but Windows, as for `advisories bloom status`.
+    if (command === "ignore") {
+        if (asksForHelp(args)) {
+            return platform !== "win32";
+        }
+
+        return ignoreMayRunNatively(platform, environment, cwd, interactive);
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
