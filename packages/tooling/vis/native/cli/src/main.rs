@@ -42,6 +42,8 @@ mod vis_config;
 mod width_tables;
 // Not routed to any command yet; the command ports call it.
 #[cfg_attr(not(test), allow(dead_code))]
+mod graph;
+#[cfg_attr(not(test), allow(dead_code))]
 mod workspace;
 mod x;
 

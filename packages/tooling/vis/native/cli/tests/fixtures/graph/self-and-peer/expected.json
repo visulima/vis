@@ -1,0 +1,1 @@
+{"native":{"nodes":[{"name":"x","type":"library"},{"name":"y","type":"library"}],"edges":[{"source":"x","target":"x","type":"static"},{"source":"x","target":"y","type":"peerDependency"}]}}

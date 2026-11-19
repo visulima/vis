@@ -1,0 +1,1 @@
+{"native":{"nodes":[{"name":"p","type":"application"},{"name":"q","type":"library"}],"edges":[{"source":"q","target":"p","type":"static"}]}}
