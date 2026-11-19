@@ -45,12 +45,16 @@ describe("native project graph parity", () => {
         const graph = buildProjectGraph(caseRoot, workspace, packageJsons);
 
         const nodes = Object.values(graph.nodes)
-            .map((node) => ({ name: node.name, type: node.type }))
+            .map((node) => {
+                return { name: node.name, type: node.type };
+            })
             .toSorted((left, right) => left.name.localeCompare(right.name));
 
         const edges = Object.values(graph.dependencies)
             .flat()
-            .map((edge) => ({ source: edge.source, target: edge.target, type: edge.type }))
+            .map((edge) => {
+                return { source: edge.source, target: edge.target, type: edge.type };
+            })
             .toSorted((left, right) =>
                 `${left.source}\0${left.target}\0${left.type}`.localeCompare(`${right.source}\0${right.target}\0${right.type}`),
             );
