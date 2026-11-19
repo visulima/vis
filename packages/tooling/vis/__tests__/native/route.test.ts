@@ -68,8 +68,8 @@ describe("launcher routing (bin/route.mjs)", () => {
 
     describe("`vis ignore` gate (native_context in ignore.rs)", () => {
         const cwd = "/work/app";
-        const ciEnvironment = { CI: "1", VIS_MONOREPO_ROOT: cwd, PATH: "/usr/bin" };
-        const route = (args: string[], overrides: Partial<{ environment: Record<string, string>; platform: string; cwd: string; interactive: boolean }> = {}) =>
+        const ciEnvironment = { CI: "1", PATH: "/usr/bin", VIS_MONOREPO_ROOT: cwd };
+        const route = (args: string[], overrides: Partial<{ cwd: string; environment: Record<string, string>; interactive: boolean; platform: string }> = {}) =>
             routesToNative(
                 args,
                 overrides.platform ?? "linux",
@@ -94,10 +94,10 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["VIS_MONOREPO_ROOT is unset", { CI: "1" }],
             ["VIS_MONOREPO_ROOT is empty", { CI: "1", VIS_MONOREPO_ROOT: "" }],
             ["VIS_MONOREPO_ROOT is another directory", { CI: "1", VIS_MONOREPO_ROOT: "/work" }],
-            ["FORCE_COLOR is set", { CI: "1", VIS_MONOREPO_ROOT: cwd, FORCE_COLOR: "1" }],
-            ["CLICOLOR_FORCE is set", { CI: "1", VIS_MONOREPO_ROOT: cwd, CLICOLOR_FORCE: "1" }],
-            ["GITHUB_ACTIONS is set", { CI: "1", VIS_MONOREPO_ROOT: cwd, GITHUB_ACTIONS: "true" }],
-            ["TERM is a colour terminal", { CI: "1", VIS_MONOREPO_ROOT: cwd, TERM: "xterm-256color" }],
+            ["FORCE_COLOR is set", { CI: "1", FORCE_COLOR: "1", VIS_MONOREPO_ROOT: cwd }],
+            ["CLICOLOR_FORCE is set", { CI: "1", CLICOLOR_FORCE: "1", VIS_MONOREPO_ROOT: cwd }],
+            ["GITHUB_ACTIONS is set", { CI: "1", GITHUB_ACTIONS: "true", VIS_MONOREPO_ROOT: cwd }],
+            ["TERM is a colour terminal", { CI: "1", TERM: "xterm-256color", VIS_MONOREPO_ROOT: cwd }],
         ])("delegates `vis ignore` in Node when %s", (_label: string, environment: Record<string, string>) => {
             expect.assertions(1);
 
