@@ -1,0 +1,5 @@
+# workspace
+packages:
+  - 'tools/cli/'
+  - "apps/site"
+  - 'missing/dir'
