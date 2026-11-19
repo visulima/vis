@@ -33,10 +33,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         // `ignore` help is answered by the binary; plain runs depend on the environment (below).
         [["ignore", "--help"], true],
         [["ignore-all"], false],
-        // `clean` is native; `--empty-packages` is answered by the binary, which delegates it.
-        [["clean"], true],
-        [["clean", "--dry-run", "--lockfile"], true],
-        [["clean", "--empty-packages"], true],
+        // `clean` depends on the environment (below).
         // Natively implemented commands.
         [["--version"], true],
         [["-V"], true],
@@ -85,8 +82,49 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect.assertions(3);
 
         expect(routesToNative(["--version"], "win32")).toBe(true);
-        expect(routesToNative(["clean", "--dry-run"], "win32")).toBe(true);
+        expect(routesToNative(["clean", "--dry-run"], "win32", process.env, "/work/app", false)).toBe(false);
         expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
+    });
+
+    describe("`vis clean` gate (plan in clean.rs)", () => {
+        const cwd = "/work/app";
+        const ci = { CI: "1" };
+
+        it.each([[["clean"]], [["clean", "--dry-run"]], [["clean", "--lockfile"]], [["clean", "-l", "--dry-run"]]])(
+            "routes plain `vis %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, cwd, false)).toBe(true);
+            },
+        );
+
+        it.each([[["clean", "--empty-packages"]], [["clean", "--dry-run", "--dry-run"]], [["clean", "--other"]]])(
+            "delegates `vis %j`, which the binary would hand to Node anyway",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, cwd, false)).toBe(false);
+            },
+        );
+
+        it("delegates outside CI", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["clean"], "linux", {}, cwd, false)).toBe(false);
+        });
+
+        it("delegates when a colour variable is set", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["clean"], "linux", { ...ci, FORCE_COLOR: "1" }, cwd, false)).toBe(false);
+        });
+
+        it("delegates when stdout or stderr is a terminal", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["clean"], "linux", ci, cwd, true)).toBe(false);
+        });
     });
 
     describe("`vis ignore` gate (native_context in ignore.rs)", () => {

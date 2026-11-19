@@ -73,6 +73,26 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive) => {
     return term === undefined || term.includes("dumb") || term.includes("mono");
 };
 
+// Whether `vis clean` can pass the binary's native gate (`plan` in `clean.rs`). The binary re-checks
+// everything; this only skips the extra process when it would delegate anyway. Flags are the
+// default, `--dry-run` and `--lockfile`/`-l`, each at most once.
+const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
+    if (platform === "win32" || interactive) {
+        return false;
+    }
+
+    const inCi = ["CI", "CONTINUOUS_INTEGRATION"].some((key) => environment[key] !== undefined && environment[key] !== "0" && environment[key] !== "false");
+
+    if (!inCi || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined)) {
+        return false;
+    }
+
+    const flags = args.slice(1);
+    const known = new Set(["--dry-run", "--lockfile", "-l"]);
+
+    return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
+};
+
 // Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
 // parameters default to the running process; tests pass their own.
 const routesToNative = (
@@ -116,7 +136,11 @@ const routesToNative = (
     // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
     // stdout stays in Node too: pail colours its output there, and the binary does not.
     if (command === "clean") {
-        return !interactive && (platform !== "win32" || !asksForHelp(args));
+        if (asksForHelp(args)) {
+            return platform !== "win32";
+        }
+
+        return cleanMayRunNatively(platform, environment, args, cwd, interactive);
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
