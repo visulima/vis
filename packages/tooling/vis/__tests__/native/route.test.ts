@@ -54,7 +54,6 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(args, "linux")).toBe(expected);
     });
 
-    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]]])(
     it.each([[["clean", "--help"]], [["clean", "-h"]]])(
         "keeps `vis %j` in Node on Windows",
         (args: string[]) => {
@@ -64,7 +63,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         },
     );
 
-    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]]])(
+    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]]])(
         "keeps the help surface `vis %j` in Node on Windows",
         (args: string[]) => {
             expect.assertions(1);
@@ -78,7 +77,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         (args: string[]) => {
             expect.assertions(1);
 
-            expect(routesToNative(args, "linux", true)).toBe(false);
+            expect(routesToNative(args, "linux", process.env, "/work/app", true)).toBe(false);
         },
     );
 
