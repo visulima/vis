@@ -197,6 +197,10 @@ const secretsOptionDefinitions = {
         description: "Scan the content staged for commit (the git index), not the working-tree files",
         type: Boolean,
     },
+    stdin: {
+        description: "Scan piped stdin as a virtual file named <filename> (e.g. --stdin config/.env). Not with paths or another scan target",
+        type: String,
+    },
     "update-baseline": {
         defaultValue: false,
         description: "Merge current findings into the baseline and exit 0",
@@ -226,6 +230,7 @@ const secrets = defineCommand({
         ["vis secrets", "Scan the workspace with grouped, colourised output"],
         ["vis secrets --staged", "Scan only files staged for the current commit (pre-commit hooks)"],
         ["vis secrets --since main", "Scan only files changed since the `main` branch"],
+        ["cat .env | vis secrets --stdin .env", "Scan piped content as a virtual file"],
         ["vis secrets --affected", "Scan only projects affected by the current branch"],
         ["vis secrets --history", "Scan the full git history for secrets that were committed then removed"],
         ["vis secrets --history --history-range main..HEAD", "Scan only commits on the current branch since main"],

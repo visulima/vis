@@ -12,6 +12,7 @@ import {
     scanFilesDetailed,
     scanGitHistoryDetailed,
     scanGitStaged,
+    scanString,
 } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../../errors/vis-user-error";
@@ -22,7 +23,16 @@ import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
 import { pathExists } from "../../util/toolbox-fs";
 import type { SecretsFlags, VisSecretsConfig } from "./flags";
-import { assertArchiveFlags, assertHistoryFlags, assertReportingFlags, partialScanReasons, resolveScanOptions, toArray, validateFormat } from "./flags";
+import {
+    assertArchiveFlags,
+    assertHistoryFlags,
+    assertReportingFlags,
+    partialScanReasons,
+    resolveScanOptions,
+    stdinUsageError,
+    toArray,
+    validateFormat,
+} from "./flags";
 import type { SecretsOptions } from "./index";
 import type { ScanOutcome } from "./report";
 import { applyDiagnosticGates, emitReports, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, status } from "./report";
@@ -114,9 +124,18 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
 };
 
 /** What a scan reads, resolved once from the validated flags. */
-type ScanMode = { files: string[]; kind: "files" } | { kind: "history" } | { kind: "paths"; paths: string[] } | { kind: "staged" };
+type ScanMode
+    = | { files: string[]; kind: "files" }
+        | { kind: "history" }
+        | { kind: "paths"; paths: string[] }
+        | { content: string; filename: string; kind: "stdin" }
+        | { kind: "staged" };
 
-const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): ScanMode => {
+const resolveScanMode = (flags: SecretsFlags, args: string[], root: string, stdinContent: string): ScanMode => {
+    if (flags.stdin !== undefined) {
+        return { content: stdinContent, filename: flags.stdin, kind: "stdin" };
+    }
+
     const paths = args.length > 0 ? args.map((p) => resolve(root, p)) : [root];
     const gitFlag = flags.history ? "--history" : flags.staged ? "--staged" : flags.since === undefined ? undefined : "--since";
 
@@ -152,6 +171,12 @@ const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): Sca
 };
 
 const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOptions, root: string): Promise<ScanOutcome> => {
+    if (mode.kind === "stdin") {
+        const findings = await scanString(mode.content, mode.filename, scanOptions);
+
+        return { findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
+    }
+
     if (mode.kind === "history") {
         const result = await scanGitHistoryDetailed({ ...scanOptions, all: flags.all, cwd: root, maxCommits: flags.maxCommits, range: flags.historyRange });
 
@@ -209,6 +234,19 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
+    // A conflict with --stdin is a usage error, not an actionable scan failure.
+    const stdinConflict = stdinUsageError(flags, args.length > 0);
+
+    if (stdinConflict !== undefined) {
+        const cliConsole = toolbox.console as Console & { flush?: () => Promise<void> | void };
+
+        cliConsole.error(stdinConflict);
+        await cliConsole.flush?.();
+        toolbox.process.exit(2);
+
+        return;
+    }
+
     // Before the --list-*/--init early returns, so no mode silently drops a flag.
     assertHistoryFlags(flags);
     assertArchiveFlags(flags);
@@ -241,7 +279,8 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const mode = resolveScanMode(flags, args, root);
+    const stdinContent = flags.stdin === undefined ? "" : ((toolbox.process.stdin as string | undefined) ?? "");
+    const mode = resolveScanMode(flags, args, root, stdinContent);
     const history = mode.kind === "history";
 
     if (mode.kind === "files" && mode.files.length === 0) {
@@ -254,7 +293,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
 
     const spinner = createSpinner({ verbose: !flags.quiet && format === "text" });
 
-    spinner.start(history ? "scanning git history for secrets" : "scanning for secrets");
+    spinner.start(mode.kind === "stdin" ? "scanning piped input" : history ? "scanning git history for secrets" : "scanning for secrets");
 
     let outcome: ScanOutcome;
 

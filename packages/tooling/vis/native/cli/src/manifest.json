@@ -4470,6 +4470,10 @@
           "Scan only files changed since the `main` branch"
         ],
         [
+          "cat .env | vis secrets --stdin .env",
+          "Scan piped content as a virtual file"
+        ],
+        [
           "vis secrets --affected",
           "Scan only projects affected by the current branch"
         ],
@@ -4811,6 +4815,11 @@
           "description": "Scan the content staged for commit (the git index), not the working-tree files",
           "name": "staged",
           "type": "boolean"
+        },
+        {
+          "description": "Scan piped stdin as a virtual file named <filename> (e.g. --stdin config/.env). Not with paths or another scan target",
+          "name": "stdin",
+          "type": "string"
         },
         {
           "description": "Merge current findings into the baseline and exit 0",

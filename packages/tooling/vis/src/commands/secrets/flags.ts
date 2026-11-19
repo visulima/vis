@@ -46,6 +46,7 @@ export interface SecretsFlags {
     report?: RepeatableString;
     since?: string;
     staged?: boolean;
+    stdin?: string;
     updateBaseline?: boolean;
     validate?: boolean;
     verbose?: boolean;
@@ -211,6 +212,26 @@ const nonScanMode = (flags: SecretsFlags, includeUpdateBaseline: boolean): strin
     ].find((flag): flag is string => flag !== undefined);
 
 /**
+ * Usage conflicts for `--stdin`. The command reports these with exit code 2,
+ * unlike the actionable `VisUserError`s below which exit 1.
+ */
+export const stdinUsageError = (flags: SecretsFlags, hasPathArguments: boolean): string | undefined => {
+    if (toArray(flags.stdin).length === 0) {
+        return undefined;
+    }
+
+    const conflicts = [nonScanMode(flags, true), ...scanTargetFlags(flags), hasPathArguments ? "explicit paths" : undefined].filter(
+        (flag): flag is string => flag !== undefined,
+    );
+
+    if (conflicts.length === 0) {
+        return undefined;
+    }
+
+    return `--stdin reads piped content and can't be combined with ${conflicts.join(", ")}. Pipe into \`vis secrets --stdin <filename>\` on its own.`;
+};
+
+/**
  * Reject history-only flags used without `--history`, flag combinations the
  * history walk can't honour, and two scan targets at once, instead of
  * silently ignoring all but one.
@@ -270,6 +291,7 @@ export const assertArchiveFlags = (flags: SecretsFlags): void => {
  */
 export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolean): string[] =>
     [
+        toArray(flags.stdin).length > 0 ? "--stdin" : undefined,
         flags.staged ? "--staged" : undefined,
         flags.since === undefined ? undefined : "--since",
         flags.affected ? "--affected" : undefined,

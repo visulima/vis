@@ -20,6 +20,7 @@ import securityEnforcementPlugin from "./plugins/security-enforcement";
 import registerCommands from "./register-commands";
 import { parseEarlyCaCert } from "./util/ca-cert";
 import getPackageVersion from "./util/package-version";
+import { readStdin } from "./util/read-stdin";
 import { startUpgradeCheck } from "./util/upgrade-check";
 
 /**
@@ -59,9 +60,15 @@ export const runCli = async (): Promise<void> => {
     // Start background upgrade check immediately (non-blocking)
     const upgradeCheckCallback = startUpgradeCheck(getPackageVersion(), process.argv[2] ?? "");
 
+    // cerebro exposes stdin to commands as a string buffer; populate it only
+    // when an invocation asks for piped input so other commands never block.
+    const stdinRequested = process.argv.slice(2).some((argument) => argument === "--stdin" || argument.startsWith("--stdin="));
+    const stdin = stdinRequested ? await readStdin() : undefined;
+
     const cli = createCerebro("vis", {
         packageName: "vis",
         packageVersion: getPackageVersion(),
+        stdin,
     });
 
     // Enhanced error handling
