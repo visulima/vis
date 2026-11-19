@@ -42,8 +42,9 @@ const NON_JS_MARKERS: &[&str] = &[
 ];
 const NON_JS_SUFFIXES: &[&str] = &[".gemspec", ".csproj", ".fsproj"];
 
-/// Config files the Node loader reads, in its order within one directory (`vis_config.rs`).
-/// Any file found at the root or above it delegates, since the config may change the result.
+/// Config files that can change the result, checked at the root and every ancestor. The names mirror
+/// `CONFIG_FILES` in `src/config/config.ts`, plus the `.json` form, a deliberate extra that Node does
+/// not load. The walk is broader than Node, which reads only the workspace root's config.
 const CONFIG_NAMES: [&str; 7] = [
     "vis.config.ts",
     "vis.config.mts",
@@ -180,8 +181,12 @@ fn resolve(root: &Path) -> Option<Membership> {
 
         let absolute = root.join(&directory);
 
-        // A candidate without package.json is a non-JS project, which the non-JS resolvers would claim.
-        if !absolute.join("package.json").exists() || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists()) {
+        // Node names a project from its package.json (or project.json, which wins) and drops a directory
+        // with no name, so a candidate that does not yield a name is left to Node.
+        if !has_package_name(&absolute)
+            || absolute.join("project.json").exists()
+            || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists())
+        {
             return None;
         }
 
@@ -189,6 +194,14 @@ fn resolve(root: &Path) -> Option<Membership> {
     }
 
     Some(Membership::Native(kept))
+}
+
+/// Whether `directory/package.json` parses and has a string `name`.
+fn has_package_name(directory: &Path) -> bool {
+    fs::read_to_string(directory.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|manifest| manifest.get("name").is_some_and(serde_json::Value::is_string))
 }
 
 fn has_non_js_marker(root: &Path) -> Option<bool> {
@@ -724,13 +737,13 @@ mod gitignore_fixture_tests {
                 "pnpm-workspace.yaml",
                 "packages:\n  - \"packages/**\"\n  - \"root-skip\"\n  - \"nested/**\"\n  - \"upper/**\"\n",
             ),
-            ("packages/a/package.json", "{}"),
-            ("packages/skipped/package.json", "{}"),
-            ("packages/x/skipped/package.json", "{}"),
-            ("root-skip/package.json", "{}"),
-            ("nested/hidden/p/package.json", "{}"),
-            ("nested/keep/package.json", "{}"),
-            ("upper/x/package.json", "{}"),
+            ("packages/a/package.json", "{\"name\":\"p\"}"),
+            ("packages/skipped/package.json", "{\"name\":\"p\"}"),
+            ("packages/x/skipped/package.json", "{\"name\":\"p\"}"),
+            ("root-skip/package.json", "{\"name\":\"p\"}"),
+            ("nested/hidden/p/package.json", "{\"name\":\"p\"}"),
+            ("nested/keep/package.json", "{\"name\":\"p\"}"),
+            ("upper/x/package.json", "{\"name\":\"p\"}"),
         ];
 
         for (path, text) in files {

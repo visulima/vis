@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { isProjectCandidate } from "../../src/config/cargo-projects";
-import { readPnpmWorkspacePatterns, resolveWorkspacePatterns, validateWorkspacesField } from "../../src/config/workspace";
 import type { PackageJson } from "../../src/config/types";
+import { readPnpmWorkspacePatterns, resolveWorkspacePatterns, validateWorkspacesField } from "../../src/config/workspace";
 
 /**
  * Parity for the native workspace membership (`native/cli/src/workspace.rs`). Each fixture under
@@ -89,13 +89,13 @@ describe("native workspace membership parity", () => {
 
         const files: Record<string, string> = {
             ".gitignore": "skipped\n/root-skip\nnested/hidden\nUpper\n# comment\n",
+            "nested/hidden/p/package.json": "{}",
+            "nested/keep/package.json": "{}",
             "package.json": '{"name":"root","private":true}',
             "packages/a/package.json": "{}",
             "packages/skipped/package.json": "{}",
             "packages/x/skipped/package.json": "{}",
             "pnpm-workspace.yaml": 'packages:\n  - "packages/**"\n  - "root-skip"\n  - "nested/**"\n  - "upper/**"\n',
-            "nested/hidden/p/package.json": "{}",
-            "nested/keep/package.json": "{}",
             "root-skip/package.json": "{}",
             "upper/x/package.json": "{}",
         };
