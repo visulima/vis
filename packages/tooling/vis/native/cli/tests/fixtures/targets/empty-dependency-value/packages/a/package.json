@@ -1,0 +1,9 @@
+{
+  "name": "a",
+  "devDependencies": {
+    "jest": ""
+  },
+  "scripts": {
+    "test": "jest"
+  }
+}

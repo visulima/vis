@@ -204,7 +204,7 @@ fn has_package_name(directory: &Path) -> bool {
         .is_some_and(|manifest| manifest.get("name").is_some_and(serde_json::Value::is_string))
 }
 
-fn has_non_js_marker(root: &Path) -> Option<bool> {
+pub(crate) fn has_non_js_marker(root: &Path) -> Option<bool> {
     for entry in fs::read_dir(root).ok()? {
         let name = entry.ok()?.file_name().into_string().ok()?;
 

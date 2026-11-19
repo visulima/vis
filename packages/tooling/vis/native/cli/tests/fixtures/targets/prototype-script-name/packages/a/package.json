@@ -1,0 +1,6 @@
+{
+  "name": "a",
+  "scripts": {
+    "constructor": "node x.js"
+  }
+}

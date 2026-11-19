@@ -37,6 +37,9 @@ mod pm_family;
 mod pm_shim;
 mod surface;
 mod table;
+// Not routed to any command yet; the command ports call it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod targets;
 mod term;
 mod vis_config;
 mod width_tables;

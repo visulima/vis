@@ -1,0 +1,9 @@
+{
+  "name": "a",
+  "peerDependencies": {
+    "prettier": "*"
+  },
+  "scripts": {
+    "format": "prettier ."
+  }
+}

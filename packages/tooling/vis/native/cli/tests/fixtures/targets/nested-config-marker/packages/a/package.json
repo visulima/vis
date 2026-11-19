@@ -1,0 +1,6 @@
+{
+  "name": "a",
+  "scripts": {
+    "storybook": "node sb.mjs"
+  }
+}
