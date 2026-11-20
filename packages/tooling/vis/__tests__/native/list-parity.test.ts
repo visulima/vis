@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ const fixtureRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "lis
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const marker = "NATIVE-DELEGATED";
+const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 /** The native path answers the plain listing only. Help is rendered by the binary for every fixture. */
 const nativeArguments = (args: string[]): boolean =>
@@ -78,10 +79,14 @@ const runNative = (fixture: string, args: string[], ci: boolean, entry: string) 
     spawnSync(binary as string, ["list", ...args], {
         cwd: fixture,
         encoding: "utf8",
+        // A binary in a platform package (what CI runs) keeps the entry and version the launcher
+        // passes; one inside the vis package (a dev copy) takes the override instead. Set both.
         env: {
             ...contextEnvironment(fixture, ci),
+            VIS_FALLBACK_ENTRY: entry,
             VIS_FALLBACK_ENTRY_OVERRIDE: entry,
             VIS_NODE: process.execPath,
+            VIS_VERSION: version,
         },
     });
 
