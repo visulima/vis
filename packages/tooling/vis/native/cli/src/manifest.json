@@ -4538,6 +4538,10 @@
           "Extra gitignore-syntax exclusions for the walker"
         ],
         [
+          "vis secrets --secretlintignore config/secrets.ignore",
+          "Add a .secretlintignore file alongside the auto-discovered one"
+        ],
+        [
           "vis secrets --config ./leaks.json --no-extend-bundled",
           "Use only the supplied config, skip the bundled ruleset"
         ],
@@ -4775,6 +4779,12 @@
           "type": "boolean"
         },
         {
+          "description": "Disable .secretlintignore auto-discovery and explicit files.",
+          "hidden": true,
+          "name": "no-secretlintignore",
+          "type": "boolean"
+        },
+        {
           "description": "With --validate, drop every finding whose validation is not 'verified'. Useful for CI gating.",
           "name": "only-verified",
           "type": "boolean"
@@ -4804,6 +4814,12 @@
           "description": "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless findings are masked (--no-redact reveals them); --history reports are always owner-only, as commit messages are not masked.",
           "multiple": true,
           "name": "report",
+          "type": "string"
+        },
+        {
+          "description": "Additional .secretlintignore file to honour (repeatable). Auto-discovered .secretlintignore files are combined with these and with .gitignore; use --no-secretlintignore to disable all of them.",
+          "multiple": true,
+          "name": "secretlintignore",
           "type": "string"
         },
         {

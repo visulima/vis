@@ -103,13 +103,11 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
  * `allowWarnings` the allow markers that name rule ids which are not active.
  */
 export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const { context, prepared } = await beginScan(
-        options,
-        paths.map((path) => resolve(path)),
-    );
+    const bases = paths.map((path) => resolve(path));
+    const { context, options: effective, prepared } = await beginScan(options, bases, bases);
     const report = await binding.scanDetailed(paths, prepared.nativeOptions);
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context, { allowWarnings: report.allowWarnings });
+    return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -124,12 +122,12 @@ export const scan = async (paths: string[], options?: ScanOptions): Promise<Find
  * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
  */
 export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const { context, prepared } = await beginScan(options, [process.cwd()]);
-    const matcher = buildIgnoreMatcher(options);
+    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [process.cwd()]);
+    const matcher = buildIgnoreMatcher(effective, process.cwd());
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context, { allowWarnings: report.allowWarnings });
+    return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });
 };
 
 /**

@@ -2,6 +2,7 @@
 // `scanFilesDetailed`, and the git history / staged scans).
 
 import { warnOnSkippedRules } from "./diagnostics";
+import { applySecretlintIgnores } from "./ignore-matcher";
 import type { SuppressionContext } from "./pipeline";
 import { createSuppressionContext } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
@@ -10,22 +11,27 @@ import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, Suppresse
 
 export interface ScanSession {
     context: SuppressionContext;
+    /** The options the scan runs with: `options` plus the discovered `.secretlintignore` files. */
+    options: ScanOptions | undefined;
     prepared: PreparedScan;
 }
 
 /**
  * Prepare a scan: resolve the config, print skipped-rule diagnostics under
  * `verbose`, and build the per-scan suppression state. `bases` are the
- * directories a relative `finding.file` may be relative to.
+ * directories a relative `finding.file` may be relative to. `ignoreRoots` are
+ * where `.secretlintignore` files are discovered; git history scans omit it
+ * because they read blobs rather than walk the file system.
  */
-export const beginScan = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>): Promise<ScanSession> => {
-    const prepared = prepareScan(options);
+export const beginScan = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>, ignoreRoots?: ReadonlyArray<string>): Promise<ScanSession> => {
+    const effective = ignoreRoots === undefined ? options : applySecretlintIgnores(options, ignoreRoots);
+    const prepared = prepareScan(effective);
 
-    if (options?.verbose) {
+    if (effective?.verbose) {
         await warnOnSkippedRules(prepared.nativeOptions);
     }
 
-    return { context: await createSuppressionContext(options, bases), prepared };
+    return { context: await createSuppressionContext(effective, bases), options: effective, prepared };
 };
 
 export interface FinishResultOptions {

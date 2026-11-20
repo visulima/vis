@@ -431,6 +431,19 @@ describe(scanGitStaged, () => {
         expect(result.findings).toHaveLength(0);
     });
 
+    it("discovers .secretlintignore from options.cwd, not the process cwd", async () => {
+        expect.assertions(2);
+
+        const { git, repo, write } = createRepo();
+
+        write("staged.ts", `t = "${SECRET_A}"\n`);
+        write(".secretlintignore", "staged.ts\n");
+        git("add", ".");
+
+        await expect(scanGitStaged({ cwd: repo })).resolves.toMatchObject({ findings: [] });
+        await expect(scanGitStaged({ cwd: repo, redact: false, secretlintIgnore: false })).resolves.toMatchObject({ findings: [expect.objectContaining({ secret: SECRET_A })] });
+    });
+
     it("reports paths relative to the process cwd, so a scanFiles baseline suppresses them", async () => {
         expect.assertions(3);
 

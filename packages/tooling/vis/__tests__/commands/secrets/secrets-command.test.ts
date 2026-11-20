@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import secretsCommand from "../../../src/commands/secrets";
+import { resolveScanOptions } from "../../../src/commands/secrets/flags";
 
 describe("secrets command", () => {
     it("declares its name", () => {
@@ -26,8 +27,28 @@ describe("secrets command", () => {
         const names = Object.keys(secretsCommand.options ?? {});
 
         expect(names).toStrictEqual(
-            expect.arrayContaining(["config", "format", "baseline", "redact", "include-hidden", "no-gitignore", "max-size", "stdin", "update-baseline"]),
+            expect.arrayContaining([
+                "config",
+                "format",
+                "baseline",
+                "redact",
+                "secretlintignore",
+                "no-secretlintignore",
+                "include-hidden",
+                "no-gitignore",
+                "max-size",
+                "stdin",
+                "update-baseline",
+            ]),
         );
+    });
+
+    it("resolves --secretlintignore and --no-secretlintignore", () => {
+        expect.assertions(3);
+
+        expect(resolveScanOptions({ secretlintignore: ["extra.ignore"] }, undefined, "/repo").secretlintIgnore).toStrictEqual(["/repo/extra.ignore"]);
+        expect(resolveScanOptions({ secretlintignore: false }, { secretlintIgnore: ["config.ignore"] }, "/repo").secretlintIgnore).toBe(false);
+        expect(resolveScanOptions({}, { secretlintIgnore: ["config.ignore"] }, "/repo").secretlintIgnore).toStrictEqual(["/repo/config.ignore"]);
     });
 
     it("provides usage examples", () => {

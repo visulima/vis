@@ -248,6 +248,17 @@ export interface ScanOptions {
     rules?: RuleFilters;
 
     /**
+     * `.secretlintignore` files to honour alongside `.gitignore` and
+     * `walk.excludeFromFiles`. By default the file is auto-discovered in each
+     * scan root and its parents up to the repository root; an array adds
+     * explicit paths; `false` disables both. A `.secretlintignore` is anchored
+     * at its own directory, any other path at the scan root, and negation (`!`) only re-includes paths within
+     * the file that declared it. Applies to path walks, `scanFiles` and staged
+     * scans; git history scans read blobs and ignore it.
+     */
+    secretlintIgnore?: string[] | false;
+
+    /**
      * Abort the scan's validation stage. When `config.validate: true` a scan can
      * fire one HTTP request per finding (plus DB-driver connections); pass a
      * signal so a CLI/editor host can cancel mid-flight. The signal is forwarded

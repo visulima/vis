@@ -162,6 +162,12 @@ const secretsOptionDefinitions = {
         description: "Do not respect .gitignore",
         type: Boolean,
     },
+    // No `defaultValue`: with one, the parser would overwrite `secretlintignore`.
+    "no-secretlintignore": {
+        description: "Disable .secretlintignore auto-discovery and explicit files.",
+        hidden: true,
+        type: Boolean,
+    },
     "only-verified": {
         defaultValue: false,
         description: "With --validate, drop every finding whose validation is not 'verified'. Useful for CI gating.",
@@ -185,6 +191,12 @@ const secretsOptionDefinitions = {
     report: {
         description:
             "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless findings are masked (--no-redact reveals them); --history reports are always owner-only, as commit messages are not masked.",
+        multiple: true,
+        type: String,
+    },
+    secretlintignore: {
+        description:
+            "Additional .secretlintignore file to honour (repeatable). Auto-discovered .secretlintignore files are combined with these and with .gitignore, unless the config sets `secretlintIgnore: false`, in which case only these files apply; use --no-secretlintignore to disable all of them.",
         multiple: true,
         type: String,
     },
@@ -247,6 +259,7 @@ const secrets = defineCommand({
         ["vis secrets --min-confidence high", "Drop rules without a high confidence label (CI-friendly precision filter)"],
         ["vis secrets --validate --only-verified", "Live-verify each finding against its provider (one HTTP call per finding)"],
         ["vis secrets --exclude 'dist/**' --exclude-from .secretsignore", "Extra gitignore-syntax exclusions for the walker"],
+        ["vis secrets --secretlintignore config/secrets.ignore", "Add a .secretlintignore file alongside the auto-discovered one"],
         ["vis secrets --config ./leaks.json --no-extend-bundled", "Use only the supplied config, skip the bundled ruleset"],
         ["vis secrets --concurrency 4", "Cap the rayon thread pool (0 / omit = auto)"],
         ["vis secrets --baseline .secrets-baseline.json", "Suppress known findings; print diff vs. baseline"],
