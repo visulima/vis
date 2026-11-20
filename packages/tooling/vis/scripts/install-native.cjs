@@ -17,8 +17,8 @@
 //   - pnpm may already have written a shim that starts Node (see `pnpmShimMayStartNode`).
 
 const { spawnSync } = require("node:child_process");
-const { chmodSync, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync } = require("node:fs");
-const { basename, dirname, join, sep } = require("node:path");
+const { chmodSync, copyFileSync, existsSync, linkSync, readFileSync, realpathSync, renameSync, rmSync } = require("node:fs");
+const { basename, dirname, join, relative, sep } = require("node:path");
 
 const packageRoot = join(__dirname, "..");
 const target = join(packageRoot, "bin", "vis");
@@ -105,25 +105,56 @@ const projectModulesDirectory = () => {
     return undefined;
 };
 
+// Directories whose `.bin` may hold the shim for this package: the one the virtual store sits in,
+// and the one of the project pnpm was run from (`INIT_CWD`), which is a workspace member's own
+// `node_modules` when that member depends on this package or the store is not under `node_modules`.
+const shimModulesDirectories = () => {
+    const directories = [projectModulesDirectory()];
+
+    if (process.env.INIT_CWD) {
+        directories.push(join(process.env.INIT_CWD, "node_modules"));
+    }
+
+    return [...new Set(directories.filter((directory) => directory !== undefined))];
+};
+
+// Whether the shim in `modules/.bin` was written for this very package directory and starts Node.
+// pnpm writes `exec node "$basedir/<relative path to bin/vis>"`, so the path names the package
+// directory (version included; `target` is a real path, so the shim's directory is resolved too): the shim of an earlier version, or one that execs the binary
+// directly, leaves the launcher free to be replaced. A shim that cannot be read cannot be ruled out.
+const shimStartsNodeForThisPackage = (modules) => {
+    const shim = join(modules, ".bin", "vis");
+
+    if (!existsSync(shim)) {
+        return false;
+    }
+
+    try {
+        const text = readFileSync(shim, "utf8");
+        const launcher = relative(realpathSync(dirname(shim)), target).split(sep).join("/");
+
+        return text.includes(launcher) && /\bexec\s+(?:node|"\$basedir\/node")\s/u.test(text);
+    } catch {
+        return true;
+    }
+};
+
 // pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the
 // launcher is in place. A first install writes the shim after this script ran, so a shim that
-// already exists was written by an earlier run. That covers `pnpm approve-builds` and
-// `pnpm rebuild`, which run this script again, and any install on top of an earlier one that
-// skipped it. Replacing `bin/vis` then would leave `node <native binary>`, which crashes, so
-// keep the launcher, which works with either shim. The `npm_command` value is not used: pnpm
-// does not guarantee it for these commands.
+// already exists for this package directory was written by an earlier run. That covers
+// `pnpm approve-builds` and `pnpm rebuild`, which run this script again, and any install on top of
+// an earlier one that skipped it. Replacing `bin/vis` then would leave `node <native binary>`,
+// which crashes, so keep the launcher, which works with either shim. An upgrade finds the shim of
+// the previous version, which names another directory, and goes native. The `npm_command` value is
+// not used: pnpm does not guarantee it for these commands.
 const pnpmShimMayStartNode = () => {
     if (!(process.env.npm_config_user_agent || "").startsWith("pnpm/")) {
         return false;
     }
 
-    const modules = projectModulesDirectory();
+    const directories = shimModulesDirectories();
 
-    if (modules === undefined) {
-        return false;
-    }
-
-    if (existsSync(join(modules, ".bin", "vis"))) {
+    if (directories.some(shimStartsNodeForThisPackage)) {
         return true;
     }
 
@@ -132,7 +163,13 @@ const pnpmShimMayStartNode = () => {
     try {
         const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-        return skippedBuilds(readFileSync(join(modules, ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
+        return directories.some((modules) => {
+            try {
+                return skippedBuilds(readFileSync(join(modules, ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
+            } catch {
+                return false;
+            }
+        });
     } catch {
         return false;
     }
