@@ -93,17 +93,9 @@ const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
     return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
 };
 
-// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
-// parameters default to the running process; tests pass their own.
-const routesToNative = (
-    args,
-    platform = process.platform,
-    environment = process.env,
-    cwd = process.cwd(),
-    interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
-) => {
-    const [command = "", subcommand] = args;
-
+// The routing of the commands that have their own native shapes: `true` or `false` when the
+// command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
+const routesCommandToNative = (command, subcommand, args, platform, environment, cwd, interactive) => {
     if (NATIVE_COMMANDS.has(command)) {
         return true;
     }
@@ -158,6 +150,25 @@ const routesToNative = (
 
     if (command === "complete") {
         return false;
+    }
+
+    return undefined;
+};
+
+// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
+// parameters default to the running process; tests pass their own.
+const routesToNative = (
+    args,
+    platform = process.platform,
+    environment = process.env,
+    cwd = process.cwd(),
+    interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
+) => {
+    const [command = "", subcommand] = args;
+    const decided = routesCommandToNative(command, subcommand, args, platform, environment, cwd, interactive);
+
+    if (decided !== undefined) {
+        return decided;
     }
 
     // Windows keeps the help surface in Node: the binary paints it with raw ANSI codes
