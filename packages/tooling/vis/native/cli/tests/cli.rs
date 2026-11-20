@@ -878,7 +878,7 @@ fn pm_family_runs_a_plain_npm_backend_pin_natively() {
     let fallback = base.join("dist").join("bin.js");
 
     let output = binary()
-        .args(["remove", "lodash"])
+        .args(["why", "lodash"])
         .current_dir(&project)
         .env("VIS_NODE", bindir.join("node"))
         .env("VIS_FALLBACK_ENTRY", &fallback)
@@ -895,6 +895,73 @@ fn pm_family_runs_a_plain_npm_backend_pin_natively() {
     assert!(output.status.success(), "native npm remove failed: {:?}", output);
     assert!(stdout.starts_with("PM:"), "npm pin did not run natively: {stdout}");
     assert!(!stdout.contains("NODE:"), "npm pin was delegated: {stdout}");
+}
+
+/// `remove` and `dedupe` under a pin stay with Node, whose security-enforcement plugin reports the
+/// configuration warnings and errors the native path does not.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_remove_and_dedupe_under_a_backend_pin() {
+    for (name, args) in [("npm-remove", vec!["remove", "lodash"]), ("npm-dedupe", vec!["dedupe"])] {
+        let (base, project, bindir) = backend_pin_fixture(name, "npm", "npm");
+        let fallback = base.join("dist").join("bin.js");
+
+        let output = binary()
+            .args(&args)
+            .current_dir(&project)
+            .env("VIS_NODE", bindir.join("node"))
+            .env("VIS_FALLBACK_ENTRY", &fallback)
+            .env("PATH", &bindir)
+            .env_remove("VIS_INSTALLER")
+            .env_remove("npm_config_user_agent")
+            .output()
+            .expect("run binary");
+
+        let _ = std::fs::remove_dir_all(&base);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(stdout.starts_with("NODE:"), "{args:?} under a pin was not delegated: {stdout}");
+    }
+}
+
+/// A turbo.json above the working directory is Node's workspace root even with no lockfile or
+/// `packageManager` field, so `link` and the other workspace-root verbs reach Node from a child package.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_workspace_root_verbs_below_a_turbo_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-turbo-root-{}", std::process::id()));
+    let child = base.join("project").join("packages").join("app");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(base.join("project").join("turbo.json"), "{}\n").unwrap();
+    std::fs::write(child.join("vis.config.ts"), "export default {};\n").unwrap();
+
+    for (name, body) in [("node", "echo \"NODE:$*\""), ("npm", "echo \"PM:$*\"")] {
+        let path = bindir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = binary()
+        .args(["link", "../shared"])
+        .current_dir(&child)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.starts_with("NODE:"), "link below a turbo root was not delegated: {stdout}");
 }
 
 /// An `install.backend: "aube"` pin still delegates to Node, as does `outdated` under any pin.
@@ -968,4 +1035,109 @@ fn pm_family_delegates_a_backend_pin_outside_a_monorepo_root() {
 
     assert!(stdout.contains("NODE:"), "single-package pin was not delegated: {stdout}");
     assert!(!stdout.contains("PM:"), "single-package pin ran natively: {stdout}");
+}
+
+/// Writes `files` under a fresh scratch directory and a stub bin dir in which each named binary prints
+/// its own name, so the test can tell which manager ran. `node` prints `NODE:` as the delegation marker.
+#[cfg(unix)]
+fn named_stub_fixture(
+    name: &str,
+    files: &[(&str, &str)],
+    binaries: &[&str],
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-stub-{name}-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+
+    for (path, body) in files {
+        let target = project.join(path);
+
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, body).unwrap();
+    }
+
+    for binary in std::iter::once(&"node").chain(binaries.iter()) {
+        let path = bindir.join(binary);
+        std::fs::write(&path, format!("#!/bin/sh\necho \"{binary}:$*\"\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    (base.clone(), project, bindir)
+}
+
+/// A bare pnpm workspace (`pnpm-workspace.yaml` and a root `vis.config.ts` pin, no lockfile and no
+/// `packageManager`) has no monorepo root for Node, so Node drops the config and installs with the
+/// detected manager. The native path must answer it the same way instead of delegating, and must not run
+/// the pinned npm.
+#[cfg(unix)]
+#[test]
+fn pm_family_answers_a_bare_pnpm_workspace_pin_the_way_node_does() {
+    let (base, project, bindir) = named_stub_fixture(
+        "bare-pnpm",
+        &[
+            ("pnpm-workspace.yaml", "packages: []\n"),
+            ("vis.config.ts", "export default { install: { backend: \"npm\" } };\n"),
+        ],
+        &["pnpm", "npm"],
+    );
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!stdout.contains("node:"), "bare pnpm workspace was delegated to Node: {stdout}");
+    assert!(stdout.contains("pnpm:remove lodash"), "detected pnpm did not run natively: {stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("npm:")),
+        "the pinned npm ran instead of the detected manager: {stdout}"
+    );
+}
+
+/// `dedupe` from a workspace package with a literal config runs Node's handler at the workspace root, so
+/// the native path must delegate rather than deduplicate the package directory.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_dedupe_from_a_workspace_package_with_a_literal_config() {
+    let (base, project, bindir) = named_stub_fixture(
+        "workspace-package",
+        &[
+            ("pnpm-workspace.yaml", "packages:\n  - packages/*\n"),
+            ("pnpm-lock.yaml", "lockfileVersion: 9\n"),
+            ("packages/app/vis.config.ts", "export default {};\n"),
+        ],
+        &["pnpm"],
+    );
+
+    let output = binary()
+        .args(["dedupe"])
+        .current_dir(project.join("packages").join("app"))
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("node:"), "workspace-package dedupe was not delegated: {stdout}");
+    assert!(!stdout.contains("pnpm:"), "workspace-package dedupe ran natively: {stdout}");
 }

@@ -165,18 +165,49 @@ pub fn node_reads_pin(cwd: &Path) -> bool {
     has_config && !bun_lockfile && node_config_root(cwd).as_deref() == Some(cwd)
 }
 
+/// Whether Node finds no monorepo root for `cwd` and so ignores every `vis.config` on the way up.
+/// `findMonorepoRoot` fails without an error only when no lerna or turbo marker, no lockfile and no
+/// `packageManager` pin is found, and every `package.json` parses. Any other failure is reported by Node,
+/// so it returns `false` and the command stays with Node.
+pub fn node_ignores_config(cwd: &Path) -> bool {
+    for directory in cwd.ancestors() {
+        let marked = directory.join("lerna.json").exists()
+            || directory.join("turbo.json").exists()
+            || LOCKFILES.iter().any(|(file, _)| directory.join(file).exists());
+
+        if marked {
+            return false;
+        }
+
+        let manifest_path = directory.join("package.json");
+
+        if manifest_path.exists() {
+            let Some(manifest) = read_json(&manifest_path) else {
+                return false;
+            };
+
+            if manifest.get("packageManager").and_then(Value::as_str).is_some() {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// The lockfiles Node's manager lookup recognises, with the manager each one names.
+const LOCKFILES: [(&str, &str); 6] = [
+    ("pnpm-lock.yaml", "pnpm"),
+    ("package-lock.json", "npm"),
+    ("npm-shrinkwrap.json", "npm"),
+    ("yarn.lock", "yarn"),
+    ("bun.lock", "bun"),
+    ("bun.lockb", "bun"),
+];
+
 /// The nearest directory that names a package manager, with that manager. `None` for the manager
 /// means the nearest marker names one Node cannot resolve a workspace from, such as bun.
 fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> {
-    const LOCKFILES: [(&str, &str); 6] = [
-        ("pnpm-lock.yaml", "pnpm"),
-        ("package-lock.json", "npm"),
-        ("npm-shrinkwrap.json", "npm"),
-        ("yarn.lock", "yarn"),
-        ("bun.lock", "bun"),
-        ("bun.lockb", "bun"),
-    ];
-
     for directory in cwd.ancestors() {
         if let Some((_, name)) = LOCKFILES.iter().find(|(file, _)| directory.join(file).exists()) {
             return Some((directory, Some(name)));
@@ -569,6 +600,28 @@ mod tests {
         let dir = files("single", &[("package.json", "{}"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")]);
 
         assert_eq!(node_config_root(&dir), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_bare_pnpm_workspace_has_no_node_root_and_node_ignores_its_config() {
+        let dir = files(
+            "bare-pnpm-workspace",
+            &[("pnpm-workspace.yaml", "packages: []\n"), ("vis.config.ts", "export default {};\n")],
+        );
+
+        assert_eq!(node_config_root(&dir), None);
+        assert!(node_ignores_config(&dir));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_parse_is_not_a_silent_node_failure() {
+        let dir = files("broken-manifest", &[("package.json", "{"), ("pnpm-workspace.yaml", "packages: []\n")]);
+
+        assert!(!node_ignores_config(&dir));
 
         fs::remove_dir_all(&dir).ok();
     }

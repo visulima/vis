@@ -201,8 +201,25 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     let pinned = crate::vis_config::native_backend_pin(&config);
     let pin = pinned.filter(|_| verb != "outdated" && crate::vis_config::node_reads_pin(&cwd));
 
+    // Where Node finds no monorepo root it drops every config, so a pin there is not Node's to honour:
+    // the native detector answers the same way Node's installer detection does, with no backend.
+    let ignored_by_node = pinned.is_some() && verb != "outdated" && crate::vis_config::node_ignores_config(&cwd);
+
+    // link, dedupe, unlink and why run Node's handler at the workspace root, not at the invocation directory.
+    // A turbo.json above `cwd` makes that folder Node's root even where no package manager marks a workspace.
+    let runs_at_workspace_root = matches!(verb, "dedupe" | "link" | "unlink" | "why")
+        && config != crate::vis_config::ConfigState::Absent
+        && (crate::vis_config::node_config_root(&cwd).is_some_and(|root| root != cwd)
+            || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()));
+
+    // Node runs `remove` and `dedupe` through its security-enforcement plugin, whose warnings and errors the
+    // native path does not reproduce, so those two verbs stay with Node under a pin.
+    let security_checked_by_node = pin.is_some() && matches!(verb, "remove" | "dedupe");
+
     if crate::vis_config::requires_node(&config)
-        || (pinned.is_some() && pin.is_none())
+        || security_checked_by_node
+        || (pinned.is_some() && pin.is_none() && !ignored_by_node)
+        || runs_at_workspace_root
         || (config != crate::vis_config::ConfigState::Absent
             && (installer_selected_by_environment()
                 || uses_global_option(full_args)
