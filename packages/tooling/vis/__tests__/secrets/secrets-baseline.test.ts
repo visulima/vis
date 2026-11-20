@@ -145,7 +145,7 @@ describe("secrets-baseline", () => {
             expect(parsed[0]!.secret).toBe(real().secret);
         });
 
-        it.skipIf(process.platform === "win32")("stays owner-only while an entry holds a real value", () => {
+        it.skipIf(process.platform === "win32")("tightens an existing baseline to owner-only on every write", () => {
             expect.assertions(2);
 
             const baselinePath = join(tmpDir, "baseline.json");
@@ -160,7 +160,37 @@ describe("secrets-baseline", () => {
             chmodSync(baselinePath, 0o644);
             writeBaseline([maskFinding(real())], baselinePath, tmpDir);
 
-            expect(statSync(baselinePath).mode % 0o1000).not.toBe(0o600);
+            expect(statSync(baselinePath).mode % 0o1000).toBe(0o600);
+        });
+
+        it("keeps distinct real secrets whose masks collide", () => {
+            expect.assertions(2);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+            const short = (secret: string, line: number): ReturnType<typeof baseFinding> =>
+                makeFinding({ endLine: line, file: "a.env", match: `PW=${secret}`, ruleId: "pw", secret, startLine: line });
+
+            writeFileSync(baselinePath, JSON.stringify([short("abcdef", 1)]));
+
+            const count = writeBaseline([short("ghijkl", 2), short("mnopqr", 3)], baselinePath, tmpDir);
+            const parsed = JSON.parse(readFileSync(baselinePath, "utf8")) as { secret: string }[];
+
+            expect(count).toBe(3);
+            expect(parsed.map((entry) => entry.secret)).toStrictEqual(["abcdef", "ghijkl", "mnopqr"]);
+        });
+
+        it("accepts hand-written entries that carry only ruleId, file and startLine", () => {
+            expect.assertions(3);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+
+            writeFileSync(baselinePath, JSON.stringify([{ file: "a.env", requiredFindings: [{ ruleId: "dep" }], ruleId: "tok", startLine: 1 }]));
+
+            const diff = diffBaseline([maskFinding({ ...real(), endLine: 1, startLine: 1 })], baselinePath, tmpDir);
+
+            expect(diff.surviving).toHaveLength(1);
+            expect(diff.fresh).toStrictEqual([]);
+            expect(writeBaseline([maskFinding(real())], baselinePath, tmpDir)).toBeGreaterThan(0);
         });
 
         it("diffs a moved masked finding against a real-value entry as unchanged", () => {

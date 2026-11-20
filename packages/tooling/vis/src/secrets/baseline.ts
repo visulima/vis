@@ -89,15 +89,27 @@ export const rebaseBaseline = (baselinePath: string, root: string, base: string)
  */
 const matchKeys = (finding: Finding): string[] => [...baselineKeys(finding), ...baselineKeys(maskFinding(finding))];
 
-/** An entry read from a baseline file may lack a `secret`; mask it as an empty one. */
-const maskEntry = (entry: Finding): Finding => maskFinding({ ...entry, secret: typeof entry.secret === "string" ? entry.secret : "" });
+const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/** An entry read from a baseline file only needs `ruleId`, `file` and `startLine`; fill in the strings masking reads. */
+const normaliseEntry = (entry: Finding): Finding => {
+    const normalised: Finding = { ...entry, match: asString(entry.match), secret: asString(entry.secret) };
+
+    if (Array.isArray(entry.requiredFindings)) {
+        normalised.requiredFindings = entry.requiredFindings.map((required) => {
+            return { ...required, match: asString(required.match), secret: asString(required.secret) };
+        });
+    } else {
+        delete normalised.requiredFindings;
+    }
+
+    return normalised;
+};
+
+const maskEntry = (entry: Finding): Finding => maskFinding(normaliseEntry(entry));
 
 /** The keys a baseline entry suppresses under, as the scanner indexes a baseline file. */
-const entryKeys = (entry: Finding): string[] => [
-    fingerprint({ ...entry, secret: typeof entry.secret === "string" ? entry.secret : "" }),
-    legacyFingerprint(entry),
-    fingerprint(maskEntry(entry)),
-];
+const entryKeys = (entry: Finding): string[] => [fingerprint(normaliseEntry(entry)), legacyFingerprint(entry), fingerprint(maskEntry(entry))];
 
 export interface BaselineDiff {
     fresh: Finding[];
@@ -127,21 +139,23 @@ export interface WriteBaselineOptions {
     replace?: boolean;
 }
 
-const holdsRealValue = (entry: Finding): boolean => {
-    const masked = maskEntry(entry);
-
-    return masked.match !== entry.match || masked.secret !== entry.secret || JSON.stringify(masked.requiredFindings) !== JSON.stringify(entry.requiredFindings);
-};
-
 /** Identity of a baseline entry regardless of masking, so a real-value entry and its masked rescan are one. */
 const maskedFingerprint = (entry: Finding): string => fingerprint(maskEntry(entry));
+
+/** Whether an entry's secret is already a mask. A real value can only be told apart from another by its real fingerprint. */
+const isMaskedEntry = (entry: Finding): boolean => {
+    const secret = asString(entry.secret);
+
+    return maskEntry(entry).secret === secret;
+};
 
 /**
  * Write `findings` to `baselinePath` with paths relative to `root`. By default
  * merges with any existing baseline (so prior triage decisions for files not
  * rescanned this run are preserved; an existing entry wins over a rescan of
- * the same finding). Pass `replace: true` to overwrite. The file is written
- * 0600 when any entry holds an unmasked secret.
+ * the same finding). Pass `replace: true` to overwrite. The file is always
+ * written 0600: whether an entry still holds a real value cannot be told from
+ * its text.
  */
 export const writeBaseline = (findings: Finding[], baselinePath: string, root: string, options: WriteBaselineOptions = {}): number => {
     const incoming = findings.map((f) => toRelativeFinding(f, root));
@@ -156,23 +170,36 @@ export const writeBaseline = (findings: Finding[], baselinePath: string, root: s
         const existing = readBaseline(baselinePath)
             .map((f) => toRelativeFinding(f, root))
             .filter((f) => !superseded.has(maskedFingerprint(f)));
-        const seen = new Set<string>();
+        const seenReal = new Set<string>();
+        // Masked identities of every kept entry, and of the kept entries that are masks.
+        const seenMasked = new Set<string>();
+        const seenMaskedEntries = new Set<string>();
 
         final = [];
 
+        // Two real values are the same entry only when their real fingerprints are;
+        // a mask stands for any real value it could have come from.
         for (const f of [...existing, ...incoming]) {
-            const key = maskedFingerprint(f);
+            const realKey = fingerprint(normaliseEntry(f));
+            const maskedKey = maskedFingerprint(f);
+            const masked = isMaskedEntry(f);
 
-            if (seen.has(key)) {
+            if (seenReal.has(realKey) || (masked ? seenMasked.has(maskedKey) : seenMaskedEntries.has(maskedKey))) {
                 continue;
             }
 
-            seen.add(key);
+            seenReal.add(realKey);
+            seenMasked.add(maskedKey);
+
+            if (masked) {
+                seenMaskedEntries.add(maskedKey);
+            }
+
             final.push(f);
         }
     }
 
-    writeReportFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`, final.some((entry) => holdsRealValue(entry)));
+    writeReportFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`, true);
 
     return final.length;
 };

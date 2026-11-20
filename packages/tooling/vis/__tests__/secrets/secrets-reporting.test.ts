@@ -230,7 +230,7 @@ describe("diagnostic formatters", () => {
 });
 
 describe(writeBaseline, () => {
-    it.skipIf(process.platform === "win32")("writes 0600 unless every entry is masked", () => {
+    it.skipIf(process.platform === "win32")("always writes 0600", () => {
         expect.assertions(3);
 
         const root = tempDir();
@@ -251,7 +251,7 @@ describe(writeBaseline, () => {
         chmodSync(redacted, 0o644);
         writeBaseline([maskFinding(finding())], redacted, root);
 
-        expect(mode(redacted)).toBe(0o644);
+        expect(mode(redacted)).toBe(0o600);
     });
 });
 
