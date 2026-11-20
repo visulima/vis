@@ -115,8 +115,8 @@ jobs:
             - name: "Build vis"
               run: "pnpm exec nx run vis:build:prod"
 
-            # The smoke script reports a package manager that is missing as NOT RUN, so bun is
-            # installed here to make that row run.
+            # bun is named by `--pm` below, and a requested package manager that is missing fails
+            # the smoke run, so bun must be installed here.
             - name: "Install bun"
               if: "runner.os != 'Windows'"
               shell: "bash"

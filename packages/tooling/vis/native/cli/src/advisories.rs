@@ -117,7 +117,7 @@ pub fn run(args: &[String]) -> ! {
 /// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads in a
 /// directory. Node stops at the nearest one, so any of them above the working directory means the
 /// root may not be the working directory.
-const ROOT_MARKERS: [&str; 10] = [
+pub(crate) const ROOT_MARKERS: [&str; 10] = [
     "lerna.json",
     "turbo.json",
     "pnpm-workspace.yaml",

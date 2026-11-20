@@ -32,10 +32,18 @@ const PNPM = "pnpm@12.21.0";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-const pmFlag = process.argv.indexOf("--pm");
+// `--pm npm,bun` and `--pm=npm,bun` both name the managers; a missing value is a usage error, not a crash.
+const pmFlag = process.argv.findIndex((argument) => argument === "--pm" || argument.startsWith("--pm="));
 const explicitlyRequested = pmFlag !== -1;
 const knownManagers = ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
-const requested = explicitlyRequested ? process.argv[pmFlag + 1].split(",") : knownManagers;
+const pmValue = explicitlyRequested ? (process.argv[pmFlag].startsWith("--pm=") ? process.argv[pmFlag].slice("--pm=".length) : process.argv[pmFlag + 1]) : undefined;
+
+if (explicitlyRequested && (pmValue === undefined || pmValue === "" || pmValue.startsWith("--"))) {
+    console.error("install-smoke: --pm needs a list of package managers, for example --pm npm,bun");
+    process.exit(2);
+}
+
+const requested = explicitlyRequested ? pmValue.split(",") : knownManagers;
 
 for (const name of requested) {
     if (!knownManagers.includes(name)) {
@@ -90,8 +98,18 @@ const excerpt = (text, lines) => text.trim().split("\n").slice(0, lines).join(" 
 const work = mkdtempSync(join(tmpdir(), "vis-install-smoke-"));
 const tarballs = join(work, "tarballs");
 
+// Stops the registry before the work directory goes, since a running process can keep it from being removed. A failed
+// removal only warns: it must not skip the registry stop or change the exit code.
+let stopRegistry = () => {};
+
 process.on("exit", () => {
-    rmSync(work, { force: true, recursive: true });
+    stopRegistry();
+
+    try {
+        rmSync(work, { force: true, maxRetries: 5, recursive: true });
+    } catch (error) {
+        console.warn(`install-smoke: could not remove ${work} (${error.message})`);
+    }
 });
 
 mkdirSync(tarballs);
@@ -188,7 +206,7 @@ const stop = () => {
     }
 };
 
-process.on("exit", stop);
+stopRegistry = stop;
 
 // Polls the registry over HTTP until it answers, so a stalled `npx` cannot hang the job. Fails on a spawn
 // error, an early exit, or the deadline.

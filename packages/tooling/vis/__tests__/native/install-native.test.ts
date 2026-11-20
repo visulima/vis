@@ -184,9 +184,16 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             expect(launcherKept()).toBe(false);
         });
 
+        // The `.bin/vis` shim pnpm wrote on the first install, before this script ran again.
+        const writeStaleShim = () => {
+            mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+            writeFileSync(join(root, "node_modules", ".bin", "vis"), "#!/bin/sh\nexec node \"$basedir/../@visulima/vis/bin/vis\" \"$@\"\n");
+        };
+
         it("keeps the launcher on `pnpm rebuild`, where the shim was written before the script ran", () => {
             expect.assertions(1);
 
+            writeStaleShim();
             install({ ...pnpm, INIT_CWD: root, npm_command: "rebuild" });
 
             expect(launcherKept()).toBe(true);
@@ -195,9 +202,19 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         it("keeps the launcher on `pnpm approve-builds`, which leaves the stale shim in place", () => {
             expect.assertions(2);
 
+            writeStaleShim();
             const approved = install({ ...pnpm, INIT_CWD: root, npm_command: "approve-builds" });
 
             expect(approved.status).toBe(0);
+            expect(launcherKept()).toBe(true);
+        });
+
+        it("keeps the launcher when a stale shim exists, whatever `npm_command` pnpm reports", () => {
+            expect.assertions(1);
+
+            writeStaleShim();
+            install({ ...pnpm, INIT_CWD: root });
+
             expect(launcherKept()).toBe(true);
         });
 
