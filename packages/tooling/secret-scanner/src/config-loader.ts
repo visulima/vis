@@ -206,7 +206,7 @@ const resolveConfig = (options: ConfigLoadOptions = {}): GitleaksConfig => {
     const hasRules = Array.isArray(userConfig.rules) && userConfig.rules.length > 0;
     const hasAllowlist = userConfig.allowlist !== undefined || (Array.isArray(userConfig.allowlists) && userConfig.allowlists.length > 0);
 
-    if (!hasRules && !hasAllowlist) {
+    if (!hasRules && !hasAllowlist && userConfig.title === undefined) {
         return getBundledConfig();
     }
 

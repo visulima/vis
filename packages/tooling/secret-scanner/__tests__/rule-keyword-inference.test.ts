@@ -96,6 +96,47 @@ describe("keyword inference fails safe", () => {
     });
 });
 
+describe("keyword inference and the native prefilter", () => {
+    const scan = (code: string, rule: ReturnType<typeof defineRule>) =>
+        scanString(code, "test.ts", { config: { extendBundled: false, inline: { rules: [rule] } } });
+
+    it("leaves a rule with a match longer than the keyword window running everywhere", async () => {
+        expect.assertions(3);
+
+        const rule = defineRule({ description: "long", id: "test.long", regex: /^.{5000}TOKEN_[A-Z]{4}/ });
+
+        expect(rule.keywords).toBeUndefined();
+        await expect(scan(`${"a".repeat(5000)}TOKEN_ABCD`, rule)).resolves.toHaveLength(1);
+        expect(inferKeywords("TOKEN_[A-Z]{40}")).toStrictEqual(["token_"]);
+    });
+
+    it("does not infer k or s keywords from a case-insensitive regex", async () => {
+        expect.assertions(4);
+
+        expect(inferKeywords("(?i)KEY_[A-Z]{4}")).toStrictEqual([]);
+        expect(inferKeywords("(?i)abcd_[A-Z]{4}")).toStrictEqual(["abcd_"]);
+        expect(inferKeywords("(?-i)KEY_[A-Z]{4}")).toStrictEqual(["key_"]);
+
+        const rule = defineRule({ description: "kelvin", id: "test.kelvin", regex: /KEY_[A-Z]{4}/i });
+
+        await expect(scan("\u212AEY_ABCD", rule)).resolves.toHaveLength(1);
+    });
+
+    it("infers no keyword when preRegexReplace rewrites the content first", async () => {
+        expect.assertions(2);
+
+        const rule = defineRule({
+            description: "rewritten",
+            id: "test.rewritten",
+            preRegexReplace: [{ from: "MASKED_", to: "TOKEN_" }],
+            regex: /TOKEN_[A-Z]{4}/,
+        });
+
+        expect(rule.keywords).toBeUndefined();
+        await expect(scan("MASKED_ABCD", rule)).resolves.toHaveLength(1);
+    });
+});
+
 describe("opt-in rules in the tester", () => {
     const optIn = () => defineRule({ defaultEnabled: false, description: "opt-in", id: "test.opt-in", regex: /OPTIN_[A-Z0-9]{8}/ });
 

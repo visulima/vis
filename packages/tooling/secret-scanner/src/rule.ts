@@ -11,6 +11,10 @@ export const DEFAULT_KEYWORD_MIN_LENGTH = 4;
 
 const MAX_KEYWORDS = 8;
 
+// The native keyword window reaches 4 KiB past a hit; stay well inside it so a match that
+// contains a keyword also contains the text the regex needs to reach it.
+const MAX_MATCH_SPAN = 2048;
+
 /** How a rule's prefilter keywords are chosen: inferred from the regex, none, or an explicit list. */
 export type KeywordHint = "auto" | false | string[];
 
@@ -66,8 +70,11 @@ export interface RuleInput {
     /**
      * Literal prefilter hints. `"auto"` extracts only literals that are
      * mandatory on every path through the regex, and returns none when it
-     * can't fully understand the regex; `false` (or an empty result) leaves
-     * the keyword list off so the rule always runs. Explicit strings replace
+     * can't fully understand the regex, when the regex is case-insensitive
+     * (no `k` or `s` keywords), when its counted repetitions can span more
+     * than the native keyword window, or when `preRegexReplace` is set;
+     * `false` (or an empty result) leaves the keyword list off so the rule
+     * always runs. Explicit strings replace
      * inference entirely — make sure they match every candidate.
      */
     keywords?: KeywordHint;
@@ -111,6 +118,10 @@ const FLAG_GROUP = /\?[imsUuR-]*([:)])/y;
 const POSIX_CLASS = /^:\^?[a-z]+:\]/;
 const QUANTIFIER_BRACES = /\{(\d+)(?:,\d*)?\}/y;
 // Verbose mode makes whitespace and `#` comments insignificant, so a scan can't tell literals from comments.
+const COUNTED_REPETITION = /\{(\d+)(?:,(\d*))?\}/g;
+// Unicode case folding lets U+212A (Kelvin) match `k` and U+017F (long s) match `s`, which the ASCII-only prefilter can't see.
+const CASE_FOLDING_LETTER = /[ks]/;
+const CASE_INSENSITIVE_FLAG = /\(\?[msUuR]*i/;
 const VERBOSE_FLAG = /\(\?[imsUuR-]*x[imsUuR-]*[:)]/;
 // Rust accepts a backslash before any ASCII character except alphanumerics and `<`/`>` (word boundaries).
 const LITERAL_ESCAPE = /^(?![\dA-Z<>])[\0-\u007F]$/i;
@@ -451,6 +462,17 @@ const parseSequence = (source: string, state: ParseState, nested: boolean): stri
 
 /* eslint-enable no-param-reassign, no-plusplus, sonarjs/cognitive-complexity */
 
+/** Upper bound on the text counted repetitions can consume, summed over the pattern. */
+const countedSpan = (pattern: string): number => {
+    let total = 0;
+
+    for (const [, min, max] of pattern.matchAll(COUNTED_REPETITION)) {
+        total += Number(max === undefined || max === "" ? min : max);
+    }
+
+    return total;
+};
+
 /**
  * Collect literal fragments that must be present for a regex to match.
  * Alternatives are intersected at every level, escaped punctuation is
@@ -461,7 +483,7 @@ const parseSequence = (source: string, state: ParseState, nested: boolean): stri
  * false negative.
  */
 const mandatoryFragments = (pattern: string): string[] => {
-    if (VERBOSE_FLAG.test(pattern)) {
+    if (VERBOSE_FLAG.test(pattern) || countedSpan(pattern) > MAX_MATCH_SPAN) {
         return [];
     }
 
@@ -498,8 +520,10 @@ const isAscii = (value: string): boolean => {
 export const inferKeywords = (pattern: string, options: { minLength?: number } = {}): string[] => {
     const minLength = options.minLength ?? DEFAULT_KEYWORD_MIN_LENGTH;
 
+    const foldsCase = CASE_INSENSITIVE_FLAG.test(pattern);
+
     return [...new Set(mandatoryFragments(pattern))]
-        .filter((fragment) => fragment.length >= minLength && isAscii(fragment))
+        .filter((fragment) => fragment.length >= minLength && isAscii(fragment) && !(foldsCase && CASE_FOLDING_LETTER.test(fragment.toLowerCase())))
         .map((fragment) => fragment.toLowerCase())
         .toSorted((a, b) => b.length - a.length || a.localeCompare(b))
         .slice(0, MAX_KEYWORDS);
@@ -549,7 +573,8 @@ export const defineRule = (input: RuleInput): DefinedRule => {
     const pattern = normalizePattern(regex);
     const rule: DefinedRule = { ...rest, id: input.id, regex: pattern };
 
-    if (keywordHint === false) {
+    // The native prefilter reads the original content, but a rewritten buffer is what the regex sees.
+    if (keywordHint === false || (keywordHint === "auto" && (input.preRegexReplace?.length ?? 0) > 0)) {
         return rule;
     }
 

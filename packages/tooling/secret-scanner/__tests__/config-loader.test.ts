@@ -153,6 +153,16 @@ describe(resolveConfig, () => {
         expect(resolved.title).toBe("my rules");
     });
 
+    it("keeps the title of a path config that has no rules or allowlists", async () => {
+        expect.assertions(1);
+
+        const path = resolve(tmp, "title-only.json");
+
+        await writeFile(path, JSON.stringify({ title: "my rules" }));
+
+        expect(resolveConfig({ configPath: path }).title).toBe("my rules");
+    });
+
     it("reads and merges a config from a path", async () => {
         expect.assertions(1);
 
