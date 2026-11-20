@@ -126,7 +126,7 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMark
 // Whether `vis clean` can pass the binary's native gate (`plan` in `clean.rs`). The binary re-checks
 // everything; this only skips the extra process when it would delegate anyway. Flags are the
 // default, `--dry-run` and `--lockfile`/`-l`, each at most once.
-const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
+const cleanMayRunNatively = (platform, environment, args, interactive) => {
     if (platform === "win32" || interactive) {
         return false;
     }
@@ -206,7 +206,7 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
     // stdout stays in Node too: pail colours its output there, and the binary does not.
     if (command === "clean") {
-        return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, cwd, interactive));
+        return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, interactive));
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
