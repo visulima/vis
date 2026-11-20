@@ -17,8 +17,8 @@
 //   - pnpm may already have written a shim that starts Node (see `pnpmShimMayStartNode`).
 
 const { spawnSync } = require("node:child_process");
-const { chmodSync, copyFileSync, linkSync, readFileSync, renameSync, rmSync } = require("node:fs");
-const { basename, dirname, join, sep } = require("node:path");
+const { chmodSync, copyFileSync, existsSync, linkSync, readFileSync, realpathSync, renameSync, rmSync } = require("node:fs");
+const { basename, dirname, join, relative, sep } = require("node:path");
 
 const packageRoot = join(__dirname, "..");
 const target = join(packageRoot, "bin", "vis");
@@ -79,37 +79,108 @@ const isThisPackage = (entry, version) => {
     return entry.startsWith(prefix) && !/^[\w.-]/u.test(entry.slice(prefix.length));
 };
 
-// pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the
-// launcher is in place. A first install (also from a lockfile) rewrites the shim after
-// this script ran, but a later run does not: `pnpm approve-builds` / `pnpm rebuild`, or
-// an install on top of an earlier one that skipped the script. `node <native binary>`
-// would then crash, so keep the launcher, which works with either shim.
+// The project's `node_modules`, the directory holding pnpm's `.bin` and `.modules.yaml`. Inside pnpm's
+// virtual store that is the directory above `.pnpm`; otherwise the nearest `node_modules` ancestor.
+const projectModulesDirectory = () => {
+    let directory = packageRoot;
+
+    while (dirname(directory) !== directory) {
+        if (basename(directory) === ".pnpm") {
+            return dirname(directory);
+        }
+
+        directory = dirname(directory);
+    }
+
+    directory = packageRoot;
+
+    while (dirname(directory) !== directory) {
+        if (basename(directory) === "node_modules") {
+            return directory;
+        }
+
+        directory = dirname(directory);
+    }
+
+    return undefined;
+};
+
+// Directories whose `.bin` may hold the shim for this package: the one the virtual store sits in,
+// and the one of the project pnpm was run from (`INIT_CWD`), which is a workspace member's own
+// `node_modules` when that member depends on this package or the store is not under `node_modules`.
+const shimModulesDirectories = () => {
+    const directories = [projectModulesDirectory()];
+
+    if (process.env.INIT_CWD) {
+        directories.push(join(process.env.INIT_CWD, "node_modules"));
+    }
+
+    return [...new Set(directories.filter((directory) => directory !== undefined))];
+};
+
+// Whether the shim in `modules/.bin` was written for this very package directory, starts Node, and
+// predates this run. pnpm writes `exec node "$basedir/<relative path to bin/vis>"`, so the path names the
+// package directory (version included): the shim of an earlier version, or one that execs the binary
+// directly, leaves the launcher free to be replaced. pnpm 12 also writes the shim of a first install
+// before it runs this script, and rewrites it afterwards; `.modules.yaml` is only written once an
+// install has finished, so a shim without one belongs to the current run. A shim that cannot be read
+// cannot be ruled out.
+const shimStartsNodeForThisPackage = (modules) => {
+    const shim = join(modules, ".bin", "vis");
+
+    if (!existsSync(shim) || !existsSync(join(modules, ".modules.yaml"))) {
+        return false;
+    }
+
+    try {
+        const text = readFileSync(shim, "utf8");
+        const launcher = relative(realpathSync(dirname(shim)), target).split(sep).join("/");
+
+        return text.includes(launcher) && /\bexec\s+(?:node|"\$basedir\/node")\s/u.test(text);
+    } catch {
+        return true;
+    }
+};
+
+// pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the launcher is in
+// place. A first install rewrites the shim after this script ran, but a later run does not: `pnpm
+// approve-builds` / `pnpm rebuild`, or an install on top of an earlier one that skipped the script.
+// Replacing `bin/vis` then would leave `node <native binary>`, which crashes, so keep the launcher,
+// which works with either shim. Those two commands are recognised by `npm_command` and, because pnpm
+// does not guarantee it, by a shim for this package directory left by a finished install. An upgrade
+// finds the shim of the previous version, which names another directory, and goes native.
 const pnpmShimMayStartNode = () => {
     if (!(process.env.npm_config_user_agent || "").startsWith("pnpm/")) {
         return false;
     }
 
-    // `approve-builds` removes the package from `ignoredBuilds` before it runs this script,
-    // so it is not visible in `.modules.yaml` any more, but its shim is the same stale one.
     if (process.env.npm_command === "rebuild" || process.env.npm_command === "approve-builds") {
+        return true;
+    }
+
+    const directories = shimModulesDirectories();
+
+    if (directories.some(shimStartsNodeForThisPackage)) {
         return true;
     }
 
     // pnpm lists packages whose scripts it skipped (`ignoredBuilds`, `pendingBuilds`) in
     // `node_modules/.modules.yaml`, next to the `.pnpm` virtual store.
-    let directory = packageRoot;
-
-    while (basename(directory) !== ".pnpm" && dirname(directory) !== directory) {
-        directory = dirname(directory);
-    }
+    let version;
 
     try {
-        const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-
-        return skippedBuilds(readFileSync(join(dirname(directory), ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
+        ({ version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")));
     } catch {
         return false;
     }
+
+    return directories.some((modules) => {
+        try {
+            return skippedBuilds(readFileSync(join(modules, ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
+        } catch {
+            return false;
+        }
+    });
 };
 
 const main = () => {

@@ -160,6 +160,14 @@ fn ancestor_pins_package_manager(cwd: &Path) -> bool {
     false
 }
 
+/// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
+/// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
+fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
+    cwd.ancestors()
+        .skip(1)
+        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+}
+
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
 /// argument parsing does not apply them, so they must reach Node.
 fn uses_global_option(args: &[String]) -> bool {
@@ -173,6 +181,10 @@ fn uses_global_option(args: &[String]) -> bool {
 /// (including the leading verb) so the config-delegation path can replay it.
 pub fn run(verb: &str, full_args: &[String]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
+        crate::delegate(full_args);
+    }
 
     // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
     // native PM detector doesn't read. For these PM commands — especially the
@@ -332,6 +344,8 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{has, scan};
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -353,6 +367,20 @@ mod tests {
         assert!(has(&parsed, "save-dev"));
         // Packages AND the unknown flag are forwarded, in order.
         assert_eq!(parsed.rest, ["lodash", "--unknown", "react"]);
+    }
+
+    #[test]
+    fn a_root_marker_above_the_working_directory_is_a_possible_root() {
+        let root = std::env::temp_dir().join(format!("vis-pm-family-{}", std::process::id()));
+        let package = root.join("packages").join("app");
+
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(root.join("pnpm-workspace.yaml"), "packages: []\n").unwrap();
+
+        assert!(super::ancestor_may_be_workspace_root(&package));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

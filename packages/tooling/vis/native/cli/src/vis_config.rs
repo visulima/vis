@@ -18,10 +18,19 @@ use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
 
 /// Top-level keys the native path must leave to Node. `runtime` and `extends` change what
-/// the Node loader resolves, `versionConstraint` can fail the run, and the four removed keys
+/// the Node loader resolves, `versionConstraint` can fail the run, `security` makes the Node
+/// hook report policy errors for package-manager commands, and the four removed keys
 /// (`src/config/deprecation.ts`) make the Node loader fail.
-const NODE_ONLY_KEYS: [&str; 7] =
-    ["runtime", "extends", "versionConstraint", "targetDefaults", "taskRunnerOptions", "taskDefaults", "scopedTasks"];
+const NODE_ONLY_KEYS: [&str; 8] = [
+    "runtime",
+    "extends",
+    "versionConstraint",
+    "security",
+    "targetDefaults",
+    "taskRunnerOptions",
+    "taskDefaults",
+    "scopedTasks",
+];
 
 /// The module `defineConfig` is imported from. Its evaluation is harmless, so a value import
 /// from it is allowed, and only a `defineConfig` bound to it is unwrapped.
@@ -241,9 +250,9 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
         match statement {
             Statement::ImportDeclaration(import) if import.import_kind == ImportOrExportKind::Type => {}
             Statement::ImportDeclaration(import) => {
-                // Only `defineConfig` from the config module is allowed. Its resolution and exports are
-                // not checked here, so any other binding, and any side-effect import, is left to Node.
-                if import.source.value != VIS_CONFIG_MODULE {
+                // Only `defineConfig` from the config module is allowed, and only when that subpath
+                // resolves from the config file. Any other binding, and any side-effect import, is left to Node.
+                if import.source.value != VIS_CONFIG_MODULE || !config_module_resolves(path) {
                     return None;
                 }
 
@@ -281,6 +290,40 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
     }
 
     default
+}
+
+/// Whether `VIS_CONFIG_MODULE` resolves from the directory of `path`: the nearest installed
+/// `@visulima/vis` exports that subpath, and its target file exists. Node may still fail to load
+/// the target, so this is a check of the package map, not a proof that the module loads.
+fn config_module_resolves(path: &Path) -> bool {
+    let Some(directory) = path.parent() else {
+        return false;
+    };
+
+    let Some(package) = directory
+        .ancestors()
+        .map(|ancestor| ancestor.join("node_modules").join("@visulima").join("vis"))
+        .find(|package| package.join("package.json").is_file())
+    else {
+        return false;
+    };
+
+    let Some(manifest) = fs::read_to_string(package.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    else {
+        return false;
+    };
+
+    let file = match manifest.get("exports").and_then(|exports| exports.get("./config")) {
+        Some(Value::String(file)) => Some(file.as_str()),
+        Some(Value::Object(conditions)) => {
+            ["import", "default"].iter().find_map(|key| conditions.get(*key).and_then(Value::as_str))
+        }
+        _ => None,
+    };
+
+    file.is_some_and(|file| package.join(file).is_file())
 }
 
 /// Unwraps `defineConfig(x)` only when `defineConfig` is bound to the vis config module.
@@ -394,15 +437,44 @@ mod tests {
         );
     }
 
+    // Lays out an installed `@visulima/vis` that exports `./config`, as the package does.
+    fn install_vis_config_module(dir: &Path) {
+        let package = dir.join("node_modules").join("@visulima").join("vis");
+
+        fs::create_dir_all(package.join("dist")).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"exports":{"./config":{"types":"./dist/config.d.ts","default":"./dist/config.js"}}}"#,
+        )
+        .unwrap();
+        fs::write(package.join("dist").join("config.js"), "export const defineConfig = (config) => config;\n").unwrap();
+    }
+
     #[test]
     fn define_config_wrapper_is_unwrapped() {
+        let dir = scratch("wrapper");
+
+        install_vis_config_module(&dir);
+        fs::write(
+            dir.join("vis.config.ts"),
+            "import { defineConfig } from '@visulima/vis/config';\nexport default defineConfig({ runtime: 'bun' });\n",
+        )
+        .unwrap();
+
+        assert_eq!(read(&dir), ConfigState::Static(serde_json::json!({ "runtime": "bun" })));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn define_config_wrapper_with_an_unresolvable_helper_is_dynamic() {
         assert_eq!(
             config(
-                "wrapper",
+                "wrapper-unresolved",
                 "vis.config.ts",
-                "import { defineConfig } from '@visulima/vis/config';\nexport default defineConfig({ runtime: 'bun' });\n"
+                "import { defineConfig } from '@visulima/vis/config';\nexport default defineConfig({ lint: {} });\n"
             ),
-            ConfigState::Static(serde_json::json!({ "runtime": "bun" })),
+            ConfigState::Dynamic,
         );
     }
 
@@ -476,6 +548,7 @@ mod tests {
         assert!(!needs(serde_json::json!({ "install": { "backend": "bun" } })));
         assert!(needs(serde_json::json!({ "install": { "corepack": "strict" } })));
         assert!(needs(serde_json::json!({ "runtime": "bun" })));
+        assert!(needs(serde_json::json!({ "security": { "policies": { "installScripts": { "mode": "strict" } } } })));
         assert!(needs(serde_json::json!({ "install": "npm" })));
         assert!(needs(serde_json::json!({ "targetDefaults": {} })));
         assert!(needs(serde_json::json!({ "scopedTasks": [] })));
