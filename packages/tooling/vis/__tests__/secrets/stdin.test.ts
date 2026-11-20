@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import type { Toolbox } from "@visulima/cerebro";
+import { DEFAULT_MAX_FILE_SIZE } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
@@ -50,7 +51,7 @@ describe("vis secrets --stdin", () => {
     });
 
     const run = async (options: SecretsFlags, { argument = [], chunks = [], cwd = root, isTTY = false }: RunInput = {}): Promise<Finding[]> => {
-        const stdin = Object.assign(Readable.from(chunks), { isTTY });
+        const stdin = Object.assign(Readable.from(chunks, { objectMode: false }), { isTTY });
 
         vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
         stdout.length = 0;
@@ -109,6 +110,12 @@ describe("vis secrets --stdin", () => {
             expect.assertions(1);
 
             expect(files(await run({ stdin: join(root, "config", ".env") }, { chunks: [SECRET_LINE] }))).toStrictEqual(["config/.env"]);
+        }, 60_000);
+
+        it("reports a dotted in-root name root-relative", async () => {
+            expect.assertions(1);
+
+            expect(files(await run({ stdin: "..env" }, { chunks: [SECRET_LINE] }))).toStrictEqual(["..env"]);
         }, 60_000);
 
         it("resolves the name against the directory vis runs from", async () => {
@@ -175,12 +182,30 @@ describe("vis secrets --stdin", () => {
             ["--replace-baseline", { replaceBaseline: true }],
             ["--log-ignored", { logIgnored: true }],
             ["--max-size", { maxSize: 100 }],
+            ["--max-archive-depth", { maxArchiveDepth: 1 }],
             ["--fail-on-unreadable", { failOnUnreadable: true }],
             ["--fail-on-unused-ignores", { failOnUnusedIgnores: true }],
         ] satisfies [string, SecretsFlags][])("rejects %s", async (flag, extra) => {
             expect.assertions(1);
 
             await expect(run({ stdin: "config/.env", ...extra })).rejects.toThrow(flag);
+        });
+
+        it("stops reading input larger than the scanner's file size limit", async () => {
+            expect.assertions(2);
+
+            const chunk = Buffer.alloc(DEFAULT_MAX_FILE_SIZE / 2 + 1);
+            let pulled = 0;
+            const generate = function* (): Generator<Buffer> {
+                while (pulled < 10) {
+                    pulled += 1;
+
+                    yield chunk;
+                }
+            };
+
+            await expect(run({ stdin: "big.txt" }, { chunks: generate() as unknown as Buffer[] })).rejects.toThrow("--stdin input exceeds");
+            expect(pulled).toBeLessThan(10);
         });
 
         it("fails fast when stdin is a terminal", async () => {

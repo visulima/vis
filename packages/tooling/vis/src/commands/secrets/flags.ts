@@ -313,11 +313,12 @@ export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: bool
             flags.replaceBaseline ? "--replace-baseline" : undefined,
             flags.logIgnored ? "--log-ignored" : undefined,
             flags.maxSize === undefined ? undefined : "--max-size",
+            flags.maxArchiveDepth === undefined ? undefined : "--max-archive-depth",
             flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
         ].filter((flag): flag is string => flag !== undefined);
 
         if (ineffective.length > 0) {
-            throw new VisUserError(`${ineffective.join(", ")} can't be combined with --stdin: a single piped buffer can't seed a baseline, and there are no files to size-check, skip or list.`);
+            throw new VisUserError(`${ineffective.join(", ")} can't be combined with --stdin: a single piped buffer can't seed a baseline, and there are no files to size-check, skip, list or open as archives.`);
         }
     }
 

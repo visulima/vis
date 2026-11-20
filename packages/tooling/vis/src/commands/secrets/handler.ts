@@ -1,11 +1,10 @@
-import { text } from "node:stream/consumers";
-
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { dim, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
 import { isAbsolute, join, relative, resolve } from "@visulima/path";
 import type { Finding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
 import {
+    DEFAULT_MAX_FILE_SIZE,
     inspectRuleset,
     listRequiredValidators,
     listRules,
@@ -142,7 +141,25 @@ const stdinScanFile = (filename: string, root: string, cwd: string): string => {
     const absolute = resolve(cwd, filename);
     const relativePath = relative(root, absolute);
 
-    return relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath) ? absolute : relativePath;
+    return relativePath === "" || relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath) ? absolute : relativePath;
+};
+
+/** Buffers piped input, refusing more than the size the scanner reads from a file so an endless pipe can't exhaust memory. */
+const readStdin = async (): Promise<string> => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+
+    for await (const chunk of process.stdin as AsyncIterable<Buffer>) {
+        size += chunk.length;
+
+        if (size > DEFAULT_MAX_FILE_SIZE) {
+            throw new VisUserError(`--stdin input exceeds ${String(DEFAULT_MAX_FILE_SIZE)} bytes, the largest file the scanner reads. Scan it as a file instead.`);
+        }
+
+        chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks).toString("utf8");
 };
 
 const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string, cwd: string): Promise<ScanMode> => {
@@ -153,7 +170,7 @@ const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string
             throw new VisUserError("--stdin expects piped input, but stdin is a terminal. Pipe content in, e.g. `cat .env | vis secrets --stdin .env`.");
         }
 
-        return { content: await text(process.stdin), filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
+        return { content: await readStdin(), filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
     }
 
     const paths = args.length > 0 ? args.map((p) => resolve(root, p)) : [root];
