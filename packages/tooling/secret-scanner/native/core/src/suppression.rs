@@ -75,10 +75,17 @@ struct TrailingIds {
     unknown: Vec<String>,
 }
 
+/// Most tokens read after one marker, and most unknown ids reported for one line. Bounds
+/// the work a single long line full of markers or ids can cost; ids past the cap only
+/// narrow a scope, never widen it.
+const MAX_MARKER_IDS: usize = 32;
+
 fn parse_trailing_ids(trailing: &str, is_known_rule: &dyn Fn(&str) -> bool) -> TrailingIds {
     let mut ids = TrailingIds { known: Vec::new(), unknown: Vec::new() };
 
-    for token in trailing.split(|c: char| c == ',' || c.is_whitespace()).filter(|token| !token.is_empty()) {
+    for token in
+        trailing.split(|c: char| c == ',' || c.is_whitespace()).filter(|token| !token.is_empty()).take(MAX_MARKER_IDS)
+    {
         if is_known_rule(token) {
             if ids.unknown.is_empty() {
                 ids.known.push(token.to_string());
@@ -146,24 +153,17 @@ impl<'a> MarkerScan<'a> {
     }
 }
 
-fn find_marker<'a>(lc: &str, markers: &[&'a str]) -> Option<(usize, &'a str)> {
-    markers
-        .iter()
-        .filter_map(|marker| lc.find(marker).map(|position| (position, *marker)))
-        .min_by_key(|(position, _)| *position)
-}
-
 /// Trailing text after every marker on `line`. A `-start` / `-end` suffix directly
 /// after the marker is skipped so a region boundary line also acts as an inline allow,
 /// with any rule ids following the suffix as its scope.
 fn marker_trailers<'a>(line: &'a str, markers: &[&str], skip_suffixes: &[&str]) -> Vec<&'a str> {
     let lc = line.to_ascii_lowercase();
+    let mut scan = MarkerScan::new(&lc, markers);
     let mut trailers = Vec::new();
-    let mut base = 0;
+    let mut from = 0;
 
-    while base < lc.len() {
-        let Some((position, marker)) = find_marker(&lc[base..], markers) else { break };
-        let after_marker = base + position + marker.len();
+    while let Some((position, marker_len)) = scan.first_from(from) {
+        let after_marker = position + marker_len;
         let suffix_len = skip_suffixes
             .iter()
             .find(|suffix| lc[after_marker..].starts_with(*suffix))
@@ -172,7 +172,7 @@ fn marker_trailers<'a>(line: &'a str, markers: &[&str], skip_suffixes: &[&str]) 
         // `to_ascii_lowercase` keeps byte offsets, so this slice preserves the
         // original case of any rule id.
         trailers.push(&line[after_marker + suffix_len..]);
-        base = after_marker;
+        from = after_marker;
     }
 
     trailers
@@ -261,11 +261,16 @@ fn unknown_ids_by_line(content: &str, is_known_rule: &dyn Fn(&str) -> bool) -> V
         let text = line_slice(content, &offsets, line);
         let mut ids: Vec<String> = Vec::new();
 
-        for trailing in marker_trailers(text, &SAME_LINE_MARKERS, &["-start", "-end"])
+        let trailers = marker_trailers(text, &SAME_LINE_MARKERS, &["-start", "-end"])
             .into_iter()
-            .chain(marker_trailers(text, &NEXT_LINE_MARKERS, &[]))
-        {
+            .chain(marker_trailers(text, &NEXT_LINE_MARKERS, &[]));
+
+        'line: for trailing in trailers {
             for id in parse_trailing_ids(trailing, is_known_rule).unknown {
+                if ids.len() == MAX_MARKER_IDS {
+                    break 'line;
+                }
+
                 if !ids.contains(&id) {
                     ids.push(id);
                 }
@@ -624,6 +629,18 @@ mod tests {
         ] {
             assert!(unknown_ids_by_line(line, &is_known_rule).is_empty(), "{line}");
         }
+    }
+
+    #[test]
+    fn a_line_packed_with_markers_and_ids_is_bounded() {
+        let markers: String = (0..50_000).map(|i| format!("gitleaks:allow id-{i} ")).collect();
+        let ids: String = (0..50_000).map(|i| format!("id-{i} ")).collect();
+        let src = format!("{markers}\nx // gitleaks:allow {ids}\n");
+        let found = unknown_ids_by_line(&src, &is_known_rule);
+
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|(_, ids)| ids.len() == MAX_MARKER_IDS));
+        assert_eq!(same_line_scopes(&markers, &is_known_rule).len(), 50_000);
     }
 
     #[test]
