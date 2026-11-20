@@ -196,12 +196,19 @@ fn resolve(root: &Path) -> Option<Membership> {
     Some(Membership::Native(kept))
 }
 
-/// Whether `directory/package.json` parses and has a string `name`.
+/// Whether `directory/package.json` parses and has a non-empty string `name` other than `__proto__`.
+/// Node drops an empty name (`if (!projectName) continue`), and it stores projects on a plain object,
+/// where `__proto__` sets the prototype instead of adding a project.
 fn has_package_name(directory: &Path) -> bool {
     fs::read_to_string(directory.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .is_some_and(|manifest| manifest.get("name").is_some_and(serde_json::Value::is_string))
+        .is_some_and(|manifest| {
+            manifest
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| !name.is_empty() && name != "__proto__")
+        })
 }
 
 pub(crate) fn has_non_js_marker(root: &Path) -> Option<bool> {

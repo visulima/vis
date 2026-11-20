@@ -40,10 +40,6 @@ describe("launcher routing (bin/route.mjs)", () => {
         [["exec", "tsc"], true],
         [["pm", "list"], true],
         [["why", "left-pad"], true],
-        // `list` is routed; the binary delegates the shapes it does not answer.
-        [["list"], true],
-        [["list", "--json"], true],
-        [["list", "--deps"], true],
         // Everything else stays in-process.
         [["status", "--json"], false],
         [["run", "build"], false],
@@ -90,6 +86,47 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(["list"], "win32")).toBe(false);
     });
 
+    describe("`vis list` gate (run in list.rs)", () => {
+        const ci = { CI: "1" };
+
+        it.each([[["list"]], [["list", "--json"]], [["list", "--format=table"]], [["list", "--format", "json"]]])(
+            "routes plain `vis %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+            },
+        );
+
+        it.each([[["list", "--deps"]], [["list", "--targets"]], [["list", "--format=ndjson"]], [["list", "--json", "--format=table"]], [["list", "extra"]]])(
+            "delegates `vis %j`, which the binary would hand to Node anyway",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+            },
+        );
+
+        it("delegates an interactive run, which prints tips to stderr", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["list"], "linux", ci, "/work/app", true)).toBe(false);
+        });
+
+        it("delegates outside CI", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["list"], "linux", {}, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps `list --help` native outside Windows", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(["list", "--help"], "linux", {}, "/work/app", false)).toBe(true);
+            expect(routesToNative(["list", "--help"], "win32", {}, "/work/app", false)).toBe(false);
+        });
+    });
+
     describe("`vis clean` gate (plan in clean.rs)", () => {
         const cwd = "/work/app";
         const ci = { CI: "1" };
@@ -128,6 +165,19 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect.assertions(1);
 
             expect(routesToNative(["clean"], "linux", ci, cwd, true)).toBe(false);
+        });
+
+        it("delegates when GITHUB_ACTIONS is set, as the binary's colour gate does", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["clean"], "linux", { ...ci, GITHUB_ACTIONS: "true" }, cwd, false)).toBe(false);
+        });
+
+        it("delegates when TERM is a colour terminal, and routes when it is dumb", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(["clean"], "linux", { ...ci, TERM: "xterm" }, cwd, false)).toBe(false);
+            expect(routesToNative(["clean"], "linux", { ...ci, TERM: "dumb" }, cwd, false)).toBe(true);
         });
     });
 

@@ -110,8 +110,6 @@ pub fn find_lockfiles(root: &Path) -> Vec<PathBuf> {
 
 /// Removes every `node_modules` below `root` (the root's own last, because the running `vis`
 /// resolves itself through it), then the root lockfiles when `remove_lockfile` is set.
-///
-/// `remove_dir_all` does not follow a symlink, so a linked `node_modules` is unlinked itself.
 pub fn clean_workspace(root: &Path, remove_lockfile: bool) -> CleanOutcome {
     let mut node_modules_dirs = find_node_modules(root);
 
@@ -119,9 +117,20 @@ pub fn clean_workspace(root: &Path, remove_lockfile: bool) -> CleanOutcome {
     let root_node_modules = root.join("node_modules");
     node_modules_dirs.sort_by_key(|dir| *dir == root_node_modules);
 
+    let lockfiles = if remove_lockfile { find_lockfiles(root) } else { Vec::new() };
+
+    remove_listed(&node_modules_dirs, &lockfiles)
+}
+
+/// Removes exactly the given directories, in order, then the given lockfiles. A caller that has
+/// already walked the tree and checked its paths passes those same paths here, so nothing is
+/// walked twice and nothing else is removed.
+///
+/// `remove_dir_all` does not follow a symlink, so a linked `node_modules` is unlinked itself.
+pub fn remove_listed(directories: &[PathBuf], lockfiles: &[PathBuf]) -> CleanOutcome {
     let mut outcome = CleanOutcome::default();
 
-    for dir in &node_modules_dirs {
+    for dir in directories {
         let dir_str = dir.to_string_lossy().to_string();
 
         match fs::remove_dir_all(dir) {
@@ -130,14 +139,12 @@ pub fn clean_workspace(root: &Path, remove_lockfile: bool) -> CleanOutcome {
         }
     }
 
-    if remove_lockfile {
-        for lockfile in &find_lockfiles(root) {
-            let lockfile_str = lockfile.to_string_lossy().to_string();
+    for lockfile in lockfiles {
+        let lockfile_str = lockfile.to_string_lossy().to_string();
 
-            match fs::remove_file(lockfile) {
-                Ok(()) => outcome.lockfiles_removed.push(lockfile_str),
-                Err(error) => outcome.errors.push(format!("{lockfile_str}: {error}")),
-            }
+        match fs::remove_file(lockfile) {
+            Ok(()) => outcome.lockfiles_removed.push(lockfile_str),
+            Err(error) => outcome.errors.push(format!("{lockfile_str}: {error}")),
         }
     }
 

@@ -22,7 +22,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use vis_core::clean::{clean_workspace, find_lockfiles, find_node_modules, list_node_modules, CleanOutcome};
+use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
 use crate::vis_config::{self, ConfigState};
 
@@ -45,7 +45,6 @@ struct Output {
 struct Plan {
     dry_run: bool,
     lockfile: bool,
-    root: PathBuf,
     /// `node_modules` directories, in the order the Node path visits them.
     directories: Vec<PathBuf>,
     lockfiles: Vec<PathBuf>,
@@ -70,7 +69,7 @@ pub fn run(raw: &[OsString]) -> ! {
     if plan.dry_run {
         dry_run_output(&plan, &mut out);
     } else {
-        let outcome = clean_workspace(&plan.root, plan.lockfile);
+        let outcome = remove_listed(&plan.directories, &plan.lockfiles);
 
         exit_code = removal_output(&plan, &outcome, &mut out);
     }
@@ -108,8 +107,14 @@ fn plan(args: &[String]) -> Option<Plan> {
 
     let (dry_run, lockfile) = flags(args)?;
 
-    // pail colours its output on a terminal or under FORCE_COLOR; the native path does not.
-    if crate::term::color_enabled(args) || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
+    // pail colours its output on a terminal, under FORCE_COLOR, or where Node's colour detection
+    // turns colour on (`colour_may_be_forced`); the native path does not colour.
+    if crate::term::color_enabled(args)
+        || crate::ignore::colour_may_be_forced()
+        || !in_ci()
+        || io::stdout().is_terminal()
+        || io::stderr().is_terminal()
+    {
         return None;
     }
 
@@ -129,7 +134,7 @@ fn plan(args: &[String]) -> Option<Plan> {
         return None;
     }
 
-    Some(Plan { dry_run, lockfile, root, directories, lockfiles, width })
+    Some(Plan { dry_run, lockfile, directories, lockfiles, width })
 }
 
 /// The flags after `clean`, each accepted at most once. Anything else is `None`.
@@ -170,6 +175,16 @@ fn pail_width() -> Option<usize> {
 /// workspace file both here, and no lerna config above that could claim the root instead.
 fn workspace_root_is_cwd(cwd: &Path) -> bool {
     if cwd.ancestors().any(|directory| directory.join("lerna.json").exists()) {
+        return false;
+    }
+
+    // Node's root search stops at the nearest marker above cwd, so any marker there could be the
+    // root instead (`turbo.json`, a lockfile, a `package.json`, ...). Delegate rather than guess.
+    if cwd
+        .ancestors()
+        .skip(1)
+        .any(|directory| crate::advisories::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
+    {
         return false;
     }
 
@@ -343,7 +358,33 @@ fn in_ci() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap;
+    use super::{workspace_root_is_cwd, wrap};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("vis-clean-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(directory.join("app")).unwrap();
+
+        directory
+    }
+
+    #[test]
+    fn a_pnpm_root_with_a_marker_above_it_is_not_the_workspace_root() {
+        let directory = scratch("ancestor-marker");
+        let app = directory.join("app");
+
+        fs::write(app.join("pnpm-lock.yaml"), "").unwrap();
+        fs::write(app.join("pnpm-workspace.yaml"), "").unwrap();
+        assert!(workspace_root_is_cwd(&app));
+
+        fs::write(directory.join("turbo.json"), "{}").unwrap();
+        assert!(!workspace_root_is_cwd(&app));
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
 
     #[test]
     fn a_long_path_breaks_after_the_label_and_keeps_its_space() {
