@@ -95,7 +95,9 @@ const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
 
 // The routing of the commands that have their own native shapes: `true` or `false` when the
 // command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
-const routesCommandToNative = (command, subcommand, args, platform, environment, cwd, interactive) => {
+const routesCommandToNative = (args, platform, environment, cwd, interactive) => {
+    const [command = "", subcommand] = args;
+
     if (NATIVE_COMMANDS.has(command)) {
         return true;
     }
@@ -164,8 +166,7 @@ const routesToNative = (
     cwd = process.cwd(),
     interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
 ) => {
-    const [command = "", subcommand] = args;
-    const decided = routesCommandToNative(command, subcommand, args, platform, environment, cwd, interactive);
+    const decided = routesCommandToNative(args, platform, environment, cwd, interactive);
 
     if (decided !== undefined) {
         return decided;
@@ -181,7 +182,7 @@ const routesToNative = (
     // `vis`, `help …`, and `--help` / `-h` anywhere before a `--` separator. It
     // delegates whatever it cannot answer to `dist/bin.js` itself (never back through
     // the launcher), so these are safe to hand over.
-    return args.length === 0 || command === "help" || asksForHelp(args);
+    return args.length === 0 || args[0] === "help" || asksForHelp(args);
 };
 
 // eslint-disable-next-line import/prefer-default-export -- named like `resolve-binary.mjs`; more routing helpers will join it
