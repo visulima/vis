@@ -153,6 +153,41 @@ describe("vis secrets --stdin", () => {
         }, 60_000);
     });
 
+    describe("path excludes", () => {
+        it("reports nothing for a name matched by --exclude", async () => {
+            expect.assertions(2);
+
+            await expect(run({ exclude: "dist/**", stdin: "dist/x.env" }, { chunks: [SECRET_LINE] })).resolves.toStrictEqual([]);
+            expect(process.exitCode).toBeUndefined();
+        }, 60_000);
+
+        it("still reports a name the excludes do not match", async () => {
+            expect.assertions(1);
+
+            expect(files(await run({ exclude: "dist/**", stdin: "src/x.env" }, { chunks: [SECRET_LINE] }))).toStrictEqual(["src/x.env"]);
+        }, 60_000);
+
+        it("honours --exclude-from", async () => {
+            expect.assertions(1);
+
+            const ignoreFile = join(root, ".secretsignore");
+
+            writeFileSync(ignoreFile, "config/\n");
+
+            await expect(run({ excludeFrom: ignoreFile, stdin: "config/.env" }, { chunks: [SECRET_LINE] })).resolves.toStrictEqual([]);
+        }, 60_000);
+
+        it("matches the name root-relative when vis runs from a subdirectory", async () => {
+            expect.assertions(1);
+
+            const cwd = join(root, "packages", "app");
+
+            mkdirSync(cwd, { recursive: true });
+
+            await expect(run({ exclude: "packages/**", stdin: ".env" }, { chunks: [SECRET_LINE], cwd })).resolves.toStrictEqual([]);
+        }, 60_000);
+    });
+
     describe("usage errors", () => {
         it.each([
             ["a bare --stdin", null],

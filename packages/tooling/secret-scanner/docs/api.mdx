@@ -73,6 +73,17 @@ const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 
 Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency.
 
+### `isPathExcluded(file, options?, root)`
+
+Whether `file` is excluded by `walk.excludePatterns` / `walk.excludeFromFiles` in `options`, the filter `scanFiles` applies to a listed file. Relative paths resolve against `root`; a path outside `root` is never excluded. Use it before `scanString` when the buffer stands in for a file that a path scan would have skipped.
+
+```typescript
+import { isPathExcluded, scanString } from "@visulima/secret-scanner";
+
+const options = { walk: { excludePatterns: ["dist/**"] } };
+const findings = isPathExcluded("dist/app.js", options, process.cwd()) ? [] : await scanString(content, "dist/app.js", options);
+```
+
 ## Git
 
 All git helpers shell out to the `git` binary with array arguments (no shell). Every call overrides config that changes output shape (`core.quotepath=off`, `color.ui=never`, `--no-textconv`, `--no-ext-diff`, `--no-color`), and blobs are read by object id through `git cat-file --batch`, so textconv and smudge filters (sops, git-crypt, LFS) never run. Binary blobs (a NUL in the first 8 KiB), blobs larger than `walk.maxFileSize` (10 MiB by default) and blobs missing from the object store are skipped and reported. Any other git failure, such as a corrupt object or a permission error, throws.

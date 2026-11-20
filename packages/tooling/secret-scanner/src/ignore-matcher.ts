@@ -98,3 +98,11 @@ export const filterIgnoredFiles = (files: string[], matcher: IgnoreMatcher | und
         return !matcher.ignores(relativePath);
     });
 };
+
+/**
+ * Whether `file` is excluded by the `walk.excludePatterns` / `walk.excludeFromFiles`
+ * in `options`, the same filter `scanFiles` applies to a listed file. Relative
+ * paths resolve against `root`; a path outside `root` is never excluded.
+ */
+export const isPathExcluded = (file: string, options: ScanOptions | undefined, root: string): boolean =>
+    filterIgnoredFiles([file], buildIgnoreMatcher(options), root).length === 0;

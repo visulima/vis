@@ -423,6 +423,8 @@ interface SkippedRule {
 declare function scan(paths: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanFiles(files: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanString(content: string, file: string, options?: ScanOptions): Promise<Finding[]>;
+// True when walk.excludePatterns / walk.excludeFromFiles exclude `file` (relative to `root`), as scanFiles filters it.
+declare function isPathExcluded(file: string, options: ScanOptions | undefined, root: string): boolean;
 // Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore entries.
 declare function scanDetailed(paths: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function scanFilesDetailed(files: string[], options?: ScanOptions): Promise<ScanResult>;

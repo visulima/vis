@@ -6,6 +6,7 @@ import type { Finding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
 import {
     DEFAULT_MAX_FILE_SIZE,
     inspectRuleset,
+    isPathExcluded,
     listRequiredValidators,
     listRules,
     scan,
@@ -209,7 +210,7 @@ const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string
 
 const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOptions, root: string): Promise<ScanOutcome> => {
     if (mode.kind === "stdin") {
-        const findings = await scanString(mode.content, mode.filename, scanOptions);
+        const findings = isPathExcluded(mode.filename, scanOptions, root) ? [] : await scanString(mode.content, mode.filename, scanOptions);
 
         return { findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
     }

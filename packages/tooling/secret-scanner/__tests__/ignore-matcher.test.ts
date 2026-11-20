@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildIgnoreMatcher, filterIgnoredFiles } from "../src/ignore-matcher";
+import { buildIgnoreMatcher, filterIgnoredFiles, isPathExcluded } from "../src/ignore-matcher";
 
 let tmp: string;
 
@@ -145,5 +145,41 @@ describe(filterIgnoredFiles, () => {
         const kept = filterIgnoredFiles(["deploy.log", "app.ts"], matcher, missingCwd);
 
         expect(kept).toStrictEqual(["app.ts"]);
+    });
+});
+
+describe(isPathExcluded, () => {
+    it("is false when no excludes are configured", () => {
+        expect.assertions(1);
+
+        expect(isPathExcluded("dist/x.env", undefined, tmp)).toBe(false);
+    });
+
+    it("matches inline patterns against a root-relative path", () => {
+        expect.assertions(2);
+
+        const options = { walk: { excludePatterns: ["dist/**"] } };
+
+        expect(isPathExcluded("dist/x.env", options, tmp)).toBe(true);
+        expect(isPathExcluded("src/x.env", options, tmp)).toBe(false);
+    });
+
+    it("honours exclude files", async () => {
+        expect.assertions(2);
+
+        const ignoreFile = resolve(tmp, ".secretsignore");
+
+        await writeFile(ignoreFile, "*.env\n");
+
+        const options = { walk: { excludeFromFiles: [ignoreFile] } };
+
+        expect(isPathExcluded("config/a.env", options, tmp)).toBe(true);
+        expect(isPathExcluded("config/a.ts", options, tmp)).toBe(false);
+    });
+
+    it("never excludes a path outside the root", () => {
+        expect.assertions(1);
+
+        expect(isPathExcluded("../dist/x.env", { walk: { excludePatterns: ["**"] } }, tmp)).toBe(false);
     });
 });
