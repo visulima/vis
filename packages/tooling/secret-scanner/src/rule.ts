@@ -3,8 +3,6 @@
 // native scanner consumes. No runtime loader is involved: import the compiled
 // JavaScript config as usual.
 
-/* eslint-disable no-param-reassign, no-plusplus, default-case, sonarjs/cognitive-complexity -- the keyword parser is a small recursive-descent scanner with an explicit cursor */
-
 import type { GitleaksRule } from "./config-loader";
 import type { Confidence } from "./types";
 
@@ -13,20 +11,49 @@ export const DEFAULT_KEYWORD_MIN_LENGTH = 4;
 
 const MAX_KEYWORDS = 8;
 
-/** `true` when an input rule has no keywords and therefore runs on every file. */
+/** How a rule's prefilter keywords are chosen: inferred from the regex, none, or an explicit list. */
 export type KeywordHint = "auto" | false | string[];
 
+/** Native allowlist entry, in the gitleaks shape. */
+export interface RuleAllowlist {
+    commits?: string[];
+    /** `"AND"` requires every populated field to match; the default is `"OR"`. */
+    condition?: string;
+    description?: string;
+    paths?: string[];
+    regexes?: string[];
+    regexTarget?: string;
+    stopwords?: string[];
+    targetRules?: string[];
+}
+
+/** Cheap post-match filters applied to the captured secret. */
+export interface RulePatternRequirements {
+    ignoreIfContains?: string[];
+    minDigits?: number;
+    minLength?: number;
+    minLowercase?: number;
+    minUppercase?: number;
+}
+
+/** A composite-rule dependency: another rule that must also fire in the same file. */
+export interface RuleRequirement {
+    id: string;
+    withinColumns?: number;
+    withinLines?: number;
+}
+
 export interface RuleInput {
-    // Anything else the native rule schema understands (validation,
-    // patternRequirements, preRegexReplace, …) passes through untouched.
-    [key: string]: unknown;
     /** Native allowlist entries, either the singular or the plural gitleaks field. */
-    allowlist?: unknown;
-    allowlists?: unknown[];
+    allowlist?: RuleAllowlist | RuleAllowlist[];
+    allowlists?: RuleAllowlist[];
     /** Author-declared quality signal; defaults to `low`. */
     confidence?: Confidence;
 
-    /** Always emit this rule when the ruleset is loaded. */
+    /**
+     * Rules are on by default. Set `false` to make the rule opt-in: it only
+     * runs when its id is listed in `rules.enable` or `rules.include`.
+     */
     defaultEnabled?: boolean;
 
     description: string;
@@ -38,20 +65,26 @@ export interface RuleInput {
 
     /**
      * Literal prefilter hints. `"auto"` extracts only literals that are
-     * mandatory on every path through the regex; `false` (or an empty result)
-     * leaves the keyword list off so the rule always runs. Explicit strings
-     * replace inference entirely — make sure they match every candidate.
+     * mandatory on every path through the regex, and returns none when it
+     * can't fully understand the regex; `false` (or an empty result) leaves
+     * the keyword list off so the rule always runs. Explicit strings replace
+     * inference entirely — make sure they match every candidate.
      */
     keywords?: KeywordHint;
     /** Path filter, for rules that match file names rather than content. */
     path?: string;
+    patternRequirements?: RulePatternRequirements;
+    /** Ordered replacements applied to file content before the rule's regex runs. */
+    preRegexReplace?: { from: string; to?: string }[];
     /** Rule priority on overlapping spans. */
     priority?: number;
     regex: string | RegExp;
-    /** Compiled dependency ids for composite rules. */
-    required?: unknown[];
+    /** Compiled dependency rules for composite rules. */
+    required?: RuleRequirement[];
     /** Capture-group index holding the secret; defaults to the whole match. */
     secretGroup?: number;
+    /** Run the rule so others can require it, but never report its own findings. */
+    skipReport?: boolean;
     /** Rule provenance. Keep the source's own value when wrapping a rule. */
     source?: string;
     tags?: string[];
@@ -60,11 +93,27 @@ export interface RuleInput {
 /** A rule ready to put in `config.inline.rules` or a config file. */
 export type DefinedRule = GitleaksRule & { id: string; regex: string };
 
-const NON_LITERAL_ESCAPES = new Set(["0", "A", "B", "b", "d", "D", "f", "n", "r", "s", "S", "t", "v", "w", "W", "Z", "z"]);
+/** Raised internally when the regex uses a construct the inference doesn't fully model. */
+class UnsupportedPattern extends Error {}
+
+const bail = (): never => {
+    throw new UnsupportedPattern("unsupported regex construct");
+};
 
 interface ParseState {
     index: number;
 }
+
+/** Escapes that match a class or a position and contribute no literal text. */
+const ATOM_ESCAPES = new Set(["A", "a", "B", "b", "D", "d", "f", "n", "r", "S", "s", "t", "v", "W", "w", "Z", "z"]);
+const CODE_POINT_ESCAPE_WIDTH: Record<string, number> = { U: 8, u: 4, x: 2 };
+const FLAG_GROUP = /\?[imsUuR-]*([:)])/y;
+const POSIX_CLASS = /^:\^?[a-z]+:\]/;
+const QUANTIFIER_BRACES = /\{(\d+)(?:,\d*)?\}/y;
+// Verbose mode makes whitespace and `#` comments insignificant, so a scan can't tell literals from comments.
+const VERBOSE_FLAG = /\(\?[imsUuR-]*x[imsUuR-]*[:)]/;
+// Rust accepts a backslash before any ASCII character except alphanumerics and `<`/`>` (word boundaries).
+const LITERAL_ESCAPE = /^(?![\dA-Z<>])[\0-\u007F]$/i;
 
 /** Intersect literal fragments so a keyword is mandatory on every branch. */
 const intersect = (groups: string[][]): string[] => {
@@ -77,12 +126,74 @@ const intersect = (groups: string[][]): string[] => {
     return first.filter((fragment) => rest.every((group) => group.includes(fragment)));
 };
 
+/* eslint-disable no-param-reassign, no-plusplus, sonarjs/cognitive-complexity -- the scanner helpers advance a shared cursor */
+
+/** Move the cursor just past the next `terminator`, or give up if there is none. */
+const skipPast = (source: string, state: ParseState, terminator: string): void => {
+    const end = source.indexOf(terminator, state.index);
+
+    if (end === -1) {
+        bail();
+    }
+
+    state.index = end + terminator.length;
+};
+
+/**
+ * Skip a character class whose `[` was just consumed: a leading `^`, a leading
+ * literal `]`, escapes, POSIX `[:alpha:]` items and nested classes.
+ */
+const skipClass = (source: string, state: ParseState): void => {
+    if (source[state.index] === "^") {
+        state.index += 1;
+    }
+
+    if (source[state.index] === "]") {
+        state.index += 1;
+    }
+
+    while (state.index < source.length) {
+        const char = source[state.index];
+
+        state.index += 1;
+
+        switch (char) {
+            case "[": {
+                const posix = POSIX_CLASS.exec(source.slice(state.index));
+
+                if (posix === null) {
+                    skipClass(source, state);
+                } else {
+                    state.index += posix[0].length;
+                }
+
+                break;
+            }
+            case "\\": {
+                state.index += 1;
+
+                break;
+            }
+            case "]": {
+                return;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
+    bail();
+};
+
 /** Skip a `(?…)` group we can't reason about, including its nested parentheses. */
 const skipGroup = (source: string, state: ParseState): void => {
     let depth = 1;
 
     while (state.index < source.length && depth > 0) {
-        const char = source[state.index++] as string;
+        const char = source[state.index];
+
+        state.index += 1;
 
         switch (char) {
             case "(": {
@@ -96,14 +207,7 @@ const skipGroup = (source: string, state: ParseState): void => {
                 break;
             }
             case "[": {
-                while (state.index < source.length && source[state.index] !== "]") {
-                    if (source[state.index] === "\\") {
-                        state.index += 1;
-                    }
-
-                    state.index += 1;
-                }
-                state.index += 1;
+                skipClass(source, state);
 
                 break;
             }
@@ -112,24 +216,24 @@ const skipGroup = (source: string, state: ParseState): void => {
 
                 break;
             }
-            // No default
+            default: {
+                break;
+            }
         }
+    }
+
+    if (depth > 0) {
+        bail();
     }
 };
 
 type Quantifier = "none" | "optional" | "repeated";
 
-/** Consume the quantifier following a token and classify its minimum count. */
+/** Consume the quantifier at the cursor and classify its minimum count. */
 const readQuantifier = (source: string, state: ParseState): Quantifier => {
     const char = source[state.index];
 
-    if (char === "?") {
-        state.index += 1;
-
-        return "optional";
-    }
-
-    if (char === "*") {
+    if (char === "?" || char === "*") {
         state.index += 1;
 
         return "optional";
@@ -145,214 +249,231 @@ const readQuantifier = (source: string, state: ParseState): Quantifier => {
         return "none";
     }
 
-    const end = source.indexOf("}", state.index);
-    const body = end === -1 ? undefined : source.slice(state.index + 1, end);
+    QUANTIFIER_BRACES.lastIndex = state.index;
 
-    state.index = end === -1 ? source.length : end + 1;
+    const braces = QUANTIFIER_BRACES.exec(source);
 
-    const minimum = Number.parseInt(body?.split(",")[0] ?? "1", 10);
+    if (braces === null) {
+        return bail();
+    }
 
-    return Number.isNaN(minimum) || minimum > 0 ? "repeated" : "optional";
+    state.index = QUANTIFIER_BRACES.lastIndex;
+
+    return Number(braces[1]) === 0 ? "optional" : "repeated";
 };
+
+/**
+ * Consume the escape whose backslash was just read. Returns the literal text
+ * it stands for, or `undefined` for an escape that matches a class, a
+ * position or a code point we don't model as text. Anything outside the
+ * known sets (backreferences, `\h`, `\K`, `\&lt;`, `\b{start}`, …) gives up.
+ */
+const readEscape = (source: string, state: ParseState): string | undefined => {
+    const next = source[state.index];
+
+    state.index += 1;
+
+    if (next === undefined) {
+        return bail();
+    }
+
+    if (LITERAL_ESCAPE.test(next)) {
+        return next;
+    }
+
+    if ((next === "b" || next === "B") && source[state.index] === "{") {
+        return bail();
+    }
+
+    if (ATOM_ESCAPES.has(next)) {
+        return undefined;
+    }
+
+    const codePointWidth = CODE_POINT_ESCAPE_WIDTH[next];
+
+    if (codePointWidth === undefined && next !== "p" && next !== "P") {
+        return bail();
+    }
+
+    if (source[state.index] === "{") {
+        skipPast(source, state, "}");
+    } else {
+        state.index += codePointWidth ?? 1;
+    }
+
+    return undefined;
+};
+
+/**
+ * Parse one sequence (a whole pattern or a group body) into its alternatives,
+ * each a list of literal fragments that every match of that alternative contains.
+ */
+const parseSequence = (source: string, state: ParseState, nested: boolean): string[][] => {
+    const alternatives: string[][] = [[]];
+    let current = alternatives[0] as string[];
+    let literal = "";
+    let lastWasLiteral = false;
+    let closed = !nested;
+    const flush = (): void => {
+        if (literal.length > 0) {
+            current.push(literal);
+            literal = "";
+            lastWasLiteral = true;
+        }
+    };
+    const breakLiteral = (): void => {
+        flush();
+        lastWasLiteral = false;
+    };
+    const trimLast = (): void => {
+        const last = lastWasLiteral ? current.at(-1) : undefined;
+
+        if (last === undefined) {
+            return;
+        }
+
+        if (last.length === 1) {
+            current.pop();
+        } else {
+            current[current.length - 1] = last.slice(0, -1);
+        }
+    };
+
+    while (state.index < source.length) {
+        const char = source[state.index++] as string;
+
+        if (char === ")") {
+            if (!nested) {
+                bail();
+            }
+
+            closed = true;
+
+            break;
+        }
+
+        switch (char) {
+            case "$":
+            case ".":
+            case "^": {
+                breakLiteral();
+
+                break;
+            }
+            case "(": {
+                breakLiteral();
+
+                if (source[state.index] === "?") {
+                    FLAG_GROUP.lastIndex = state.index;
+
+                    const flags = FLAG_GROUP.exec(source);
+
+                    if (flags === null) {
+                        skipGroup(source, state);
+
+                        continue;
+                    }
+
+                    state.index = FLAG_GROUP.lastIndex;
+
+                    // Bare inline flags `(?i)` apply from here on; they have no body.
+                    if (flags[1] === ")") {
+                        continue;
+                    }
+                }
+
+                const inner = parseSequence(source, state, true);
+
+                if (readQuantifier(source, state) !== "optional") {
+                    current.push(...intersect(inner));
+                }
+
+                break;
+            }
+            case "*":
+            case "+":
+            case "?":
+            case "{": {
+                state.index -= 1;
+                flush();
+
+                if (readQuantifier(source, state) === "optional") {
+                    trimLast();
+                }
+
+                lastWasLiteral = false;
+
+                break;
+            }
+            case "[": {
+                breakLiteral();
+                skipClass(source, state);
+
+                break;
+            }
+            case "\\": {
+                const text = readEscape(source, state);
+
+                if (text === undefined) {
+                    breakLiteral();
+                } else {
+                    literal += text;
+                }
+
+                break;
+            }
+            case "|": {
+                breakLiteral();
+                current = [];
+                alternatives.push(current);
+
+                break;
+            }
+            case "}": {
+                bail();
+
+                break;
+            }
+            default: {
+                literal += char;
+            }
+        }
+    }
+
+    if (!closed) {
+        bail();
+    }
+
+    flush();
+
+    return alternatives;
+};
+
+/* eslint-enable no-param-reassign, no-plusplus, sonarjs/cognitive-complexity */
 
 /**
  * Collect literal fragments that must be present for a regex to match.
  * Alternatives are intersected at every level, escaped punctuation is
  * unescaped, character classes and non-consuming groups contribute nothing,
- * and optional tokens are dropped. Anything ambiguous yields no keywords —
- * an always-run rule is slower but never a false negative.
+ * and optional tokens are dropped. Any construct that isn't fully understood
+ * (verbose mode, backreferences, unknown escapes, malformed classes or
+ * quantifiers) yields no keywords: an always-run rule is slower but never a
+ * false negative.
  */
 const mandatoryFragments = (pattern: string): string[] => {
-    const parse = (source: string, state: ParseState, nested: boolean): string[][] => {
-        const alternatives: string[][] = [[]];
-        let current = alternatives[0] as string[];
-        let literal = "";
-        let lastWasLiteral = false;
-        const flush = (): void => {
-            if (literal.length > 0) {
-                current.push(literal);
-                literal = "";
-                lastWasLiteral = true;
-            }
-        };
-        const trimLast = (): void => {
-            if (!lastWasLiteral) {
-                return;
-            }
+    if (VERBOSE_FLAG.test(pattern)) {
+        return [];
+    }
 
-            const last = current.at(-1);
-
-            if (last === undefined) {
-                return;
-            }
-
-            const trimmed = last.slice(0, -1);
-
-            if (trimmed.length === 0) {
-                current.pop();
-            } else {
-                current[current.length - 1] = trimmed;
-            }
-        };
-
-        while (state.index < source.length) {
-            const char = source[state.index++] as string;
-
-            if (nested && char === ")") {
-                break;
-            }
-
-            if (char === "\\") {
-                const next = source[state.index++];
-
-                if (next === undefined) {
-                    break;
-                }
-
-                if (NON_LITERAL_ESCAPES.has(next)) {
-                    flush();
-                    lastWasLiteral = false;
-                    continue;
-                }
-
-                if (next === "p" || next === "P") {
-                    flush();
-                    lastWasLiteral = false;
-
-                    while (state.index < source.length && source[state.index] !== "}") {
-                        state.index += 1;
-                    }
-                    state.index += 1;
-                    continue;
-                }
-
-                if (next === "x" || next === "u") {
-                    flush();
-                    lastWasLiteral = false;
-
-                    if (source[state.index] === "{") {
-                        while (state.index < source.length && source[state.index] !== "}") {
-                            state.index += 1;
-                        }
-                        state.index += 1;
-                    } else {
-                        state.index += next === "x" ? 2 : 4;
-                    }
-
-                    continue;
-                }
-
-                if (next === "k" && source[state.index] === "<") {
-                    flush();
-                    lastWasLiteral = false;
-
-                    while (state.index < source.length && source[state.index] !== ">") {
-                        state.index += 1;
-                    }
-                    state.index += 1;
-                    continue;
-                }
-
-                literal += next;
-                continue;
-            }
-
-            if (char === "[") {
-                flush();
-                lastWasLiteral = false;
-
-                while (state.index < source.length && source[state.index] !== "]") {
-                    if (source[state.index] === "\\") {
-                        state.index += 1;
-                    }
-
-                    state.index += 1;
-                }
-                state.index += 1;
-                continue;
-            }
-
-            if (char === "(") {
-                flush();
-                lastWasLiteral = false;
-
-                if (source[state.index] === "?") {
-                    let cursor = state.index + 1;
-
-                    while (cursor < source.length && "imsUx-".includes(source[cursor] as string)) {
-                        cursor += 1;
-                    }
-
-                    const terminator = source[cursor];
-
-                    if (terminator === ")") {
-                        // Bare inline flags `(?i)` apply from here on; they don't
-                        // form a group with its own alternatives.
-                        state.index = cursor + 1;
-                        continue;
-                    }
-
-                    if (terminator !== ":") {
-                        skipGroup(source, state);
-                        continue;
-                    }
-
-                    state.index = cursor + 1;
-                }
-
-                const inner = parse(source, state, true);
-                const quantifier = readQuantifier(source, state);
-
-                if (quantifier !== "optional") {
-                    current.push(...intersect(inner));
-                }
-
-                lastWasLiteral = false;
-                continue;
-            }
-
-            if (char === "|") {
-                flush();
-                lastWasLiteral = false;
-                current = [];
-                alternatives.push(current);
-                continue;
-            }
-
-            if (char === "*" || char === "?") {
-                flush();
-                trimLast();
-                lastWasLiteral = false;
-                continue;
-            }
-
-            if (char === "{") {
-                flush();
-                const quantifier = readQuantifier(source, state);
-
-                if (quantifier === "optional") {
-                    trimLast();
-                }
-
-                lastWasLiteral = false;
-                continue;
-            }
-
-            if (char === "." || char === "^" || char === "$" || char === "+" || char === "}") {
-                flush();
-                lastWasLiteral = false;
-                continue;
-            }
-
-            literal += char;
+    try {
+        return intersect(parseSequence(pattern, { index: 0 }, false));
+    } catch (error) {
+        if (error instanceof UnsupportedPattern) {
+            return [];
         }
 
-        flush();
-
-        return alternatives;
-    };
-
-    return intersect(parse(pattern, { index: 0 }, false));
+        throw error;
+    }
 };
 
 /** The native keyword prefilter lowercases and matches ASCII only. */

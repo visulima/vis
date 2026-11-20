@@ -115,7 +115,7 @@ await tester.run({
 const snapshots = await tester.snapshot(["const key = int_abcdefghij0123456789abcdefghijkl;"]);
 ```
 
-`keywords: "auto"` (the default) extracts only literal fragments that are mandatory on every path through the regex, so it cannot create false negatives. Set `keywords: false` when no safe fragment exists; the rule then always runs. Explicit keyword arrays replace inference — make sure every candidate contains one.
+`keywords: "auto"` (the default) extracts only literal fragments that are mandatory on every path through the regex, and returns no keywords whenever the regex uses a construct it does not fully understand (verbose `(?x)` mode, backreferences, unusual escapes, malformed classes or quantifiers), so it never invents a keyword that a real match lacks. Set `keywords: false` when no safe fragment exists; the rule then always runs. Explicit keyword arrays replace inference — make sure every candidate contains one.
 
 The tester scans with the bundled ruleset disabled, validators off and inline allow markers ignored. It checks that each rule compiled, runs cases through the real detector, and throws a `RuleTesterError` containing positions only — never case content or raw secrets.
 

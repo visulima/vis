@@ -144,7 +144,7 @@ describe(createRuleTester, () => {
         });
         const tester = createRuleTester([tokenRule(), other]);
         const results = await tester.run({
-            invalid: [{ code: `OTHER_ABC12345 ${SECRET}`, findings: 1, ruleId: "test.token" }],
+            invalid: [{ code: `OTHER_ABC12345 ${SECRET}`, expectedFindings: 1, ruleId: "test.token" }],
         });
 
         expect(results[0]?.findings).toStrictEqual([{ column: 16, line: 1, maskedMatch: masked, ruleId: "test.token" }]);
