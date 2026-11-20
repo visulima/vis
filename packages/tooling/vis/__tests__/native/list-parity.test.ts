@@ -60,6 +60,7 @@ const contextEnvironment = (fixture: string, ci: boolean): Record<string, string
     delete env["CONTINUOUS_INTEGRATION"];
     delete env["VIS_FALLBACK_ENTRY"];
     delete env["VIS_FALLBACK_ENTRY_OVERRIDE"];
+    delete env["VIS_VERSION"];
 
     if (ci) {
         env["CI"] = "1";
