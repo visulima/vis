@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
+import { maskFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { diffBaseline, toRelativeFinding, writeBaseline } from "../../src/secrets/baseline";
@@ -122,6 +123,58 @@ describe("secrets-baseline", () => {
             const parsed = JSON.parse(readFileSync(baselinePath, "utf8")) as { ruleId: string }[];
 
             expect(parsed[0]!.ruleId).toBe("fresh");
+        });
+    });
+
+    describe("baselines holding real values (written before masking was the default)", () => {
+        const real = (): ReturnType<typeof baseFinding> =>
+            makeFinding({ file: "a.env", match: "TOKEN=TESTTOKEN_abcdefghij0123456789", ruleId: "tok", secret: "TESTTOKEN_abcdefghij0123456789" });
+
+        it("keeps one existing entry when a masked rescan of the same finding is merged in", () => {
+            expect.assertions(3);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+
+            writeFileSync(baselinePath, JSON.stringify([real()]));
+
+            const count = writeBaseline([maskFinding(real())], baselinePath, tmpDir);
+            const parsed = JSON.parse(readFileSync(baselinePath, "utf8")) as { secret: string }[];
+
+            expect(count).toBe(1);
+            expect(parsed).toHaveLength(1);
+            expect(parsed[0]!.secret).toBe(real().secret);
+        });
+
+        it.skipIf(process.platform === "win32")("stays owner-only while an entry holds a real value", () => {
+            expect.assertions(2);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+
+            writeFileSync(baselinePath, JSON.stringify([real()]));
+            chmodSync(baselinePath, 0o644);
+            writeBaseline([maskFinding(real())], baselinePath, tmpDir);
+
+            expect(statSync(baselinePath).mode % 0o1000).toBe(0o600);
+
+            writeBaseline([maskFinding(real())], baselinePath, tmpDir, { replace: true });
+            chmodSync(baselinePath, 0o644);
+            writeBaseline([maskFinding(real())], baselinePath, tmpDir);
+
+            expect(statSync(baselinePath).mode % 0o1000).not.toBe(0o600);
+        });
+
+        it("diffs a moved masked finding against a real-value entry as unchanged", () => {
+            expect.assertions(3);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+
+            writeFileSync(baselinePath, JSON.stringify([real()]));
+
+            const diff = diffBaseline([maskFinding({ ...real(), endLine: 9, startLine: 9 })], baselinePath, tmpDir);
+
+            expect(diff.fresh).toStrictEqual([]);
+            expect(diff.resolved).toStrictEqual([]);
+            expect(diff.surviving).toHaveLength(1);
         });
     });
 

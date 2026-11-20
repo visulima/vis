@@ -128,6 +128,9 @@ const validateConfidence = (raw: string | undefined): Confidence | undefined => 
     return raw as Confidence;
 };
 
+/** Scan options with `redact` resolved (masked unless turned off). */
+export type ResolvedScanOptions = ScanOptions & { redact: boolean };
+
 /**
  * Resolve scan options by layering (high → low precedence):
  *   CLI flags > vis.config.secrets > built-in defaults.
@@ -136,7 +139,7 @@ const validateConfidence = (raw: string | undefined): Confidence | undefined => 
  * `secrets.config.presets` and `--enable-rule` interact, and a regression
  * here is silent (the scan still runs; it just runs the wrong rule set).
  */
-export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsConfig | undefined, root: string): ScanOptions => {
+export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsConfig | undefined, root: string): ResolvedScanOptions => {
     const cfg = visSecrets ?? {};
     const resolvePath = (p: string | undefined): string | undefined => (p ? resolve(root, p) : undefined);
     const pickList = (flag: RepeatableString | undefined, fallback: string[] | undefined): string[] | undefined => {

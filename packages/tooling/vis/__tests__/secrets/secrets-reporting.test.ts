@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
+import { maskFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
@@ -229,7 +230,7 @@ describe("diagnostic formatters", () => {
 });
 
 describe(writeBaseline, () => {
-    it.skipIf(process.platform === "win32")("writes 0600 unless the findings are redacted", () => {
+    it.skipIf(process.platform === "win32")("writes 0600 unless every entry is masked", () => {
         expect.assertions(3);
 
         const root = tempDir();
@@ -248,7 +249,7 @@ describe(writeBaseline, () => {
 
         writeFileSync(redacted, "[]");
         chmodSync(redacted, 0o644);
-        writeBaseline([finding()], redacted, root, { sensitive: false });
+        writeBaseline([maskFinding(finding())], redacted, root);
 
         expect(mode(redacted)).toBe(0o644);
     });

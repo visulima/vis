@@ -42,9 +42,7 @@ const VALIDATOR_CONCURRENCY = 8;
 const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOptions | undefined): F[] => {
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
-    // The content-shape heuristics judge `finding.secret`. Masking happens at
-    // the very end, so every stage here sees the real value regardless of
-    // `redact` — the same findings are reported either way.
+    // The content-shape heuristics judge `finding.secret`.
     const skipSequential = heuristics?.sequentialString !== false;
     const skipUuid = heuristics?.potentialUuid !== false;
     const skipNonAlnum = heuristics?.notAlphanumericString !== false;
@@ -217,10 +215,6 @@ const applyValidation = async (findings: Finding[], options: ScanOptions | undef
     if (options?.config?.validate !== true || findings.length === 0) {
         return findings;
     }
-
-    // Validation runs on the real secret; `redact` only masks what is emitted
-    // afterwards. Enabling `validate` remains an explicit opt-in because it
-    // sends the candidate secret to the provider.
 
     // Pre-partition: findings whose rule has no validation block can never be
     // verified, so mark them `"skipped"` here and keep them out of the worker
@@ -395,13 +389,13 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
  * entry shadowed by the baseline isn't reported as stale.
  *
  * `.gitleaksignore` secret entries match the real secret. Baselines are matched
- * against both the real finding and `shown` (the masked form under `redact`),
- * so real-value fingerprints and baselines captured from redacted output both
- * keep suppressing without changing which findings are reported.
+ * against both the real finding and its masked form, so real-value baselines
+ * and baselines captured from redacted output both suppress, whatever `redact`
+ * says about what is reported.
  */
 const suppressionFor = (
     finding: Finding,
-    shown: Finding,
+    masked: Finding,
     context: SuppressionContext,
 ): { entry?: SuppressedFinding["suppressedByEntry"]; reason: SuppressionReason } | undefined => {
     if (context.ignore?.isIgnoreFile(finding, context.bases)) {
@@ -410,7 +404,7 @@ const suppressionFor = (
 
     const entry = context.ignore?.match(finding, context.bases);
 
-    if (context.baseline.size > 0 && [...baselineKeys(finding), ...baselineKeys(shown)].some((key) => context.baseline.has(key))) {
+    if (context.baseline.size > 0 && [...baselineKeys(finding), ...baselineKeys(masked)].some((key) => context.baseline.has(key))) {
         return { reason: "baseline" };
     }
 
@@ -463,13 +457,13 @@ export const postProcessDetailed = async (
     const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
-    const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
 
     for (const finding of verifiedOnly) {
-        const shown = mask(finding);
-        const hit = suppressionFor(finding, shown, suppression);
+        const masked = maskFinding(finding);
+        const shown = suppression.redact ? masked : finding;
+        const hit = suppressionFor(finding, masked, suppression);
 
         if (hit === undefined) {
             findings.push(shown);
@@ -482,7 +476,7 @@ export const postProcessDetailed = async (
         // Mark matching ignore entries used; the allowlist reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
-        suppressed.push(mask(finding));
+        suppressed.push(suppression.redact ? maskFinding(finding) : finding);
     }
 
     return { findings, suppressed: options?.reportSuppressed === true ? suppressed : [] };

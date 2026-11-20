@@ -537,10 +537,6 @@ describe("postProcess — validation host allowlist + cancellation", () => {
 });
 
 describe("postProcess — redact interactions", () => {
-    afterEach(() => {
-        resetPipelineWarningsForTests();
-    });
-
     it("applies content-shape heuristics to real secrets when redact=true", async () => {
         expect.assertions(2);
 

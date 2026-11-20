@@ -1,5 +1,5 @@
-// The one place secrets are masked for `redact: true`. The native scan always
-// returns real values; the pipeline masks what it reports.
+// Masks secrets for the default `redact` behaviour (and for baseline matching).
+// The native scan returns real values; the pipeline masks what it reports.
 
 import type { Finding } from "./types";
 

@@ -96,6 +96,17 @@ describe("redact masks composite dependencies", () => {
         await expect(scanString(moved, "c.env", { ...compositeOptions, baseline })).resolves.toStrictEqual([]);
     });
 
+    it("matches a masked baseline by content hash when redact is false", async () => {
+        expect.assertions(2);
+
+        const baseline = await scanString(content, "c.env", compositeOptions);
+        const moved = `\n\n${content}`;
+        const revealed = { ...compositeOptions, redact: false };
+
+        await expect(scanString(moved, "c.env", revealed)).resolves.toHaveLength(2);
+        await expect(scanString(moved, "c.env", { ...revealed, baseline })).resolves.toStrictEqual([]);
+    });
+
     it("masks requiredFindings without an ignore file", async () => {
         expect.assertions(1);
 
