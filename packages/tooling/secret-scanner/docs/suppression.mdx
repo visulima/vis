@@ -28,7 +28,7 @@ const token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"; // gitleaks:allow 
 const other = "ghp_zY9xW8vU7tS6rQ5pO4nM3lK2jI1hG0fE9dC8bA7a"; // secret-scanner:allow github-pat, aws-access-token
 ```
 
-Rule ids are compared case-sensitively against the active ruleset; an unknown id suppresses nothing. Marker text stays case-insensitive. Plain prose after a bare marker leaves it bare, so `// gitleaks:allow safe in tests` still suppresses every rule on that line.
+Ids are separated by commas or spaces and compared case-sensitively against the active ruleset. Anything that is not an active rule id is read as prose, and the list ends at the first such token. A marker with no active id stays bare and suppresses every rule on the line, so `// gitleaks:allow safe in tests` and `// gitleaks:allow test-only` behave like `// gitleaks:allow`. This also means a mistyped or disabled id (`// gitleaks:allow githb-pat`) does not narrow the marker: it still suppresses everything. Marker text stays case-insensitive.
 
 ## 2. Block region — `gitleaks:allow-start` / `-end`
 
@@ -47,7 +47,7 @@ Unpaired start markers are ignored — a stray `allow-start` never silently swal
 
 Both `gitleaks:...` and `secret-scanner:...` are accepted for every variant (inline, start, end). Case-insensitive.
 
-Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`.
+Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`. A start pairs with the first end after it, and a second start before that end does not open its own region. A secret on the same line, before an `allow-start` marker, is not covered by that marker.
 
 ## 3. Previous-line pragma — `pragma: allowlist nextline secret`
 

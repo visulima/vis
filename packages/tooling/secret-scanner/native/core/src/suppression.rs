@@ -2,7 +2,7 @@
 // nextline pragma) and config allowlists.
 
 use crate::lines::line_slice;
-use crate::rules::{AllowlistTarget, CompiledAllowlist};
+use crate::rules::{AllowlistTarget, CompiledAllowlist, CompiledRuleset};
 
 /// Why a match was suppressed. Only surfaced with `reportSuppressed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,45 +62,55 @@ pub struct AllowRegion {
     scope: AllowScope,
 }
 
-/// Marker text is case-insensitive; rule ids stay case-sensitive. A token is
-/// treated as a rule id when it is either a known id in the active ruleset or
-/// has the shape of one (hyphen, underscore, dot, slash, or an `@` namespace).
-/// That keeps prose after a bare marker ("gitleaks:allow safe in tests") bare
-/// while still recognising simple user-defined ids such as `openrouter`.
+/// Leading comma/space separated tokens that are active rule ids. The first token
+/// that is not one ends the list, so prose after a bare marker ("gitleaks:allow
+/// safe in tests") and mistyped ids leave the marker bare. Marker text is
+/// case-insensitive; rule ids are not.
 fn trailing_rule_ids(trailing: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<String> {
-    let mut ids = Vec::new();
-    let mut token = String::new();
-
-    for character in trailing.chars() {
-        if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '@') {
-            token.push(character);
-            continue;
-        }
-
-        if !token.is_empty() {
-            if !looks_like_rule_id(&token, is_known_rule) {
-                break;
-            }
-            ids.push(std::mem::take(&mut token));
-        }
-    }
-
-    if !token.is_empty() && looks_like_rule_id(&token, is_known_rule) {
-        ids.push(token);
-    }
-
-    ids
+    trailing
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|token| !token.is_empty())
+        .map_while(|token| is_known_rule(token).then(|| token.to_string()))
+        .collect()
 }
 
-fn looks_like_rule_id(token: &str, is_known_rule: &dyn Fn(&str) -> bool) -> bool {
-    if token.len() <= 1 {
-        return false;
+/// Marker offsets in a lowercased buffer, found lazily. Each marker keeps its next
+/// hit until the cursor passes it, so a marker that never occurs costs one scan to
+/// the end of the buffer instead of one per query.
+struct MarkerScan<'a> {
+    lc: &'a str,
+    markers: &'a [&'a str],
+    next: Vec<Option<usize>>,
+    exhausted: Vec<bool>,
+}
+
+impl<'a> MarkerScan<'a> {
+    fn new(lc: &'a str, markers: &'a [&'a str]) -> Self {
+        Self { lc, markers, next: vec![None; markers.len()], exhausted: vec![false; markers.len()] }
     }
 
-    is_known_rule(token)
-        || token.starts_with('@')
-        || (token.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-            && token.chars().any(|c| matches!(c, '-' | '_' | '.' | '/')))
+    /// Earliest marker at or after `from`, as `(offset, marker_len)`.
+    fn first_from(&mut self, from: usize) -> Option<(usize, usize)> {
+        for (index, marker) in self.markers.iter().enumerate() {
+            if self.exhausted[index] || self.next[index].is_some_and(|position| position >= from) {
+                continue;
+            }
+
+            match self.lc[from..].find(marker) {
+                Some(position) => self.next[index] = Some(from + position),
+                None => self.exhausted[index] = true,
+            }
+        }
+
+        self.markers
+            .iter()
+            .zip(&self.next)
+            .zip(&self.exhausted)
+            .filter_map(|((marker, next), exhausted)| {
+                next.filter(|_| !exhausted).map(|position| (position, marker.len()))
+            })
+            .min_by_key(|(position, _)| *position)
+    }
 }
 
 fn find_marker<'a>(lc: &str, markers: &[&'a str]) -> Option<(usize, &'a str)> {
@@ -119,74 +129,88 @@ fn allow_scope_on_line(
     reject_after: &[&str],
     is_known_rule: &dyn Fn(&str) -> bool,
 ) -> Option<AllowScope> {
-    if line.is_empty() {
-        return None;
-    }
-
     let lc = line.to_ascii_lowercase();
     let mut base = 0;
 
     while base < lc.len() {
-        let Some((position, marker)) = find_marker(&lc[base..], markers) else { break };
-        let absolute = base + position;
-        let after_marker = position + marker.len();
+        let (position, marker) = find_marker(&lc[base..], markers)?;
+        let after_marker = base + position + marker.len();
 
-        if reject_after.iter().any(|suffix| lc[absolute + marker.len()..].starts_with(suffix)) {
-            base += after_marker;
+        if reject_after.iter().any(|suffix| lc[after_marker..].starts_with(suffix)) {
+            base = after_marker;
             continue;
         }
 
         // `to_ascii_lowercase` keeps byte offsets, so this slice preserves the
         // original case of any rule id.
-        return Some(AllowScope::from_trailing(&line[absolute + marker.len()..], is_known_rule));
+        return Some(AllowScope::from_trailing(&line[after_marker..], is_known_rule));
     }
 
     None
 }
 
-fn allow_scope_at_offset(
+/// Scope of an inline allow-comment on `line`. Accepts `gitleaks:allow`,
+/// `secret-scanner:allow` and `pragma: allowlist secret`, case-insensitively and
+/// regardless of the host language's comment syntax: it looks for the marker text,
+/// not the comment delimiters.
+fn same_line_scope(line: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Option<AllowScope> {
+    // Shortest marker bounds the cheap-path length check.
+    if line.len() < "gitleaks:allow".len() {
+        return None;
+    }
+
+    allow_scope_on_line(line, &SAME_LINE_MARKERS, &["-start", "-end"], is_known_rule)
+}
+
+/// Scope of a `pragma: allowlist nextline secret` marker (detect-secrets compat) on
+/// the line *before* a potential match. Useful for multi-line block scalars (YAML)
+/// and PEM bodies where an inline comment is awkward or impossible.
+///
+/// Cheap pre-check: scan the raw bytes for `p`/`P` before paying the
+/// `to_ascii_lowercase()` allocation. The vast majority of source lines contain
+/// neither.
+fn next_line_scope(line: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Option<AllowScope> {
+    if line.len() < "pragma: allowlist nextline secret".len() || !line.bytes().any(|b| b == b'p' || b == b'P') {
+        return None;
+    }
+
+    allow_scope_on_line(line, &NEXT_LINE_MARKERS, &[], is_known_rule)
+}
+
+fn scope_after_marker(
     content: &str,
     marker_start: usize,
     marker_len: usize,
     is_known_rule: &dyn Fn(&str) -> bool,
 ) -> AllowScope {
-    let line_end = content[marker_start..].find('\n').map_or(content.len(), |offset| marker_start + offset);
+    let after_marker = marker_start + marker_len;
+    let line_end = content[after_marker..].find('\n').map_or(content.len(), |offset| after_marker + offset);
 
-    AllowScope::from_trailing(&content[marker_start + marker_len..line_end], is_known_rule)
+    AllowScope::from_trailing(&content[after_marker..line_end], is_known_rule)
 }
 
 /// Byte ranges inside `content` marked by `gitleaks:allow-start` ... `gitleaks:allow-end`
 /// or `secret-scanner:allow-start` ... `:allow-end` pairs, with the scope declared on
 /// the start marker. Any finding whose match falls inside a range and matches its
 /// scope is suppressed.
-pub fn find_allow_regions(content: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<AllowRegion> {
+pub fn find_allow_regions(content: &str, ruleset: &CompiledRuleset) -> Vec<AllowRegion> {
+    allow_regions(content, &|id| ruleset.has_rule(id))
+}
+
+/// A start pairs with the first end after it; a start with no end is ignored. A
+/// second start before that end does not open a region of its own.
+fn allow_regions(content: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<AllowRegion> {
     let lc = content.to_ascii_lowercase();
+    let mut starts = MarkerScan::new(&lc, &REGION_START_MARKERS);
+    let mut ends = MarkerScan::new(&lc, &REGION_END_MARKERS);
     let mut regions = Vec::new();
-    let mut open: Vec<(usize, AllowScope)> = Vec::new();
     let mut cursor = 0;
 
-    while cursor < lc.len() {
-        let rest = &lc[cursor..];
-        let next_start = find_marker(rest, &REGION_START_MARKERS).map(|(position, marker)| (cursor + position, marker));
-        let next_end = find_marker(rest, &REGION_END_MARKERS).map(|(position, marker)| (cursor + position, marker));
+    while let Some((start, start_len)) = starts.first_from(cursor) {
+        let Some((end, end_len)) = ends.first_from(start + start_len) else { break };
 
-        match (next_start, next_end) {
-            (Some((start, marker)), Some((end, _))) if start < end => {
-                open.push((start, allow_scope_at_offset(content, start, marker.len(), is_known_rule)));
-                cursor = start + marker.len();
-            }
-            (Some(_), Some((end, marker))) | (None, Some((end, marker))) => {
-                if let Some((start, scope)) = open.pop() {
-                    regions.push(AllowRegion { start, end, scope });
-                }
-                cursor = end + marker.len();
-            }
-            (Some((start, marker)), None) => {
-                open.push((start, allow_scope_at_offset(content, start, marker.len(), is_known_rule)));
-                cursor = start + marker.len();
-            }
-            (None, None) => break,
-        }
+        regions.push(AllowRegion { start, end, scope: scope_after_marker(content, start, start_len, is_known_rule) });
+        cursor = end + end_len;
     }
 
     regions
@@ -204,16 +228,17 @@ pub fn inline_suppressed(
     content: &str,
     offsets: &[usize],
     regions: &[AllowRegion],
-    is_known_rule: &dyn Fn(&str) -> bool,
+    ruleset: &CompiledRuleset,
     rule_id: &str,
     line: u32,
     offset: usize,
 ) -> bool {
-    allow_scope_on_line(line_slice(content, offsets, line), &SAME_LINE_MARKERS, &["-start", "-end"], is_known_rule)
-        .is_some_and(|scope| scope.suppresses(rule_id))
+    let is_known_rule = |id: &str| ruleset.has_rule(id);
+
+    same_line_scope(line_slice(content, offsets, line), &is_known_rule).is_some_and(|scope| scope.suppresses(rule_id))
         || is_in_allow_region(regions, rule_id, offset)
         || (line > 1
-            && allow_scope_on_line(line_slice(content, offsets, line - 1), &NEXT_LINE_MARKERS, &[], is_known_rule)
+            && next_line_scope(line_slice(content, offsets, line - 1), &is_known_rule)
                 .is_some_and(|scope| scope.suppresses(rule_id)))
 }
 
@@ -290,12 +315,12 @@ mod tests {
         matches!(id, "github-pat" | "aws-access-token" | "openrouter")
     }
 
-    fn same_line_scope(line: &str) -> Option<AllowScope> {
-        allow_scope_on_line(line, &SAME_LINE_MARKERS, &["-start", "-end"], &is_known_rule)
+    fn same_line(line: &str) -> Option<AllowScope> {
+        same_line_scope(line, &is_known_rule)
     }
 
-    fn next_line_scope(line: &str) -> Option<AllowScope> {
-        allow_scope_on_line(line, &NEXT_LINE_MARKERS, &[], &is_known_rule)
+    fn next_line(line: &str) -> Option<AllowScope> {
+        next_line_scope(line, &is_known_rule)
     }
 
     #[test]
@@ -308,7 +333,7 @@ mod tests {
             "token = \"abc123\"  # pragma: allowlist secret",
             "/* pragma: allowlist secret */ const k = \"…\";",
         ] {
-            let scope = same_line_scope(line).unwrap_or_else(|| panic!("no scope in {line}"));
+            let scope = same_line(line).unwrap_or_else(|| panic!("no scope in {line}"));
             assert_eq!(scope, AllowScope::All);
             assert!(scope.suppresses("github-pat"));
             assert!(scope.suppresses("any-other-rule"));
@@ -317,55 +342,70 @@ mod tests {
 
     #[test]
     fn allow_comment_absent() {
-        assert!(same_line_scope("normal line").is_none());
-        assert!(same_line_scope("// just a comment").is_none());
-        assert!(same_line_scope("allow").is_none()); // too short
-        assert!(same_line_scope("# gitleaks:allow-start").is_none());
-        assert!(same_line_scope("# gitleaks:allow-end").is_none());
-        assert!(same_line_scope("token = \"abc\" # pragma: allow").is_none());
+        assert!(same_line("normal line").is_none());
+        assert!(same_line("// just a comment").is_none());
+        assert!(same_line("allow").is_none()); // too short
+        assert!(same_line("# gitleaks:allow-start").is_none());
+        assert!(same_line("# gitleaks:allow-end").is_none());
+        assert!(same_line("token = \"abc\" # pragma: allow").is_none());
     }
 
     #[test]
     fn scoped_allow_comments_suppress_only_named_rules() {
-        let scope = same_line_scope("token = \"...\" // gitleaks:allow github-pat, aws-access-token").unwrap();
+        let scope = same_line("token = \"...\" // gitleaks:allow github-pat, aws-access-token").unwrap();
         assert_eq!(scope, AllowScope::Rules(vec!["github-pat".to_string(), "aws-access-token".to_string()]));
         assert!(scope.suppresses("github-pat"));
         assert!(scope.suppresses("aws-access-token"));
         assert!(!scope.suppresses("generic-api-key"));
 
-        let upper_marker = same_line_scope("token = \"...\" # SECRET-SCANNER:ALLOW github-pat").unwrap();
+        let upper_marker = same_line("token = \"...\" # SECRET-SCANNER:ALLOW github-pat").unwrap();
         assert!(upper_marker.suppresses("github-pat"));
 
         // Simple ids without punctuation still work when they are active rules.
-        let simple = same_line_scope("token = \"...\" // gitleaks:allow openrouter").unwrap();
+        let simple = same_line("token = \"...\" // gitleaks:allow openrouter").unwrap();
         assert_eq!(simple, AllowScope::Rules(vec!["openrouter".to_string()]));
 
-        // Marker text is case-insensitive, but the rule id is not.
-        let wrong_case = same_line_scope("token = \"...\" // gitleaks:allow GITHUB-PAT").unwrap();
-        assert!(!wrong_case.suppresses("github-pat"));
+        // Marker text is case-insensitive, but the rule id is not: a wrong-case id is
+        // prose, so the marker stays bare.
+        assert_eq!(same_line("token = \"...\" // gitleaks:allow GITHUB-PAT"), Some(AllowScope::All));
     }
 
     #[test]
-    fn unknown_scope_suppresses_nothing() {
-        let scope = same_line_scope("token = \"...\" // secret-scanner:allow no-such-rule").unwrap();
-        assert!(!scope.suppresses("github-pat"));
+    fn prose_and_unknown_ids_leave_the_marker_bare() {
+        for line in [
+            "x // gitleaks:allow false-positive",
+            "x // gitleaks:allow test-only",
+            "x // gitleaks:allow @alice",
+            "x // secret-scanner:allow no-such-rule",
+            "x // gitleaks:allow githb-pat",
+            "x // gitleaks:allow safe in tests",
+        ] {
+            assert_eq!(same_line(line), Some(AllowScope::All), "{line}");
+        }
+    }
+
+    #[test]
+    fn scope_list_ends_at_first_unknown_token() {
+        let scope = same_line("x // gitleaks:allow github-pat, then prose aws-access-token").unwrap();
+
+        assert_eq!(scope, AllowScope::Rules(vec!["github-pat".to_string()]));
     }
 
     #[test]
     fn nextline_pragma_suppresses_following_line() {
-        let scope = next_line_scope("# pragma: allowlist nextline secret").unwrap();
+        let scope = next_line("# pragma: allowlist nextline secret").unwrap();
         assert_eq!(scope, AllowScope::All);
-        let upper = next_line_scope("// PRAGMA: ALLOWLIST NEXTLINE SECRET").unwrap();
+        let upper = next_line("// PRAGMA: ALLOWLIST NEXTLINE SECRET").unwrap();
         assert_eq!(upper, AllowScope::All);
 
-        assert!(next_line_scope("# pragma: allowlist secret").is_none());
-        assert!(next_line_scope("normal comment").is_none());
-        assert!(next_line_scope("").is_none()); // empty line
+        assert!(next_line("# pragma: allowlist secret").is_none());
+        assert!(next_line("normal comment").is_none());
+        assert!(next_line("").is_none()); // empty line
     }
 
     #[test]
     fn scoped_nextline_pragma_suppresses_only_named_rule() {
-        let scope = next_line_scope("# pragma: allowlist nextline secret github-pat").unwrap();
+        let scope = next_line("# pragma: allowlist nextline secret github-pat").unwrap();
 
         assert!(scope.suppresses("github-pat"));
         assert!(!scope.suppresses("aws-access-token"));
@@ -374,7 +414,7 @@ mod tests {
     #[test]
     fn allow_region_pair() {
         let src = "head\n# gitleaks:allow-start\nSECRET=abc\n# gitleaks:allow-end\ntail";
-        let regions = find_allow_regions(src, &is_known_rule);
+        let regions = allow_regions(src, &is_known_rule);
         assert_eq!(regions.len(), 1);
         let secret_off = src.find("SECRET").unwrap();
         assert!(is_in_allow_region(&regions, "github-pat", secret_off));
@@ -383,7 +423,7 @@ mod tests {
     #[test]
     fn scoped_allow_region_suppresses_only_named_rule() {
         let src = "head\n# secret-scanner:allow-start github-pat\nSECRET=abc\n# secret-scanner:allow-end\ntail";
-        let regions = find_allow_regions(src, &is_known_rule);
+        let regions = allow_regions(src, &is_known_rule);
         assert_eq!(regions.len(), 1);
         let secret_off = src.find("SECRET").unwrap();
 
@@ -392,9 +432,47 @@ mod tests {
     }
 
     #[test]
+    fn allow_region_prose_after_start_stays_bare() {
+        let src = "# gitleaks:allow-start test-only\nSECRET=abc\n# gitleaks:allow-end";
+        let regions = allow_regions(src, &is_known_rule);
+
+        assert!(is_in_allow_region(&regions, "github-pat", src.find("SECRET").unwrap()));
+    }
+
+    #[test]
+    fn nested_starts_pair_first_start_with_first_end() {
+        let src =
+            "# gitleaks:allow-start github-pat\nA\n# gitleaks:allow-start aws-access-token\nB\n# gitleaks:allow-end\nC";
+        let regions = allow_regions(src, &is_known_rule);
+
+        assert_eq!(regions.len(), 1);
+        assert!(is_in_allow_region(&regions, "github-pat", src.find('B').unwrap()));
+        assert!(!is_in_allow_region(&regions, "aws-access-token", src.find('B').unwrap()));
+        assert!(!is_in_allow_region(&regions, "github-pat", src.find('C').unwrap()));
+    }
+
+    #[test]
+    fn many_end_only_markers_scan_in_linear_time() {
+        let src = "secret-scanner:allow-end\n".repeat(200_000);
+        let started = std::time::Instant::now();
+
+        assert!(allow_regions(&src, &is_known_rule).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn many_regions_with_one_marker_kind_absent_scan_in_linear_time() {
+        let src = "gitleaks:allow-start\nx\ngitleaks:allow-end\n".repeat(50_000);
+        let started = std::time::Instant::now();
+
+        assert_eq!(allow_regions(&src, &is_known_rule).len(), 50_000);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
     fn allow_region_unpaired_is_ignored() {
         let src = "# gitleaks:allow-start\nonly one marker";
-        let regions = find_allow_regions(src, &is_known_rule);
+        let regions = allow_regions(src, &is_known_rule);
         assert!(regions.is_empty());
     }
 }

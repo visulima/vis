@@ -103,13 +103,25 @@ describe("rule-scoped allow markers (end-to-end)", () => {
         expect(findings.map((finding) => finding.ruleId)).toStrictEqual(expect.arrayContaining(["other-token", "test-token"]));
     }, 30_000);
 
-    it("unknown rule id suppresses nothing", async () => {
+    it("unknown rule id is read as prose and leaves the marker bare", async () => {
         expect.assertions(1);
 
         const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow no-such-rule\n${OTHER_TOKEN_LINE}\n`);
 
-        expect(findings).toHaveLength(2);
+        expect(findings.map((finding) => finding.ruleId)).toStrictEqual(["other-token"]);
     }, 30_000);
+
+    it.each(["false-positive", "test-only", "@alice"])(
+        "hyphenated or handle prose `%s` after a bare marker still suppresses",
+        async (prose) => {
+            expect.assertions(1);
+
+            const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow ${prose}\n`);
+
+            expect(findings).toHaveLength(0);
+        },
+        30_000,
+    );
 
     it("bare marker with prose still suppresses every rule on the line", async () => {
         expect.assertions(1);

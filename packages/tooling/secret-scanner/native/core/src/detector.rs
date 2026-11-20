@@ -148,8 +148,7 @@ pub fn detect(
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let known_rule = |id: &str| ruleset.rules.iter().any(|rule| rule.id == id);
-    let allow_regions = if opts.inline_allow { find_allow_regions(content, &known_rule) } else { Vec::new() };
+    let allow_regions = if opts.inline_allow { find_allow_regions(content, ruleset) } else { Vec::new() };
 
     // 1) Candidate rules via AC keyword prefilter on the whole file. Empty-keywords rules
     //    are pre-marked so they always run. We use a bitmap indexed by rule id — O(rules)
@@ -485,13 +484,12 @@ impl MatchCtx<'_> {
         // (gitleaks:allow-start ... gitleaks:allow-end), or detect-secrets-style
         // `pragma: allowlist nextline secret` on the line preceding the match.
         // `inline_allow: false` disables all three so CI can audit them.
-        let known_rule = |id: &str| self.ruleset.rules.iter().any(|rule| rule.id == id);
         let inline_allowed = self.opts.inline_allow
             && inline_suppressed(
                 self.text,
                 self.line_offsets,
                 self.allow_regions,
-                &known_rule,
+                self.ruleset,
                 &self.rule.id,
                 sl,
                 span.match_start,

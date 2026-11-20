@@ -126,8 +126,7 @@ pub fn scan_text_with_decoding(
     }
 
     let line_offsets = compute_line_offsets(content);
-    let known_rule = |id: &str| ruleset.rules.iter().any(|rule| rule.id == id);
-    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content, &known_rule) } else { Vec::new() };
+    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content, ruleset) } else { Vec::new() };
     let original =
         Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts, ruleset };
 
@@ -519,13 +518,12 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
     // Suppression markers live on the original line, which the decoded buffer may not
     // fully contain — re-check them against the original content.
     let (sl, sc, el, ec) = offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
-    let known_rule = |id: &str| original.ruleset.rules.iter().any(|rule| rule.id == id);
     let inline_allowed = original.detect.inline_allow
         && inline_suppressed(
             original.content,
             original.line_offsets,
             original.allow_regions,
-            &known_rule,
+            original.ruleset,
             &f.rule_id,
             sl,
             orig_start,
@@ -706,11 +704,14 @@ mod tests {
 
     #[test]
     fn scoped_allow_comment_on_original_line_is_rule_specific() {
-        let matching = format!("value: {} # gitleaks:allow openrouter\n", b64(KEY));
-        let other_rule = format!("value: {} # gitleaks:allow github-pat\n", b64(KEY));
+        let rs = ruleset(
+            r#"{"rules":[{"id":"openrouter","regex":"\\b(sk-or-v1-[0-9a-f]{64})\\b","secretGroup":1,"keywords":["sk-or-v1-"]},{"id":"other-rule","regex":"nomatch-[0-9]{9}","keywords":["nomatch-"]}]}"#,
+        );
+        let scan_scoped =
+            |text: &str| scan_text_with_decoding(&rs, Path::new("x.txt"), text, decode_opts(DecodeOptions::default()));
 
-        assert!(scan(&matching, 2).is_empty());
-        assert_eq!(scan(&other_rule, 2).len(), 1);
+        assert!(scan_scoped(&format!("value: {} # gitleaks:allow openrouter\n", b64(KEY))).is_empty());
+        assert_eq!(scan_scoped(&format!("value: {} # gitleaks:allow other-rule\n", b64(KEY))).len(), 1);
     }
 
     #[test]
