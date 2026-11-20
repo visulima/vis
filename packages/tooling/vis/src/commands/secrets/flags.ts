@@ -46,7 +46,7 @@ export interface SecretsFlags {
     report?: RepeatableString;
     since?: string;
     staged?: boolean;
-    stdin?: string;
+    stdin?: string | null;
     updateBaseline?: boolean;
     validate?: boolean;
     verbose?: boolean;
@@ -193,9 +193,26 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
     };
 };
 
+/**
+ * The `--stdin` filename, or `undefined` when stdin mode is off. A bare
+ * `--stdin` or `--stdin=` is a usage error: the name drives rule and path matching.
+ */
+export const stdinFilename = (flags: SecretsFlags): string | undefined => {
+    if (flags.stdin === undefined) {
+        return undefined;
+    }
+
+    if (flags.stdin === null || flags.stdin === "") {
+        throw new VisUserError("--stdin needs a filename used for rule and path matching, e.g. `cat .env | vis secrets --stdin .env`.");
+    }
+
+    return flags.stdin;
+};
+
 /** The flags that pick what a scan reads; at most one may be set. */
 const scanTargetFlags = (flags: SecretsFlags): string[] =>
     [
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
         flags.history ? "--history" : undefined,
         flags.staged ? "--staged" : undefined,
         flags.since === undefined ? undefined : "--since",
@@ -210,26 +227,6 @@ const nonScanMode = (flags: SecretsFlags, includeUpdateBaseline: boolean): strin
         flags.init ? "--init" : undefined,
         includeUpdateBaseline && flags.updateBaseline ? "--update-baseline" : undefined,
     ].find((flag): flag is string => flag !== undefined);
-
-/**
- * Usage conflicts for `--stdin`. The command reports these with exit code 2,
- * unlike the actionable `VisUserError`s below which exit 1.
- */
-export const stdinUsageError = (flags: SecretsFlags, hasPathArguments: boolean): string | undefined => {
-    if (toArray(flags.stdin).length === 0) {
-        return undefined;
-    }
-
-    const conflicts = [nonScanMode(flags, true), ...scanTargetFlags(flags), hasPathArguments ? "explicit paths" : undefined].filter(
-        (flag): flag is string => flag !== undefined,
-    );
-
-    if (conflicts.length === 0) {
-        return undefined;
-    }
-
-    return `--stdin reads piped content and can't be combined with ${conflicts.join(", ")}. Pipe into \`vis secrets --stdin <filename>\` on its own.`;
-};
 
 /**
  * Reject history-only flags used without `--history`, flag combinations the
@@ -291,7 +288,7 @@ export const assertArchiveFlags = (flags: SecretsFlags): void => {
  */
 export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolean): string[] =>
     [
-        toArray(flags.stdin).length > 0 ? "--stdin" : undefined,
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
         flags.staged ? "--staged" : undefined,
         flags.since === undefined ? undefined : "--since",
         flags.affected ? "--affected" : undefined,
@@ -306,6 +303,24 @@ export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolea
  * a partial scan would call every entry for an unscanned file "unused".
  */
 export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: boolean): void => {
+    if (stdinFilename(flags) !== undefined) {
+        if (hasPathArguments) {
+            throw new VisUserError("--stdin scans piped content and can't be combined with explicit paths.");
+        }
+
+        const ineffective = [
+            flags.updateBaseline ? "--update-baseline" : undefined,
+            flags.replaceBaseline ? "--replace-baseline" : undefined,
+            flags.logIgnored ? "--log-ignored" : undefined,
+            flags.maxSize === undefined ? undefined : "--max-size",
+            flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
+        ].filter((flag): flag is string => flag !== undefined);
+
+        if (ineffective.length > 0) {
+            throw new VisUserError(`${ineffective.join(", ")} can't be combined with --stdin: a single piped buffer can't seed a baseline, and there are no files to size-check, skip or list.`);
+        }
+    }
+
     const reportless = nonScanMode(flags, true);
     const reportingFlags = [
         toArray(flags.report).length > 0 ? "--report" : undefined,

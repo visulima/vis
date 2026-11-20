@@ -43,6 +43,7 @@ const runSecrets = async (options: SecretsFlags, workspaceRoot: string): Promise
         argument: [],
         fs: { access, mkdir, readdir, readFile, rm, stat, writeFile },
         options,
+        process: { cwd: process.cwd() },
         workspaceRoot,
     } as unknown as Partial<Toolbox>);
 };

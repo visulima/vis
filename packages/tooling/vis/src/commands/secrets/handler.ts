@@ -1,7 +1,9 @@
+import { text } from "node:stream/consumers";
+
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { dim, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
-import { join, relative, resolve } from "@visulima/path";
+import { isAbsolute, join, relative, resolve } from "@visulima/path";
 import type { Finding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
 import {
     inspectRuleset,
@@ -29,7 +31,7 @@ import {
     assertReportingFlags,
     partialScanReasons,
     resolveScanOptions,
-    stdinUsageError,
+    stdinFilename,
     toArray,
     validateFormat,
 } from "./flags";
@@ -124,16 +126,34 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
 };
 
 /** What a scan reads, resolved once from the validated flags. */
-type ScanMode
-    = | { files: string[]; kind: "files" }
-        | { kind: "history" }
-        | { kind: "paths"; paths: string[] }
-        | { content: string; filename: string; kind: "stdin" }
-        | { kind: "staged" };
+type ScanMode = { files: string[]; kind: "files" } | { kind: "history" } | { kind: "paths"; paths: string[] } | { content: string; filename: string; kind: "stdin" } | { kind: "staged" };
 
-const resolveScanMode = (flags: SecretsFlags, args: string[], root: string, stdinContent: string): ScanMode => {
-    if (flags.stdin !== undefined) {
-        return { content: stdinContent, filename: flags.stdin, kind: "stdin" };
+/** Spinner text and failure prefix per scan mode. */
+const SCAN_LABELS: Record<ScanMode["kind"], { failure: string; spinner: string }> = {
+    files: { failure: "secret scan", spinner: "scanning for secrets" },
+    history: { failure: "git-history secret scan", spinner: "scanning git history for secrets" },
+    paths: { failure: "secret scan", spinner: "scanning for secrets" },
+    staged: { failure: "secret scan", spinner: "scanning for secrets" },
+    stdin: { failure: "piped-input secret scan", spinner: "scanning piped input" },
+};
+
+/** Root-relative with posix separators like every other mode; the absolute path when the file lies outside `root`. */
+const stdinScanFile = (filename: string, root: string, cwd: string): string => {
+    const absolute = resolve(cwd, filename);
+    const relativePath = relative(root, absolute);
+
+    return relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath) ? absolute : relativePath;
+};
+
+const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string, cwd: string): Promise<ScanMode> => {
+    const stdinName = stdinFilename(flags);
+
+    if (stdinName !== undefined) {
+        if (process.stdin.isTTY) {
+            throw new VisUserError("--stdin expects piped input, but stdin is a terminal. Pipe content in, e.g. `cat .env | vis secrets --stdin .env`.");
+        }
+
+        return { content: await text(process.stdin), filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
     }
 
     const paths = args.length > 0 ? args.map((p) => resolve(root, p)) : [root];
@@ -234,19 +254,6 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
-    // A conflict with --stdin is a usage error, not an actionable scan failure.
-    const stdinConflict = stdinUsageError(flags, args.length > 0);
-
-    if (stdinConflict !== undefined) {
-        const cliConsole = toolbox.console as Console & { flush?: () => Promise<void> | void };
-
-        cliConsole.error(stdinConflict);
-        await cliConsole.flush?.();
-        toolbox.process.exit(2);
-
-        return;
-    }
-
     // Before the --list-*/--init early returns, so no mode silently drops a flag.
     assertHistoryFlags(flags);
     assertArchiveFlags(flags);
@@ -279,8 +286,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const stdinContent = flags.stdin === undefined ? "" : ((toolbox.process.stdin as string | undefined) ?? "");
-    const mode = resolveScanMode(flags, args, root, stdinContent);
+    const mode = await resolveScanMode(flags, args, root, toolbox.process.cwd);
     const history = mode.kind === "history";
 
     if (mode.kind === "files" && mode.files.length === 0) {
@@ -293,7 +299,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
 
     const spinner = createSpinner({ verbose: !flags.quiet && format === "text" });
 
-    spinner.start(mode.kind === "stdin" ? "scanning piped input" : history ? "scanning git history for secrets" : "scanning for secrets");
+    spinner.start(SCAN_LABELS[mode.kind].spinner);
 
     let outcome: ScanOutcome;
 
@@ -303,7 +309,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     } catch (error) {
         spinner.failed();
 
-        throw new VisUserError(`${history ? "git-history secret scan" : "secret scan"} failed: ${error instanceof Error ? error.message : String(error)}`, {
+        throw new VisUserError(`${SCAN_LABELS[mode.kind].failure} failed: ${error instanceof Error ? error.message : String(error)}`, {
             cause: error,
         });
     }
