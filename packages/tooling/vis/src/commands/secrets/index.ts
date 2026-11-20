@@ -197,6 +197,11 @@ const secretsOptionDefinitions = {
         description: "Scan the content staged for commit (the git index), not the working-tree files",
         type: Boolean,
     },
+    stdin: {
+        description:
+            "Scan standard input as a virtual file with this name (e.g. --stdin src/app.ts) instead of reading paths. The name is what findings, baselines, ignore entries and reports use. Cannot be combined with paths or other scan targets. Input over --max-size is skipped.",
+        type: String,
+    },
     "update-baseline": {
         defaultValue: false,
         description: "Merge current findings into the baseline and exit 0",
@@ -231,6 +236,7 @@ const secrets = defineCommand({
         ["vis secrets --history --history-range main..HEAD", "Scan only commits on the current branch since main"],
         ["vis secrets --history --all", "Scan every branch and tag, including unmerged ones"],
         ["vis secrets --history --max-commits 100 --redact", "Scan the last 100 commits, masking any secret values"],
+        ["git show HEAD:src/app.ts | vis secrets --stdin src/app.ts", "Scan piped content, reported as src/app.ts"],
         ["vis secrets --init", "Write an initial baseline from current findings"],
         ["vis secrets --list-rules", "Print all bundled detection rules"],
         ["vis secrets --list-validators", "Print non-HTTP validator types in the ruleset + install hints for each"],

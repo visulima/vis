@@ -46,6 +46,7 @@ export interface SecretsFlags {
     report?: RepeatableString;
     since?: string;
     staged?: boolean;
+    stdin?: string;
     updateBaseline?: boolean;
     validate?: boolean;
     verbose?: boolean;
@@ -260,6 +261,41 @@ export const assertArchiveFlags = (flags: SecretsFlags): void => {
 };
 
 /**
+ * Why `--stdin` with a file name can't run as given, or `undefined` when it can (or
+ * isn't set). A message rather than a throw: the caller reports it as a usage
+ * error (exit 2).
+ */
+export const stdinUsageError = (flags: SecretsFlags, hasPathArguments: boolean): string | undefined => {
+    if (flags.stdin === undefined) {
+        return undefined;
+    }
+
+    if (typeof flags.stdin !== "string" || flags.stdin.trim() === "") {
+        return "--stdin needs the file name to report findings under, e.g. `vis secrets --stdin src/app.ts < src/app.ts`.";
+    }
+
+    if (hasPathArguments) {
+        return "--stdin scans standard input and can't be combined with paths to scan. Use one or the other.";
+    }
+
+    const conflicts = [
+        ...scanTargetFlags(flags),
+        flags.maxArchiveDepth === undefined ? undefined : "--max-archive-depth",
+        // The walker never runs, so its flags would be silently ignored.
+        toArray(flags.exclude).length > 0 ? "--exclude" : undefined,
+        toArray(flags.excludeFrom).length > 0 ? "--exclude-from" : undefined,
+        flags.gitignore === false ? "--no-gitignore" : undefined,
+        flags.includeHidden ? "--include-hidden" : undefined,
+        flags.concurrency === undefined ? undefined : "--concurrency",
+        flags.listRules ? "--list-rules" : undefined,
+        flags.listValidators ? "--list-validators" : undefined,
+        flags.init ? "--init" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
+
+    return conflicts.length > 0 ? `--stdin scans standard input and can't be combined with ${conflicts.join(", ")}.` : undefined;
+};
+
+/**
  * Why a scan covers only part of the repository (staged files, a diff, a
  * path subset, part of history). On such a scan an ignore entry for a file
  * outside it would look unused, so unused entries are neither printed nor
@@ -268,6 +304,7 @@ export const assertArchiveFlags = (flags: SecretsFlags): void => {
 export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolean): string[] =>
     [
         flags.staged ? "--staged" : undefined,
+        flags.stdin === undefined ? undefined : "--stdin",
         flags.since === undefined ? undefined : "--since",
         flags.affected ? "--affected" : undefined,
         flags.historyRange === undefined ? undefined : "--history-range",

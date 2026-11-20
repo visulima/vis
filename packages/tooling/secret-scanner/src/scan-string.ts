@@ -6,7 +6,22 @@
 import { binding } from "./binding";
 import { createSuppressionContext, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
-import type { Finding, ScanOptions } from "./types";
+import { finishResult } from "./scan-session";
+import type { Finding, ScanOptions, ScanResult } from "./types";
+
+/**
+ * Like {@link scanString}, with the diagnostics of `scanDetailed`: the findings a
+ * baseline, allowlist, inline pragma or `.gitleaksignore` hid (with
+ * `reportSuppressed`) and the `.gitleaksignore` entries nothing matched.
+ * `skipped` is always empty, as nothing is read from disk.
+ */
+export const scanStringDetailed = async (content: string, file: string, options?: ScanOptions): Promise<ScanResult> => {
+    const prepared = prepareScan(options);
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
+
+    return finishResult(await postProcessDetailed(report, prepared, options, context), [], context);
+};
 
 /**
  * Scan an in-memory buffer as if it lived at `file`. Useful for editor
@@ -20,11 +35,7 @@ import type { Finding, ScanOptions } from "./types";
  * input yourself or offload to a worker.
  */
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
-    const prepared = prepareScan(options);
-    const context = await createSuppressionContext(options, [process.cwd()]);
-    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
+    const result = await scanStringDetailed(content, file, options);
 
-    const { findings } = await postProcessDetailed(report, prepared, options, context);
-
-    return findings;
+    return result.findings;
 };
