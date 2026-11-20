@@ -93,7 +93,7 @@ const canonicalize = (path: string): string => {
 const insideRoot = (absolute: string, root: string): string | undefined => {
     const relativePath = relative(root, canonicalize(absolute));
 
-    if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    if (relativePath === "" || relativePath === ".." || relativePath.startsWith("../") || relativePath.startsWith("..\\") || isAbsolute(relativePath)) {
         return undefined;
     }
 
