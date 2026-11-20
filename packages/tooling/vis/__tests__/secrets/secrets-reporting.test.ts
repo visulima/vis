@@ -132,15 +132,14 @@ describe("report emitters", () => {
         expect(first?.fingerprint).toBe(second?.fingerprint);
     });
 
-    it("emits GitHub annotations with the finding span and a masked secret", () => {
-        expect.assertions(4);
+    it("emits GitHub annotations with the finding span and no secret value", () => {
+        expect.assertions(5);
 
         const annotation = emitSecretsGitHub([finding()]);
 
-        expect(annotation).toBe(
-            `::error file=src/a.ts,line=3,endLine=3,col=10,endColumn=50,title=github-pat::GitHub PAT%0ASecret: ghp${"*".repeat(PAT_A.length - 6)}xY4\n`,
-        );
+        expect(annotation).toBe("::error file=src/a.ts,line=3,endLine=3,col=10,endColumn=50,title=github-pat::GitHub PAT\n");
         expect(annotation).not.toContain(PAT_A);
+        expect(annotation).not.toContain(`ghp${"*".repeat(PAT_A.length - 6)}xY4`);
         expect(emitSecretsGitHub([])).toBe("");
         expect(
             emitSecretsGitHub([finding(), finding({ file: "b.ts" })])
@@ -149,25 +148,28 @@ describe("report emitters", () => {
         ).toHaveLength(2);
     });
 
-    it("percent-encodes GitHub workflow-command properties and message bodies", () => {
-        expect.assertions(3);
+    it("percent-encodes GitHub workflow-command properties and message bodies, leaving = alone", () => {
+        expect.assertions(4);
 
-        const annotation = emitSecretsGitHub([finding({ description: "first line%\nsecond: line", file: "src/a,b:c%.ts", ruleId: "rule:1,x" })]);
+        const annotation = emitSecretsGitHub([finding({ description: "first line%\nsecond: line", file: "src/a,b:c%=d.ts", ruleId: "rule:1,x" })]);
 
-        expect(annotation).toContain("::error file=src/a%2Cb%3Ac%25.ts,");
+        expect(annotation).toContain("::error file=src/a%2Cb%3Ac%25=d.ts,");
         expect(annotation).toContain(",title=rule%3A1%2Cx::");
         expect(annotation).toContain("first line%25%0Asecond: line");
+        expect(annotation).not.toContain("%3D");
     });
 
-    it("adds the commit sha to history annotations without leaking the commit message", () => {
-        expect.assertions(2);
+    it("names history findings by commit in the message, without location properties or the commit message", () => {
+        expect.assertions(4);
 
         const annotation = emitSecretsGitHub([
             finding({ commit: { authorEmail: "e@x", authorName: "A", date: "2026-01-01", message: `leaked ${PAT_A}`, sha: "a".repeat(40) } }),
         ]);
 
-        expect(annotation).toContain(`Commit: ${"a".repeat(40)}`);
+        expect(annotation).toBe("::error title=github-pat::GitHub PAT%0Asrc/a.ts:3 in commit aaaaaaa\n");
+        expect(annotation).not.toMatch(/file=|line=|col=/u);
         expect(annotation).not.toContain(PAT_A);
+        expect(annotation).not.toContain("leaked");
     });
 });
 

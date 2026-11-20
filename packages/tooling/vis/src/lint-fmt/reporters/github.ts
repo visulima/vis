@@ -11,7 +11,7 @@
  * tree (GitHub anchors on repo-relative paths).
  */
 
-import { encodeWorkflowMessage, encodeWorkflowProperty } from "../../report/github";
+import { workflowCommand } from "../../report/github-workflow-command";
 import type { Finding, FindingSeverity } from "../config-types";
 
 export interface GitHubAdapterRun {
@@ -56,27 +56,11 @@ const renderFinding = (finding: Finding, workspaceRoot: string | undefined): str
     const file = relativeFile(finding.file, workspaceRoot);
     const title = finding.ruleId ? `${finding.adapter}(${finding.ruleId})` : finding.adapter;
 
-    const properties: string[] = [`file=${encodeWorkflowProperty(file)}`];
-
-    if (finding.line !== undefined) {
-        properties.push(`line=${String(finding.line)}`);
-    }
-
-    if (finding.endLine !== undefined) {
-        properties.push(`endLine=${String(finding.endLine)}`);
-    }
-
-    if (finding.column !== undefined) {
-        properties.push(`col=${String(finding.column)}`);
-    }
-
-    if (finding.endColumn !== undefined) {
-        properties.push(`endColumn=${String(finding.endColumn)}`);
-    }
-
-    properties.push(`title=${encodeWorkflowProperty(title)}`);
-
-    return `::${command} ${properties.join(",")}::${encodeWorkflowMessage(finding.message)}\n`;
+    return workflowCommand(
+        command,
+        { col: finding.column, endColumn: finding.endColumn, endLine: finding.endLine, file, line: finding.line, title },
+        finding.message,
+    );
 };
 
 /**

@@ -1,4 +1,5 @@
 import type { PublishContextResult } from "../../release/core/orchestrator/publish-types";
+import { workflowCommand } from "../../report/github-workflow-command";
 
 /**
  * A GitHub Actions annotation, which shows on the run summary even when the
@@ -8,7 +9,7 @@ import type { PublishContextResult } from "../../release/core/orchestrator/publi
  */
 export const annotate = (level: "error" | "warning", message: string): void => {
     if (process.env["GITHUB_ACTIONS"] === "true") {
-        process.stdout.write(`::${level}::${message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}\n`);
+        process.stdout.write(workflowCommand(level, {}, message));
     }
 };
 

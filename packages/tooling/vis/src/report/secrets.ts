@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
-import { encodeWorkflowMessage, encodeWorkflowProperty } from "./github";
+import { workflowCommand } from "./github-workflow-command";
 import { cdata, escapeAttribute } from "./junit-audit";
 
 type SecretsFinding = Finding & Partial<Pick<GitFinding, "commit">>;
@@ -167,29 +167,37 @@ export const emitSecretsGitlabCodeQuality = (findings: SecretsFinding[]): string
 };
 
 /**
- * GitHub Actions annotations: one `::error` command per finding, with the
- * exact span GitHub can anchor to a file in the checked-out tree. Annotations
- * are visible to anyone who can read the PR, so the secret is always masked —
- * even when `--redact` is off. Commit messages are never included; history
- * findings carry only the commit sha.
+ * GitHub Actions annotations: one `::error` command per finding. Annotations
+ * are visible to anyone who can read the PR, so they carry no secret value,
+ * not even a masked one, and no commit message. Working-tree findings anchor
+ * to their exact span; history findings refer to a blob that is not in the
+ * checked-out tree, so they carry no location properties and name
+ * `file:line in commit &lt;sha>` in the message instead.
  */
 export const emitSecretsGitHub = (findings: SecretsFinding[]): string =>
     findings
         .map((finding) => {
-            const properties = [
-                `file=${encodeWorkflowProperty(finding.file)}`,
-                `line=${String(finding.startLine)}`,
-                `endLine=${String(finding.endLine)}`,
-                `col=${String(finding.startColumn)}`,
-                `endColumn=${String(finding.endColumn)}`,
-                `title=${encodeWorkflowProperty(finding.ruleId)}`,
-            ];
-            const details = [
-                finding.description || finding.ruleId,
-                `Secret: ${maskSecret(finding.secret)}`,
-                ...(finding.commit ? [`Commit: ${finding.commit.sha}`] : []),
-            ].join("\n");
+            const description = finding.description || finding.ruleId;
 
-            return `::error ${properties.join(",")}::${encodeWorkflowMessage(details)}\n`;
+            if (finding.commit) {
+                return workflowCommand(
+                    "error",
+                    { title: finding.ruleId },
+                    `${description}\n${finding.file}:${String(finding.startLine)} in commit ${finding.commit.sha.slice(0, 7)}`,
+                );
+            }
+
+            return workflowCommand(
+                "error",
+                {
+                    col: finding.startColumn,
+                    endColumn: finding.endColumn,
+                    endLine: finding.endLine,
+                    file: finding.file,
+                    line: finding.startLine,
+                    title: finding.ruleId,
+                },
+                description,
+            );
         })
         .join("");
