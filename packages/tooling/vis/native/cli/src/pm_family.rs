@@ -163,7 +163,9 @@ fn ancestor_pins_package_manager(cwd: &Path) -> bool {
 /// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
 /// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
 fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
-    cwd.ancestors().skip(1).any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+    cwd.ancestors()
+        .skip(1)
+        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
 }
 
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
