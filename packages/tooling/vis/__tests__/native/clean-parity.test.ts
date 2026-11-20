@@ -109,6 +109,10 @@ const normalize = (text: string, root: string): string => text.replaceAll(root, 
 
 const delegation = (): Record<string, string> => { return { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }; };
 
+// Privileged processes remove files whatever their mode bits say, so a read-only directory does not
+// make the removal fail there.
+const privileged = process.getuid?.() === 0;
+
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis clean: native vs Node", () => {
     beforeAll(() => {
         scratch = mkdtempSync(join(tmpdir(), "vis-clean-parity-"));
@@ -178,7 +182,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 
-    it("writes a removal error to stderr and the successful removals to stdout", () => {
+    it.skipIf(privileged)("writes a removal error to stderr and the successful removals to stdout", () => {
         expect.assertions(3);
 
         const root = workspaceFor("read-only-package");
@@ -187,6 +191,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.status).toBe(1);
         expect(native.stderr).toMatch(/ERROR \.+\n\n.*packages\/locked\/node_modules/);
         expect(native.stdout).not.toContain("ERROR");
+    });
+
+    it("hands a run that Node would colour to Node", () => {
+        expect.assertions(1);
+
+        const root = workspaceFor(nativeCases[0] as string);
+
+        // A declined invocation exits 70 without the Node entry; the native path must not answer.
+        expect(runNative(["--dry-run"], root, { GITHUB_ACTIONS: "true" }).status).toBe(70);
     });
 
     it("hands a run outside CI to Node, with Node's output", () => {
