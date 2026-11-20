@@ -86,8 +86,11 @@ const cacheDirFor = (name: string, files: Record<string, string>): string => {
  * `is-in-ci` counts an empty `CI` as set.
  */
 const run = (command: string, args: string[], options: { ci: boolean; cwd?: string; extraEnv?: Record<string, string> }) => {
-    const env: Record<string, string | undefined> = { ...process.env, VIS_CLI_TEST: "1", VIS_NO_UPDATE_CHECK: "1", ...options.extraEnv };
+    // An inherited root (from a parent vis run) would make the native gate answer for another workspace.
+    const env: Record<string, string | undefined> = { ...process.env };
 
+    delete env["VIS_MONOREPO_ROOT"];
+    Object.assign(env, { VIS_CLI_TEST: "1", VIS_NO_UPDATE_CHECK: "1", ...options.extraEnv });
     delete env["CI"];
     delete env["CONTINUOUS_INTEGRATION"];
 
