@@ -141,6 +141,9 @@ const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
     return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
 };
 
+// The argument lists (after `list`) that the binary answers natively.
+const LIST_NATIVE_SHAPES = [[], ["--json"], ["--format", "json"], ["--format", "table"], ["--format=json"], ["--format=table"]];
+
 // Whether `vis list` can pass the binary's native gate (`run` in `list.rs`). Only the plain listing
 // is native: no flags, `--json`, or one `--format` value. The binary re-checks the CI context and
 // every other shape, so this only skips the extra process when it would delegate anyway.
@@ -151,15 +154,17 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
 
     const flags = args.slice(1);
 
-    if (flags.length === 0) {
-        return true;
+    return LIST_NATIVE_SHAPES.some((shape) => shape.length === flags.length && shape.every((flag, index) => flags[index] === flag));
+};
+
+// Commands with a native gate answer help through the binary everywhere but Windows, and
+// otherwise follow the gate. `mayRunNatively` is only called when the help surface is not asked for.
+const helpOrNative = (args, platform, mayRunNatively) => {
+    if (asksForHelp(args)) {
+        return platform !== "win32";
     }
 
-    if (flags.length === 1) {
-        return ["--format=json", "--format=table", "--json"].includes(flags[0]);
-    }
-
-    return flags.length === 2 && flags[0] === "--format" && (flags[1] === "table" || flags[1] === "json");
+    return mayRunNatively();
 };
 
 // The routing of the commands that have their own native shapes: `true` or `false` when the
@@ -184,18 +189,24 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return platform !== "win32" || !asksForHelp(args);
     }
 
-    // `ignore`, `list` and `clean` are native for their plain shapes (`ignore.rs`, `list.rs`, `clean.rs`);
-    // the binary hands every other run to Node itself, so sending one through it would only add a second
-    // Node boot. Help is answered by the binary everywhere but Windows. A terminal stdout stays in Node
-    // for `clean` too: pail colours its output there, and the binary does not.
-    const gates = new Map([
-        ["clean", () => cleanMayRunNatively(platform, environment, args, cwd, interactive)],
-        ["ignore", () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker)],
-        ["list", () => listMayRunNatively(platform, environment, args, interactive)],
-    ]);
+    // `ignore` is native for its plain shapes in a CI context (`native/cli/src/ignore.rs`); any
+    // other run would be delegated by the binary, which costs a second Node boot. Help is
+    // answered by the binary everywhere but Windows, as for `advisories bloom status`.
+    if (command === "ignore") {
+        return helpOrNative(args, platform, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker));
+    }
 
-    if (gates.has(command)) {
-        return asksForHelp(args) ? platform !== "win32" : gates.get(command)();
+    // `list` is native for the plain listing in a CI context (`native/cli/src/list.rs`); any other
+    // run would be delegated by the binary, which costs a second Node boot.
+    if (command === "list") {
+        return helpOrNative(args, platform, () => listMayRunNatively(platform, environment, args, interactive));
+    }
+
+    // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
+    // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
+    // stdout stays in Node too: pail colours its output there, and the binary does not.
+    if (command === "clean") {
+        return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, cwd, interactive));
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
