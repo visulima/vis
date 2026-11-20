@@ -45,6 +45,10 @@ export interface Finding {
      * root). Not part of a finding's identity: fingerprints and baselines ignore it.
      */
     root?: string;
+    /** Byte spans into the scanned content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
 }
 
 /**
@@ -101,6 +105,10 @@ export interface RequiredFinding {
     match: string;
     secret: string;
     decoded?: Array<string>;
+    /** Byte spans into the source content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
 }
 
 export interface RuleInfo {
@@ -254,6 +262,14 @@ export interface SkippedRule {
     reason: string;
 }
 
+/** Byte spans into the scanned content, for consumers that rewrite findings in place. */
+export interface SourceSpan {
+    matchStart: number;
+    matchEnd: number;
+    secretStart: number;
+    secretEnd: number;
+}
+
 /**
  * A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
  * Only returned with `reportSuppressed`. NAPI objects can't flatten, so the fields
@@ -303,6 +319,10 @@ export interface SuppressedFinding {
      * root). Not part of a finding's identity: fingerprints and baselines ignore it.
      */
     root?: string;
+    /** Byte spans into the scanned content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
     /** `"allowlist"` or `"inline-allow"`. */
     suppressedBy: string;
 }

@@ -80,6 +80,14 @@ pub struct RawFinding {
     /// Findings of the rule's `[[rules.required]]` dependencies that satisfied it, nearest
     /// first, one per required id. Set by the composite pass; `None` for plain rules.
     pub required_findings: Option<Vec<RawFinding>>,
+    /// Byte offsets of the `secret` capture, in the same coordinate space as
+    /// `start_offset`/`end_offset`.
+    pub secret_start_offset: u32,
+    pub secret_end_offset: u32,
+    /// Fixed, secret-free reason the offsets above don't map back to the source file
+    /// (pre-regex-replaced or lossy-decoded text); such findings must not expose
+    /// rewrite spans. Other cases are labelled in `finalize`.
+    pub span_unavailable: Option<&'static str>,
     /// Archive entries only: the virtual suffix after the archive's own path, e.g.
     /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
     /// it to relativise just the on-disk part.
@@ -98,6 +106,11 @@ impl RawFinding {
     pub fn decode_chain(&self) -> Option<&[String]> {
         self.decoded.as_ref().map(|d| d.chain.as_slice())
     }
+
+    /// File-path rules match no content, so they carry zero offsets.
+    pub fn is_path_only(&self) -> bool {
+        self.start_offset == 0 && self.end_offset == 0
+    }
 }
 
 /// Per-scan detection switches. Kept off [`CompiledRuleset`] on purpose: the
@@ -115,11 +128,14 @@ pub struct DetectOptions<'a> {
     /// `condition = "AND"` that list `commits` next to paths / regexes / stopwords read
     /// it: without a commit, such an allowlist never matches.
     pub commit: Option<&'a str>,
+    /// Set when the scanned text was decoded from bytes that don't map one-to-one to
+    /// it, so its offsets must not be exposed as source-file rewrite spans.
+    pub span_unavailable: Option<&'static str>,
 }
 
 impl Default for DetectOptions<'_> {
     fn default() -> Self {
-        Self { inline_allow: true, report_suppressed: false, commit: None }
+        Self { inline_allow: true, report_suppressed: false, commit: None, span_unavailable: None }
     }
 }
 
@@ -343,6 +359,7 @@ pub fn detect(
         // The slice stays at char boundaries via `window_around`, and we translate
         // slice-relative offsets back to absolute via `slice_start` before emission.
         let uses_pre_replace = !rule.pre_regex_replace.is_empty();
+        let span_unavailable = opts.span_unavailable.or(uses_pre_replace.then_some("pre-regex-replaced content"));
         let window = if uses_pre_replace || rule.unbounded_multiline { None } else { ac_spans[i] };
         let (slice_start, slice_end) = match window {
             Some(span) => window_around(text_ref, span),
@@ -361,6 +378,7 @@ pub fn detect(
             marker_source: if lines_kept { (content, &line_offsets) } else { (text_ref, offsets_ref) },
             allow_regions: &allow_regions,
             opts,
+            span_unavailable,
         };
 
         // Secret extraction follows gitleaks: an explicit `secretGroup`, else the first
@@ -451,6 +469,7 @@ struct MatchCtx<'a> {
     marker_source: (&'a str, &'a [usize]),
     allow_regions: &'a [AllowRegion],
     opts: DetectOptions<'a>,
+    span_unavailable: Option<&'static str>,
 }
 
 impl MatchCtx<'_> {
@@ -554,6 +573,9 @@ impl MatchCtx<'_> {
             priority: self.rule.priority,
             start_offset: span.match_start as u32,
             end_offset: span.match_end as u32,
+            secret_start_offset: span.secret_start as u32,
+            secret_end_offset: span.secret_end as u32,
+            span_unavailable: self.span_unavailable,
             source: self.rule.source.clone(),
             confidence: self.rule.confidence.as_str(),
             suppressed_by,

@@ -100,7 +100,7 @@ fn scan_bytes(
     ruleset: &CompiledRuleset,
     path: &Path,
     bytes: &[u8],
-    opts: TextScanOptions<'_>,
+    mut opts: TextScanOptions<'_>,
     archive: ArchiveOptions,
 ) -> FileScan {
     if archive.max_depth > 0 {
@@ -113,7 +113,13 @@ fn scan_bytes(
     if is_binary(bytes) {
         return FileScan::default();
     }
-    scan_unit(ruleset, path, &lossy_text(bytes), opts)
+    let text = lossy_text(bytes);
+    // Replacement characters have a different byte width from the bytes they replace,
+    // so offsets into the decoded text can't be used to rewrite the original file.
+    if matches!(text, Cow::Owned(_)) {
+        opts.detect.span_unavailable = Some("lossy UTF-8 decoding");
+    }
+    scan_unit(ruleset, path, &text, opts)
 }
 
 /// `bytes` as text: borrowed when valid UTF-8, else decoded with replacement characters

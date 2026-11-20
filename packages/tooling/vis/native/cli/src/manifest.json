@@ -4502,6 +4502,14 @@
           "Write an initial baseline from current findings"
         ],
         [
+          "vis secrets --fix",
+          "Replace secrets in working-tree files with <REDACTED>"
+        ],
+        [
+          "vis secrets --fix --dry-run",
+          "Preview which secrets --fix would replace, without writing files"
+        ],
+        [
           "vis secrets --list-rules",
           "Print all bundled detection rules"
         ],
@@ -4620,7 +4628,7 @@
           "type": "string"
         },
         {
-          "description": "With --init, preview the baseline without writing files",
+          "description": "With --fix or --init, preview changes without writing files",
           "name": "dry-run",
           "type": "boolean"
         },
@@ -4647,6 +4655,11 @@
           "multiple": true,
           "name": "exclude-rule",
           "type": "string"
+        },
+        {
+          "description": "Replace detected secret values in working-tree files with <REDACTED>. Prints only a masked summary; combine with --dry-run to preview.",
+          "name": "fix",
+          "type": "boolean"
         },
         {
           "description": "Disable --fail-on-unreadable.",

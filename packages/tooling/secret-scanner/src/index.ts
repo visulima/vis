@@ -206,6 +206,8 @@ export type {
     SkippedFile,
     SkippedRule,
     SkipReason,
+    SourceSpan,
+    SpanUnavailableReason,
     SuppressedFinding,
     SuppressionReason,
     ValidationStatus,

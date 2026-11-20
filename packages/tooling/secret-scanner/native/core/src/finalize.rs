@@ -8,7 +8,7 @@ use crate::profile::ProfileFile;
 use crate::scanner::FileScan;
 use crate::skip::Skipped;
 use crate::suppression::UnknownAllowIds;
-use crate::types::{AllowWarning, Finding, RequiredFinding, ScanReport, SkippedFile};
+use crate::types::{AllowWarning, Finding, RequiredFinding, ScanReport, SkippedFile, SourceSpan};
 
 /// Build the report: finalize findings, rewrite skipped and warning paths like findings.
 /// `roots` are the scan roots that paths are made relative to; an in-memory scan passes
@@ -219,7 +219,34 @@ fn redact(s: &str) -> String {
     out
 }
 
+/// The rewrite span of `f`, or the fixed reason it can't be trusted against the source file.
+fn span_of(f: &RawFinding) -> (Option<SourceSpan>, Option<String>) {
+    let unavailable = if f.is_path_only() {
+        Some("path-only finding")
+    } else if f.archive_entry.is_some() {
+        Some("archive entry")
+    } else if f.decoded.is_some() {
+        Some("decoded content")
+    } else {
+        f.span_unavailable
+    };
+    match unavailable {
+        Some(reason) => (None, Some(reason.to_string())),
+        None => (
+            Some(SourceSpan {
+                match_start: f.start_offset,
+                match_end: f.end_offset,
+                secret_start: f.secret_start_offset,
+                secret_end: f.secret_end_offset,
+            }),
+            None,
+        ),
+    }
+}
+
 fn to_finding(f: RawFinding, redact_secrets: bool) -> Finding {
+    let (source_span, span_unavailable_reason) = span_of(&f);
+
     Finding {
         rule_id: f.rule_id,
         description: f.description,
@@ -239,18 +266,25 @@ fn to_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         root: f.root,
         required_findings: f.required_findings.map(|list| {
             list.into_iter()
-                .map(|r| RequiredFinding {
-                    rule_id: r.rule_id,
-                    start_line: r.start_line,
-                    end_line: r.end_line,
-                    start_column: r.start_column,
-                    end_column: r.end_column,
-                    r#match: if redact_secrets { redact(&r.r#match) } else { r.r#match },
-                    secret: if redact_secrets { redact(&r.secret) } else { r.secret },
-                    decoded: r.decoded.map(|d| d.chain),
+                .map(|r| {
+                    let (source_span, span_unavailable_reason) = span_of(&r);
+                    RequiredFinding {
+                        rule_id: r.rule_id,
+                        start_line: r.start_line,
+                        end_line: r.end_line,
+                        start_column: r.start_column,
+                        end_column: r.end_column,
+                        r#match: if redact_secrets { redact(&r.r#match) } else { r.r#match },
+                        secret: if redact_secrets { redact(&r.secret) } else { r.secret },
+                        decoded: r.decoded.map(|d| d.chain),
+                        source_span,
+                        span_unavailable_reason,
+                    }
                 })
                 .collect()
         }),
+        source_span,
+        span_unavailable_reason,
     }
 }
 
@@ -273,6 +307,8 @@ mod tests {
             priority,
             start_offset: start,
             end_offset: end,
+            secret_start_offset: start + 2,
+            secret_end_offset: end.saturating_sub(2),
             confidence: "low",
             ..Default::default()
         }
@@ -291,6 +327,54 @@ mod tests {
         assert_eq!(redact("€€€€€€€€"), "€€€**€€€");
         assert_eq!(redact("äöü"), "******");
         assert_eq!(redact("äöüäöü"), "******");
+    }
+
+    #[test]
+    fn finalize_exposes_trusted_spans() {
+        let (out, _) = finalize_findings(vec![raw_finding("rule.a", 0, 10, 30)], &[]);
+        let finding = to_finding(out.into_iter().next().unwrap(), false);
+
+        assert_eq!(
+            finding.source_span,
+            Some(SourceSpan { match_start: 10, match_end: 30, secret_start: 12, secret_end: 28 })
+        );
+        assert_eq!(finding.span_unavailable_reason, None);
+    }
+
+    #[test]
+    fn finalize_withholds_spans_that_cannot_map_to_the_source_file() {
+        let mut pre_replaced = raw_finding("rule.pre", 0, 10, 30);
+        pre_replaced.span_unavailable = Some("pre-regex-replaced content");
+        let mut decoded = raw_finding("rule.decoded", 0, 10, 30);
+        decoded.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], ..Default::default() });
+        let mut archived = raw_finding("rule.archive", 0, 10, 30);
+        archived.archive_entry = Some("!inner.env".into());
+        let path_only = raw_finding("rule.path", 0, 0, 0);
+
+        for (finding, reason) in [
+            (pre_replaced, "pre-regex-replaced content"),
+            (decoded, "decoded content"),
+            (archived, "archive entry"),
+            (path_only, "path-only finding"),
+        ] {
+            let (out, _) = finalize_findings(vec![finding], &[]);
+            let finding = to_finding(out.into_iter().next().unwrap(), false);
+            assert_eq!(finding.source_span, None);
+            assert_eq!(finding.span_unavailable_reason.as_deref(), Some(reason));
+        }
+    }
+
+    #[test]
+    fn finalize_keeps_trusted_spans_on_suppressed_findings() {
+        let mut finding = raw_finding("rule.suppressed", 0, 10, 30);
+        finding.suppressed_by = Some(crate::suppression::SuppressionReason::InlineAllow);
+        let (_, suppressed) = finalize_findings(vec![finding], &[]);
+        let finding = to_finding(suppressed.into_iter().next().unwrap(), false);
+
+        assert_eq!(
+            finding.source_span,
+            Some(SourceSpan { match_start: 10, match_end: 30, secret_start: 12, secret_end: 28 })
+        );
     }
 
     #[test]
@@ -379,6 +463,22 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].rule_id, "rule.composite");
         assert_eq!(out[0].alternate_matches, vec!["rule.high".to_string()]);
+    }
+
+    #[test]
+    fn finalize_gives_required_findings_their_own_spans() {
+        let mut composite = raw_finding("rule.composite", 0, 10, 30);
+        composite.required_findings = Some(vec![raw_finding("rule.dep", 0, 40, 50)]);
+
+        let (out, _) = finalize_findings(vec![composite], &[]);
+        let finding = to_finding(out.into_iter().next().unwrap(), false);
+        let required = finding.required_findings.unwrap();
+
+        assert_eq!(
+            required[0].source_span,
+            Some(SourceSpan { match_start: 40, match_end: 50, secret_start: 42, secret_end: 48 })
+        );
+        assert_eq!(required[0].span_unavailable_reason, None);
     }
 
     #[test]

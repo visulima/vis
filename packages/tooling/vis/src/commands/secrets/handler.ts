@@ -21,12 +21,15 @@ import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
 import { diffBaseline, rebaseBaseline, rebaseFile, rebaseFinding, rebaseProfile, writeBaseline } from "../../secrets/baseline";
+import { fixSecrets } from "../../secrets/fix";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
 import { pathExists } from "../../util/toolbox-fs";
 import type { SecretsFlags, VisSecretsConfig } from "./flags";
 import {
     assertArchiveFlags,
+    assertDryRunFlags,
+    assertFixFlags,
     assertHistoryFlags,
     assertReportingFlags,
     partialScanReasons,
@@ -37,7 +40,7 @@ import {
 } from "./flags";
 import type { SecretsOptions } from "./index";
 import type { ScanOutcome } from "./report";
-import { applyDiagnosticGates, emitReports, emptyProfile, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, printProfile, status } from "./report";
+import { applyDiagnosticGates, emitReports, emptyProfile, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, printFixResult, printProfile, status } from "./report";
 
 const DEFAULT_BASELINE = ".secrets-baseline.json";
 
@@ -291,6 +294,13 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     assertHistoryFlags(flags);
     assertArchiveFlags(flags);
     assertReportingFlags(flags, args.length > 0);
+    assertDryRunFlags(flags);
+    assertFixFlags(flags, scanOptions, args.length);
+
+    // Fix mode needs the real secret to find its span; its output never prints one.
+    if (flags.fix) {
+        scanOptions.redact = false;
+    }
 
     const format = validateFormat(flags.format);
     const reports = parseReportTargets(toArray(flags.report));
@@ -336,7 +346,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const spinner = createSpinner({ verbose: !flags.quiet && format === "text" });
+    const spinner = createSpinner({ verbose: !flags.quiet && format === "text" && !flags.fix });
 
     spinner.start(SCAN_LABELS[mode.kind].spinner);
 
@@ -351,6 +361,20 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         throw new VisUserError(`${SCAN_LABELS[mode.kind].failure} failed: ${error instanceof Error ? error.message : String(error)}`, {
             cause: error,
         });
+    }
+
+    if (flags.fix) {
+        // A path scan reports findings relative to its one positional path, so the
+        // rewriter needs that path to find the actual working-tree file.
+        const result = fixSecrets(outcome.findings, root, flags.dryRun === true, mode.kind === "paths" ? mode.paths[0] : root);
+
+        printFixResult(result, outcome.skipped.length, flags.dryRun === true, flags.quiet === true);
+
+        if (result.skipped.length > 0) {
+            process.exitCode = 1;
+        }
+
+        return;
     }
 
     const context = {

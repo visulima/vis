@@ -83,6 +83,7 @@ fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
             inline_allow: opts.inline_allow.unwrap_or(true),
             report_suppressed: opts.report_suppressed.unwrap_or(false),
             commit: opts.commit.as_deref(),
+            ..Default::default()
         },
     }
 }

@@ -22,6 +22,7 @@ export interface SecretsFlags {
     extendBundled?: boolean;
     failOnUnreadable?: boolean;
     failOnUnusedIgnores?: boolean;
+    fix?: boolean;
     format?: string;
     gitignore?: boolean;
     gitleaksIgnore?: boolean;
@@ -385,5 +386,56 @@ export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: bool
         throw new VisUserError(
             `--fail-on-unused-ignores needs a full scan: with ${partial.join(", ")}, entries for files outside the scan would be reported as unused. Run it on a full \`vis secrets\` or \`vis secrets --history\` scan.`,
         );
+    }
+};
+
+/** `--dry-run` previews `--init` or `--fix`; alone it would be silently ignored. */
+export const assertDryRunFlags = (flags: SecretsFlags): void => {
+    if (flags.dryRun && !flags.fix && !flags.init) {
+        throw new VisUserError("--dry-run needs --fix (to preview rewrites) or --init (to preview a baseline).");
+    }
+};
+
+/**
+ * `--fix` rewrites working-tree files, so every mode that reads another source
+ * or emits a report that could carry an unredacted secret is rejected rather
+ * than silently ignored. Only an explicit `--redact` is rejected: fix mode scans
+ * unmasked internally, so a `redact` default or config value is harmless.
+ */
+export const assertFixFlags = (flags: SecretsFlags, scanOptions: ScanOptions, pathCount: number): void => {
+    if (!flags.fix) {
+        return;
+    }
+
+    const format = flags.format ?? "text";
+    const incompatible = [
+        flags.redact === true ? "--redact" : undefined,
+        flags.history ? "--history" : undefined,
+        flags.staged ? "--staged" : undefined,
+        flags.init ? "--init" : undefined,
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
+        flags.profile ? "--profile" : undefined,
+        flags.listRules ? "--list-rules" : undefined,
+        flags.listValidators ? "--list-validators" : undefined,
+        flags.updateBaseline ? "--update-baseline" : undefined,
+        flags.replaceBaseline ? "--replace-baseline" : undefined,
+        toArray(flags.report).length > 0 ? "--report" : undefined,
+        flags.logIgnored ? "--log-ignored" : undefined,
+        flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
+        flags.failOnUnusedIgnores ? "--fail-on-unused-ignores" : undefined,
+        flags.validate || scanOptions.config?.validate ? "--validate" : undefined,
+        format === "text" ? undefined : `--format ${format}`,
+    ].filter((flag): flag is string => flag !== undefined);
+
+    if (incompatible.length > 0) {
+        throw new VisUserError(
+            `${incompatible.join(", ")} cannot be combined with --fix. Fix mode rewrites working-tree files in place and prints only a masked summary.`,
+        );
+    }
+
+    // Findings from a multi-root scan are relative to a root chosen by the native
+    // scanner, with no root provenance left to tell rewrites apart.
+    if (pathCount > 1) {
+        throw new VisUserError("--fix accepts at most one path; run one scan per path so rewrite targets stay unambiguous.");
     }
 };

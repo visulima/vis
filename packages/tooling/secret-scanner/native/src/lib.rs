@@ -87,6 +87,26 @@ impl From<ScanOptions> for core::ScanOptions {
     }
 }
 
+/// Byte spans into the scanned content, for consumers that rewrite findings in place.
+#[napi(object)]
+pub struct SourceSpan {
+    pub match_start: u32,
+    pub match_end: u32,
+    pub secret_start: u32,
+    pub secret_end: u32,
+}
+
+impl From<core::SourceSpan> for SourceSpan {
+    fn from(v: core::SourceSpan) -> Self {
+        Self {
+            match_start: v.match_start,
+            match_end: v.match_end,
+            secret_start: v.secret_start,
+            secret_end: v.secret_end,
+        }
+    }
+}
+
 #[napi(object)]
 pub struct Finding {
     pub rule_id: String,
@@ -120,6 +140,10 @@ pub struct Finding {
     /// was not rewritten against a root (in-memory scans, history scans, paths outside every
     /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
     pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 impl From<core::Finding> for Finding {
@@ -142,6 +166,8 @@ impl From<core::Finding> for Finding {
             decoded,
             required_findings,
             root,
+            source_span,
+            span_unavailable_reason,
         } = v;
         Self {
             rule_id,
@@ -161,6 +187,8 @@ impl From<core::Finding> for Finding {
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
             root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
         }
     }
 }
@@ -201,6 +229,10 @@ pub struct SuppressedFinding {
     /// was not rewritten against a root (in-memory scans, history scans, paths outside every
     /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
     pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
@@ -225,6 +257,8 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             decoded,
             required_findings,
             root,
+            source_span,
+            span_unavailable_reason,
             suppressed_by,
         } = v;
         Self {
@@ -245,6 +279,8 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
             root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
             suppressed_by,
         }
     }
@@ -261,13 +297,38 @@ pub struct RequiredFinding {
     pub r#match: String,
     pub secret: String,
     pub decoded: Option<Vec<String>>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 impl From<core::RequiredFinding> for RequiredFinding {
     fn from(v: core::RequiredFinding) -> Self {
-        let core::RequiredFinding { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded } =
-            v;
-        Self { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded }
+        let core::RequiredFinding {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span,
+            span_unavailable_reason,
+        } = v;
+        Self {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
+        }
     }
 }
 

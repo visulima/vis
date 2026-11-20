@@ -30,7 +30,7 @@ const secretsOptionDefinitions = {
     },
     "dry-run": {
         defaultValue: false,
-        description: "With --init, preview the baseline without writing files",
+        description: "With --fix or --init, preview changes without writing files",
         type: Boolean,
     },
     "enable-rule": {
@@ -53,6 +53,12 @@ const secretsOptionDefinitions = {
         description: "Rule id or tag:<name> selector — drop matching findings. Repeatable.",
         multiple: true,
         type: String,
+    },
+    fix: {
+        defaultValue: false,
+        description:
+            "Replace detected secret values in working-tree files with <REDACTED>. Prints only a masked summary; combine with --dry-run to preview.",
+        type: Boolean,
     },
     ...negatable({
         defaultValue: false,
@@ -255,6 +261,8 @@ const secrets = defineCommand({
         ["vis secrets --history --max-commits 100", "Scan the last 100 commits with secret values masked"],
         ["vis secrets --no-redact", "Scan and show the full secret values (use with care)"],
         ["vis secrets --init", "Write an initial baseline from current findings"],
+        ["vis secrets --fix", "Replace secrets in working-tree files with <REDACTED>"],
+        ["vis secrets --fix --dry-run", "Preview which secrets --fix would replace, without writing files"],
         ["vis secrets --list-rules", "Print all bundled detection rules"],
         ["vis secrets --list-validators", "Print non-HTTP validator types in the ruleset + install hints for each"],
         ["vis secrets --exclude-rule generic-api-key --exclude-rule aws-access-token", "Drop noisy rules"],
