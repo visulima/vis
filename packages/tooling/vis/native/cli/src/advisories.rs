@@ -176,7 +176,6 @@ pub(crate) fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Lockfiles that `findMonorepoRootSync` reads as a package manager other than pnpm.
 const OTHER_LOCKFILES: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb"];
 
 /// Whether Node would reach the same answer without a workspace search or any config notice.
