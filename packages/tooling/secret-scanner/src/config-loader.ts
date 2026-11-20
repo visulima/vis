@@ -19,6 +19,7 @@ interface GitleaksConfig {
     description?: string;
     extend?: { disabledRules?: string[]; path?: string; useDefault?: boolean };
     rules?: GitleaksRule[];
+    title?: string;
 }
 
 interface ConfigLoadOptions {
@@ -141,6 +142,7 @@ const mergeConfigs = (base: GitleaksConfig, overlay: GitleaksConfig): GitleaksCo
         description: overlay.description ?? base.description,
         extend: overlay.extend ?? base.extend,
         rules: [...baseRules, ...userRules],
+        title: overlay.title ?? base.title,
     };
 };
 

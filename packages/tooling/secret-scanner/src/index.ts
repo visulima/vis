@@ -169,8 +169,19 @@ export {
 } from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
 export { maskFinding } from "./mask";
+export { DEFAULT_KEYWORD_MIN_LENGTH, type DefinedRule, defineRule, defineRuleset, inferKeywords, type KeywordHint, type RuleInput } from "./rule";
 export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
 export { scanString } from "./scan-string";
+export {
+    createRuleTester,
+    type RuleCase,
+    type RuleSnapshotCase,
+    type RuleSnapshotFinding,
+    type RuleTestCases,
+    type RuleTester,
+    RuleTesterError,
+    type RuleTestResult,
+} from "./testing";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
 export type {

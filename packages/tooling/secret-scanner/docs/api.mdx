@@ -120,6 +120,40 @@ const { findings, skipped, suppressed, unusedIgnores } = await scanGitStaged({ c
 
 Findings carry the absolute working-tree path, like `scanFiles`. `walk.excludePatterns` / `walk.excludeFromFiles` apply relative to `cwd`.
 
+## Authoring and testing rules
+
+### `defineRule(input)` / `defineRuleset(rules, title?)`
+
+Compile a typed rule definition into the plain gitleaks-shaped object used by `config.inline.rules`. `regex` accepts a string or a `RegExp`; only the `i`, `m` and `s` flags can be represented and become Rust inline flags.
+
+`keywords` defaults to `"auto"`, which infers literal fragments that are mandatory on every branch of the regex. Set it to `false` (or omit the field when inference finds nothing) to leave the rule always-running, or pass an explicit `string[]` to take full control. `inferKeywords(pattern, { minLength? })` is exported for inspecting the inference directly.
+
+```typescript
+import { defineRule } from "@visulima/secret-scanner";
+
+const rule = defineRule({
+    description: "Internal API key",
+    id: "internal-api-key",
+    regex: /int_[A-Za-z0-9]{32}/,
+});
+// { description, id, keywords: ["int_"], regex: "int_[A-Za-z0-9]{32}" }
+```
+
+### `createRuleTester(rule | rules, options?)`
+
+Run true/false-positive cases through the real detector with a controlled configuration: bundled rules, validators, baseline suppression and inline allow markers are all off. `run()` throws an aggregated `RuleTesterError` on mismatch; `snapshot()` returns a stable, masked payload suitable for `toMatchSnapshot()`.
+
+```typescript
+import { createRuleTester } from "@visulima/secret-scanner";
+
+const tester = createRuleTester(rule);
+
+await tester.run({
+    invalid: ["int_abcdefghij0123456789abcdefghijkl"],
+    valid: ["not a secret"],
+});
+```
+
 ## Introspection
 
 ### `listRules(options?)`
