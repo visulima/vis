@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,11 +92,16 @@ const runNative = (fixture: string, args: string[], ci: boolean, entry: string) 
     });
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis list: native vs Node", () => {
-    const paths = { scratch: "", stub: "" };
+    const paths = { fixtures: "", scratch: "", stub: "" };
 
     beforeAll(() => {
         paths.scratch = mkdtempSync(join(tmpdir(), "vis-list-parity-"));
         paths.stub = join(paths.scratch, "stub.mjs");
+        // A fixture without a lockfile would otherwise resolve the repository's own workspace, which
+        // other test files change while this one runs, so the Node and native runs would see different trees.
+        paths.fixtures = join(paths.scratch, "fixtures");
+
+        cpSync(fixtureRoot, paths.fixtures, { recursive: true });
 
         writeFileSync(paths.stub, `console.log("${marker}");\nprocess.exit(99);\n`);
     });
@@ -110,7 +115,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         (fixture, args) => {
             expect.assertions(4);
 
-            const directory = join(fixtureRoot, fixture);
+            const directory = join(paths.fixtures, fixture);
             const expectDelegated = !args.includes("--help") && !(nativeFixtures.has(fixture) && nativeArguments(args));
             const node = runNode(directory, args, true);
 
@@ -130,7 +135,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     it.each(fixtures)("%s delegates outside CI and matches Node", (fixture) => {
         expect.assertions(3);
 
-        const directory = join(fixtureRoot, fixture);
+        const directory = join(paths.fixtures, fixture);
         const node = runNode(directory, [], false);
         const native = runNative(directory, [], false, nodeEntry);
 
@@ -142,7 +147,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     it.each(["basic", "bin-null", "empty"])("%s answers the plain listing natively", (fixture) => {
         expect.assertions(1);
 
-        const native = runNative(join(fixtureRoot, fixture), [], true, paths.stub);
+        const native = runNative(join(paths.fixtures, fixture), [], true, paths.stub);
 
         expect(native.stdout).not.toContain(marker);
     });
