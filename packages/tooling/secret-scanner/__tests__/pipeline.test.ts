@@ -84,7 +84,7 @@ describe("postProcess — rule filter", () => {
 
         const findings = [sampleFinding({ ruleId: "a" }), sampleFinding({ ruleId: "b" })];
 
-        await expect(postProcess(findings, preparedScan(), undefined)).resolves.toStrictEqual(findings);
+        await expect(postProcess(findings, preparedScan(), { redact: false })).resolves.toStrictEqual(findings);
     });
 });
 
@@ -450,7 +450,7 @@ describe("postProcess — validation host allowlist + cancellation", () => {
             requests += 1;
         });
 
-        const options: ScanOptions = { config: { validate: true }, reportSuppressed: true };
+        const options: ScanOptions = { config: { validate: true }, redact: false, reportSuppressed: true };
         const context = await createSuppressionContext(options, [process.cwd()]);
         const finding = { ...sampleFinding({ ruleId: "rule.http" }), commit: { sha: "abc" } };
         const result = await postProcessDetailed({ findings: [finding], suppressed: [] }, preparedScan(httpMeta()), options, {
@@ -502,66 +502,96 @@ describe("postProcess — validation host allowlist + cancellation", () => {
     });
 });
 
-describe("postProcess — redact interactions", () => {
-    afterEach(() => {
-        resetPipelineWarningsForTests();
+describe("postProcess — masking", () => {
+    const SHORT = "******";
+    // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
+    const LONG = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
+    const MASKED_LONG = `ghp${"*".repeat(LONG.length - 6)}xY4`;
+
+    it("masks match and secret by default and keeps the real values with redact=false", async () => {
+        expect.assertions(4);
+
+        const findings = [sampleFinding({ match: `token = "${LONG}"`, secret: LONG })];
+        const masked = await postProcess(findings, preparedScan(), undefined);
+        const explicit = await postProcess(findings, preparedScan(), { redact: true });
+        const revealed = await postProcess(findings, preparedScan(), { redact: false });
+
+        expect(masked[0]?.secret).toBe(MASKED_LONG);
+        expect(JSON.stringify(masked)).not.toContain(LONG);
+        expect(explicit).toStrictEqual(masked);
+        expect(revealed[0]?.secret).toBe(LONG);
     });
 
-    it("skips validation and warns once when redact=true (masked secrets can't be validated)", async () => {
-        expect.assertions(3);
+    it("runs validation on the real secret and masks only the reported finding", async () => {
+        expect.assertions(4);
 
-        resetPipelineWarningsForTests();
+        const received: string[] = [];
+        const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+            received.push(String(request.headers["x-token"]));
+            response.writeHead(200);
+            response.end("ok");
+        });
+
+        await new Promise<void>((_resolve) => {
+            server.listen(0, "127.0.0.1", _resolve);
+        });
 
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        // Validator URL points at an unreachable host — had validation run it
-        // would resolve to "error". The redact guard skips it, leaving
-        // `validation` untouched, and no garbage request is fired.
-        const meta = new Map<string, RuleMeta>([
-            [
-                "rule.http",
-                {
-                    validation: {
-                        content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } },
-                        type: "Http",
+        try {
+            const { port } = server.address() as AddressInfo;
+            const meta = new Map<string, RuleMeta>([
+                [
+                    "rule.http",
+                    {
+                        validation: {
+                            content: {
+                                request: {
+                                    headers: { "X-Token": "{{ TOKEN }}" },
+                                    response_matcher: [{ status: [200], type: "StatusMatch" }],
+                                    url: `http://127.0.0.1:${String(port)}/v`,
+                                },
+                            },
+                            type: "Http",
+                        },
                     },
-                },
-            ],
-        ]);
-        const findings = [sampleFinding({ ruleId: "rule.http", secret: "abc***xyz" })];
+                ],
+            ]);
+            const out = await postProcess([sampleFinding({ match: LONG, ruleId: "rule.http", secret: LONG })], preparedScan(meta), {
+                config: { validate: true },
+            });
 
-        const out = await postProcess(findings, preparedScan(meta), { config: { validate: true }, redact: true });
-
-        expect(out[0]?.validation).toBeUndefined();
-        expect(consoleError).toHaveBeenCalledTimes(1);
-
-        // Second call in the same process must not duplicate the warning.
-        await postProcess(findings, preparedScan(meta), { config: { validate: true }, redact: true });
-
-        expect(consoleError).toHaveBeenCalledTimes(1);
-
-        consoleError.mockRestore();
+            expect(out[0]?.validation).toBe("verified");
+            expect(out[0]?.secret).toBe(MASKED_LONG);
+            expect(received).toStrictEqual([LONG]);
+            // No "cannot validate" diagnostic: validation is not skipped by masking.
+            expect(consoleError).not.toHaveBeenCalled();
+        } finally {
+            consoleError.mockRestore();
+            await new Promise<void>((_resolve) => {
+                server.close(() => {
+                    _resolve();
+                });
+            });
+        }
     });
 
-    it("does not drop a masked (short) secret via the content-shape heuristics when redact=true", async () => {
+    it("still drops a short non-alphanumeric secret via the content-shape heuristics when masking is on", async () => {
         expect.assertions(2);
 
-        // "******" is what the native layer masks a ≤6-char secret to. Without
-        // the redact gate `notAlphanumericString` would discard it outright.
-        const masked = sampleFinding({ ruleId: "short-secret", secret: "******" });
+        // The real value is judged, not its mask: `*****` is dropped, a real token that masks to `******` is kept.
+        const junk = sampleFinding({ ruleId: "short-secret", secret: "*****" });
+        const real = sampleFinding({ ruleId: "real-short", secret: "aB3dE4" });
 
-        const redacted = await postProcess([masked], preparedScan(), { redact: true });
+        await expect(postProcess([junk], preparedScan(), undefined)).resolves.toStrictEqual([]);
 
-        expect(redacted.map((f) => f.ruleId)).toStrictEqual(["short-secret"]);
+        const kept = await postProcess([real], preparedScan(), undefined);
 
-        // Sanity: without redact the same finding is dropped by the heuristic.
-        const notRedacted = await postProcess([masked], preparedScan(), undefined);
-
-        expect(notRedacted).toHaveLength(0);
+        expect(kept.map((f) => [f.ruleId, f.secret])).toStrictEqual([["real-short", SHORT]]);
     });
 
-    it("does not drop a masked match via the checksum filter when redact=true", async () => {
-        expect.assertions(1);
+    it("applies the checksum filter to the real match when masking is on", async () => {
+        expect.assertions(2);
 
         const meta: RuleMeta = {
             checksum: {
@@ -570,13 +600,45 @@ describe("postProcess — redact interactions", () => {
             },
             pattern: "(?xi)\n\\b\n(\n  zpka_(?P<body>[a-z0-9]{32})_(?P<checksum>[0-9a-f]{8})\n)\n",
         };
-        // A masked match can't satisfy the checksum; under redact the filter is
-        // skipped so the finding survives instead of being silently dropped.
-        const findings = [sampleFinding({ match: "zpk***c55", ruleId: "kingfisher.zuplo.1", secret: "zpk***c55" })];
+        // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token
+        const bad = "zpka_" + "0123456789abcdef0123456789abcdef_00000000";
+        const findings = [sampleFinding({ match: bad, ruleId: "kingfisher.zuplo.1", secret: bad })];
 
-        const out = await postProcess(findings, preparedScan(new Map([["kingfisher.zuplo.1", meta]])), { redact: true });
+        await expect(postProcess(findings, preparedScan(new Map([["kingfisher.zuplo.1", meta]])), undefined)).resolves.toStrictEqual([]);
+        await expect(postProcess(findings, preparedScan(new Map([["kingfisher.zuplo.1", meta]])), { redact: false })).resolves.toStrictEqual([]);
+    });
 
-        expect(out).toHaveLength(1);
+    it("reports the same findings whether masking is on or off", async () => {
+        expect.assertions(1);
+
+        const findings = [
+            sampleFinding({ ruleId: "a", secret: LONG }),
+            sampleFinding({ ruleId: "uuid", secret: "123e4567-e89b-12d3-a456-426614174000" }),
+            sampleFinding({ ruleId: "junk", secret: "********" }),
+        ];
+        const masked = await postProcess(findings, preparedScan(), undefined);
+        const revealed = await postProcess(findings, preparedScan(), { redact: false });
+
+        expect(masked.map((f) => f.ruleId)).toStrictEqual(revealed.map((f) => f.ruleId));
+    });
+
+    it("matches a baseline of real values and one of masked values", async () => {
+        expect.assertions(4);
+
+        const finding = sampleFinding({ ruleId: "leak", secret: LONG });
+        const moved = { ...finding, endLine: 40, startLine: 40 };
+
+        // Real-valued baseline (the old default output), finding moved so only the content hash can match.
+        await expect(postProcess([moved], preparedScan(), { baseline: [finding] })).resolves.toStrictEqual([]);
+
+        // Masked baseline (the new default output).
+        const [maskedBaseline] = await postProcess([finding], preparedScan(), undefined);
+
+        await expect(postProcess([moved], preparedScan(), { baseline: maskedBaseline ? [maskedBaseline] : [] })).resolves.toStrictEqual([]);
+
+        // The same masked baseline still matches when the scan reveals values.
+        await expect(postProcess([moved], preparedScan(), { baseline: maskedBaseline ? [maskedBaseline] : [], redact: false })).resolves.toStrictEqual([]);
+        await expect(postProcess([moved], preparedScan(), { baseline: [] })).resolves.toHaveLength(1);
     });
 });
 

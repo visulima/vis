@@ -40,16 +40,13 @@ const VALIDATOR_CONCURRENCY = 8;
  * - `notAlphanumericString` — skip `*****` / `------` / `//////`
  */
 const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOptions | undefined): F[] => {
-    const redact = options?.redact === true;
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
-    // The content-shape heuristics judge `finding.secret`. They stay off under
-    // `redact: true` so redacted scans keep reporting the findings they did
-    // when the native layer masked before the pipeline ran. The file-based
-    // `lockFile` heuristic reads `finding.file` and is unaffected.
-    const skipSequential = !redact && heuristics?.sequentialString !== false;
-    const skipUuid = !redact && heuristics?.potentialUuid !== false;
-    const skipNonAlnum = !redact && heuristics?.notAlphanumericString !== false;
+    // The content-shape heuristics judge `finding.secret`. Masking happens
+    // after them (see `postProcessDetailed`), so they always see the real value.
+    const skipSequential = heuristics?.sequentialString !== false;
+    const skipUuid = heuristics?.potentialUuid !== false;
+    const skipNonAlnum = heuristics?.notAlphanumericString !== false;
 
     if (!skipLockFile && !skipSequential && !skipUuid && !skipNonAlnum) {
         return findings;
@@ -147,10 +144,8 @@ const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] 
  * means we couldn't evaluate the template — those findings stay (conservative),
  * mirroring Kingfisher's `skip_if_missing: true` default.
  */
-const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>, redact: boolean): F[] => {
-    // Skipped under `redact: true`, for the same compatibility as the
-    // heuristics above.
-    if (redact || ruleMeta.size === 0) {
+const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>): F[] => {
+    if (ruleMeta.size === 0) {
         return findings;
     }
 
@@ -217,27 +212,10 @@ const resolveOneValidation = async (finding: Finding, context: ValidationContext
  * before `applySuppressions` (so suppressed findings are still validated —
  * baseline is a user-facing filter, not something the validator consults).
  */
-let warnedRedactWithValidate = false;
-
 const applyValidation = async (findings: Finding[], options: ScanOptions | undefined, ruleMeta: Map<string, RuleMeta>): Promise<Finding[]> => {
+    // Validation runs on the real secrets: masking is applied to the reported
+    // findings afterwards, so `redact` never changes which findings are verified.
     if (options?.config?.validate !== true || findings.length === 0) {
-        return findings;
-    }
-
-    // `redact: true` promises the secret is not used beyond detection, and a
-    // validator sends it to a provider. Skip validation entirely and warn once;
-    // the caller can re-run with `redact: false` to verify, then mask at
-    // output time.
-    if (options.redact === true) {
-        if (!warnedRedactWithValidate) {
-            warnedRedactWithValidate = true;
-
-            // eslint-disable-next-line no-console -- Diagnostic output; stderr is the intended channel for library warnings.
-            console.error(
-                "secret-scanner: `config.validate: true` with `redact: true` cannot validate — secrets are masked before the validator runs. Skipping validation; re-run with `redact: false` to verify findings.",
-            );
-        }
-
         return findings;
     }
 
@@ -344,7 +322,6 @@ const applyOnlyVerified = (findings: Finding[], options: ScanOptions | undefined
 /** Test-only: reset the once-per-process warning gates. */
 export const resetPipelineWarningsForTests = (): void => {
     warnedOnlyVerifiedWithoutValidate = false;
-    warnedRedactWithValidate = false;
 };
 
 /** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
@@ -352,7 +329,7 @@ const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan,
     const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
     const heuristicsFiltered = applyHeuristicFilters(filtered, options);
 
-    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
+    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta);
 };
 
 /**
@@ -393,7 +370,7 @@ export interface SuppressionContext {
      * any other suppression, and before validation.
      */
     isCommitAllowlisted?: (finding: Finding & { commit?: { sha: string } }) => boolean;
-    /** `redact` is on: reported findings are masked, and the baseline is matched against the masked form. */
+    /** Masking is on (the default): reported findings are masked. The baseline matches both the real and the masked form. */
     redact: boolean;
 }
 
@@ -405,7 +382,7 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
         baseline: await resolveBaselineSet(options?.baseline),
         bases,
         ignore,
-        redact: options?.redact === true,
+        redact: options?.redact !== false,
     };
 };
 
@@ -415,12 +392,11 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
  * entry shadowed by the baseline isn't reported as stale.
  *
  * `.gitleaksignore` secret entries match the real secret; the baseline is
- * matched against `shown`, the finding as reported (masked under `redact`), so
- * a baseline written from redacted output keeps matching.
+ * matched against the real finding and its masked form, so a baseline
+ * written from either real or masked output keeps matching.
  */
 const suppressionFor = (
     finding: Finding,
-    shown: Finding,
     context: SuppressionContext,
 ): { entry?: SuppressedFinding["suppressedByEntry"]; reason: SuppressionReason } | undefined => {
     if (context.ignore?.isIgnoreFile(finding, context.bases)) {
@@ -429,7 +405,9 @@ const suppressionFor = (
 
     const entry = context.ignore?.match(finding, context.bases);
 
-    if (context.baseline.size > 0 && baselineKeys(shown).some((key) => context.baseline.has(key))) {
+    // A baseline holds real values (written with `redact: false`) or masked ones
+    // (the default), whichever `redact` this scan runs with: try both forms.
+    if (context.baseline.size > 0 && [finding, maskFinding(finding)].some((candidate) => baselineKeys(candidate).some((key) => context.baseline.has(key)))) {
         return { reason: "baseline" };
     }
 
@@ -481,14 +459,14 @@ export const postProcessDetailed = async (
 
     const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
-    // The single masking point for `redact`: the native scan returns real values.
+    // The single masking point (on unless `redact: false`): the native scan returns real values.
     const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
 
     for (const finding of verifiedOnly) {
         const shown = mask(finding);
-        const hit = suppressionFor(finding, shown, suppression);
+        const hit = suppressionFor(finding, suppression);
 
         if (hit === undefined) {
             findings.push(shown);

@@ -115,13 +115,13 @@ vis secrets --format sarif > report.sarif
 
 ### Output
 
-| Flag                | Type    | Default | Description                                            |
-| ------------------- | ------- | ------- | ------------------------------------------------------ |
-| `--format <fmt>`    | string  | `text`  | Output format: `text`, `json`, `sarif`.                |
-| `--redact`          | boolean | `false` | Mask secret values in output.                          |
-| `--quiet`           | boolean | `false` | Suppress all progress output (only emit findings).     |
-| `--verbose`         | boolean | `false` | Print diagnostic info to stderr (skipped rules, etc.). |
-| `--concurrency <n>` | number  | auto    | Rayon worker threads (`0` / omit = auto).              |
+| Flag                | Type    | Default | Description                                                                                |
+| ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------ |
+| `--format <fmt>`    | string  | `text`  | Output format: `text`, `json`, `sarif`.                                                    |
+| `--no-redact`       | boolean | `false` | Print the real secret values. Values are masked by default (`--redact` is still accepted). |
+| `--quiet`           | boolean | `false` | Suppress all progress output (only emit findings).                                         |
+| `--verbose`         | boolean | `false` | Print diagnostic info to stderr (skipped rules, etc.).                                     |
+| `--concurrency <n>` | number  | auto    | Rayon worker threads (`0` / omit = auto).                                                  |
 
 ### Baseline
 
@@ -153,6 +153,8 @@ Rules without an explicit label are treated as `low`. That's every bundled gitle
 - Per-host concurrency capped at 4; global cap at 8.
 - `--only-verified` drops any finding whose `validation` is not `verified` — ideal for CI gating.
 - Non-HTTP validators may require optional peer-deps (e.g. AWS / GCP / MySQL drivers). Run `vis secrets --list-validators` to see which are referenced by the current ruleset.
+
+Validation uses the real secret even though output is masked by default (masking is applied afterwards), so `--validate` works the same with or without `--no-redact`.
 
 > **Warning:** `--validate` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test.
 

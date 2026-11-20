@@ -2,7 +2,7 @@
  * Report emitters for `vis secrets`: CSV, JUnit XML and GitLab Code Quality.
  *
  * Findings arrive with paths already relative to the workspace root (see
- * `toRelativeFinding`) and already masked when `--redact` is on. History
+ * `toRelativeFinding`) and already masked unless `--no-redact` is given. History
  * findings carry the commit that introduced them.
  */
 

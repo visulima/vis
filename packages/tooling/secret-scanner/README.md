@@ -121,7 +121,7 @@ import {
 } from "@visulima/secret-scanner";
 
 // 1) Scan directories (respects .gitignore)
-const findings = await scan([process.cwd()], { redact: true });
+const findings = await scan([process.cwd()]); // secret values are masked by default; pass { redact: false } to reveal them
 
 // 2) Scan a specific file list (e.g., output of `git diff --name-only`)
 const staged = await scanFiles(["src/app.ts", "src/db.ts"]);
@@ -354,7 +354,7 @@ interface ScanOptions {
      */
     maxArchiveDepth?: number;
 
-    /** Mask `match` / `secret` strings in every finding. */
+    /** Mask `match` / `secret` strings in every finding (default: true). `false` reveals them. */
     redact?: boolean;
 
     /** Abort the (network-bound) validation stage. Forwarded to each validator's `fetch()`. */

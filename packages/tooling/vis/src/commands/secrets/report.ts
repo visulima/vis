@@ -75,17 +75,17 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
 /**
  * Print the `--format` report to stdout and write every `--report` file.
  *
- * With `--redact` the scanner has already masked every secret-bearing field,
+ * Unless `--no-redact` is given the scanner has already masked every secret-bearing field,
  * composite `requiredFindings` included, so the findings are rendered as is.
  */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
     const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
-    const shouldRedact = scanOptions.redact === true;
+    const shouldRedact = scanOptions.redact !== false;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
     const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
-    // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
-    // History reports carry commit messages, which `--redact` doesn't mask and which
+    // Unredacted reports hold every secret in clear text: owner-only.
+    // History reports carry commit messages, which masking doesn't touch and which
     // can quote a secret, so they stay owner-only either way.
     const sensitive = !shouldRedact || history;
 

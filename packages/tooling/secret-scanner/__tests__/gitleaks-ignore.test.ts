@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
 import { GitleaksIgnore } from "../src/gitleaks-ignore";
-import { scanDetailed, scanFilesDetailed } from "../src/index";
 import { maskSecret } from "../src/mask";
 import type { Finding, ScanOptions } from "../src/types";
+import { scanDetailed, scanFilesDetailed } from "./helpers/unmasked";
 
 const SECRET = "TESTTOKEN_abcdefghij0123456789";
 const OTHER = "TESTTOKEN_zyxwvutsrq9876543210";

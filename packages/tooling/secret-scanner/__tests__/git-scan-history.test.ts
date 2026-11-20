@@ -6,9 +6,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { scanGitHistory, scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
-import { scanFiles, scanString } from "../src/index";
 import type { ScanOptions } from "../src/types";
+import { scanFiles, scanGitHistory, scanGitHistoryDetailed, scanGitStaged, scanString } from "./helpers/unmasked";
 
 // Fake GitHub PATs (`ghp_` + 36 base62 chars) matching the bundled `github-pat` rule.
 const SECRET_A = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";

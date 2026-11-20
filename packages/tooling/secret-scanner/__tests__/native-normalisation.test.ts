@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { fingerprint, scanString } from "../src/index";
+import { fingerprint } from "../src/index";
 import type { ScanOptions } from "../src/types";
+import { scanString } from "./helpers/unmasked";
 
 // Warm the Rust regex JIT (full bundled ruleset) once so tests don't timeout.
 beforeAll(async () => {

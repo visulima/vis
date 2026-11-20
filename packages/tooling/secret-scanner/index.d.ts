@@ -116,7 +116,7 @@ export interface ScanOptions {
     ignoreFiles?: Array<string>;
     /** Max file size in bytes (default 10 MiB). Files above are skipped. */
     maxFileSize?: number;
-    /** Redact secret values in output (default: false) */
+    /** Not read by the native scan: values are masked by the TypeScript pipeline (default: on) */
     redact?: boolean;
     /** Number of rayon worker threads. 0/omitted = use rayon's global pool. */
     concurrency?: number;

@@ -367,7 +367,7 @@ class BlobScanner {
      * Shadowing runs here rather than only in the pipeline so it sees every
      * match, before parent dedupe removes some: an old secret now also
      * matched by generic-api-key is not reported again. Secrets are real even
-     * under `redact` (the pipeline masks), so parent comparisons never
+     * when masking is on (the pipeline masks), so parent comparisons never
      * confuse two secrets that mask alike (`ghp***xY4`). `commit` lets AND
      * allowlists that list `commits` match.
      */

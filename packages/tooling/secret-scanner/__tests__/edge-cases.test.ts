@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { inspectRuleset, listRules, scan, scanFiles, scanString } from "../src/index";
+import { inspectRuleset, listRules } from "../src/index";
+import { scan, scanFiles, scanString } from "./helpers/unmasked";
 
 // Warm the Rust regex JIT (full bundled ruleset) once so tests don't timeout.
 // Tests that merge custom configs (extendBundled + inline rules, tag selectors)

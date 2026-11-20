@@ -3,7 +3,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { resolveConfig } from "../src/config-loader";
 import type { GitleaksConfig } from "../src/index";
-import { inspectRuleset, scanString } from "../src/index";
+import { inspectRuleset } from "../src/index";
+import { scanString } from "./helpers/unmasked";
 
 vi.setConfig({ testTimeout: 60_000 });
 

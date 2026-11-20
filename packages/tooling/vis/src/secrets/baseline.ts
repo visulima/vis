@@ -116,7 +116,7 @@ export interface WriteBaselineOptions {
     replace?: boolean;
 
     /**
-     * The findings hold real secrets (no `--redact`): write the file 0600.
+     * The findings hold real secrets (`--no-redact`): write the file 0600.
      * Default `true`.
      */
     sensitive?: boolean;

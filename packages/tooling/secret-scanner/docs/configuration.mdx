@@ -62,7 +62,7 @@ export interface ScanOptions {
 | `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                         |
 | `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
 | `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
-| `redact`           | `boolean`         | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
+| `redact`           | `boolean`         | `true`  | Mask the `match` and `secret` strings in every emitted finding. `false` reveals the real values. See [Masking](#masking).                           |
 | `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                              |
 | `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
 
@@ -161,7 +161,15 @@ Supported today: Kingfisher-style HTTP validators with `StatusMatch` / `WordMatc
 
 `onlyVerified: true` then filters the emitted set down to findings whose `validation === "verified"` — useful for CI gating where a suspect match that can't be verified is not a blocker.
 
+Validation uses the real secret even when output is masked: masking is applied to the reported findings afterwards, so `redact` (on by default) never changes what is verified. A masked scan with `validate: true` still sends the real candidate to the provider.
+
 > **Warning:** `validate: true` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test.
+
+### Masking
+
+`redact` is on by default: every emitted `match` and `secret` (and those of composite `requiredFindings`) is masked as `abc***xyz`, or `******` for six characters or fewer. Set `redact: false` (CLI: `--no-redact`) to reveal the real values.
+
+Masking is the last step of the pipeline. Rule matching, entropy and stop-word filters, the [heuristics](#heuristics--post-detection-false-positive-filters), checksum filtering, same-span dedup, `.gitleaksignore` secret entries, baselines and `validate` all work on the real values, so `redact` only changes what is printed, never which findings are reported. A baseline matches whether it holds real values (written with `redact: false`) or masked ones.
 
 ## `walk` — filesystem traversal
 
@@ -194,6 +202,8 @@ Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it;
 ## `baseline` — fingerprint suppression
 
 Set `baseline` to the path of a JSON array of `Finding` objects. Any finding whose content-hash fingerprint — SHA-256 over `(secret, ruleId, file)` truncated to 16 hex chars — already appears in the baseline is suppressed. Because the fingerprint hashes content rather than position, the entry survives line shifts inside the file; it only invalidates when the secret itself, the rule, or the file path changes.
+
+A baseline matches by the real value and by its masked form, whichever `redact` the scan uses. Findings are masked by default, so `vis secrets --init` / `--update-baseline` write entries with masked `secret` strings (and the file is not owner-only unless `--no-redact` is given). Those entries are fingerprinted over the masked value: two different secrets in the same file and rule that mask alike (same first three characters, last three characters and length, or any secrets of six characters or fewer) share a fingerprint. Use `--no-redact` when writing a baseline that must tell such secrets apart; it then holds real secrets, so keep it out of version control or accept the file mode `0600` default.
 
 Legacy gitleaks-style baselines using the `<file>:<ruleID>:<startLine>` form keep suppressing correctly on read, so migrating to the content-hash form can happen at your own pace via `vis secrets --update-baseline`.
 
@@ -265,7 +275,7 @@ Proximity rules:
 - Same line: `withinColumns` (if set) bounds the column distance.
 - Different lines: only `withinLines` applies. `withinColumns` is never compared across lines (upstream gitleaks fixed the same bug in six PRs, #2123 to #2255). A rule with only `withinColumns` therefore needs the required finding on the same line. This differs from the "rectangular" area the gitleaks README describes for both bounds: a dependency on the next line is not rejected just because it starts at a different column.
 
-A reported finding carries `requiredFindings`: for each required id, the nearest finding that satisfied it (redacted with `redact: true`). The check runs per file, per archive entry and per `scanString` buffer, on the findings before the same-span dedup, so a required finding counts even if it is `skipReport` or itself a composite rule. An allowlisted or inline-allowed finding never satisfies a requirement, as in gitleaks. A satisfied composite finding wins the same-span dedup against any other rule matching the exact same span, whatever its priority; the other rule is listed in `alternateMatches`. A composite `generic-api-key` is also never dropped by the generic-overlap filter.
+A reported finding carries `requiredFindings`: for each required id, the nearest finding that satisfied it (masked like `match` and `secret`, unless `redact: false`). The check runs per file, per archive entry and per `scanString` buffer, on the findings before the same-span dedup, so a required finding counts even if it is `skipReport` or itself a composite rule. An allowlisted or inline-allowed finding never satisfies a requirement, as in gitleaks. A satisfied composite finding wins the same-span dedup against any other rule matching the exact same span, whatever its priority; the other rule is listed in `alternateMatches`. A composite `generic-api-key` is also never dropped by the generic-overlap filter.
 
 A rule whose `required` names a rule that isn't loaded (unknown id, failed regex, or filtered out by `minConfidence` or opt-in gating) can never match. It is dropped and listed by `inspectRuleset()` with the reason, and `verbose: true` prints it.
 

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { scanString } from "../src/index";
+import { scanString } from "./helpers/unmasked";
 
 // Warm the Rust regex JIT (full bundled ruleset) once so tests don't timeout.
 beforeAll(async () => {

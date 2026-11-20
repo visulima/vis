@@ -107,7 +107,7 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
         return;
     }
 
-    const count = writeBaseline(findings, baselinePath, root, { replace: true, sensitive: scanOptions.redact !== true });
+    const count = writeBaseline(findings, baselinePath, root, { replace: true, sensitive: scanOptions.redact === false });
 
     pail.success(`Wrote ${DEFAULT_BASELINE} (${String(count)} findings).`);
     pail.notice("Commit it. Use `vis secrets --baseline .secrets-baseline.json` in CI. Add path patterns to .gitignore to exclude directories from scanning.");
@@ -293,7 +293,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const baselineFullPath = typeof scanOptions.baseline === "string" ? scanOptions.baseline : join(root, DEFAULT_BASELINE);
 
     if (flags.updateBaseline) {
-        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline, sensitive: scanOptions.redact !== true });
+        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline, sensitive: scanOptions.redact === false });
 
         status.success(`Baseline updated: ${relative(root, baselineFullPath) || baselineFullPath} now contains ${String(count)} entries.`);
 

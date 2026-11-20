@@ -14,8 +14,8 @@ Recursively scan one or more paths for secrets. Runs the detector on a Rust thre
 ```typescript
 import { scan } from "@visulima/secret-scanner";
 
+// `match` and `secret` are masked by default (`ghp***…xY4`); `redact: false` reveals them.
 const findings = await scan([process.cwd()], {
-    redact: true,
     walk: { gitignore: true, maxFileSize: 5 * 1024 * 1024 },
 });
 ```
@@ -273,7 +273,7 @@ interface RequiredFinding {
 - `confidence` resolves to `"low"` when the rule declares none (every bundled gitleaks rule). Use it alongside `config.minConfidence` to filter.
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.
 - `decoded` is present only when the secret was found inside encoded text (see `maxDecodeDepth`). It lists the encoding chain, outermost first, e.g. `["base64"]` or `["base64", "hex"]`. `match` and `secret` hold the decoded value; line and column point at the original encoded span.
-- `requiredFindings` is present only on findings of composite rules (`required` in the rule config, see [Composite rules](./configuration#composite-rules-required-skipreport)). It holds, for each required rule id, the nearest finding in the same file that satisfied the rule. `match` and `secret` are redacted with `redact: true`.
+- `requiredFindings` is present only on findings of composite rules (`required` in the rule config, see [Composite rules](./configuration#composite-rules-required-skipreport)). It holds, for each required rule id, the nearest finding in the same file that satisfied the rule. `match` and `secret` are masked like the finding's own, unless `redact: false`.
 - `source` tags the rule's provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or whatever the user declared.
 - `validation` is set only when `config.validate: true`. See [`ValidationStatus`](#validationstatus) below.
 

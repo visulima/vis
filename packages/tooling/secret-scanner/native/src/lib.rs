@@ -33,7 +33,7 @@ pub struct ScanOptions {
     pub ignore_files: Option<Vec<String>>,
     /// Max file size in bytes (default 10 MiB). Files above are skipped.
     pub max_file_size: Option<u32>,
-    /// Redact secret values in output (default: false)
+    /// Not read by the native scan: values are masked by the TypeScript pipeline (default: on)
     pub redact: Option<bool>,
     /// Number of rayon worker threads. 0/omitted = use rayon's global pool.
     pub concurrency: Option<u32>,

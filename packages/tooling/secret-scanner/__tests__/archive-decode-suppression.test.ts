@@ -6,8 +6,8 @@ import { gzipSync } from "node:zlib";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { scanDetailed } from "../src/index";
 import type { ScanOptions } from "../src/types";
+import { scanDetailed } from "./helpers/unmasked";
 
 vi.setConfig({ testTimeout: 30_000 });
 

@@ -133,3 +133,30 @@ describe(validateFormat, () => {
         );
     });
 });
+
+describe("resolveScanOptions redact", () => {
+    it("masks by default", () => {
+        expect.assertions(1);
+
+        expect(resolveScanOptions(NO_FLAGS, undefined, ROOT).redact).toBe(true);
+    });
+
+    it("`--no-redact` (redact: false) reveals values and wins over config", () => {
+        expect.assertions(2);
+
+        expect(resolveScanOptions({ redact: false }, undefined, ROOT).redact).toBe(false);
+        expect(resolveScanOptions({ redact: false }, { redact: true }, ROOT).redact).toBe(false);
+    });
+
+    it("`--redact` is accepted and wins over a config that reveals", () => {
+        expect.assertions(1);
+
+        expect(resolveScanOptions({ redact: true }, { redact: false }, ROOT).redact).toBe(true);
+    });
+
+    it("`redact: false` in config reveals values", () => {
+        expect.assertions(1);
+
+        expect(resolveScanOptions(NO_FLAGS, { redact: false }, ROOT).redact).toBe(false);
+    });
+});

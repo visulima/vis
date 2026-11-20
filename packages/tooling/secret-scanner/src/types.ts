@@ -188,7 +188,13 @@ export interface ScanOptions {
      */
     maxDecodeDepth?: number;
 
-    /** Mask `match` / `secret` strings in every finding. */
+    /**
+     * Mask `match` / `secret` strings in every reported finding (`abc***xyz`).
+     * On by default; pass `false` to reveal the real values. Masking is the last
+     * step: heuristics, checksums, baselines and `config.validate` all work on
+     * the real values, so it never changes which findings are reported.
+     * Default: `true`.
+     */
     redact?: boolean;
 
     /**
@@ -273,7 +279,7 @@ export interface Finding {
     /**
      * Composite rules only (`required` in the rule config): the findings of the rule's
      * required dependencies that satisfied it, the nearest one per required id, in the
-     * order the rule declares them. Redacted along with `secret` when `redact` is on.
+     * order the rule declares them. Masked along with `secret` unless `redact: false`.
      */
     requiredFindings?: RequiredFinding[];
     ruleId: string;

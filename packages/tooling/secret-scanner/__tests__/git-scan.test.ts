@@ -5,8 +5,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { scanGitHistory } from "../src/git-scan";
-import { scanString } from "../src/index";
+import { scanGitHistory, scanString } from "./helpers/unmasked";
 
 // A real (fake) GitHub PAT — `ghp_` + 36 base62 chars — matches the bundled
 // `github-pat` rule. Defined once so commit content and assertions agree.

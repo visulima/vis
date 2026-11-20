@@ -374,7 +374,7 @@ describe("vis secrets reporting (end-to-end)", () => {
 
         const root = workspace();
 
-        await runSecrets({ format: "json", report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
+        await runSecrets({ format: "json", redact: false, report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
 
         expect(JSON.parse(stdout.join(""))).toHaveLength(1);
         expect(JSON.parse(readFileSync(join(root, "out", "s.sarif"), "utf8")).version).toBe("2.1.0");
@@ -382,7 +382,23 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
     }, 60_000);
 
-    it("never prints or writes a raw secret with --redact", async () => {
+    it("a baseline of real values still suppresses a moved finding while output is masked", async () => {
+        expect.assertions(2);
+
+        const root = workspace();
+
+        // Written before masking was the default: holds the real secret, at a line the finding has since left.
+        const baseline = join(tempDir(), "baseline.json");
+
+        writeFileSync(baseline, JSON.stringify([finding({ file: "a.ts", startLine: 40 })]));
+
+        await runSecrets({ baseline, format: "json" }, root);
+
+        expect(JSON.parse(stdout.join(""))).toStrictEqual([]);
+        expect(process.exitCode).not.toBe(1);
+    }, 60_000);
+
+    it("never prints or writes a raw secret when masking (--redact, also the default)", async () => {
         expect.assertions(5);
 
         // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens
@@ -406,19 +422,21 @@ describe("vis secrets reporting (end-to-end)", () => {
     }, 60_000);
 
     it.skipIf(process.platform === "win32")(
-        "writes report files owner-only unless redacted",
+        "writes report files owner-only when the values are revealed",
         async () => {
-            expect.assertions(2);
+            expect.assertions(3);
 
             const root = workspace();
 
-            await runSecrets({ report: ["csv=raw.csv"] }, root);
+            await runSecrets({ redact: false, report: ["csv=raw.csv"] }, root);
 
             expect(mode(join(root, "raw.csv"))).toBe(0o600);
+            expect(readFileSync(join(root, "raw.csv"), "utf8")).toContain(PAT_A);
 
-            await runSecrets({ redact: true, report: ["csv=redacted.csv"] }, root);
+            // Masked by default, so nothing sensitive and no owner-only restriction.
+            await runSecrets({ report: ["csv=masked.csv"] }, root);
 
-            expect(mode(join(root, "redacted.csv"))).not.toBe(0o600);
+            expect(mode(join(root, "masked.csv"))).not.toBe(0o600);
         },
         60_000,
     );

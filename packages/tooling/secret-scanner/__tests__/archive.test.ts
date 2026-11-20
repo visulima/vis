@@ -8,7 +8,7 @@ import { crc32, gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Finding, ScanOptions } from "../src/index";
-import { scan, scanFiles } from "../src/index";
+import { scan, scanFiles } from "./helpers/unmasked";
 
 vi.setConfig({ testTimeout: 30_000 });
 

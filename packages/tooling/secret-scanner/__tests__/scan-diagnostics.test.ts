@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { scanDetailed, scanFilesDetailed, scanString, toSarif, toSarifUri, writeBaseline } from "../src/index";
+import { toSarif, toSarifUri, writeBaseline } from "../src/index";
 import type { Finding } from "../src/types";
+import { scanDetailed, scanFilesDetailed, scanString } from "./helpers/unmasked";
 
 const SECRET = "TESTTOKEN_abcdefghij0123456789";
 const OTHER = "TESTTOKEN_zyxwvutsrq9876543210";
