@@ -164,7 +164,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         writeFileSync(join(directory, "package.json"), "{}");
 
-        const delegated = nativeRun([], directory, { VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
+        const delegated = nativeRun([], directory, { VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
         const native = nativeRun([], directory, { VIS_FALLBACK_ENTRY: nodeEntry });
         const node = nodeRun([], directory);
 
