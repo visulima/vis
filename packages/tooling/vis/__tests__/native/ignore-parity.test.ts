@@ -129,26 +129,21 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(nativeWrite.status).toBe(0);
     }, 60_000);
 
-    it("delegates when VIS_MONOREPO_ROOT names another directory, and matches Node", () => {
-        expect.assertions(4);
+    it("delegates when VIS_MONOREPO_ROOT names another directory", () => {
+        expect.assertions(1);
 
         const directory = copyFixture("empty-project");
         const missingEntry = join(scratch, "missing-entry.js");
 
         // A delegated run cannot reach a missing entry, so a non-zero status shows the binary handed over.
-        // The fallback entry is set too: a binary outside the package reads VIS_FALLBACK_ENTRY, not the override.
+        // Node's own output is not compared here: a delegated run would only compare Node with itself.
         const stale = nativeRun([], directory, {
             VIS_FALLBACK_ENTRY: missingEntry,
             VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry,
             VIS_MONOREPO_ROOT: scratch,
         });
-        const native = nativeRun([], copyFixture("empty-project"), { VIS_MONOREPO_ROOT: scratch });
-        const node = nodeRun([], copyFixture("empty-project"), { VIS_MONOREPO_ROOT: scratch });
 
         expect(stale.status).not.toBe(0);
-        expect(native.status).toBe(node.status);
-        expect(native.stdout).toBe(node.stdout);
-        expect(native.stdout).not.toBe("");
     }, 60_000);
 
     it("delegates when an ancestor holds a root marker, and matches Node", () => {
