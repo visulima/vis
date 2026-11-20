@@ -78,7 +78,9 @@ const runNode = (fixture: string, args: string[], ci: boolean) =>
 
 // `vis list` computes its root from the working directory and never reads `VIS_MONOREPO_ROOT`. The
 // native runs get a stale value on purpose, so a regression that trusted it would show up as a mismatch.
-const runNative = (fixture: string, args: string[], ci: boolean, entry: string) =>
+// `root` is the inherited VIS_MONOREPO_ROOT. A delegated run gets the same value as its Node reference
+// (Node's `list --deps` reads it), while a native answer keeps the stale parent so it is never trusted.
+const runNative = (fixture: string, args: string[], ci: boolean, entry: string, root = dirname(fixture)) =>
     spawnSync(binary as string, ["list", ...args], {
         cwd: fixture,
         encoding: "utf8",
@@ -88,7 +90,7 @@ const runNative = (fixture: string, args: string[], ci: boolean, entry: string) 
             ...contextEnvironment(fixture, ci),
             VIS_FALLBACK_ENTRY: entry,
             VIS_FALLBACK_ENTRY_OVERRIDE: entry,
-            VIS_MONOREPO_ROOT: dirname(fixture),
+            VIS_MONOREPO_ROOT: root,
             VIS_NODE: process.execPath,
             VIS_VERSION: version,
         },
@@ -127,7 +129,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(probe.stdout.includes(marker)).toBe(expectDelegated);
 
-            const native = runNative(directory, args, true, nodeEntry);
+            const native = runNative(directory, args, true, nodeEntry, expectDelegated ? directory : dirname(directory));
 
             expect(native.stdout).toBe(node.stdout);
             expect(native.stderr).toBe(node.stderr);
@@ -140,7 +142,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         const directory = join(paths.fixtures, fixture);
         const node = runNode(directory, [], false);
-        const native = runNative(directory, [], false, nodeEntry);
+        const native = runNative(directory, [], false, nodeEntry, directory);
 
         expect(native.stdout).toBe(node.stdout);
         expect(native.stderr).toBe(node.stderr);
