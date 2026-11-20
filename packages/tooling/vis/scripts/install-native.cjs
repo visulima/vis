@@ -160,19 +160,21 @@ const pnpmShimMayStartNode = () => {
 
     // pnpm lists packages whose scripts it skipped (`ignoredBuilds`, `pendingBuilds`) in
     // `node_modules/.modules.yaml`, next to the `.pnpm` virtual store.
-    try {
-        const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+    let version;
 
-        return directories.some((modules) => {
-            try {
-                return skippedBuilds(readFileSync(join(modules, ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
-            } catch {
-                return false;
-            }
-        });
+    try {
+        ({ version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")));
     } catch {
         return false;
     }
+
+    return directories.some((modules) => {
+        try {
+            return skippedBuilds(readFileSync(join(modules, ".modules.yaml"), "utf8")).some((entry) => isThisPackage(entry, version));
+        } catch {
+            return false;
+        }
+    });
 };
 
 const main = () => {
