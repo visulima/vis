@@ -747,7 +747,7 @@ export interface VisConfig {
             presets?: string[];
         };
 
-        /** Redact secret values in findings. */
+        /** Mask secret values in findings and reports. Default `true`; `false` reveals them. */
         redact?: boolean;
 
         /** Rule-id filters applied after scanning. */

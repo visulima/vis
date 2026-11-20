@@ -97,7 +97,7 @@ describe("scanGitHistory dedup", () => {
         write("settings.ts", `// moved\nexport const token = "${SECRET_A}";\n`);
         git("commit", "-q", "-am", "rename");
 
-        const findings = await scanGitHistory({ cwd: git("rev-parse", "--show-toplevel") });
+        const findings = await scanGitHistory({ cwd: git("rev-parse", "--show-toplevel"), redact: false });
         const hits = findings.filter((finding) => finding.secret === SECRET_A);
 
         expect(hits).toHaveLength(1);
@@ -115,7 +115,7 @@ describe("scanGitHistory dedup", () => {
         write("config.ts", `a = "${SECRET_A}"\nb = "${SECRET_B}"\n`);
         git("commit", "-q", "-am", "second");
 
-        const findings = await scanGitHistory({ cwd: repo });
+        const findings = await scanGitHistory({ cwd: repo, redact: false });
 
         expect(secretsOf(findings, SECRET_A)).toBe(1);
         expect(findings.find((finding) => finding.secret === SECRET_B)?.commit.message).toBe("second");
@@ -212,7 +212,7 @@ describe("scanGitHistory merges and refs", () => {
         // Guard the fixture: HEAD must be a real two-parent merge.
         expect(git("rev-list", "--parents", "-1", "HEAD").split(" ")).toHaveLength(3);
 
-        const findings = await scanGitHistory({ cwd: repo });
+        const findings = await scanGitHistory({ cwd: repo, redact: false });
         const mergeHit = findings.filter((finding) => finding.secret === SECRET_B);
 
         expect(mergeHit).toHaveLength(1);
@@ -235,8 +235,8 @@ describe("scanGitHistory merges and refs", () => {
         git("commit", "-q", "-m", "feature leak");
         git("checkout", "-q", "main");
 
-        expect(secretsOf(await scanGitHistory({ cwd: repo }), SECRET_D)).toBe(0);
-        expect(secretsOf(await scanGitHistory({ all: true, cwd: repo }), SECRET_D)).toBe(1);
+        expect(secretsOf(await scanGitHistory({ cwd: repo, redact: false }), SECRET_D)).toBe(0);
+        expect(secretsOf(await scanGitHistory({ all: true, cwd: repo, redact: false }), SECRET_D)).toBe(1);
         await expect(scanGitHistory({ all: true, cwd: repo, range: "HEAD" })).rejects.toThrow(/cannot be combined/);
     });
 });
@@ -266,7 +266,7 @@ describe("scanGitHistory commit allowlists", () => {
             regex: "TESTTOKEN_[A-Z0-9]{20}",
         };
 
-        const baseline = await scanGitHistory({ config: { inline: { rules: [customRule] } }, cwd: repo });
+        const baseline = await scanGitHistory({ config: { inline: { rules: [customRule] } }, cwd: repo, redact: false });
 
         expect(baseline.some((finding) => finding.ruleId === "test-token")).toBe(false);
         expect(secretsOf(baseline, SECRET_B)).toBe(1);
@@ -279,6 +279,7 @@ describe("scanGitHistory commit allowlists", () => {
                 },
             },
             cwd: repo,
+            redact: false,
         });
 
         expect(secretsOf(allowlisted, SECRET_A)).toBe(0);
@@ -303,6 +304,7 @@ describe("scanGitHistory commit allowlists", () => {
         const options = {
             config: { inline: { allowlists: [{ commits: [first], condition: "AND", paths: ["^fixture-"] }] } },
             cwd: repo,
+            redact: false,
         };
         const findings = await scanGitHistory(options);
 
@@ -311,7 +313,7 @@ describe("scanGitHistory commit allowlists", () => {
         expect(secretsOf(findings, SECRET_B)).toBe(1);
 
         // A working-tree scan has no commit, so the AND allowlist doesn't apply.
-        const workingTree = await scanString(`t = "${SECRET_A}"\n`, "fixture-one.ts", { config: options.config });
+        const workingTree = await scanString(`t = "${SECRET_A}"\n`, "fixture-one.ts", { config: options.config, redact: false });
 
         expect(secretsOf(workingTree, SECRET_A)).toBe(1);
     });
@@ -331,7 +333,7 @@ describe("scanGitHistory blob handling", () => {
         git("add", ".");
         git("commit", "-q", "-m", "add env");
 
-        const findings = await scanGitHistory({ cwd: repo });
+        const findings = await scanGitHistory({ cwd: repo, redact: false });
 
         expect(secretsOf(findings, SECRET_A)).toBe(1);
         expect(findings.find((finding) => finding.secret === SECRET_A)?.file).toBe("schlüssel.env");
@@ -408,7 +410,7 @@ describe(scanGitStaged, () => {
         // Unstaged secret: won't be committed.
         write("base.ts", `t = "${SECRET_B}"\n`);
 
-        const result = await scanGitStaged({ cwd: repo });
+        const result = await scanGitStaged({ cwd: repo, redact: false });
 
         expect(secretsOf(result.findings, SECRET_A)).toBe(1);
         expect(secretsOf(result.findings, SECRET_B)).toBe(0);

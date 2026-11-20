@@ -107,12 +107,12 @@ describe("decoded findings go through suppression", () => {
 
         writeFileSync(join(root, "secret.yaml"), `token: ${base64(SECRET)} # gitleaks:allow\n`);
 
-        const suppressed = await scanDetailed([root], { config, reportSuppressed: true });
+        const suppressed = await scanDetailed([root], { config, redact: false, reportSuppressed: true });
 
         expect(suppressed.findings).toStrictEqual([]);
         expect(suppressed.suppressed.map((f) => [f.secret, f.decoded, f.suppressedBy])).toStrictEqual([[SECRET, ["base64"], "inline-allow"]]);
 
-        const audited = await scanDetailed([root], { config, inlineAllow: false });
+        const audited = await scanDetailed([root], { config, inlineAllow: false, redact: false });
 
         expect(audited.findings.map((f) => [f.secret, f.decoded])).toStrictEqual([[SECRET, ["base64"]]]);
     });
@@ -125,7 +125,7 @@ describe("decoded findings go through suppression", () => {
         writeFileSync(join(root, "secret.yaml"), `a: ${base64(OTHER)}\nb: ${base64(SECRET)}\n`);
         writeFileSync(join(root, ".gitleaksignore"), `secret:${SECRET}\n`);
 
-        const result = await scanDetailed([root], { config, gitleaksIgnore: join(root, ".gitleaksignore"), reportSuppressed: true });
+        const result = await scanDetailed([root], { config, gitleaksIgnore: join(root, ".gitleaksignore"), redact: false, reportSuppressed: true });
 
         expect(result.findings).toStrictEqual([]);
         expect(result.suppressed.map((f) => [f.secret, f.suppressedBy])).toStrictEqual([

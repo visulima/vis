@@ -60,7 +60,7 @@ describe(scanGitHistory, () => {
     it("finds a secret that was committed then deleted", async () => {
         expect.assertions(4);
 
-        const findings = await scanGitHistory({ cwd: repo });
+        const findings = await scanGitHistory({ cwd: repo, redact: false });
         const tokenFindings = findings.filter((f) => f.secret === SECRET || f.match.includes(SECRET));
 
         expect(tokenFindings.length).toBeGreaterThan(0);
@@ -104,7 +104,7 @@ describe(scanGitHistory, () => {
 
         // HEAD~2..HEAD covers commits 2 and 3, so the secret introduced in
         // commit 2 is in range.
-        const findings = await scanGitHistory({ cwd: repo, since: "HEAD~2", until: "HEAD" });
+        const findings = await scanGitHistory({ cwd: repo, redact: false, since: "HEAD~2", until: "HEAD" });
 
         expect(findings.some((f) => f.match.includes(SECRET))).toBe(true);
     });

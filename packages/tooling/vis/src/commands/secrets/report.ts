@@ -1,7 +1,7 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { dim, green, yellow } from "@visulima/colorize";
 import { relative, resolve } from "@visulima/path";
-import type { Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, ScanOptions, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import type { Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
 import { listRules } from "@visulima/secret-scanner";
 
 import { pail } from "../../io/logger";
@@ -10,7 +10,7 @@ import { formatSkipped } from "../../secrets/format";
 import type { ReportFormat, ReportTarget } from "../../secrets/report";
 import { formatSuppressed, formatUnusedIgnores, renderReport } from "../../secrets/report";
 import { writeReportFileSync } from "../../secrets/secure-write";
-import type { SecretsFlags } from "./flags";
+import type { ResolvedScanOptions, SecretsFlags } from "./flags";
 import type { SecretsOptions } from "./index";
 
 export const GITLEAKS_IGNORE = ".gitleaksignore";
@@ -40,7 +40,7 @@ export interface ReportingContext {
     history: boolean;
     reports: ReportTarget[];
     root: string;
-    scanOptions: ScanOptions;
+    scanOptions: ResolvedScanOptions;
     toolbox: Toolbox<Console, SecretsOptions>;
     toolVersion: string;
     useColor: boolean;
@@ -75,12 +75,12 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
 /**
  * Print the `--format` report to stdout and write every `--report` file.
  *
- * With `--redact` the scanner has already masked every secret-bearing field,
+ * By default the scanner has already masked every secret-bearing field,
  * composite `requiredFindings` included, so the findings are rendered as is.
  */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
     const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
-    const shouldRedact = scanOptions.redact === true;
+    const shouldRedact = scanOptions.redact;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
     const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };

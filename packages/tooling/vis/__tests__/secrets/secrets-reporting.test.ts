@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
+import { maskFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
@@ -229,7 +230,7 @@ describe("diagnostic formatters", () => {
 });
 
 describe(writeBaseline, () => {
-    it.skipIf(process.platform === "win32")("writes 0600 unless the findings are redacted", () => {
+    it.skipIf(process.platform === "win32")("always writes 0600", () => {
         expect.assertions(3);
 
         const root = tempDir();
@@ -248,9 +249,9 @@ describe(writeBaseline, () => {
 
         writeFileSync(redacted, "[]");
         chmodSync(redacted, 0o644);
-        writeBaseline([finding()], redacted, root, { sensitive: false });
+        writeBaseline([maskFinding(finding())], redacted, root);
 
-        expect(mode(redacted)).toBe(0o644);
+        expect(mode(redacted)).toBe(0o600);
     });
 });
 
@@ -374,7 +375,7 @@ describe("vis secrets reporting (end-to-end)", () => {
 
         const root = workspace();
 
-        await runSecrets({ format: "json", report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
+        await runSecrets({ format: "json", redact: false, report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
 
         expect(JSON.parse(stdout.join(""))).toHaveLength(1);
         expect(JSON.parse(readFileSync(join(root, "out", "s.sarif"), "utf8")).version).toBe("2.1.0");
@@ -382,7 +383,7 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
     }, 60_000);
 
-    it("never prints or writes a raw secret with --redact", async () => {
+    it("never prints or writes a raw secret by default", async () => {
         expect.assertions(5);
 
         // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens
@@ -393,7 +394,7 @@ describe("vis secrets reporting (end-to-end)", () => {
         writeFileSync(join(root, "c.ts"), `const c = "${patC}";\n`);
         writeFileSync(join(root, ".gitleaksignore"), `secret:${PAT_A}\npath:a.ts:rule:github-pat:secret:${PAT_B}\nsecret:${unused}\n`);
 
-        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, redact: true, report: reports }, root);
+        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, report: reports }, root);
 
         const outputs = [stdout.join(""), stderr.join(""), ...reports.map((report) => readFileSync(join(root, report.split("=")[1] as string), "utf8"))];
         const leaked = outputs.filter((output) => [PAT_A, PAT_B, patC, unused].some((secret) => output.includes(secret)));
@@ -406,19 +407,19 @@ describe("vis secrets reporting (end-to-end)", () => {
     }, 60_000);
 
     it.skipIf(process.platform === "win32")(
-        "writes report files owner-only unless redacted",
+        "writes report files owner-only unless findings are masked",
         async () => {
             expect.assertions(2);
 
             const root = workspace();
 
-            await runSecrets({ report: ["csv=raw.csv"] }, root);
+            await runSecrets({ redact: false, report: ["csv=raw.csv"] }, root);
 
             expect(mode(join(root, "raw.csv"))).toBe(0o600);
 
-            await runSecrets({ redact: true, report: ["csv=redacted.csv"] }, root);
+            await runSecrets({ report: ["csv=masked.csv"] }, root);
 
-            expect(mode(join(root, "redacted.csv"))).not.toBe(0o600);
+            expect(mode(join(root, "masked.csv"))).not.toBe(0o600);
         },
         60_000,
     );

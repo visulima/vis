@@ -188,7 +188,12 @@ export interface ScanOptions {
      */
     maxDecodeDepth?: number;
 
-    /** Mask `match` / `secret` strings in every finding. */
+    /**
+     * Mask `match` / `secret` strings in every emitted finding. Default `true`;
+     * set `false` to reveal values. Detection, heuristics, checksum filtering,
+     * suppression and validation always use the real values; only the returned
+     * findings are masked.
+     */
     redact?: boolean;
 
     /**

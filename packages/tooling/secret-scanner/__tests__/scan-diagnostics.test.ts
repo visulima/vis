@@ -53,7 +53,7 @@ describe("reportSuppressed / inlineAllow", () => {
 
         writeFileSync(join(root, "a.env"), content);
 
-        const result = await scanDetailed([root], { config });
+        const result = await scanDetailed([root], { config, redact: false });
 
         expect(result.findings.map((f) => f.secret)).toStrictEqual([THIRD]);
         expect(result.suppressed).toStrictEqual([]);
@@ -66,11 +66,11 @@ describe("reportSuppressed / inlineAllow", () => {
 
         writeFileSync(join(root, "a.env"), content);
 
-        const { findings: baseline } = await scanDetailed([root], { config });
+        const { findings: baseline } = await scanDetailed([root], { config, redact: false });
 
         writeFileSync(join(root, "a.env"), content);
 
-        const result = await scanDetailed([root], { baseline, config, reportSuppressed: true });
+        const result = await scanDetailed([root], { baseline, config, redact: false, reportSuppressed: true });
         const reasons = Object.fromEntries(result.suppressed.map((f) => [f.secret, f.suppressedBy]));
 
         expect(result.findings).toStrictEqual([]);
@@ -119,7 +119,7 @@ describe("skipped files", () => {
             chmodSync(join(root, "locked"), 0o000);
 
             try {
-                const result = await scanDetailed([root], { config });
+                const result = await scanDetailed([root], { config, redact: false });
 
                 expect(result.findings.map((f) => f.secret)).toStrictEqual([THIRD]);
                 expect(result.skipped).toContainEqual({ path: "secret.env", reason: "permission-denied" });

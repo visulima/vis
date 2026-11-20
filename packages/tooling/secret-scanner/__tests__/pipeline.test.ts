@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { maskSecret } from "../src/mask";
 import { createSuppressionContext, postProcessDetailed, resetPipelineWarningsForTests } from "../src/pipeline";
 import type { PreparedScan, RuleMeta } from "../src/prepare-scan";
 import type { Finding, ScanOptions } from "../src/types";
@@ -84,7 +85,7 @@ describe("postProcess — rule filter", () => {
 
         const findings = [sampleFinding({ ruleId: "a" }), sampleFinding({ ruleId: "b" })];
 
-        await expect(postProcess(findings, preparedScan(), undefined)).resolves.toStrictEqual(findings);
+        await expect(postProcess(findings, preparedScan(), { redact: false })).resolves.toStrictEqual(findings);
     });
 });
 
@@ -450,7 +451,7 @@ describe("postProcess — validation host allowlist + cancellation", () => {
             requests += 1;
         });
 
-        const options: ScanOptions = { config: { validate: true }, reportSuppressed: true };
+        const options: ScanOptions = { config: { validate: true }, redact: false, reportSuppressed: true };
         const context = await createSuppressionContext(options, [process.cwd()]);
         const finding = { ...sampleFinding({ ruleId: "rule.http" }), commit: { sha: "abc" } };
         const result = await postProcessDetailed({ findings: [finding], suppressed: [] }, preparedScan(httpMeta()), options, {
@@ -500,67 +501,55 @@ describe("postProcess — validation host allowlist + cancellation", () => {
 
         expect(out[0]?.validation).toBe("error");
     });
-});
 
-describe("postProcess — redact interactions", () => {
-    afterEach(() => {
-        resetPipelineWarningsForTests();
-    });
+    it("validates the real secret when redact=true and masks only the emitted finding", async () => {
+        expect.assertions(4);
 
-    it("skips validation and warns once when redact=true (masked secrets can't be validated)", async () => {
-        expect.assertions(3);
+        const requested: string[] = [];
 
-        resetPipelineWarningsForTests();
+        server.on("request", (request) => {
+            requested.push(request.url ?? "");
+        });
 
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-        // Validator URL points at an unreachable host — had validation run it
-        // would resolve to "error". The redact guard skips it, leaving
-        // `validation` untouched, and no garbage request is fired.
+        const secret = "ghp_REALSECRET123456";
         const meta = new Map<string, RuleMeta>([
             [
                 "rule.http",
                 {
                     validation: {
-                        content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: "http://127.0.0.1:9/never" } },
+                        content: { request: { response_matcher: [{ status: [200], type: "StatusMatch" }], url: `${url}/{{TOKEN}}` } },
                         type: "Http",
                     },
                 },
             ],
         ]);
-        const findings = [sampleFinding({ ruleId: "rule.http", secret: "abc***xyz" })];
 
-        const out = await postProcess(findings, preparedScan(meta), { config: { validate: true }, redact: true });
+        const out = await postProcess([sampleFinding({ ruleId: "rule.http", secret })], preparedScan(meta), {
+            config: { validate: true, validateAllowedHosts: [host] },
+            redact: true,
+        });
 
-        expect(out[0]?.validation).toBeUndefined();
-        expect(consoleError).toHaveBeenCalledTimes(1);
-
-        // Second call in the same process must not duplicate the warning.
-        await postProcess(findings, preparedScan(meta), { config: { validate: true }, redact: true });
-
-        expect(consoleError).toHaveBeenCalledTimes(1);
-
-        consoleError.mockRestore();
+        expect(out).toHaveLength(1);
+        expect(out[0]?.validation).toBe("verified");
+        expect(requested).toStrictEqual([`/v/${secret}`]);
+        expect(out[0]?.secret).toBe(maskSecret(secret));
     });
+});
 
-    it("does not drop a masked (short) secret via the content-shape heuristics when redact=true", async () => {
+describe("postProcess — redact interactions", () => {
+    it("applies content-shape heuristics to real secrets when redact=true", async () => {
         expect.assertions(2);
 
-        // "******" is what the native layer masks a ≤6-char secret to. Without
-        // the redact gate `notAlphanumericString` would discard it outright.
-        const masked = sampleFinding({ ruleId: "short-secret", secret: "******" });
+        const noisy = sampleFinding({ ruleId: "short-secret", secret: "******" });
+        const real = sampleFinding({ ruleId: "real-secret", secret: "ghp_abcdef1234567890" });
 
-        const redacted = await postProcess([masked], preparedScan(), { redact: true });
+        const out = await postProcess([noisy, real], preparedScan(), { redact: true });
 
-        expect(redacted.map((f) => f.ruleId)).toStrictEqual(["short-secret"]);
-
-        // Sanity: without redact the same finding is dropped by the heuristic.
-        const notRedacted = await postProcess([masked], preparedScan(), undefined);
-
-        expect(notRedacted).toHaveLength(0);
+        expect(out.map((f) => f.ruleId)).toStrictEqual(["real-secret"]);
+        expect(out[0]?.secret).toBe(maskSecret(real.secret));
     });
 
-    it("does not drop a masked match via the checksum filter when redact=true", async () => {
+    it("applies the checksum filter to real matches when redact=true", async () => {
         expect.assertions(1);
 
         const meta: RuleMeta = {
@@ -570,13 +559,12 @@ describe("postProcess — redact interactions", () => {
             },
             pattern: "(?xi)\n\\b\n(\n  zpka_(?P<body>[a-z0-9]{32})_(?P<checksum>[0-9a-f]{8})\n)\n",
         };
-        // A masked match can't satisfy the checksum; under redact the filter is
-        // skipped so the finding survives instead of being silently dropped.
-        const findings = [sampleFinding({ match: "zpk***c55", ruleId: "kingfisher.zuplo.1", secret: "zpk***c55" })];
+        const valid = sampleFinding({ match: "zpka_3e6c4f7d39954ca29353b7ab88589b64_de26cd55", ruleId: "kingfisher.zuplo.1" });
+        const invalid = sampleFinding({ match: "zpka_3e6c4f7d39954ca29353b7ab88589b64_deadbeef", ruleId: "kingfisher.zuplo.1" });
 
-        const out = await postProcess(findings, preparedScan(new Map([["kingfisher.zuplo.1", meta]])), { redact: true });
+        const out = await postProcess([valid, invalid], preparedScan(new Map([["kingfisher.zuplo.1", meta]])), { redact: true });
 
-        expect(out).toHaveLength(1);
+        expect(out.map((f) => f.match)).toStrictEqual([maskSecret(valid.match)]);
     });
 });
 
