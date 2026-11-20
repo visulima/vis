@@ -84,7 +84,7 @@ export const emitReports = async (outcome: ScanOutcome, context: ReportingContex
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
     const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
-    // Unredacted reports hold every secret in clear text: owner-only.
+    // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
     // History reports carry commit messages, which masking doesn't touch and which
     // can quote a secret, so they stay owner-only either way.
     const sensitive = !shouldRedact || history;
