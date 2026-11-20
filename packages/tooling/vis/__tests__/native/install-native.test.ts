@@ -188,6 +188,7 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         const writeStaleShim = () => {
             mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
             writeFileSync(join(root, "node_modules", ".bin", "vis"), "#!/bin/sh\nexec node \"$basedir/../@visulima/vis/bin/vis\" \"$@\"\n");
+            writeFileSync(join(root, "node_modules", ".modules.yaml"), "layoutVersion: 5\n");
         };
 
         it("keeps the launcher on `pnpm rebuild`, where the shim was written before the script ran", () => {
@@ -221,6 +222,7 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         // Writes the shim pnpm generates in `modules/.bin` for the `bin/vis` of `packageDirectory`.
         const writeShim = (modules: string, packageDirectory: string, command = "exec node") => {
             mkdirSync(join(modules, ".bin"), { recursive: true });
+            writeFileSync(join(modules, ".modules.yaml"), "layoutVersion: 5\n");
             writeFileSync(join(modules, ".bin", "vis"), `#!/bin/sh\n${command}  "$basedir/${relative(join(modules, ".bin"), join(packageDirectory, "bin", "vis"))}" "$@"\n`);
         };
 
@@ -277,13 +279,26 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             expect(storedLauncherKept(upgraded)).toBe(false);
         });
 
+        it("links on a first install even though pnpm wrote the shim before the script ran", () => {
+            expect.assertions(1);
+
+            const storedPackage = placeInStore(join(root, "node_modules", ".pnpm"));
+            const modules = join(root, "node_modules");
+
+            writeShim(modules, storedPackage);
+            rmSync(join(modules, ".modules.yaml"));
+            install({ ...pnpm, INIT_CWD: root, npm_command: "add" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(storedPackage)).toBe(false);
+        });
+
         it("goes native when the shim for this package execs the binary directly", () => {
             expect.assertions(1);
 
             const storedPackage = placeInStore(join(root, "node_modules", ".pnpm"));
 
             writeShim(join(root, "node_modules"), storedPackage, "exec");
-            install({ ...pnpm, INIT_CWD: root, npm_command: "rebuild" }, join(storedPackage, "scripts", "install-native.cjs"));
+            install({ ...pnpm, INIT_CWD: root, npm_command: "update" }, join(storedPackage, "scripts", "install-native.cjs"));
 
             expect(storedLauncherKept(storedPackage)).toBe(false);
         });

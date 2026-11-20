@@ -118,14 +118,17 @@ const shimModulesDirectories = () => {
     return [...new Set(directories.filter((directory) => directory !== undefined))];
 };
 
-// Whether the shim in `modules/.bin` was written for this very package directory and starts Node.
-// pnpm writes `exec node "$basedir/<relative path to bin/vis>"`, so the path names the package
-// directory (version included; `target` is a real path, so the shim's directory is resolved too): the shim of an earlier version, or one that execs the binary
-// directly, leaves the launcher free to be replaced. A shim that cannot be read cannot be ruled out.
+// Whether the shim in `modules/.bin` was written for this very package directory, starts Node, and
+// predates this run. pnpm writes `exec node "$basedir/<relative path to bin/vis>"`, so the path names the
+// package directory (version included): the shim of an earlier version, or one that execs the binary
+// directly, leaves the launcher free to be replaced. pnpm 12 also writes the shim of a first install
+// before it runs this script, and rewrites it afterwards; `.modules.yaml` is only written once an
+// install has finished, so a shim without one belongs to the current run. A shim that cannot be read
+// cannot be ruled out.
 const shimStartsNodeForThisPackage = (modules) => {
     const shim = join(modules, ".bin", "vis");
 
-    if (!existsSync(shim)) {
+    if (!existsSync(shim) || !existsSync(join(modules, ".modules.yaml"))) {
         return false;
     }
 
@@ -139,17 +142,20 @@ const shimStartsNodeForThisPackage = (modules) => {
     }
 };
 
-// pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the
-// launcher is in place. A first install writes the shim after this script ran, so a shim that
-// already exists for this package directory was written by an earlier run. That covers
-// `pnpm approve-builds` and `pnpm rebuild`, which run this script again, and any install on top of
-// an earlier one that skipped it. Replacing `bin/vis` then would leave `node <native binary>`,
-// which crashes, so keep the launcher, which works with either shim. An upgrade finds the shim of
-// the previous version, which names another directory, and goes native. The `npm_command` value is
-// not used: pnpm does not guarantee it for these commands.
+// pnpm writes the `.bin` shim from the shebang of `bin/vis`, which is `node` while the launcher is in
+// place. A first install rewrites the shim after this script ran, but a later run does not: `pnpm
+// approve-builds` / `pnpm rebuild`, or an install on top of an earlier one that skipped the script.
+// Replacing `bin/vis` then would leave `node <native binary>`, which crashes, so keep the launcher,
+// which works with either shim. Those two commands are recognised by `npm_command` and, because pnpm
+// does not guarantee it, by a shim for this package directory left by a finished install. An upgrade
+// finds the shim of the previous version, which names another directory, and goes native.
 const pnpmShimMayStartNode = () => {
     if (!(process.env.npm_config_user_agent || "").startsWith("pnpm/")) {
         return false;
+    }
+
+    if (process.env.npm_command === "rebuild" || process.env.npm_command === "approve-builds") {
+        return true;
     }
 
     const directories = shimModulesDirectories();
