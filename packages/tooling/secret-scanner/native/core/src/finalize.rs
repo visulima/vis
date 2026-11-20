@@ -19,7 +19,7 @@ pub fn build_report(scan: FileScan, roots: &[PathBuf], redact_secrets: bool) -> 
         .into_iter()
         .map(|Skipped { path, entry, reason }| {
             let raw = path.to_string_lossy().to_string();
-            let on_disk = relative_to_root(&raw, &canon_roots).unwrap_or(raw);
+            let on_disk = relative_to_root(&raw, &canon_roots).map_or(raw, |(rel, _)| rel);
             SkippedFile { path: format!("{on_disk}{entry}"), reason: reason.as_str().to_string() }
         })
         .collect();
@@ -29,7 +29,7 @@ pub fn build_report(scan: FileScan, roots: &[PathBuf], redact_secrets: bool) -> 
         .into_iter()
         .map(|UnknownAllowIds { path, entry, line, ids }| {
             let raw = path.to_string_lossy().to_string();
-            let on_disk = relative_to_root(&raw, &canon_roots).unwrap_or(raw);
+            let on_disk = relative_to_root(&raw, &canon_roots).map_or(raw, |(relative, _)| relative);
             AllowWarning { file: format!("{on_disk}{entry}"), line, unknown_rule_ids: ids }
         })
         .collect();
@@ -73,8 +73,9 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
             // canonicalised as a whole).
             let suffix = f.archive_entry.as_deref().filter(|s| f.file.ends_with(s)).unwrap_or("");
             let on_disk = &f.file[..f.file.len() - suffix.len()];
-            if let Some(rel) = relative_to_root(on_disk, canon_roots) {
+            if let Some((rel, root)) = relative_to_root(on_disk, canon_roots) {
                 f.file = format!("{rel}{suffix}");
+                f.root = Some(root);
             }
         }
     }
@@ -92,6 +93,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
     findings.sort_by(|a, b| {
         (
             &a.file,
+            &a.root,
             a.start_line,
             a.start_column,
             a.start_offset,
@@ -103,6 +105,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
         )
             .cmp(&(
                 &b.file,
+                &b.root,
                 b.start_line,
                 b.start_column,
                 b.start_offset,
@@ -117,6 +120,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
     // #1054 — collapse exact duplicates (same file + rule + position + secret).
     findings.dedup_by(|a, b| {
         a.file == b.file
+            && a.root == b.root
             && a.rule_id == b.rule_id
             && a.start_line == b.start_line
             && a.start_column == b.start_column
@@ -143,6 +147,7 @@ fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec
         if let Some(last) = deduped.last_mut() {
             if !is_path_only
                 && last.file == f.file
+                && last.root == f.root
                 && last.start_offset == f.start_offset
                 && last.end_offset == f.end_offset
                 && last.decoded == f.decoded
@@ -169,7 +174,8 @@ fn canonicalize_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     canon
 }
 
-fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<String> {
+/// `file` relative to the first root containing it, with that root's canonical path.
+fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<(String, String)> {
     let file_path = PathBuf::from(file);
     let file_canon = file_path.canonicalize().unwrap_or(file_path);
     for root in roots {
@@ -177,7 +183,7 @@ fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<String> {
             let s = stripped.to_string_lossy();
             // Normalise separators so baselines are identical across platforms.
             let out = s.replace('\\', "/");
-            return Some(out);
+            return Some((out, root.to_string_lossy().to_string()));
         }
     }
     None
@@ -214,6 +220,7 @@ fn to_finding(f: RawFinding, redact_secrets: bool) -> Finding {
         confidence: f.confidence.to_string(),
         alternate_matches: f.alternate_matches,
         decoded: f.decoded.map(|d| d.chain),
+        root: f.root,
         required_findings: f.required_findings.map(|list| {
             list.into_iter()
                 .map(|r| RequiredFinding {
@@ -282,6 +289,20 @@ mod tests {
         assert_eq!(out.len(), 1, "same-span findings should collapse to one");
         assert_eq!(out[0].rule_id, "kingfisher.aws.1");
         assert_eq!(out[0].alternate_matches, vec!["aws-access-token"]);
+    }
+
+    #[test]
+    fn finalize_keeps_the_same_relative_path_of_two_roots_apart() {
+        let roots = canonicalize_roots(&[PathBuf::from("/scan-a"), PathBuf::from("/scan-b")]);
+        let in_a = RawFinding { file: "/scan-a/same/app.env".into(), ..raw_finding("rule.a", 0, 10, 30) };
+        let in_b = RawFinding { file: "/scan-b/same/app.env".into(), ..raw_finding("rule.a", 0, 10, 30) };
+
+        let (out, _) = finalize_findings(vec![in_a, in_b], &roots);
+
+        assert_eq!(out.len(), 2, "the same span in the same relative path of two roots is two findings");
+        assert!(out.iter().all(|f| f.file == "same/app.env"));
+        assert_eq!(out[0].root.as_deref(), Some("/scan-a"));
+        assert_eq!(out[1].root.as_deref(), Some("/scan-b"));
     }
 
     #[test]

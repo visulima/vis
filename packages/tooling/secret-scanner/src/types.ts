@@ -301,6 +301,13 @@ export interface Finding {
      * order the rule declares them. Redacted along with `secret` when `redact` is on.
      */
     requiredFindings?: RequiredFinding[];
+
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. Absent when
+     * `file` was not made relative to a root (stdin, `scanString`, git history).
+     * Not part of the finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */

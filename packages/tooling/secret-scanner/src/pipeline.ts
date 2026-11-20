@@ -138,8 +138,8 @@ interface FileRules {
  * clears earlier exclusions, so it can re-enable a globally excluded rule);
  * `exclude` adds to the denylist.
  */
-const rulesForFile = (prepared: PreparedScan, file: string, bases: ReadonlyArray<string>, root: string): FileRules => {
-    const path = overrideMatchPath(file, bases, root);
+const rulesForFile = (prepared: PreparedScan, finding: Finding, bases: ReadonlyArray<string>, root: string): FileRules => {
+    const path = overrideMatchPath(finding.file, bases, root, finding.root);
     const enabled = new Set<string>();
     let include = prepared.includeIds;
     let exclude = prepared.excludeIds;
@@ -183,11 +183,12 @@ const applyRuleFilters = <F extends Finding>(findings: F[], prepared: PreparedSc
     const perFile = new Map<string, FileRules>();
 
     return findings.filter((finding) => {
-        let rules = perFile.get(finding.file);
+        const key = `${finding.root ?? ""}\0${finding.file}`;
+        let rules = perFile.get(key);
 
         if (rules === undefined) {
-            rules = rulesForFile(prepared, finding.file, bases, root);
-            perFile.set(finding.file, rules);
+            rules = rulesForFile(prepared, finding, bases, root);
+            perFile.set(key, rules);
         }
 
         if (prepared.overrideOnlyOptIn.has(finding.ruleId) && !rules.enabled.has(finding.ruleId)) {

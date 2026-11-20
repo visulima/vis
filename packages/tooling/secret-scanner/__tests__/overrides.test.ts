@@ -173,6 +173,27 @@ describe("overrides against the real scan targets", () => {
         expect(ids(await scan([dir], options))).toStrictEqual([]);
     });
 
+    it("applies an override to the scan root its glob names when two roots hold the same relative path", async () => {
+        expect.assertions(3);
+
+        const dir = tempDir();
+
+        for (const root of ["a", "b"]) {
+            mkdirSync(join(dir, root, "same"), { recursive: true });
+            writeFileSync(join(dir, root, "same", "app.env"), GITHUB);
+        }
+
+        const options = { ...withOverrides([{ files: "a/**", rules: { exclude: ["gh-pat"] } }]), overridesRoot: dir };
+        const findings = await scan([join(dir, "a"), join(dir, "b")], options);
+
+        expect(findings.map((finding) => finding.file)).toStrictEqual(["same/app.env"]);
+        expect(findings[0]?.root).toBe(join(dir, "b"));
+
+        const [inMemory] = await scanString(GITHUB, "same/app.env", options);
+
+        expect(inMemory?.root).toBeUndefined();
+    });
+
     describe("staged scan", () => {
         const TOKEN = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4";
         const generic = { id: "generic-api-key", keywords: ["token"], regex: String.raw`token\s*=\s*"([0-9a-zA-Z_]{20,})"` };

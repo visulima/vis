@@ -207,7 +207,7 @@ Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it;
 
 `overrides` layers extra `rules` filters onto findings whose file matches a gitignore-syntax glob. Overrides run in listed order, folded into the global `rules` filter in a single stage: an override's `include` can re-enable a rule the global `exclude` dropped.
 
-Globs are relative to `overridesRoot` (default: the process cwd), whichever way the scanner reports the path (relative to the scan root, relative to cwd, or absolute). A file outside `overridesRoot` is matched by its basename, so slash-less globs such as `*.env` still apply while `src/**` does not. A single-file scan matches the file the same way.
+Globs are relative to `overridesRoot` (default: the process cwd), whichever way the scanner reports the path (relative to the scan root, relative to cwd, or absolute). A file outside `overridesRoot` is matched by its basename, so slash-less globs such as `*.env` still apply while `src/**` does not. A single-file scan matches the file the same way. When a scan covers several roots that hold the same relative path, each finding is matched against the root it came from.
 
 - `files`: one glob or an array of globs (`"*.env"`, `"src/**"`, `"!src/vendor/**"`).
 - `rules.enable`: turn on opt-in rules for matching files only. The rules still run on every file, but findings from them are reported only when the file matches.

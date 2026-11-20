@@ -132,19 +132,21 @@ const WINDOWS_ABSOLUTE_PATH = /^[a-z]:\//i;
 /**
  * The path an override glob is tested against. A finding's `file` is relative
  * to the scan root, to the process cwd, or absolute (and empty for a single
- * file scan), so it is first made absolute through `bases` (the first base it
+ * file scan), so it is first made absolute through `fileRoot` (the scan root
+ * the finding carries) or, without one, through `bases` (the first base it
  * exists under wins), then expressed relative to `root`. A file outside `root`,
  * or `root` itself, is matched by its basename, so slash-less globs such as
  * `*.env` still apply and the result is never an input `ignore` throws on.
  */
-export const overrideMatchPath = (file: string, bases: ReadonlyArray<string>, root: string): string => {
+export const overrideMatchPath = (file: string, bases: ReadonlyArray<string>, root: string, fileRoot?: string): string => {
     const posix = file.replaceAll("\\", "/");
     let absolute: string;
 
     if (isAbsolute(posix) || WINDOWS_ABSOLUTE_PATH.test(posix)) {
         absolute = posix;
     } else {
-        const candidates = (bases.length > 0 ? bases : [root]).map((base) => resolve(base, posix));
+        const searchBases = fileRoot === undefined ? bases : [fileRoot];
+        const candidates = (searchBases.length > 0 ? searchBases : [root]).map((base) => resolve(base, posix));
 
         absolute = candidates.find((candidate) => existsSync(candidate)) ?? candidates[0] ?? root;
     }

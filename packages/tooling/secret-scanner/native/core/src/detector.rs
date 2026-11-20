@@ -83,6 +83,10 @@ pub struct RawFinding {
     /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
     /// it to relativise just the on-disk part.
     pub archive_entry: Option<String>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
     /// Why the finding was suppressed. Only set when
     /// [`DetectOptions::report_suppressed`] is on; `None` for real findings.
     pub suppressed_by: Option<SuppressionReason>,
