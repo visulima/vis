@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -224,8 +224,10 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     }
 }
 
-/// The stdout text for the invocation, or `None` to hand the command to Node. Nothing is
-/// written to disk before a `None` is returned, so the delegated run starts from the same state.
+/// The stdout text for the invocation, or `None` to hand the command to Node. Nothing is written
+/// to disk before a `None` is returned, so the delegated run starts from the same state. Once the
+/// ignore file is open for writing the file is truncated, so a failure from then on is reported
+/// here and exits with 1: running Node on a damaged file would merge into it and report success.
 fn execute(options: &Options, cwd: &Path) -> Option<String> {
     let path = cwd.join(options.filename);
     let existing = match fs::read(&path) {
@@ -246,7 +248,12 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
             return Some(format!("{} is already up to date (no new patterns).\n", options.filename));
         }
 
-        write_in_place(&write_target(&path)?, &merged.content).ok()?;
+        let mut file = open_for_write(&write_target(&path)?).ok()?;
+
+        if let Err(error) = overwrite(&mut file, &merged.content) {
+            eprintln!("vis ignore: failed to write {}: {error}", options.filename);
+            exit(1);
+        }
 
         return Some(format!("Added {} pattern(s) to {}.\n", merged.added.len(), options.filename));
     }
@@ -263,9 +270,8 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
     Some(text)
 }
 
-/// The file a write to `path` lands in. `fs::write` follows a symlink and writes its target, so the
-/// rename must target the resolved path too, or the link would be replaced by a regular file.
-/// A dangling link is `None`: Node would create the target, so the write goes there instead.
+/// The file a write to `path` lands in. Opening a symlink writes its target, as `fs::write` does. A
+/// dangling link is `None`: Node would create the target, so the command is left to it.
 fn write_target(path: &Path) -> Option<PathBuf> {
     match fs::symlink_metadata(path) {
         Ok(_) => fs::canonicalize(path).ok(),
@@ -274,16 +280,25 @@ fn write_target(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Writes `contents` to `path` the way Node's `fs.writeFile` does: an existing file is truncated and
-/// rewritten, so its inode, owner, hard links, ACLs and xattrs stay as they were. A new file is
-/// created with the default mode. Nothing is staged in a sibling, so no copy of the contents exists
-/// with a looser mode than the destination's. A failed write can leave the file truncated, as it can
-/// under Node.
-fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+/// Opens `path` for the way Node's `fs.writeFile` writes it: an existing file is rewritten in place,
+/// so its inode, owner, hard links, ACLs and xattrs stay as they were, and a new file gets the default
+/// mode. It does not truncate, so a refused open (read-only file, a directory) leaves the file as it
+/// was and the caller can still hand the command to Node.
+fn open_for_write(path: &Path) -> io::Result<File> {
+    OpenOptions::new().write(true).create(true).truncate(false).open(path)
+}
 
-    file.write_all(contents.as_bytes())?;
-    file.sync_all()
+/// Replaces the contents of the file opened by `open_for_write`. Nothing is staged in a sibling, so
+/// no copy of the contents exists with a looser mode than the destination's. A failure here can
+/// leave the file truncated, as it can under Node.
+fn overwrite(file: &mut File, contents: &str) -> io::Result<()> {
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())
+}
+
+#[cfg(test)]
+fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
+    overwrite(&mut open_for_write(path)?, contents)
 }
 
 /// `JSON.stringify({ added, file, target }, null, 2)` plus a newline. Every string is a constant
