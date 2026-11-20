@@ -20,7 +20,7 @@ import {
 import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
-import { diffBaseline, rebaseBaseline, rebaseFile, rebaseFinding, writeBaseline } from "../../secrets/baseline";
+import { diffBaseline, rebaseBaseline, rebaseFile, rebaseFinding, rebaseProfile, writeBaseline } from "../../secrets/baseline";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
 import { pathExists } from "../../util/toolbox-fs";
@@ -37,7 +37,7 @@ import {
 } from "./flags";
 import type { SecretsOptions } from "./index";
 import type { ScanOutcome } from "./report";
-import { applyDiagnosticGates, emitReports, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, status } from "./report";
+import { applyDiagnosticGates, emitReports, emptyProfile, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, printProfile, status } from "./report";
 
 const DEFAULT_BASELINE = ".secrets-baseline.json";
 
@@ -257,6 +257,7 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
             return { ...warning, file: rebaseFile(warning.file, base, root) };
         }),
         findings: result.findings.map((finding) => rebaseFinding(finding, base, root)),
+        profile: result.profile && rebaseProfile(result.profile, base, root),
         skipped: result.skipped,
         skippedUnit: mode.kind === "staged" ? "blob" : "file",
         suppressed: result.suppressed.map((finding) => rebaseFinding(finding, base, root)),
@@ -326,6 +327,12 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
             status.success("No files to scan.");
         }
 
+        // An explicit profile must never silently disappear just because the
+        // selection was empty.
+        if (flags.profile) {
+            printProfile(emptyProfile(), useColor);
+        }
+
         return;
     }
 
@@ -360,6 +367,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     };
 
     printDiagnostics(outcome, context);
+    printProfile(outcome.profile, useColor);
 
     if (flags.verbose) {
         await printRulesetDiagnostics(scanOptions);

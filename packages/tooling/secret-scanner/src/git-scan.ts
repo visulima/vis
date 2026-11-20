@@ -34,8 +34,12 @@ import { buildIgnoreMatcher, canonicalize, isWithin } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
 import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
+import { ProfileAccumulator } from "./profile";
 import { beginScan, finishResult } from "./scan-session";
-import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, ScanProfile, SuppressedFinding } from "./types";
+
+/** Length of the commit id shown next to a path in profile rows. */
+const SHORT_SHA_LENGTH = 7;
 
 /** Raw detection results kept for parent-blob lookups across commits. */
 const PARENT_CACHE_LIMIT = 256;
@@ -81,6 +85,8 @@ export interface GitScanResult<F extends Finding = Finding> {
     /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
     allowWarnings: AllowWarning[];
     findings: F[];
+    /** Timing breakdown; present only when `ScanOptions.profile` was set. */
+    profile?: ScanProfile;
     skipped: GitSkippedBlob[];
     /** Suppressed findings; empty unless `reportSuppressed` is on. */
     suppressed: SuppressedFinding<F>[];
@@ -324,6 +330,9 @@ class BlobScanner {
 
     public readonly skipped: GitSkippedBlob[] = [];
 
+    /** Present only when `ScanOptions.profile` is set; every blob's timings are folded into it as the blob finishes. */
+    public readonly profiler: ProfileAccumulator | undefined;
+
     readonly #context: SuppressionContext;
 
     readonly #options: ScanOptions | undefined;
@@ -338,6 +347,7 @@ class BlobScanner {
         this.#context = context;
         this.#options = options;
         this.#prepared = prepared;
+        this.profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
         this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
     }
 
@@ -378,10 +388,14 @@ class BlobScanner {
      * matched by generic-api-key is not reported again. Secrets are real even
      * under `redact` (the pipeline masks), so parent comparisons never
      * confuse two secrets that mask alike (`ghp***xY4`). `commit` lets AND
-     * allowlists that list `commits` match.
+     * allowlists that list `commits` match. `label` names the blob in the
+     * profile: the commit-qualified path in history scans, the reported path
+     * when staged.
      */
-    public detect(content: string, path: string, commit?: string, reportedAs?: string): ProcessedFindings {
+    public detect(content: string, path: string, commit?: string, reportedAs?: string, label?: string): ProcessedFindings {
         const report = binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
+
+        this.profiler?.addNative(report.profile, label ?? (commit === undefined ? path : `${path}@${commit.slice(0, SHORT_SHA_LENGTH)}`));
 
         if (reportedAs !== undefined) {
             for (const warning of report.allowWarnings) {
@@ -402,7 +416,7 @@ class BlobScanner {
         }
 
         const content = await this.readText(oid, path, undefined, false);
-        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detect(content, path));
+        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detect(content, path, undefined, undefined, `${path}@${oid.slice(0, SHORT_SHA_LENGTH)} (parent)`));
 
         this.#remember(cacheKey, keys);
 
@@ -417,7 +431,7 @@ class BlobScanner {
     public async finish(selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
         const report = commit === undefined ? selected : withFields(selected, { commit });
 
-        return postProcessDetailed(report, this.#prepared, this.#options, this.#context);
+        return postProcessDetailed(report, this.#prepared, this.#options, this.#context, this.profiler);
     }
 
     #remember(cacheKey: string, keys: Set<string>): void {
@@ -503,13 +517,17 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
     // History paths are repository-relative, whatever subdirectory `cwd` is.
     const { context, prepared } = await beginScan(options, [await repositoryRoot(cwd)]);
     const allowlist = buildCommitAllowlist(prepared.config);
+    const commitsStarted = performance.now();
     const commits = await listCommits(options, cwd);
+    const commitsMs = performance.now() - commitsStarted;
     const scanner = new BlobScanner(cwd, options, prepared, {
         ...context,
         isCommitAllowlisted: (finding) => finding.commit !== undefined && allowlist.isFindingAllowed(finding.ruleId, finding.commit.sha),
     });
     const findings: GitFinding[] = [];
     const suppressed: SuppressedFinding<GitFinding>[] = [];
+    const blobsStarted = performance.now();
+    const totalAtBlobsStart = scanner.profiler?.totalMs ?? 0;
 
     try {
         for (const commit of commits) {
@@ -542,7 +560,10 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, includeCommitEntries: true });
+    scanner.profiler?.addPhase("git.listCommits", commitsMs);
+    scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, includeCommitEntries: true, profile: scanner.profiler });
 };
 
 /**
@@ -589,7 +610,9 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     // Findings are reported relative to the process cwd, like native `scanFiles`;
     // ignore files are discovered from, and inline patterns anchored at, `cwd`.
     const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [cwd]);
+    const diffStarted = performance.now();
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
+    const diffMs = performance.now() - diffStarted;
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
     const absolute = (path: string): string => resolve(toplevel, path);
     // Realpaths on both sides, as native `scanFiles` relativises: on macOS the
@@ -625,6 +648,8 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     const scanner = new BlobScanner(toplevel, effective, prepared, context);
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
+    const blobsStarted = performance.now();
+    const totalAtBlobsStart = scanner.profiler?.totalMs ?? 0;
 
     try {
         for (const entry of entries) {
@@ -643,7 +668,8 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             // Detection sees the absolute path, as native `scanFiles` does; the
             // reported path is rewritten afterwards.
-            const raw = scanner.detect(content, file, undefined, reportedPath(entry.newPath));
+            const reported = reportedPath(entry.newPath);
+            const raw = scanner.detect(content, file, undefined, reported, reported);
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
@@ -657,5 +683,8 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings });
+    scanner.profiler?.addPhase("git.diff", diffMs);
+    scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, profile: scanner.profiler });
 };

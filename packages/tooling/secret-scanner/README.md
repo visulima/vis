@@ -319,6 +319,8 @@ interface ScanOptions {
     inlineAllow?: boolean;
     /** Return suppressed findings from the *Detailed scans. Default false. */
     reportSuppressed?: boolean;
+    /** Collect timing data and expose it as `ScanResult.profile`. Default false. */
+    profile?: boolean;
 
     config?: {
         /** Layer the user's rules on top of the bundled ruleset. Default: true. */
@@ -412,6 +414,33 @@ interface ScanOptions {
     };
 }
 
+interface ScanProfilePhase {
+    name: string;
+    ms: number;
+    count: number;
+}
+
+interface ScanProfileRule {
+    ruleId: string;
+    ms: number;
+    count: number;
+    matches: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+}
+
+interface ScanProfileFile {
+    file: string;
+    ms: number;
+}
+
+interface ScanProfile {
+    totalMs: number;
+    phases: ScanProfilePhase[];
+    rules: ScanProfileRule[];
+    files: ScanProfileFile[];
+}
+
 interface Finding {
     ruleId: string;
     description: string;
@@ -446,7 +475,8 @@ declare function scanString(content: string, file: string, options?: ScanOptions
 declare function scanStringDetailed(content: string, file: string, options?: ScanOptions): Promise<{ allowWarnings: AllowWarning[]; findings: Finding[] }>;
 // True when walk.excludePatterns / walk.excludeFromFiles exclude `file` (relative to `root`), as scanFiles filters it.
 declare function isPathExcluded(file: string, options: ScanOptions | undefined, root: string): boolean;
-// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore entries.
+// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore
+// entries, and an optional timing breakdown when `profile: true`.
 declare function scanDetailed(paths: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function scanFilesDetailed(files: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function listRules(options?: ScanOptions): Promise<RuleInfo[]>;

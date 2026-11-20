@@ -4574,6 +4574,10 @@
           "Audit suppressions: ignore inline markers and list everything still suppressed"
         ],
         [
+          "vis secrets --profile",
+          "Print scan timing by phase, rule and file to stderr"
+        ],
+        [
           "vis secrets --fail-on-unreadable --fail-on-unused-ignores",
           "CI: fail on unreadable files and stale .gitleaksignore entries"
         ]
@@ -4787,6 +4791,11 @@
         {
           "description": "With --validate, drop every finding whose validation is not 'verified'. Useful for CI gating.",
           "name": "only-verified",
+          "type": "boolean"
+        },
+        {
+          "description": "Print scan timing by phase, rule and file to stderr (slightly slows the scan)",
+          "name": "profile",
           "type": "boolean"
         },
         {

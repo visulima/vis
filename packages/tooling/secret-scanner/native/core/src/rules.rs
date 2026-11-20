@@ -106,6 +106,9 @@ impl CompiledPatternRequirements {
 pub struct CompiledRule {
     pub id: String,
     pub description: String,
+    /// The rule's main regex source, retained for profiler reports. `None` for
+    /// path-only rules.
+    pub pattern: Option<String>,
     pub engine: Option<Engine>,
     pub path_regex: Option<Regex>,
     pub entropy: Option<f32>,
@@ -478,6 +481,7 @@ fn compile_rule(raw: &RawRule) -> Result<CompiledRule, CompileError> {
     Ok(CompiledRule {
         id: raw.id.clone(),
         description: raw.description.clone().unwrap_or_default(),
+        pattern: raw.regex.clone(),
         engine,
         path_regex,
         entropy: raw.entropy,

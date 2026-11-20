@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
+use crate::profile::{self, RuleScope};
 use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
 use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, AllowRegion, SuppressionReason};
 
@@ -233,12 +234,14 @@ pub fn detect(
     // Pre-compute line offsets for fast line/col lookup
     let line_offsets = compute_line_offsets(content);
 
+    let profiling = profile::is_active();
     let mut out: Vec<RawFinding> = Vec::new();
     for (i, &active) in candidates.iter().enumerate() {
         if !active {
             continue;
         }
         let rule = &ruleset.rules[i];
+        let _timer = profiling.then(|| RuleScope::start(i));
         // Rule-level path filter
         if let Some(pr) = &rule.path_regex {
             if !pr.is_match(&path_str).unwrap_or(false) {

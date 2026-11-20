@@ -17,6 +17,7 @@ import { resolveConfig } from "./config-loader";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import { postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
+import { ProfileAccumulator } from "./profile";
 import { beginScan, finishResult } from "./scan-session";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
@@ -106,8 +107,11 @@ export const scanDetailed = async (paths: string[], options?: ScanOptions): Prom
     const bases = paths.map((path) => resolve(path));
     const { context, options: effective, prepared } = await beginScan(options, bases, bases);
     const report = await binding.scanDetailed(paths, prepared.nativeOptions);
+    const profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
 
-    return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });
+    profiler?.addNative(report.profile);
+
+    return finishResult(await postProcessDetailed(report, prepared, effective, context, profiler), report.skipped, context, { allowWarnings: report.allowWarnings, profile: profiler });
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -130,8 +134,11 @@ export const scanFilesDetailed = async (files: string[], options?: ScanOptions):
     const kept = new Set(filterIgnoredFiles(files.map((file) => resolve(file)), matcher, ignoreRoot));
     const filteredFiles = files.filter((file) => kept.has(resolve(file)));
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
+    const profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
 
-    return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });
+    profiler?.addNative(report.profile);
+
+    return finishResult(await postProcessDetailed(report, prepared, effective, context, profiler), report.skipped, context, { allowWarnings: report.allowWarnings, profile: profiler });
 };
 
 /**
@@ -191,6 +198,10 @@ export type {
     RuleInfo,
     ScanOptions,
     ScanOverride,
+    ScanProfile,
+    ScanProfileFile,
+    ScanProfilePhase,
+    ScanProfileRule,
     ScanResult,
     SkippedFile,
     SkippedRule,

@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use crate::detector::RawFinding;
+use crate::profile::ProfileFile;
 use crate::scanner::FileScan;
 use crate::skip::Skipped;
 use crate::suppression::UnknownAllowIds;
@@ -48,6 +49,7 @@ pub fn build_report(scan: FileScan, roots: &[PathBuf], redact_secrets: bool) -> 
             .collect(),
         skipped,
         allow_warnings,
+        profile: None,
     }
 }
 
@@ -172,6 +174,20 @@ fn canonicalize_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut canon: Vec<PathBuf> = roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
     canon.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
     canon
+}
+
+/// Rewrite profiled file paths relative to the scan roots, the same rewrite findings get.
+/// With no roots (an in-memory scan) the paths stay as given.
+pub fn relative_profile_paths(files: &mut [ProfileFile], roots: &[PathBuf]) {
+    let canon_roots = canonicalize_roots(roots);
+    if canon_roots.is_empty() {
+        return;
+    }
+    for entry in files {
+        if let Some((rel, _)) = relative_to_root(&entry.file, &canon_roots) {
+            entry.file = rel;
+        }
+    }
 }
 
 /// `file` relative to the first root containing it, with that root's canonical path.

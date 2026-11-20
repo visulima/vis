@@ -267,6 +267,7 @@ const toNativeOptions = (options: ScanOptions | undefined, config: GitleaksConfi
         maxDecodeDepth: options?.maxDecodeDepth,
         maxFileSize: options?.walk?.maxFileSize,
         minConfidence: options?.config?.minConfidence,
+        profile: options?.profile,
         reportSuppressed: options?.reportSuppressed,
         respectGitignore: options?.walk?.gitignore,
     };

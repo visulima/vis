@@ -40,6 +40,7 @@ export interface SecretsFlags {
     maxSize?: number;
     minConfidence?: string;
     onlyVerified?: boolean;
+    profile?: boolean;
     quiet?: boolean;
     redact?: boolean;
     replaceBaseline?: boolean;
@@ -205,6 +206,7 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
         maxDecodeDepth: validateDepth(flags.maxDecodeDepth, "--max-decode-depth"),
         overrides: cfg.overrides,
         overridesRoot: root,
+        profile: flags.profile === true,
         redact: flags.redact ?? cfg.redact ?? true,
         reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },
@@ -353,6 +355,7 @@ export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: bool
     const reportingFlags = [
         toArray(flags.report).length > 0 ? "--report" : undefined,
         flags.logIgnored ? "--log-ignored" : undefined,
+        flags.profile ? "--profile" : undefined,
         flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
         flags.failOnUnusedIgnores ? "--fail-on-unused-ignores" : undefined,
     ].filter((flag): flag is string => flag !== undefined);

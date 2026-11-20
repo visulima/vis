@@ -16,6 +16,8 @@ const native = loadNativeRootBinding(import.meta.url) as typeof Native;
 export interface NativeReport {
     allowWarnings: AllowWarning[];
     findings: Finding[];
+    /** Native timing breakdown; present only when `profile` was requested. */
+    profile?: Native.ProfileReport;
     skipped: SkippedFile[];
     /** Allowlisted / inline-allowed matches; empty unless `reportSuppressed`. */
     suppressed: SuppressedFinding[];
@@ -26,6 +28,7 @@ const toNativeReport = (report: Native.ScanReport): NativeReport => {
     return {
         allowWarnings: report.allowWarnings,
         findings: report.findings as Finding[],
+        profile: report.profile,
         skipped: report.skipped as SkippedFile[],
         suppressed: report.suppressed as SuppressedFinding[],
     };

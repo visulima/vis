@@ -173,6 +173,11 @@ const secretsOptionDefinitions = {
         description: "With --validate, drop every finding whose validation is not 'verified'. Useful for CI gating.",
         type: Boolean,
     },
+    profile: {
+        defaultValue: false,
+        description: "Print scan timing by phase, rule and file to stderr (slightly slows the scan)",
+        type: Boolean,
+    },
     quiet: {
         defaultValue: false,
         description: "Suppress all progress output (only emit findings)",
@@ -268,6 +273,7 @@ const secrets = defineCommand({
         ["vis secrets --format github", "GitHub Actions annotations on stdout"],
         ["vis secrets --report sarif=secrets.sarif --report gitlab-code-quality=gl-code-quality.json", "Write several report formats in one run"],
         ["vis secrets --no-inline-allow --log-ignored", "Audit suppressions: ignore inline markers and list everything still suppressed"],
+        ["vis secrets --profile", "Print scan timing by phase, rule and file to stderr"],
         ["vis secrets --fail-on-unreadable --fail-on-unused-ignores", "CI: fail on unreadable files and stale .gitleaksignore entries"],
     ],
     group: "Security",

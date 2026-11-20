@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
 import { assertReportingFlags } from "../../src/commands/secrets/flags";
 import execute from "../../src/commands/secrets/handler";
+import { formatProfile } from "../../src/commands/secrets/report";
 import { csvCell, emitSecretsCsv, emitSecretsGitHub, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
@@ -210,9 +211,31 @@ describe(parseReportTargets, () => {
     });
 });
 
+describe(formatProfile, () => {
+    const profile = (files: string[]): Parameters<typeof formatProfile>[0] => {
+        return { files: files.map((file) => { return { file, ms: 1 }; }), phases: [], rules: [], totalMs: 1 };
+    };
+
+    it("cuts long file paths from the left so the file name stays visible", () => {
+        expect.assertions(3);
+
+        const long = "packages/some/deeply/nested/workspace/directory/with/many/segments";
+        const output = formatProfile(profile([`${long}/alpha.ts`, `${long}/beta.ts`]));
+
+        expect(output).toContain("…");
+        expect(output).toMatch(/…\S*alpha\.ts /);
+        expect(output).toMatch(/…\S*beta\.ts /);
+    });
+
+    it("keeps short paths whole", () => {
+        expect.assertions(1);
+        expect(formatProfile(profile(["src/a.ts"]))).toContain("  src/a.ts ");
+    });
+});
+
 describe(assertReportingFlags, () => {
     it("rejects reporting flags in modes that produce no report", () => {
-        expect.assertions(2);
+        expect.assertions(3);
 
         expect(() => {
             assertReportingFlags({ listRules: true, report: ["json=a"] }, false);
@@ -220,6 +243,9 @@ describe(assertReportingFlags, () => {
         expect(() => {
             assertReportingFlags({ logIgnored: true, updateBaseline: true }, false);
         }).toThrow(/--update-baseline/);
+        expect(() => {
+            assertReportingFlags({ init: true, profile: true }, false);
+        }).toThrow(/--profile only applies to a scan report and can't be combined with --init/);
     });
 
     it("rejects scan targets in modes that don't scan them", () => {
@@ -362,6 +388,63 @@ describe("vis secrets reporting (end-to-end)", () => {
         await runSecrets({ format: "json", gitleaksIgnore: false }, root);
 
         expect(JSON.parse(stdout.join(""))).toHaveLength(1);
+    }, 60_000);
+
+    it("prints a timing profile to stderr without corrupting stdout or honouring --quiet", async () => {
+        expect.assertions(6);
+
+        const root = workspace();
+
+        await runSecrets({ format: "json", profile: true, quiet: true }, root);
+
+        expect(JSON.parse(stdout.join(""))).toHaveLength(1);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("profile:");
+        expect(profile).toContain("phases:");
+        expect(profile).toContain("github-pat");
+        expect(profile).toContain("1 match(es)");
+        expect(profile).toContain("files:");
+    }, 60_000);
+
+    it("names staged files relative to the workspace root in the profile", async () => {
+        expect.assertions(3);
+
+        const root = tempDir();
+        const git = (...arguments_: string[]): string => execFileSync("git", arguments_, { cwd: root, encoding: "utf8", env: hermeticGitEnv });
+
+        git("init", "-q", "-b", "main");
+        await mkdir(join(root, "sub", "dir"), { recursive: true });
+        writeFileSync(join(root, "sub", "dir", "a.ts"), `const a = "${PAT_A}";\n`);
+        git("add", "sub/dir/a.ts");
+
+        await runSecrets({ format: "json", profile: true, staged: true }, root);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("  sub/dir/a.ts ");
+        expect(profile).not.toContain(root);
+        expect(JSON.parse(stdout.join("")) as Finding[]).toHaveLength(1);
+    }, 60_000);
+
+    it("prints an empty profile when no files are selected", async () => {
+        expect.assertions(2);
+
+        const root = tempDir();
+        const git = (...arguments_: string[]): string => execFileSync("git", arguments_, { cwd: root, encoding: "utf8", env: hermeticGitEnv });
+
+        git("init", "-q", "-b", "main");
+        writeFileSync(join(root, "clean.ts"), "clean\n");
+        git("add", "clean.ts");
+        git("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "init");
+
+        await runSecrets({ profile: true, since: "HEAD" }, root);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("profile: 0.0 ms total, 0 file(s)");
+        expect(profile).toContain("phases:");
     }, 60_000);
 
     it("reports unused entries and fails on them with --fail-on-unused-ignores", async () => {

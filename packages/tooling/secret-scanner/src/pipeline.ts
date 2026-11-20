@@ -23,6 +23,7 @@ import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialStrin
 import { overrideMatchPath } from "./ignore-matcher";
 import { maskFinding } from "./mask";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
+import type { ProfileAccumulator } from "./profile";
 import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from "./types";
 import { PerHostLimiter, validateFinding } from "./validator";
 
@@ -496,6 +497,26 @@ export interface ProcessedFindings {
     suppressed: SuppressedFinding[];
 }
 
+/** Milliseconds since this call, or a constant 0 without a profiler so an unprofiled scan reads no clock. */
+const stopwatch = (profiler: ProfileAccumulator | undefined): (() => number) => {
+    if (profiler === undefined) {
+        return () => 0;
+    }
+
+    const started = performance.now();
+
+    return () => performance.now() - started;
+};
+
+/** Report the pipeline's wall clock, with validation (when it ran) as its own phase. */
+const recordPhases = (profiler: ProfileAccumulator | undefined, validated: boolean, totalMs: number, validationMs: number): void => {
+    profiler?.addPhase("postprocess", totalMs - validationMs);
+
+    if (validated) {
+        profiler?.addPhase("validate", validationMs);
+    }
+};
+
 /**
  * Shared post-processing pipeline for every scan variant. Takes the native
  * report (active findings, plus the allowlisted / inline-allowed ones under
@@ -507,7 +528,9 @@ export const postProcessDetailed = async (
     prepared: PreparedScan,
     options: ScanOptions | undefined,
     suppression: SuppressionContext,
+    profiler?: ProfileAccumulator,
 ): Promise<ProcessedFindings> => {
+    const elapsed = stopwatch(profiler);
     const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options, suppression.bases);
     // Commit-allowlisted findings are suppressed first, like the native
     // allowlist: they skip validation and join the native suppressed ones.
@@ -522,7 +545,10 @@ export const postProcessDetailed = async (
         }
     }
 
-    const validated = await applyValidation(preValidation(active, prepared, options, suppression.bases), options, prepared.ruleMeta);
+    const checked = preValidation(active, prepared, options, suppression.bases);
+    const validationElapsed = stopwatch(profiler);
+    const validated = await applyValidation(checked, options, prepared.ruleMeta);
+    const validationMs = validationElapsed();
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
     const findings: Finding[] = [];
@@ -546,6 +572,8 @@ export const postProcessDetailed = async (
 
         suppressed.push(suppression.redact ? maskFinding(finding) : finding);
     }
+
+    recordPhases(profiler, options?.config?.validate === true, elapsed(), validationMs);
 
     return { findings, suppressed: options?.reportSuppressed === true ? suppressed : [] };
 };
