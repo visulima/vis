@@ -127,8 +127,20 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(addonPath
         rmSync(scratch, { force: true, recursive: true });
     });
 
+    // Node's security-enforcement plugin reports configuration problems for these two, so they stay with Node.
+    const NODE_CHECKED = new Set(["dedupe", "remove"]);
+
     for (const backend of BACKENDS) {
-        for (const [argv, expected] of VERBS) {
+        for (const argv of [["remove", "lodash"], ["dedupe"]]) {
+            it(`${backend} pin: vis ${argv.join(" ")} is left to Node`, () => {
+                const { bindir, cwd } = workspaceFor(backend);
+                const native = runNative(argv, cwd, bindir);
+
+                expect(native.stdout).toContain("NODE-MARKER");
+            });
+        }
+
+        for (const [argv, expected] of VERBS.filter(([verbArgv]) => !NODE_CHECKED.has(verbArgv[0] as string))) {
             it(`${backend} pin: vis ${argv.join(" ")} runs the pinned manager with Node's arguments`, () => {
                 const { bindir, cwd } = workspaceFor(backend);
                 const native = runNative(argv, cwd, bindir);

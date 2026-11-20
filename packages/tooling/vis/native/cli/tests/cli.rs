@@ -878,7 +878,7 @@ fn pm_family_runs_a_plain_npm_backend_pin_natively() {
     let fallback = base.join("dist").join("bin.js");
 
     let output = binary()
-        .args(["remove", "lodash"])
+        .args(["why", "lodash"])
         .current_dir(&project)
         .env("VIS_NODE", bindir.join("node"))
         .env("VIS_FALLBACK_ENTRY", &fallback)
@@ -895,6 +895,73 @@ fn pm_family_runs_a_plain_npm_backend_pin_natively() {
     assert!(output.status.success(), "native npm remove failed: {:?}", output);
     assert!(stdout.starts_with("PM:"), "npm pin did not run natively: {stdout}");
     assert!(!stdout.contains("NODE:"), "npm pin was delegated: {stdout}");
+}
+
+/// `remove` and `dedupe` under a pin stay with Node, whose security-enforcement plugin reports the
+/// configuration warnings and errors the native path does not.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_remove_and_dedupe_under_a_backend_pin() {
+    for (name, args) in [("npm-remove", vec!["remove", "lodash"]), ("npm-dedupe", vec!["dedupe"])] {
+        let (base, project, bindir) = backend_pin_fixture(name, "npm", "npm");
+        let fallback = base.join("dist").join("bin.js");
+
+        let output = binary()
+            .args(&args)
+            .current_dir(&project)
+            .env("VIS_NODE", bindir.join("node"))
+            .env("VIS_FALLBACK_ENTRY", &fallback)
+            .env("PATH", &bindir)
+            .env_remove("VIS_INSTALLER")
+            .env_remove("npm_config_user_agent")
+            .output()
+            .expect("run binary");
+
+        let _ = std::fs::remove_dir_all(&base);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(stdout.starts_with("NODE:"), "{args:?} under a pin was not delegated: {stdout}");
+    }
+}
+
+/// A turbo.json above the working directory is Node's workspace root even with no lockfile or
+/// `packageManager` field, so `link` and the other workspace-root verbs reach Node from a child package.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_workspace_root_verbs_below_a_turbo_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-turbo-root-{}", std::process::id()));
+    let child = base.join("project").join("packages").join("app");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(base.join("project").join("turbo.json"), "{}\n").unwrap();
+    std::fs::write(child.join("vis.config.ts"), "export default {};\n").unwrap();
+
+    for (name, body) in [("node", "echo \"NODE:$*\""), ("npm", "echo \"PM:$*\"")] {
+        let path = bindir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = binary()
+        .args(["link", "../shared"])
+        .current_dir(&child)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.starts_with("NODE:"), "link below a turbo root was not delegated: {stdout}");
 }
 
 /// An `install.backend: "aube"` pin still delegates to Node, as does `outdated` under any pin.
