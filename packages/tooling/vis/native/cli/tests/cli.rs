@@ -836,3 +836,136 @@ fn delegated_clean_forwards_a_non_utf8_argument_unchanged() {
 
     assert_eq!(recorded, b"clean\0caf\xe9\0", "argv reached the stub as {recorded:?}");
 }
+
+/// Writes a monorepo root with a `vis.config.ts` pinning `install.backend`, a yarn lockfile the pin
+/// must override, a stub Node that must not run, and a stub for the pinned package manager on PATH. Returns the scratch base, the project and the bin dir.
+#[cfg(unix)]
+fn backend_pin_fixture(
+    name: &str,
+    backend: &str,
+    stub: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-pin-{name}-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(
+        project.join("vis.config.ts"),
+        format!("export default {{ install: {{ backend: \"{backend}\" }} }};\n"),
+    )
+    .unwrap();
+    // Node reads vis.config only from a monorepo root, so the fixture is one.
+    std::fs::write(project.join("lerna.json"), "{\"packages\":[]}\n").unwrap();
+    std::fs::write(project.join("yarn.lock"), "# yarn\n").unwrap();
+
+    for (binary, body) in [("node", "echo \"NODE:$*\""), (stub, "echo \"PM:$*\"")] {
+        let path = bindir.join(binary);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    (base.clone(), project, bindir)
+}
+
+/// A plain `install.backend: "npm"` pin is run natively with npm, not handed to Node.
+#[cfg(unix)]
+#[test]
+fn pm_family_runs_a_plain_npm_backend_pin_natively() {
+    let (base, project, bindir) = backend_pin_fixture("npm", "npm", "npm");
+    let fallback = base.join("dist").join("bin.js");
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", &fallback)
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "native npm remove failed: {:?}", output);
+    assert!(stdout.starts_with("PM:"), "npm pin did not run natively: {stdout}");
+    assert!(!stdout.contains("NODE:"), "npm pin was delegated: {stdout}");
+}
+
+/// An `install.backend: "aube"` pin still delegates to Node, as does `outdated` under any pin.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_an_aube_backend_pin_and_outdated() {
+    // The stub is named for the pinned manager, not `aube`, so the delegation comes from the pin rule
+    // rather than from an `aube` binary on PATH.
+    let (base, project, bindir) = backend_pin_fixture("aube", "aube", "npm");
+    let fallback = base.join("dist").join("bin.js");
+
+    let remove = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", &fallback)
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&remove.stdout);
+
+    assert!(stdout.contains("NODE:"), "aube pin was not delegated: {stdout}");
+    assert!(!stdout.contains("PM:"), "aube pin ran natively: {stdout}");
+
+    let (base, project, bindir) = backend_pin_fixture("npm-outdated", "npm", "npm");
+    let outdated = binary()
+        .args(["outdated"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&outdated.stdout);
+
+    assert!(stdout.contains("NODE:"), "outdated under a pin was not delegated: {stdout}");
+}
+
+/// Node ignores `vis.config` outside a monorepo root, so a plain npm pin in a single-package project
+/// stays with Node rather than running the pinned manager natively.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_a_backend_pin_outside_a_monorepo_root() {
+    let (base, project, bindir) = backend_pin_fixture("single", "npm", "npm");
+    std::fs::remove_file(project.join("lerna.json")).unwrap();
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("NODE:"), "single-package pin was not delegated: {stdout}");
+    assert!(!stdout.contains("PM:"), "single-package pin ran natively: {stdout}");
+}

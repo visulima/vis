@@ -33,6 +33,20 @@ pub struct DetectPackageManagerOptions {
     pub ignore_package_json: Option<bool>,
     pub ignore_lock_file: Option<bool>,
     pub ignore_argv: Option<bool>,
+    /// Explicit package manager (`install.backend`) that wins over every other source. Names
+    /// outside npm/pnpm/yarn/bun are ignored and detection runs as usual.
+    pub backend: Option<String>,
+}
+
+/// The static name of a package manager that detection can report.
+fn pm_name(name: &str) -> Option<&'static str> {
+    match name {
+        "pnpm" => Some("pnpm"),
+        "npm" => Some("npm"),
+        "yarn" => Some("yarn"),
+        "bun" => Some("bun"),
+        _ => None,
+    }
 }
 
 fn flag(opt: Option<bool>) -> bool {
@@ -43,6 +57,12 @@ fn flag(opt: Option<bool>) -> bool {
 pub fn detect_package_manager(cwd: &str, opts: Option<DetectPackageManagerOptions>) -> DetectedPackageManager {
     let path = PathBuf::from(cwd);
     let opts = opts.unwrap_or_default();
+
+    if let Some(name) = opts.backend.as_deref().and_then(pm_name) {
+        let is_workspace = detect_workspace(&path, name, None);
+
+        return DetectedPackageManager { name: name.to_string(), version: None, build_meta: None, is_workspace };
+    }
 
     // Priority 1: packageManager field in package.json
     if !flag(opts.ignore_package_json) {
@@ -322,5 +342,35 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(detected.name, "pnpm");
+    }
+
+    #[test]
+    fn backend_override_wins_over_lockfile_and_package_manager_field() {
+        let dir = std::env::temp_dir().join(format!("vis-core-detect-backend-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+        std::fs::write(dir.join("package.json"), "{\"packageManager\":\"pnpm@9.0.0\"}").unwrap();
+
+        let options = || Some(DetectPackageManagerOptions { backend: Some("npm".into()), ..ignore_env().unwrap() });
+        let detected = detect_package_manager(dir.to_str().unwrap(), options());
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(detected.name, "npm");
+        assert_eq!(detected.version, None);
+    }
+
+    #[test]
+    fn backend_override_ignores_names_detection_does_not_report() {
+        let dir = std::env::temp_dir().join(format!("vis-core-detect-backend-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("package-lock.json"), "{}\n").unwrap();
+
+        let options = Some(DetectPackageManagerOptions { backend: Some("aube".into()), ..ignore_env().unwrap() });
+        let detected = detect_package_manager(dir.to_str().unwrap(), options);
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(detected.name, "npm");
     }
 }

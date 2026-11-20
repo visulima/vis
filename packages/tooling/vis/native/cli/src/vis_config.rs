@@ -73,9 +73,25 @@ pub fn read(cwd: &Path) -> ConfigState {
     }
 }
 
+/// The `install.backend` pin the native path runs itself: `npm`, `pnpm` or `bun`, with no
+/// `install.corepack`. Corepack dispatch and every other backend stay with Node, which is why
+/// they return `None`.
+pub fn native_backend_pin(state: &ConfigState) -> Option<&str> {
+    let ConfigState::Static(value) = state else {
+        return None;
+    };
+    let install = value.get("install")?;
+
+    if !install.is_object() || install.get("corepack").is_some() {
+        return None;
+    }
+
+    install.get("backend")?.as_str().filter(|backend| matches!(*backend, "npm" | "pnpm" | "bun"))
+}
+
 /// Whether the native path must hand the command to Node. Node owns the package manager a
-/// config pins (`install.backend`, `install.corepack`), the keys in `NODE_ONLY_KEYS`, and any
-/// config it cannot read as data at all.
+/// config pins (`install.backend` unless it is `native_backend_pin`, `install.corepack`), the
+/// keys in `NODE_ONLY_KEYS`, and any config it cannot read as data at all.
 pub fn requires_node(state: &ConfigState) -> bool {
     match state {
         ConfigState::Absent => false,
@@ -83,9 +99,109 @@ pub fn requires_node(state: &ConfigState) -> bool {
         ConfigState::Static(value) => {
             NODE_ONLY_KEYS.iter().any(|key| value.get(*key).is_some())
                 || value.get("install").is_some_and(|install| {
-                    !install.is_object() || install.get("backend").is_some() || install.get("corepack").is_some()
+                    !install.is_object()
+                        || install.get("corepack").is_some()
+                        || (install.get("backend").is_some() && native_backend_pin(state).is_none())
                 })
         }
+    }
+}
+
+/// The monorepo root Node's config loader reads `vis.config` from for `cwd`, or `None` when Node
+/// finds none and ignores the config. Mirrors `findMonorepoRoot`: a lerna root, else the workspace
+/// marker of the package manager the nearest lockfile or `packageManager` field names. A file that
+/// cannot be read or parsed makes Node fail the same lookup, so it counts as no root.
+pub fn node_config_root(cwd: &Path) -> Option<PathBuf> {
+    for directory in cwd.ancestors() {
+        if directory.join("lerna.json").is_file() {
+            let lerna = read_json(&directory.join("lerna.json"))?;
+
+            if lerna.is_object() && (is_truthy(lerna.get("useWorkspaces")) || is_truthy(lerna.get("packages"))) {
+                return Some(directory.to_path_buf());
+            }
+
+            break;
+        }
+
+        if directory.join("turbo.json").is_file() {
+            break;
+        }
+    }
+
+    let (directory, manager) = nearest_package_manager(cwd)?;
+
+    let is_root = match manager {
+        Some("npm" | "yarn") => read_json(&directory.join("package.json"))
+            .and_then(|manifest| manifest.get("workspaces").cloned())
+            .is_some_and(|workspaces| workspaces.is_object() || workspaces.is_array()),
+        Some("pnpm") => directory.join("pnpm-workspace.yaml").exists(),
+        _ => false,
+    };
+
+    is_root.then(|| directory.to_path_buf())
+}
+
+/// Whether Node reads a `vis.config` pin from `cwd` and runs the pinned manager itself, so the
+/// native path may do the same. Node loads only the config file in the workspace root, and only the
+/// `.ts`/`.js` names (never `.json`). Node also picks its runtime from a bun lockfile, and a runtime
+/// of bun overrides any pinned backend, so a bun lockfile on the way up leaves the pin to Node.
+pub fn node_reads_pin(cwd: &Path) -> bool {
+    const NODE_CONFIG_FILES: [&str; 6] =
+        ["vis.config.ts", "vis.config.mts", "vis.config.cts", "vis.config.js", "vis.config.mjs", "vis.config.cjs"];
+
+    let has_config = NODE_CONFIG_FILES.iter().any(|name| cwd.join(name).is_file());
+    let bun_lockfile =
+        cwd.ancestors().any(|directory| directory.join("bun.lock").exists() || directory.join("bun.lockb").exists());
+
+    has_config && !bun_lockfile && node_config_root(cwd).as_deref() == Some(cwd)
+}
+
+/// The nearest directory that names a package manager, with that manager. `None` for the manager
+/// means the nearest marker names one Node cannot resolve a workspace from, such as bun.
+fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> {
+    const LOCKFILES: [(&str, &str); 6] = [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("package-lock.json", "npm"),
+        ("npm-shrinkwrap.json", "npm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+    ];
+
+    for directory in cwd.ancestors() {
+        if let Some((_, name)) = LOCKFILES.iter().find(|(file, _)| directory.join(file).exists()) {
+            return Some((directory, Some(name)));
+        }
+
+        let manifest_path = directory.join("package.json");
+
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        let manifest = read_json(&manifest_path)?;
+
+        if let Some(field) = manifest.get("packageManager").and_then(Value::as_str) {
+            let name = ["npm", "yarn", "pnpm", "bun"].into_iter().find(|name| field.starts_with(name));
+
+            return Some((directory, name));
+        }
+    }
+
+    None
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
+/// JavaScript truthiness of an optional JSON value, as Node's lookup tests `useWorkspaces || packages`.
+fn is_truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Number(number)) => number.as_f64().is_some_and(|number| number != 0.0),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(_) => true,
     }
 }
 
@@ -352,11 +468,132 @@ mod tests {
         assert!(requires_node(&ConfigState::Dynamic));
         assert!(!needs(serde_json::json!({ "lint": { "enabled": true } })));
         assert!(needs(serde_json::json!({ "install": { "backend": "aube" } })));
+        assert!(needs(serde_json::json!({ "install": { "backend": "yarn" } })));
+        assert!(needs(serde_json::json!({ "install": { "backend": "auto" } })));
+        assert!(needs(serde_json::json!({ "install": { "backend": "npm", "corepack": "strict" } })));
+        assert!(!needs(serde_json::json!({ "install": { "backend": "npm" } })));
+        assert!(!needs(serde_json::json!({ "install": { "backend": "pnpm" } })));
+        assert!(!needs(serde_json::json!({ "install": { "backend": "bun" } })));
         assert!(needs(serde_json::json!({ "install": { "corepack": "strict" } })));
         assert!(needs(serde_json::json!({ "runtime": "bun" })));
         assert!(needs(serde_json::json!({ "install": "npm" })));
         assert!(needs(serde_json::json!({ "targetDefaults": {} })));
         assert!(needs(serde_json::json!({ "scopedTasks": [] })));
+    }
+
+    fn files(name: &str, entries: &[(&str, &str)]) -> PathBuf {
+        let dir = scratch(name);
+
+        for (file, text) in entries {
+            fs::write(dir.join(file), text).unwrap();
+        }
+
+        dir
+    }
+
+    #[test]
+    fn a_single_package_is_not_a_monorepo_root_for_node() {
+        let dir = files("single", &[("package.json", "{}"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")]);
+
+        assert_eq!(node_config_root(&dir), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_workspace_marker_of_the_nearest_manager_is_a_monorepo_root() {
+        let pnpm = files(
+            "pnpm-root",
+            &[("pnpm-workspace.yaml", "packages: []\n"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")],
+        );
+        let npm = files("npm-root", &[("package.json", "{\"workspaces\":[]}"), ("package-lock.json", "{}")]);
+
+        assert_eq!(node_config_root(&pnpm), Some(pnpm.clone()));
+        assert_eq!(node_config_root(&npm), Some(npm.clone()));
+
+        fs::remove_dir_all(&pnpm).ok();
+        fs::remove_dir_all(&npm).ok();
+    }
+
+    #[test]
+    fn lerna_packages_make_a_root_even_for_bun() {
+        let dir = files("lerna-bun", &[("lerna.json", "{\"packages\":[]}"), ("bun.lock", "{}")]);
+
+        assert_eq!(node_config_root(&dir), Some(dir.clone()));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bun_workspaces_without_lerna_are_not_a_root_for_node() {
+        let dir = files("bun-workspaces", &[("package.json", "{\"workspaces\":[\"p/*\"]}"), ("bun.lock", "{}")]);
+
+        assert_eq!(node_config_root(&dir), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_nearest_package_manager_decides_the_root() {
+        let root =
+            files("nearest", &[("pnpm-workspace.yaml", "packages: []\n"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")]);
+        let child = root.join("child");
+
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("package.json"), "{}").unwrap();
+        fs::write(child.join("package-lock.json"), "{}").unwrap();
+
+        assert_eq!(node_config_root(&child), None);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_unparsable_manifest_is_not_a_root_for_node() {
+        let dir = files("bad-json", &[("package.json", "{"), ("pnpm-workspace.yaml", "packages: []\n")]);
+
+        assert_eq!(node_config_root(&dir), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn node_reads_a_pin_only_from_a_root_config_without_a_bun_runtime() {
+        let root =
+            files("reads-pin", &[("lerna.json", "{\"packages\":[]}"), ("vis.config.ts", "export default {};\n")]);
+        let child = root.join("child");
+
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("vis.config.ts"), "export default {};\n").unwrap();
+
+        assert!(node_reads_pin(&root));
+        assert!(!node_reads_pin(&child), "a subpackage config is not the workspace root's");
+
+        fs::write(root.join("bun.lock"), "{}").unwrap();
+        assert!(!node_reads_pin(&root), "a bun lockfile makes Node run bun");
+        fs::remove_file(root.join("bun.lock")).unwrap();
+
+        fs::remove_file(root.join("vis.config.ts")).unwrap();
+        fs::write(root.join("vis.config.json"), "{}").unwrap();
+        assert!(!node_reads_pin(&root), "Node never loads a .json config");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn native_backend_pin_is_only_npm_pnpm_or_bun_without_corepack() {
+        let pin = |value: Value| native_backend_pin(&ConfigState::Static(value)).map(str::to_owned);
+
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "npm" } })).as_deref(), Some("npm"));
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "pnpm" } })).as_deref(), Some("pnpm"));
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "bun" } })).as_deref(), Some("bun"));
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "aube" } })), None);
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "yarn" } })), None);
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "auto" } })), None);
+        assert_eq!(pin(serde_json::json!({ "install": { "backend": "npm", "corepack": "off" } })), None);
+        assert_eq!(pin(serde_json::json!({ "install": { "corepack": "off" } })), None);
+        assert_eq!(pin(serde_json::json!({ "install": "npm" })), None);
+        assert_eq!(native_backend_pin(&ConfigState::Dynamic), None);
     }
 
     #[test]
