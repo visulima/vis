@@ -185,6 +185,7 @@ export type {
     Finding,
     GitleaksIgnoreEntry,
     RequiredFinding,
+    RuleFilters,
     RuleInfo,
     ScanOptions,
     ScanOverride,

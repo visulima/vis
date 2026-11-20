@@ -2,7 +2,7 @@
 // Post-scan pipeline: runs after the native detector returns raw findings.
 //
 //   0. `dropShadowedGenericFindings` — generic-api-key yields to any overlapping finding.
-//   1. `applyRuleFilter`      — `rules.include` / `rules.exclude` and per-file `overrides`.
+//   1. `applyRuleFilters`     — `rules.include` / `rules.exclude`, folded through per-file `overrides`.
 //   2. `applyChecksumFilter`  — drops findings whose CRC-style checksum fails.
 //   3. `applyValidation`      — populates `finding.validation` via HTTP / transport validators.
 //   4. `applyOnlyVerified`    — keeps only `"verified"` when `config.onlyVerified`.
@@ -20,13 +20,13 @@ import { checkChecksum } from "./checksum";
 import { baselineKeys } from "./fingerprint";
 import { GitleaksIgnore } from "./gitleaks-ignore";
 import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
+import { overrideMatchPath } from "./ignore-matcher";
 import { maskFinding } from "./mask";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
 import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from "./types";
 import { PerHostLimiter, validateFinding } from "./validator";
 
 const VALIDATOR_CONCURRENCY = 8;
-const WINDOWS_ABSOLUTE_PATH = /^[a-z]:/i;
 
 /**
  * Drop findings the heuristic false-positive suite flags (detect-secrets
@@ -112,90 +112,89 @@ const dropShadowedBy = <F extends Finding>(findings: F[], shadowers: ReadonlyArr
     return findings.filter((finding) => finding.ruleId !== GENERIC_RULE_ID || !isShadowed(finding));
 };
 
-const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] | undefined, excludeIds: string[] | undefined): F[] => {
-    const hasInclude = includeIds && includeIds.length > 0;
-    const hasExclude = excludeIds && excludeIds.length > 0;
+type RulePredicate = (ruleId: string) => boolean;
 
-    // Short-circuit before allocating sets — the common case is "no filters".
-    if (!hasInclude && !hasExclude) {
-        return findings;
+/** Predicate for an include/exclude pair, or `undefined` when both are empty (nothing to filter). */
+const ruleFilter = (includeIds: string[] | undefined, excludeIds: string[] | undefined): RulePredicate | undefined => {
+    const include = includeIds && includeIds.length > 0 ? new Set(includeIds) : undefined;
+    const exclude = excludeIds && excludeIds.length > 0 ? new Set(excludeIds) : undefined;
+
+    if (!include && !exclude) {
+        return undefined;
     }
 
-    const include = hasInclude ? new Set(includeIds) : undefined;
-    const exclude = hasExclude ? new Set(excludeIds) : undefined;
+    return (ruleId) => (include === undefined || include.has(ruleId)) && !exclude?.has(ruleId);
+};
 
-    return findings.filter((finding) => {
-        if (include && !include.has(finding.ruleId)) {
-            return false;
+/** What applies to one file: its rule predicate and the opt-in rules a matching override turned on. */
+interface FileRules {
+    enabled: Set<string>;
+    keep: RulePredicate | undefined;
+}
+
+/**
+ * Fold the global `rules` filter through every override matching `file`, in
+ * listed order. An override's `include` replaces the effective allowlist (and
+ * clears earlier exclusions, so it can re-enable a globally excluded rule);
+ * `exclude` adds to the denylist.
+ */
+const rulesForFile = (prepared: PreparedScan, file: string, bases: ReadonlyArray<string>, root: string): FileRules => {
+    const path = overrideMatchPath(file, bases, root);
+    const enabled = new Set<string>();
+    let include = prepared.includeIds;
+    let exclude = prepared.excludeIds;
+
+    for (const override of prepared.overrides ?? []) {
+        if (!override.matcher.ignores(path)) {
+            continue;
         }
 
-        if (exclude?.has(finding.ruleId)) {
-            return false;
+        for (const id of override.enables) {
+            enabled.add(id);
         }
 
-        return true;
-    });
+        if (override.includeIds !== undefined) {
+            include = override.includeIds;
+            exclude = [];
+        }
+
+        if (override.excludeIds !== undefined) {
+            exclude = [...(exclude ?? []), ...override.excludeIds];
+        }
+    }
+
+    return { enabled, keep: ruleFilter(include, exclude) };
 };
 
 /**
- * Layer file-specific rule filters over the global ones. An override's
- * `include` replaces the effective filter for that file (and clears earlier
- * exclusions); `exclude` adds to it, so a broad rule can be narrowed further
- * for one file without affecting the rest of the scan. Opt-in rules enabled
- * only by an override stay confined to its matching files.
+ * The single rule-filter stage: global `rules.include` / `rules.exclude`, then
+ * the per-file `overrides`. The native scan compiles opt-in rules once for the
+ * whole scan, so findings of a rule that only overrides enabled are dropped in
+ * files that no enabling override matches.
  */
-const applyFileOverrides = <F extends Finding>(findings: F[], prepared: PreparedScan): F[] => {
-    const { overrides } = prepared;
+const applyRuleFilters = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined, bases: ReadonlyArray<string>): F[] => {
+    if (prepared.overrides === undefined || prepared.overrides.length === 0) {
+        const keep = ruleFilter(prepared.includeIds, prepared.excludeIds);
 
-    if (overrides === undefined || overrides.length === 0) {
-        return findings;
+        return keep === undefined ? findings : findings.filter((finding) => keep(finding.ruleId));
     }
 
-    const globallyEnabled = new Set([...(prepared.enableIds ?? []), ...(prepared.includeIds ?? [])]);
+    const root = options?.overridesRoot ?? process.cwd();
+    const perFile = new Map<string, FileRules>();
 
     return findings.filter((finding) => {
-        const file = finding.file.replaceAll("\\", "/");
+        let rules = perFile.get(finding.file);
 
-        // Absolute paths have no scan-root-relative meaning for glob patterns.
-        if (file.startsWith("/") || WINDOWS_ABSOLUTE_PATH.test(file)) {
-            return true;
+        if (rules === undefined) {
+            rules = rulesForFile(prepared, finding.file, bases, root);
+            perFile.set(finding.file, rules);
         }
 
-        let include = prepared.includeIds;
-        let exclude = prepared.excludeIds;
-        const matched: (typeof overrides)[number][] = [];
-
-        for (const override of overrides) {
-            if (!override.matcher.ignores(file)) {
-                continue;
-            }
-
-            matched.push(override);
-
-            if (override.includeIds !== undefined) {
-                include = override.includeIds;
-                // An explicit include is authoritative for the matching file;
-                // earlier exclusions must not cancel it out again.
-                exclude = [];
-            }
-
-            if (override.excludeIds !== undefined) {
-                exclude = [...new Set([...(exclude ?? []), ...override.excludeIds])];
-            }
-        }
-
-        // The native scan compiles opt-in rules once for the whole scan. Hide
-        // findings from rules that only an override turned on when the file
-        // doesn't match that override.
-        if (
-            prepared.ruleMeta.get(finding.ruleId)?.defaultEnabled === false &&
-            !globallyEnabled.has(finding.ruleId) &&
-            !matched.some((override) => [...(override.enableIds ?? []), ...(override.includeIds ?? [])].includes(finding.ruleId))
-        ) {
+        if (prepared.overrideOnlyOptIn.has(finding.ruleId) && !rules.enabled.has(finding.ruleId)) {
             return false;
         }
 
-        return applyRuleFilter([finding], include, exclude).length === 1;
+        return rules.keep?.(finding.ruleId) ?? true;
     });
 };
 
@@ -270,7 +269,7 @@ const resolveOneValidation = async (finding: Finding, context: ValidationContext
  * (or registered transport) validation block. Bounded concurrency keeps
  * well-intentioned scans from tripping rate limits on a single provider.
  *
- * Runs after `applyRuleFilter` (so excluded rules never hit the network) and
+ * Runs after `applyRuleFilters` (so excluded rules never hit the network) and
  * before `applySuppressions` (so suppressed findings are still validated —
  * baseline is a user-facing filter, not something the validator consults).
  */
@@ -385,8 +384,8 @@ export const resetPipelineWarningsForTests = (): void => {
 };
 
 /** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
-const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined): F[] => {
-    const filtered = applyFileOverrides(applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds), prepared);
+const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined, bases: ReadonlyArray<string>): F[] => {
+    const filtered = applyRuleFilters(findings, prepared, options, bases);
     const heuristicsFiltered = applyHeuristicFilters(filtered, options);
 
     return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta);
@@ -405,12 +404,17 @@ const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan,
  * turning on `reportSuppressed` never changes `findings`; a suppressed generic
  * finding is dropped when any finding overlaps it.
  */
-export const dropShadowedGenericFindings = (report: ProcessedFindings, prepared: PreparedScan, options: ScanOptions | undefined): ProcessedFindings => {
-    const activeShadowers = preValidation(report.findings, prepared, options);
+export const dropShadowedGenericFindings = (
+    report: ProcessedFindings,
+    prepared: PreparedScan,
+    options: ScanOptions | undefined,
+    bases: ReadonlyArray<string>,
+): ProcessedFindings => {
+    const activeShadowers = preValidation(report.findings, prepared, options, bases);
 
     return {
         findings: dropShadowedBy(report.findings, activeShadowers),
-        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options)]),
+        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options, bases)]),
     };
 };
 
@@ -503,7 +507,7 @@ export const postProcessDetailed = async (
     options: ScanOptions | undefined,
     suppression: SuppressionContext,
 ): Promise<ProcessedFindings> => {
-    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options);
+    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options, suppression.bases);
     // Commit-allowlisted findings are suppressed first, like the native
     // allowlist: they skip validation and join the native suppressed ones.
     const active: Finding[] = [];
@@ -517,7 +521,7 @@ export const postProcessDetailed = async (
         }
     }
 
-    const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
+    const validated = await applyValidation(preValidation(active, prepared, options, suppression.bases), options, prepared.ruleMeta);
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
     const findings: Finding[] = [];
@@ -535,7 +539,7 @@ export const postProcessDetailed = async (
         }
     }
 
-    for (const finding of preValidation(preSuppressed, prepared, options)) {
+    for (const finding of preValidation(preSuppressed, prepared, options, suppression.bases)) {
         // Mark matching ignore entries used; the allowlist reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 

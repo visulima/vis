@@ -1091,7 +1091,7 @@
                                         }
                                     }
                                 ],
-                                "description": "Gitignore-syntax globs, e.g. `*.env` or `src/**`."
+                                "description": "Gitignore-syntax globs relative to the workspace root, e.g. `*.env` or `packages/api/**`."
                             },
                             "rules": {
                                 "type": "object",

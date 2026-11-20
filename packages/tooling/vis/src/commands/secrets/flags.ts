@@ -181,6 +181,7 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
         maxArchiveDepth: validateDepth(flags.maxArchiveDepth, "--max-archive-depth", MAX_ARCHIVE_DEPTH),
         maxDecodeDepth: validateDepth(flags.maxDecodeDepth, "--max-decode-depth"),
         overrides: cfg.overrides,
+        overridesRoot: root,
         redact: flags.redact ?? cfg.redact ?? true,
         reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },

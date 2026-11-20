@@ -389,6 +389,9 @@ interface ScanOptions {
         };
     }[];
 
+    /** Directory the `overrides` globs are relative to. Default: `process.cwd()`; files outside it match by basename. */
+    overridesRoot?: string;
+
     /** Print diagnostics (skipped rules) to stderr on first run. */
     verbose?: boolean;
 

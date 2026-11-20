@@ -749,7 +749,7 @@ export interface VisConfig {
 
         /** File-specific rule filters, applied after the global `rules` filters. */
         overrides?: {
-            /** Gitignore-syntax globs, e.g. `*.env` or `src/**`. */
+            /** Gitignore-syntax globs relative to the workspace root, e.g. `*.env` or `packages/api/**`. */
             files: string | string[];
             rules?: {
                 /** Enable opt-in rules for matching files only. */

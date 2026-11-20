@@ -40,6 +40,7 @@ export interface ScanOptions {
             include?: string[];
         };
     }[];
+    overridesRoot?: string;
 
     redact?: boolean;
 
@@ -72,6 +73,7 @@ export interface ScanOptions {
 | `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                     |
 | `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                   |
 | `overrides`        | `object[]`        | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                               |
+| `overridesRoot`    | `string`          | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                |
 | `redact`           | `boolean`         | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values. |
 | `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                  |
 | `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                             |
@@ -203,7 +205,9 @@ Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it;
 
 ## `overrides` — per-file rule filters
 
-`overrides` layers extra `rules` filters onto findings whose `file` matches a gitignore-syntax glob. Globs match the path reported by the scanner: relative to the scan root for `scan()`, relative to cwd for `scanFiles()` and relative paths passed to `scanString()`. Overrides run in listed order, after the global `rules` filters.
+`overrides` layers extra `rules` filters onto findings whose file matches a gitignore-syntax glob. Overrides run in listed order, folded into the global `rules` filter in a single stage: an override's `include` can re-enable a rule the global `exclude` dropped.
+
+Globs are relative to `overridesRoot` (default: the process cwd), whichever way the scanner reports the path (relative to the scan root, relative to cwd, or absolute). A file outside `overridesRoot` is matched by its basename, so slash-less globs such as `*.env` still apply while `src/**` does not. A single-file scan matches the file the same way.
 
 - `files`: one glob or an array of globs (`"*.env"`, `"src/**"`, `"!src/vendor/**"`).
 - `rules.enable`: turn on opt-in rules for matching files only. The rules still run on every file, but findings from them are reported only when the file matches.

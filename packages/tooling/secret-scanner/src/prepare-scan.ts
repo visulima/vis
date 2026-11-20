@@ -35,7 +35,6 @@ const asDepCandidate = (entry: unknown): DepCandidate => {
  */
 export interface RuleMeta {
     checksum?: ChecksumSpec;
-    defaultEnabled?: boolean;
     dependsOnRule?: { ruleId: string; variable: string }[];
     pattern?: string;
     validation?: unknown;
@@ -43,7 +42,8 @@ export interface RuleMeta {
 
 /** A file override with its tag filters expanded and its glob matcher compiled. */
 export interface CompiledOverride {
-    enableIds?: string[];
+    /** Rules the override turns on: its `enable` plus its `include`. */
+    enables: ReadonlySet<string>;
     excludeIds?: string[];
     includeIds?: string[];
     matcher: IgnoreMatcher;
@@ -52,9 +52,10 @@ export interface CompiledOverride {
 /** The config-derived part of a prepared scan; memoised across calls. */
 interface PreparedConfig {
     config: GitleaksConfig;
-    enableIds?: string[];
     excludeIds?: string[];
     includeIds?: string[];
+    /** Opt-in rules that only overrides turn on: reported solely in files matching one that does. */
+    overrideOnlyOptIn: ReadonlySet<string>;
     overrides?: CompiledOverride[];
     ruleMeta: Map<string, RuleMeta>;
 }
@@ -78,7 +79,6 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
         }
 
         const record = rule as {
-            defaultEnabled?: unknown;
             dependsOnRule?: unknown;
             id?: unknown;
             patternRequirements?: { checksum?: ChecksumSpec };
@@ -119,7 +119,6 @@ export const buildRuleMeta = (config: GitleaksConfig): Map<string, RuleMeta> => 
 
         map.set(record.id, {
             checksum: record.patternRequirements?.checksum,
-            defaultEnabled: typeof record.defaultEnabled === "boolean" ? record.defaultEnabled : undefined,
             dependsOnRule: deps && deps.length > 0 ? deps : undefined,
             pattern: typeof record.regex === "string" ? record.regex : undefined,
             validation: record.validation,
@@ -185,11 +184,14 @@ const compileOverrides = (overrides: ScanOverride[] | undefined, allRules: Gitle
             return [];
         }
 
+        const enableIds = expandTagFilters(override.rules?.enable, allRules ?? [], "overrides.enable");
+        const includeIds = expandTagFilters(override.rules?.include, allRules ?? [], "overrides.include");
+
         return [
             {
-                enableIds: expandTagFilters(override.rules?.enable, allRules ?? [], "overrides.enable"),
+                enables: new Set([...(enableIds ?? []), ...(includeIds ?? [])]),
                 excludeIds: expandTagFilters(override.rules?.exclude, allRules ?? [], "overrides.exclude"),
-                includeIds: expandTagFilters(override.rules?.include, allRules ?? [], "overrides.include"),
+                includeIds,
                 matcher,
             },
         ];
@@ -210,14 +212,13 @@ const buildPreparedConfig = (options: ScanOptions | undefined): PreparedConfig =
 
     // `enable` and `include` both imply enablement: you can't filter to a rule
     // that's off. `exclude` is filter-only — it never turns anything on.
-    const enabledSet = new Set<string>([
-        ...(enableIds ?? []),
-        ...(includeIds ?? []),
-        ...(overrides?.flatMap((override) => [...(override.enableIds ?? []), ...(override.includeIds ?? [])]) ?? []),
-    ]);
-    const config = gateOptInRules(base, enabledSet);
+    const enabledSet = new Set<string>([...(enableIds ?? []), ...(includeIds ?? [])]);
+    const overrideEnabled = new Set(overrides?.flatMap((override) => [...override.enables]));
+    const optIn = new Set(allRules.filter((rule) => rule?.defaultEnabled === false && typeof rule.id === "string").map((rule) => rule.id));
+    const overrideOnlyOptIn = new Set([...overrideEnabled].filter((id) => optIn.has(id) && !enabledSet.has(id)));
+    const config = gateOptInRules(base, new Set([...enabledSet, ...overrideEnabled]));
 
-    return { config, enableIds, excludeIds, includeIds, overrides, ruleMeta: buildRuleMeta(config) };
+    return { config, excludeIds, includeIds, overrideOnlyOptIn, overrides, ruleMeta: buildRuleMeta(config) };
 };
 
 const preparedConfig = (options: ScanOptions | undefined): PreparedConfig => {

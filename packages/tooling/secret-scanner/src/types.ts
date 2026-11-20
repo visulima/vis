@@ -28,18 +28,21 @@ export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
  */
 export type ValidationStatus = "error" | "rejected" | "skipped" | "verified";
 
+/** Rule selectors (rule ids or `tag:&lt;name>`) that narrow or widen which rules report. */
+export interface RuleFilters {
+    /** Enable opt-in rules without restricting the output. Additive. */
+    enable?: string[];
+    /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
+    exclude?: string[];
+    /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
+    include?: string[];
+}
+
 /** Rule filters applied only to findings in files matching `files`. */
 export interface ScanOverride {
-    /** Gitignore-syntax globs (e.g. `*.env`, `src/**`). */
+    /** Gitignore-syntax globs (e.g. `*.env`, `src/**`), relative to {@link ScanOptions.overridesRoot}. */
     files: string | string[];
-    rules?: {
-        /** Enable opt-in rules for matching files without restricting output. */
-        enable?: string[];
-        /** Drop these rules for matching files. */
-        exclude?: string[];
-        /** Restrict matching files to these rules. */
-        include?: string[];
-    };
+    rules?: RuleFilters;
 }
 
 /**
@@ -203,8 +206,14 @@ export interface ScanOptions {
      */
     maxDecodeDepth?: number;
 
-    /** File-specific rule filters, applied in order after the global filters. */
+    /** File-specific rule filters, applied in order on top of the global `rules` filters. */
     overrides?: ScanOverride[];
+
+    /**
+     * Directory `overrides[].files` globs are relative to. Default: `process.cwd()`.
+     * A file outside it is matched by its basename.
+     */
+    overridesRoot?: string;
 
     /**
      * Mask `match` / `secret` strings in every emitted finding. Default `true`;
@@ -236,14 +245,7 @@ export interface ScanOptions {
      * - `exclude` — **blacklist**. Drops findings matching this list. Doesn't
      * enable anything.
      */
-    rules?: {
-        /** Enable opt-in rules without restricting the output. Additive. */
-        enable?: string[];
-        /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
-        exclude?: string[];
-        /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
-        include?: string[];
-    };
+    rules?: RuleFilters;
 
     /**
      * Abort the scan's validation stage. When `config.validate: true` a scan can
