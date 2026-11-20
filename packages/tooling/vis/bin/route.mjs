@@ -93,15 +93,9 @@ const cleanMayRunNatively = (platform, environment, args, cwd, interactive) => {
     return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
 };
 
-// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
-// parameters default to the running process; tests pass their own.
-const routesToNative = (
-    args,
-    platform = process.platform,
-    environment = process.env,
-    cwd = process.cwd(),
-    interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
-) => {
+// The routing of the commands that have their own native shapes: `true` or `false` when the
+// command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
+const routesCommandToNative = (args, platform, environment, cwd, interactive) => {
     const [command = "", subcommand] = args;
 
     if (NATIVE_COMMANDS.has(command)) {
@@ -160,6 +154,24 @@ const routesToNative = (
         return false;
     }
 
+    return undefined;
+};
+
+// Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other
+// parameters default to the running process; tests pass their own.
+const routesToNative = (
+    args,
+    platform = process.platform,
+    environment = process.env,
+    cwd = process.cwd(),
+    interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
+) => {
+    const decided = routesCommandToNative(args, platform, environment, cwd, interactive);
+
+    if (decided !== undefined) {
+        return decided;
+    }
+
     // Windows keeps the help surface in Node: the binary paints it with raw ANSI codes
     // and does not enable virtual-terminal processing, which classic conhost needs.
     if (platform === "win32") {
@@ -170,7 +182,7 @@ const routesToNative = (
     // `vis`, `help …`, and `--help` / `-h` anywhere before a `--` separator. It
     // delegates whatever it cannot answer to `dist/bin.js` itself (never back through
     // the launcher), so these are safe to hand over.
-    return args.length === 0 || command === "help" || asksForHelp(args);
+    return args.length === 0 || args[0] === "help" || asksForHelp(args);
 };
 
 // eslint-disable-next-line import/prefer-default-export -- named like `resolve-binary.mjs`; more routing helpers will join it
