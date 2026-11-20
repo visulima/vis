@@ -1,0 +1,1 @@
+{"native":{"nodes":[{"name":"@scope/a","type":"library"},{"name":"b","type":"application"},{"name":"@scope/c","type":"library"}],"edges":[{"source":"@scope/a","target":"b","type":"static"},{"source":"@scope/a","target":"@scope/c","type":"devDependency"}]}}

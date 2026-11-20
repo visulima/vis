@@ -39,6 +39,9 @@ export default createConfig(
             // package layouts (with package.json, .changeset/, index.js stubs)
             // exercised by tests — not part of the source tree, not in tsconfig.
             "__tests__/release/fixtures/**",
+            // Workspace-membership fixtures for the native CLI parity tests. Their exact bytes (quoting,
+            // spacing, layout) are the input the Rust and TypeScript resolvers read, so they stay as written.
+            "native/cli/tests/fixtures/**",
         ],
         typescript: {
             tsconfigPath: "./tsconfig.eslint.json",

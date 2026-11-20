@@ -7,10 +7,11 @@
 //! forwarded to the PM in order (the Node handlers were fixed to match).
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
-use vis_core::detect::detect_package_manager;
+use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
     resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
     RemoveOptions, ResolvedCommand, WhyOptions,
@@ -43,7 +44,7 @@ fn finish(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> ! {
 }
 
 /// Walk up from `cwd` looking for a `vis.config.*` file.
-fn has_vis_config(cwd: &Path) -> bool {
+pub(crate) fn has_vis_config(cwd: &Path) -> bool {
     const NAMES: [&str; 7] = [
         "vis.config.ts",
         "vis.config.mts",
@@ -126,23 +127,112 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
     parsed.values.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
 }
 
+/// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
+/// lockfiles, so a native choice from the lockfile would differ.
+fn installer_selected_by_environment() -> bool {
+    const AUBE_NAMES: [&str; 4] = ["aube", "aube.exe", "aube.cmd", "aube.bat"];
+
+    env::var_os("VIS_INSTALLER").is_some()
+        || env::var_os("VIS_RUNTIME").is_some()
+        || env::var_os("PATH").is_some_and(|path| {
+            env::split_paths(&path).any(|directory| AUBE_NAMES.iter().any(|name| directory.join(name).is_file()))
+        })
+}
+
+/// Node runs the installer a `packageManager` pin names through Corepack, which can differ from the
+/// one native finds. Any pin in an ancestor `package.json` leaves the command to Node.
+fn ancestor_pins_package_manager(cwd: &Path) -> bool {
+    let mut current = Some(cwd.to_path_buf());
+
+    while let Some(directory) = current {
+        let pinned = fs::read_to_string(directory.join("package.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|manifest| manifest.get("packageManager").is_some());
+
+        if pinned {
+            return true;
+        }
+
+        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
+    }
+
+    false
+}
+
+/// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
+/// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
+fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
+    cwd.ancestors()
+        .skip(1)
+        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+}
+
+/// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
+/// argument parsing does not apply them, so they must reach Node.
+fn uses_global_option(args: &[String]) -> bool {
+    const OPTIONS: [&str; 3] = ["--config", "--cwd", "--runtime"];
+
+    args.iter()
+        .any(|argument| OPTIONS.iter().any(|option| argument == option || argument.starts_with(&format!("{option}="))))
+}
+
 /// Entry point. `verb` is the command name, `full_args` is the FULL invocation
 /// (including the leading verb) so the config-delegation path can replay it.
 pub fn run(verb: &str, full_args: &[String]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    // vis.config can pin `install.backend` (e.g. aube) / `runtime`, which the
+    if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
+        crate::delegate(full_args);
+    }
+
+    // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
     // native PM detector doesn't read. For these PM commands — especially the
     // mutating ones (remove/dedupe/link/unlink) — running the wrong PM is
-    // consequential, so when a vis.config is present we delegate to Node to honor
-    // the pinned backend. (exec/x make the opposite, documented cold-start
-    // trade-off; the pm family is marginal-value, so correctness wins here.)
-    if has_vis_config(&cwd) {
+    // consequential, so a config that may pin them is left to Node. A config that is
+    // plain data without those keys stays native, unless the environment or a global
+    // option can change which installer or workspace Node would use.
+    // (exec/x make the opposite, documented cold-start trade-off.)
+    let config = crate::vis_config::read(&cwd);
+
+    // A plain `install.backend` of npm, pnpm or bun runs here, but only where Node reads the same
+    // config (a monorepo root) and never for `outdated`, whose Node form is the `check` command.
+    // Any other pin is left to Node.
+    let pinned = crate::vis_config::native_backend_pin(&config);
+    let pin = pinned.filter(|_| verb != "outdated" && crate::vis_config::node_reads_pin(&cwd));
+
+    // Where Node finds no monorepo root it drops every config, so a pin there is not Node's to honour:
+    // the native detector answers the same way Node's installer detection does, with no backend.
+    let ignored_by_node = pinned.is_some() && verb != "outdated" && crate::vis_config::node_ignores_config(&cwd);
+
+    // link, dedupe, unlink and why run Node's handler at the workspace root, not at the invocation directory.
+    // A turbo.json above `cwd` makes that folder Node's root even where no package manager marks a workspace.
+    let runs_at_workspace_root = matches!(verb, "dedupe" | "link" | "unlink" | "why")
+        && config != crate::vis_config::ConfigState::Absent
+        && (crate::vis_config::node_config_root(&cwd).is_some_and(|root| root != cwd)
+            || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()));
+
+    // Node runs `remove` and `dedupe` through its security-enforcement plugin, whose warnings and errors the
+    // native path does not reproduce, so those two verbs stay with Node under a pin.
+    let security_checked_by_node = pin.is_some() && matches!(verb, "remove" | "dedupe");
+
+    if crate::vis_config::requires_node(&config)
+        || security_checked_by_node
+        || (pinned.is_some() && pin.is_none() && !ignored_by_node)
+        || runs_at_workspace_root
+        || (config != crate::vis_config::ConfigState::Absent
+            && (installer_selected_by_environment()
+                || uses_global_option(full_args)
+                || ancestor_pins_package_manager(&cwd)))
+    {
         crate::delegate(full_args);
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };
-    let detected = detect_package_manager(&cwd.to_string_lossy(), None);
+    let detected = detect_package_manager(
+        &cwd.to_string_lossy(),
+        Some(DetectPackageManagerOptions { backend: pin.map(str::to_owned), ..Default::default() }),
+    );
     let pm = detected.name;
     let version = detected.version.unwrap_or_default();
 
@@ -271,6 +361,8 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{has, scan};
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -292,6 +384,20 @@ mod tests {
         assert!(has(&parsed, "save-dev"));
         // Packages AND the unknown flag are forwarded, in order.
         assert_eq!(parsed.rest, ["lodash", "--unknown", "react"]);
+    }
+
+    #[test]
+    fn a_root_marker_above_the_working_directory_is_a_possible_root() {
+        let root = std::env::temp_dir().join(format!("vis-pm-family-{}", std::process::id()));
+        let package = root.join("packages").join("app");
+
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(root.join("pnpm-workspace.yaml"), "packages: []\n").unwrap();
+
+        assert!(super::ancestor_may_be_workspace_root(&package));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

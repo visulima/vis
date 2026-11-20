@@ -22,20 +22,32 @@
 //! fails loudly if it is unset.
 
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::process::{exit, Command, ExitStatus};
 
+mod advisories;
+mod clean;
 mod complete;
 mod exec;
+mod graph;
 mod help;
 mod hook;
+mod ignore;
+mod list;
 mod manifest;
+mod node_contract;
 mod pm;
 mod pm_family;
 mod pm_shim;
 mod surface;
 mod table;
+// Not routed to any command yet; the command ports call it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod targets;
 mod term;
+mod vis_config;
 mod width_tables;
+mod workspace;
 mod x;
 
 /// Internal, additive diagnostic command. Used to validate the
@@ -47,9 +59,14 @@ const NATIVE_INFO: &str = "__native-info";
 const EX_SOFTWARE: i32 = 70;
 
 fn main() {
+    node_contract::init();
+
     // argv[0] is the binary path; the remainder is the `vis` invocation,
     // forwarded verbatim by the JS launcher.
-    let args: Vec<String> = env::args().skip(1).collect();
+    // The raw argv is kept for delegation, so a non-UTF-8 argument reaches Node unchanged
+    // instead of panicking; the `String` view is only for matching command names.
+    let raw_args: Vec<OsString> = env::args_os().skip(1).collect();
+    let args: Vec<String> = raw_args.iter().map(|argument| argument.to_string_lossy().into_owned()).collect();
     let first = args.first().map(String::as_str).unwrap_or("");
 
     match first {
@@ -77,6 +94,24 @@ fn main() {
         // is not certain about, is delegated to Node by `hook::run` itself.
         // `hook run --help` is the manifest's to answer (the `_` arm below).
         "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
+        // `vis advisories bloom status --format json --cache-dir <dir>` — read-only osv-bloom
+        // status. Every other shape (table output, `sync`, `prune`, help) goes to the arm below.
+        "advisories"
+            if args.get(1).map(String::as_str) == Some("bloom")
+                && args.get(2).map(String::as_str) == Some("status")
+                && !surface::asks_for_help(&args) =>
+        {
+            advisories::run(&args)
+        }
+        // `vis ignore` — the plain `--target` / `--json` / `--write` shapes in a CI context;
+        // help and everything else falls through to the arm below.
+        "ignore" if !surface::asks_for_help(&args) => ignore::run(&args, &raw_args),
+        // `vis clean` — the default and `--dry-run`/`--lockfile` shapes are answered natively;
+        // every other shape (and `--help`, left to the arm below) goes to Node.
+        "clean" if !surface::asks_for_help(&args) => clean::run(&raw_args),
+        // `vis list` — the plain project listing, native for a JS-only workspace in CI. Every
+        // other shape, and every root the gates reject, is delegated inside `list::run`.
+        "list" if !surface::asks_for_help(&args) => list::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
@@ -96,7 +131,7 @@ fn main() {
                 exit(code);
             }
 
-            delegate(&args)
+            delegate(&raw_args)
         }
     }
 }
@@ -127,7 +162,7 @@ fn native_info() {
 
 /// Hand the full argv off to the Node CLI, inheriting stdio and forwarding the
 /// child's exit status. Never returns.
-fn delegate(args: &[String]) -> ! {
+fn delegate<S: AsRef<OsStr>>(args: &[S]) -> ! {
     let node = env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned());
 
     let entry = match env::var("VIS_FALLBACK_ENTRY") {
@@ -140,11 +175,42 @@ fn delegate(args: &[String]) -> ! {
 
     // stdio is inherited by default, so the child shares the controlling
     // terminal and process group — Ctrl-C / SIGINT reach it directly.
-    match Command::new(&node).arg(&entry).args(args).status() {
-        Ok(status) => exit(forward_code(status)),
-        Err(error) => {
-            eprintln!("vis: failed to launch Node CLI ('{node}'): {error}");
-            exit(EX_SOFTWARE);
+    let mut command = Command::new(&node);
+
+    command.arg(&entry).args(args);
+
+    let error = run_in_place(&mut command);
+
+    eprintln!("vis: failed to launch Node CLI ('{node}'): {error}");
+    exit(EX_SOFTWARE);
+}
+
+/// Run `command` so that its process is the one the caller is waiting on, and
+/// never returns on success. On Unix this replaces this process with the child
+/// (`exec`), so a timeout or signal sent to the `vis` PID reaches the Node CLI
+/// itself; a parent that kills only the launcher would otherwise leave Node
+/// running with the caller's output pipes open. Elsewhere the child is spawned,
+/// waited for, and its status forwarded. Only returns the error if the child
+/// could not be started.
+pub fn run_in_place(command: &mut Command) -> std::io::Error {
+    use std::io::Write;
+
+    // `exec` skips Rust's stdio flush, so anything still buffered would be lost.
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        command.exec()
+    }
+
+    #[cfg(not(unix))]
+    {
+        match command.status() {
+            Ok(status) => exit(forward_code(status)),
+            Err(error) => error,
         }
     }
 }

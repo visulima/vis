@@ -6,6 +6,12 @@ packages:
   - "!**/__fixtures__/**"
   - "!packages/tooling/vis/examples/**"
   - "!packages/tooling/vis/__bench__/cli/fixtures/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/workspace/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/graph/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/targets/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/ignore/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/clean/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/list/**"
 
 allowBuilds:
   '@firebase/util': false

@@ -1,0 +1,10 @@
+{
+  "materialize": [
+    "node_modules/y",
+    "packages/a/node_modules/x/node_modules/z",
+    "packages/b/node_modules/w",
+    "packages/c/node_modules/v",
+    "packages/a/dist",
+    ".git/node_modules/q"
+  ]
+}

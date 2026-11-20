@@ -96,14 +96,15 @@
         "./package.json": "./package.json"
     },
     "bin": {
-        "v": "./bin/vis.mjs",
-        "vis": "./bin/vis.mjs",
+        "v": "./bin/vis",
+        "vis": "./bin/vis",
         "visx": "./dist/binx.js",
         "vx": "./dist/binx.js"
     },
     "files": [
         "dist/**",
         "bin/**",
+        "scripts/install-native.cjs",
         "dashboard/dist/**",
         "schemas/**",
         "skills/**",
@@ -139,9 +140,11 @@
         "lint:prettier": "prettier --config=prettier.config.js --check .",
         "lint:prettier:fix": "prettier --config=prettier.config.js --write .",
         "lint:types": "tsc --noEmit",
+        "preinstall": "node scripts/install-native.cjs",
         "test": "vitest run",
         "test:bench": "vitest bench --config vitest.bench.config.ts",
         "test:coverage": "vitest run --coverage",
+        "test:install-smoke": "node scripts/install-smoke.mjs",
         "test:perf": "vitest run __bench__/audit-offline.test.ts",
         "test:ui": "vitest --ui --coverage.enabled=true",
         "test:watch": "vitest"

@@ -1,16 +1,17 @@
-#!/usr/bin/env node
-// Native front-end launcher for `vis`.
+/* eslint-disable unicorn/no-process-exit -- CLI entry: exit codes are forwarded from the native binary */
+// Native front-end launcher for `vis`, used when the install script did not put
+// the native executable at `bin/vis` (see `bin/vis` and `scripts/install-native.cjs`).
+// `bin/vis` imports this file; run it directly with `node bin/vis.mjs`.
 //
-// This is the npm `bin` entry. Its only jobs are to (1) route the small set of
-// natively-implemented commands to the platform Rust binary, and (2) fall
-// through to the existing in-process Node CLI for everything else. The
-// fall-through path is byte-identical to running `dist/bin.js` directly, so the
-// launcher adds no extra Node boot for delegated commands — it `import()`s the
-// same entry in the same process.
+// Its only jobs are to (1) route the natively-implemented commands (and the help
+// surface) to the platform Rust binary, and (2) fall through to the existing
+// in-process Node CLI for everything else. The fall-through path is byte-identical
+// to running `dist/bin.js` directly, so the launcher adds no extra Node boot for
+// delegated commands: it `import()`s the same entry in the same process.
 //
-// As commands are ported off Node, their names are added to NATIVE_COMMANDS and
-// the binary grows to handle them; the binary itself delegates anything it does
-// not implement back to `dist/bin.js` via the VIS_* contract.
+// As commands are ported off Node, their names are added to NATIVE_COMMANDS in
+// `route.mjs` and the binary grows to handle them; the binary itself delegates
+// anything it does not implement back to `dist/bin.js` via the VIS_* contract.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -19,40 +20,33 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveNativeBinary } from "./resolve-binary.mjs";
+import { routesToNative } from "./route.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// VIS_FALLBACK_ENTRY lets tests (and the native binary's own delegation) point
-// the Node entry elsewhere; production resolves it next to the package.
-const fallbackEntry = process.env.VIS_FALLBACK_ENTRY ?? join(packageRoot, "dist", "bin.js");
+// Tells the CLI (and `vis doctor`) it was started through Node rather than the
+// native executable that the install script normally puts at `bin/vis`.
+process.env.VIS_LAUNCHER = "node";
 
-// Commands answered by the native binary. Every entry here MUST be handled by
-// the binary (natively or via its own Node delegation), with VERIFIED parity to
-// the Node behavior. Unknown commands never reach the binary — they take the
-// in-process path below, unchanged. NOTE: `-v` is cerebro's verbose flag (not
-// version), so it is deliberately absent.
-//
-// `exec` parity was verified empirically against cerebro: tool flags after the
-// command are forwarded to the tool on both the native path and the Node handler
-// (src/commands/exec/handler.ts), which was fixed to stop dropping them.
-const NATIVE_COMMANDS = new Set(["--version", "-V", "__native-info", "__pm-shim", "dedupe", "exec", "link", "outdated", "pm", "remove", "unlink", "why", "x"]);
+// VIS_FALLBACK_ENTRY_OVERRIDE lets tests point the Node entry elsewhere. An inherited
+// VIS_FALLBACK_ENTRY is deliberately ignored: a nested `vis` would otherwise run the entry
+// of the install that started it. Production resolves the entry next to this package.
+const fallbackEntry = process.env.VIS_FALLBACK_ENTRY_OVERRIDE ?? join(packageRoot, "dist", "bin.js");
 
-const command = process.argv[2] ?? "";
+const userArguments = process.argv.slice(2);
 
-// `hook run` is native too, but the other `hook` subcommands (install, migrate, …)
-// are not: sending those through the binary would only add a second Node boot.
-const isNativeCommand = NATIVE_COMMANDS.has(command) || (command === "hook" && process.argv[3] === "run");
-
-if (isNativeCommand) {
+if (routesToNative(userArguments)) {
     const binary = resolveNativeBinary(packageRoot);
 
     if (binary !== undefined) {
         const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
-        const { error, signal, status } = spawnSync(binary, process.argv.slice(2), {
+        const { error, signal, status } = spawnSync(binary, userArguments, {
             env: {
                 ...process.env,
                 VIS_FALLBACK_ENTRY: fallbackEntry,
+                VIS_HANDOFF: "launcher",
+                VIS_LAUNCHER: "node",
                 VIS_NODE: process.execPath,
                 VIS_VERSION: version,
             },
