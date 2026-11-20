@@ -136,7 +136,12 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const missingEntry = join(scratch, "missing-entry.js");
 
         // A delegated run cannot reach a missing entry, so a non-zero status shows the binary handed over.
-        const stale = nativeRun([], directory, { VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry, VIS_MONOREPO_ROOT: scratch });
+        // The fallback entry is set too: a binary outside the package reads VIS_FALLBACK_ENTRY, not the override.
+        const stale = nativeRun([], directory, {
+            VIS_FALLBACK_ENTRY: missingEntry,
+            VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry,
+            VIS_MONOREPO_ROOT: scratch,
+        });
         const native = nativeRun([], copyFixture("empty-project"), { VIS_MONOREPO_ROOT: scratch });
         const node = nodeRun([], copyFixture("empty-project"), { VIS_MONOREPO_ROOT: scratch });
 

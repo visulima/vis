@@ -110,7 +110,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         const missingEntry = join(scratch, "missing-entry.js");
         const delegation = { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath };
-        const nativeOnly = { VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry, VIS_NODE: process.execPath };
+        // Both are set: a binary outside its package reads VIS_FALLBACK_ENTRY, and a delegated run must fail.
+        const nativeOnly = { VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry, VIS_NODE: process.execPath };
 
         it.each(Object.entries(FIXTURES))("prints the same JSON for %s", (name, files) => {
             expect.assertions(2);
