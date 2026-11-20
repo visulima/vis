@@ -4,6 +4,7 @@ import { isAccessibleSync } from "@visulima/fs";
 import { join, relative, resolve } from "@visulima/path";
 import type { Finding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
 import {
+    DEFAULT_MAX_FILE_SIZE,
     inspectRuleset,
     listRequiredValidators,
     listRules,
@@ -12,6 +13,7 @@ import {
     scanFilesDetailed,
     scanGitHistoryDetailed,
     scanGitStaged,
+    scanStringDetailed,
 } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../../errors/vis-user-error";
@@ -20,9 +22,20 @@ import { createSpinner } from "../../io/spinner";
 import { diffBaseline, rebaseBaseline, rebaseFinding, writeBaseline } from "../../secrets/baseline";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
+import type { StdinContent } from "../../secrets/stdin";
+import { readStdinText } from "../../secrets/stdin";
 import { pathExists } from "../../util/toolbox-fs";
 import type { SecretsFlags, VisSecretsConfig } from "./flags";
-import { assertArchiveFlags, assertHistoryFlags, assertReportingFlags, partialScanReasons, resolveScanOptions, toArray, validateFormat } from "./flags";
+import {
+    assertArchiveFlags,
+    assertHistoryFlags,
+    assertReportingFlags,
+    partialScanReasons,
+    resolveScanOptions,
+    stdinUsageError,
+    toArray,
+    validateFormat,
+} from "./flags";
 import type { SecretsOptions } from "./index";
 import type { ScanOutcome } from "./report";
 import { applyDiagnosticGates, emitReports, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, status } from "./report";
@@ -114,7 +127,12 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
 };
 
 /** What a scan reads, resolved once from the validated flags. */
-type ScanMode = { files: string[]; kind: "files" } | { kind: "history" } | { kind: "paths"; paths: string[] } | { kind: "staged" };
+type ScanMode
+    = | { files: string[]; kind: "files" }
+        | { kind: "history" }
+        | { kind: "paths"; paths: string[] }
+        | { kind: "staged" }
+        | { file: string; input: StdinContent; kind: "stdin" };
 
 const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): ScanMode => {
     const paths = args.length > 0 ? args.map((p) => resolve(root, p)) : [root];
@@ -151,6 +169,15 @@ const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): Sca
     return { kind: "paths", paths };
 };
 
+/** Read standard input for `--stdin`; the virtual file sits at `name` under the workspace root, like a path argument. */
+const resolveStdinMode = async (name: string, root: string, scanOptions: ScanOptions): Promise<ScanMode> => {
+    return {
+        file: resolve(root, name),
+        input: await readStdinText(process.stdin, scanOptions.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE),
+        kind: "stdin",
+    };
+};
+
 const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOptions, root: string): Promise<ScanOutcome> => {
     if (mode.kind === "history") {
         const result = await scanGitHistoryDetailed({ ...scanOptions, all: flags.all, cwd: root, maxCommits: flags.maxCommits, range: flags.historyRange });
@@ -164,7 +191,12 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         return { ...result, skippedUnit: "file" };
     }
 
-    // The scanner reports staged and file-list findings relative to the real
+    if (mode.kind === "stdin" && mode.input.kind === "too-large") {
+        // Over --max-size, like a file: skipped and reported, not scanned.
+        return { findings: [], skipped: [{ path: relative(root, mode.file) || mode.file, reason: "too-large" }], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
+    }
+
+    // The scanner reports staged, file-list and stdin findings relative to the real
     // process cwd (not `toolbox.process.cwd`), which differs from `root` when vis
     // runs from a subdirectory. Hand it the baseline under those paths too, then
     // report root-relative paths like every other mode.
@@ -173,7 +205,12 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         ...scanOptions,
         baseline: typeof scanOptions.baseline === "string" ? rebaseBaseline(scanOptions.baseline, root, base) : scanOptions.baseline,
     };
-    const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, options);
+    const result
+        = mode.kind === "stdin"
+            ? await scanStringDetailed(mode.input.kind === "ok" ? mode.input.text : "", mode.file, options)
+            : mode.kind === "staged"
+                ? await scanGitStaged({ ...options, cwd: root })
+                : await scanFilesDetailed(mode.files, options);
 
     return {
         findings: result.findings.map((finding) => rebaseFinding(finding, base, root)),
@@ -205,6 +242,15 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const visSecrets = (visConfig as { secrets?: VisSecretsConfig } | undefined)?.secrets;
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
+
+    const stdinError = stdinUsageError(flags, args.length > 0);
+
+    if (stdinError !== undefined) {
+        status.error(stdinError);
+        process.exitCode = 2;
+
+        return;
+    }
 
     // Before the --list-*/--init early returns, so no mode silently drops a flag.
     assertHistoryFlags(flags);
@@ -238,7 +284,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const mode = resolveScanMode(flags, args, root);
+    const mode = flags.stdin === undefined ? resolveScanMode(flags, args, root) : await resolveStdinMode(flags.stdin, root, scanOptions);
     const history = mode.kind === "history";
 
     if (mode.kind === "files" && mode.files.length === 0) {
@@ -274,6 +320,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         reports,
         root,
         scanOptions,
+        stdin: mode.kind === "stdin" && mode.input.kind === "ok" ? mode.input.text : undefined,
         toolbox,
         toolVersion,
         useColor,

@@ -41,6 +41,8 @@ export interface ReportingContext {
     reports: ReportTarget[];
     root: string;
     scanOptions: ScanOptions;
+    /** `--stdin`: the text that was scanned, for the text view's source context. */
+    stdin?: string;
     toolbox: Toolbox<Console, SecretsOptions>;
     toolVersion: string;
     useColor: boolean;
@@ -79,11 +81,11 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
  * composite `requiredFindings` included, so the findings are rendered as is.
  */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
-    const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
+    const { flags, format, history, reports, root, scanOptions, stdin, toolbox, toolVersion, useColor } = context;
     const shouldRedact = scanOptions.redact === true;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
-    const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
+    const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion, virtualSource: stdin };
     // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
     // History reports carry commit messages, which `--redact` doesn't mask and which
     // can quote a secret, so they stay owner-only either way.

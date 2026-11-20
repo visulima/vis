@@ -4490,6 +4490,10 @@
           "Scan the last 100 commits, masking any secret values"
         ],
         [
+          "git show HEAD:src/app.ts | vis secrets --stdin src/app.ts",
+          "Scan piped content, reported as src/app.ts"
+        ],
+        [
           "vis secrets --init",
           "Write an initial baseline from current findings"
         ],
@@ -4797,6 +4801,11 @@
           "description": "Scan the content staged for commit (the git index), not the working-tree files",
           "name": "staged",
           "type": "boolean"
+        },
+        {
+          "description": "Scan standard input as a virtual file with this name (e.g. --stdin src/app.ts) instead of reading paths. The name is what findings, baselines, ignore entries and reports use. Cannot be combined with paths or other scan targets. Input over --max-size is skipped.",
+          "name": "stdin",
+          "type": "string"
         },
         {
           "description": "Merge current findings into the baseline and exit 0",

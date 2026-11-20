@@ -168,7 +168,7 @@ export {
 } from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
 export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
-export { scanString } from "./scan-string";
+export { scanString, scanStringDetailed } from "./scan-string";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
 export type {
