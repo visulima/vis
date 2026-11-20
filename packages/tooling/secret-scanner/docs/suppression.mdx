@@ -47,7 +47,7 @@ Unpaired start markers are ignored — a stray `allow-start` never silently swal
 
 Both `gitleaks:...` and `secret-scanner:...` are accepted for every variant (inline, start, end). Case-insensitive.
 
-Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`. A start pairs with the first end after it, and a second start before that end does not open its own region. A secret on the same line, before an `allow-start` marker, is not covered by that marker.
+Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`. A start pairs with the first end after it, and a second start before that end does not open its own region. A line carrying an `allow-start` or `allow-end` marker also works as an inline allow for secrets on that line, scoped by the same rule ids.
 
 ## 3. Previous-line pragma — `pragma: allowlist nextline secret`
 

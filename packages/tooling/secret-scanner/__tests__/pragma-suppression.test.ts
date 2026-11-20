@@ -150,6 +150,33 @@ describe("rule-scoped allow markers (end-to-end)", () => {
     }, 30_000);
 });
 
+describe("allow markers sharing a line or a boundary line", () => {
+    it("lets a later bare marker suppress a rule an earlier scoped marker did not name", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow other-token // gitleaks:allow`);
+
+        expect(findings).toHaveLength(0);
+    }, 30_000);
+
+    it("treats a secret before an allow-start marker on the same line as allowed", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow-start`);
+
+        expect(findings).toHaveLength(0);
+    }, 30_000);
+
+    it("scopes a boundary line by the rule ids after the marker", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} ${OTHER_TOKEN_LINE} // gitleaks:allow-start test-token`);
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.ruleId).toBe("other-token");
+    }, 30_000);
+});
+
 describe("yaml transformer × scanString integration", () => {
     it("detects a secret that was split across a block scalar after transform", async () => {
         expect.assertions(3);
