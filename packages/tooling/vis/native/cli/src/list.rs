@@ -5,7 +5,7 @@
 //! delegated to Node, as is any root the gates reject.
 //!
 //! The root is the one `findMonorepoRootSync` picks for the working directory (see
-//! [`monorepo_root`]), since `cli-main` overwrites `VIS_MONOREPO_ROOT` with that result. Target names
+//! [`monorepo_root`]). The inherited `VIS_MONOREPO_ROOT` is not read, so it cannot change the answer. Target names
 //! come from `package.json` scripts alone. That is exact only when no inference detector applies to
 //! the project (`inference-triggers.json`, checked by `__tests__/native/list-inference-triggers.test.ts`)
 //! and no config changes the target set. Node prints tips and first-run notices to stderr outside CI,
@@ -14,11 +14,12 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::advisories::monorepo_root;
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
 use crate::vis_config;
 
@@ -382,41 +383,6 @@ fn render(listed: &[Listed], format: Format) -> String {
 
     out
 }
-
-/// The workspace root Node picks for `cwd`: `findMonorepoRootSync` in `@visulima/package`, which
-/// takes the nearest lockfile (or `packageManager` manifest) and, for pnpm, the directory holding
-/// `pnpm-workspace.yaml`. Anything else, including a lerna or turbo marker, another lockfile or a
-/// `packageManager` field, delegates, because the outcome then depends on details this path skips.
-fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
-    if cwd.ancestors().any(|dir| dir.join("lerna.json").exists() || dir.join("turbo.json").exists()) {
-        return None;
-    }
-
-    for dir in cwd.ancestors() {
-        if dir.join("pnpm-lock.yaml").is_file() {
-            return dir.join("pnpm-workspace.yaml").is_file().then(|| dir.to_path_buf());
-        }
-
-        if OTHER_LOCKFILES.iter().any(|name| dir.join(name).exists()) {
-            return None;
-        }
-
-        let manifest = dir.join("package.json");
-
-        if manifest.exists() {
-            let parsed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&manifest).ok()?).ok()?;
-
-            if parsed.get("packageManager").is_some() {
-                return None;
-            }
-        }
-    }
-
-    None
-}
-
-/// Lockfiles that `findMonorepoRootSync` reads as a package manager other than pnpm.
-const OTHER_LOCKFILES: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb"];
 
 /// Answers `vis list` natively or hands the whole invocation to Node. `args` keeps the raw
 /// argv for the delegation; the `String` view is only for matching.

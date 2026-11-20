@@ -22,6 +22,12 @@ const nodeEntry = join(packageRoot, "dist", "bin.js");
 
 const scratch = mkdtempSync(join(tmpdir(), "vis-advisories-parity-"));
 
+// The scratch directory must be a pnpm workspace root. Node fails without a resolvable root, and the
+// native gate only answers when the root resolves to the working directory (see `native_context`).
+writeFileSync(join(scratch, "package.json"), "{}");
+writeFileSync(join(scratch, "pnpm-lock.yaml"), "");
+writeFileSync(join(scratch, "pnpm-workspace.yaml"), "");
+
 const manifest = (overrides: Record<string, unknown> = {}): string =>
     JSON.stringify(
         {
@@ -79,9 +85,12 @@ const cacheDirFor = (name: string, files: Record<string, string>): string => {
  * is what Node's config notices check; they are removed (not emptied) when `ci` is false, because
  * `is-in-ci` counts an empty `CI` as set.
  */
-const run = (command: string, args: string[], options: { ci: boolean; extraEnv?: Record<string, string> }) => {
-    const env: Record<string, string | undefined> = { ...process.env, VIS_CLI_TEST: "1", VIS_NO_UPDATE_CHECK: "1", ...options.extraEnv };
+const run = (command: string, args: string[], options: { ci: boolean; cwd?: string; extraEnv?: Record<string, string> }) => {
+    // An inherited root (from a parent vis run) would make the native gate answer for another workspace.
+    const env: Record<string, string | undefined> = { ...process.env };
 
+    delete env["VIS_MONOREPO_ROOT"];
+    Object.assign(env, { VIS_CLI_TEST: "1", VIS_NO_UPDATE_CHECK: "1", ...options.extraEnv });
     delete env["CI"];
     delete env["CONTINUOUS_INTEGRATION"];
 
@@ -89,7 +98,7 @@ const run = (command: string, args: string[], options: { ci: boolean; extraEnv?:
         env["CI"] = "1";
     }
 
-    return spawnSync(command, args, { cwd: scratch, encoding: "utf8", env });
+    return spawnSync(command, args, { cwd: options.cwd ?? scratch, encoding: "utf8", env });
 };
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))(
@@ -99,22 +108,73 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             rmSync(scratch, { force: true, recursive: true });
         });
 
-        // The native path only answers in CI with VIS_MONOREPO_ROOT set (see `native_context`).
-        const nativeContext = { VIS_MONOREPO_ROOT: scratch };
+        const missingEntry = join(scratch, "missing-entry.js");
         const delegation = { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath };
+        // Both are set: a binary outside its package reads VIS_FALLBACK_ENTRY, and a delegated run must fail.
+        const nativeOnly = { VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry, VIS_NODE: process.execPath };
 
         it.each(Object.entries(FIXTURES))("prints the same JSON for %s", (name, files) => {
-            expect.assertions(3);
+            expect.assertions(2);
 
             const cacheDir = cacheDirFor(name, files);
             const args = ["advisories", "bloom", "status", "--format", "json", "--cache-dir", cacheDir];
 
-            const native = run(binary as string, args, { ci: true, extraEnv: { ...delegation, ...nativeContext } });
-            const node = run(process.execPath, [nodeEntry, ...args], { ci: true, extraEnv: nativeContext });
+            const native = run(binary as string, args, { ci: true, extraEnv: delegation });
+            const node = run(process.execPath, [nodeEntry, ...args], { ci: true });
+
+            expect(native.status).toBe(node.status);
+            expect(native.stdout).toBe(node.stdout);
+        });
+
+        // A delegated run cannot reach the missing entry, so these fixtures prove the binary answered itself.
+        it.each(["full cache", "filter.bin without manifest", "no filter.bin"])("answers %s natively, without a Node fallback", (name) => {
+            expect.assertions(3);
+
+            const cacheDir = cacheDirFor(name, FIXTURES[name]);
+            const args = ["advisories", "bloom", "status", "--format", "json", "--cache-dir", cacheDir];
+
+            const native = run(binary as string, args, { ci: true, extraEnv: nativeOnly });
+            const node = run(process.execPath, [nodeEntry, ...args], { ci: true });
 
             expect(native.status).toBe(0);
             expect(node.status).toBe(0);
             expect(native.stdout).toBe(node.stdout);
+        });
+
+        it("delegates when VIS_MONOREPO_ROOT names another directory, and matches Node", () => {
+            expect.assertions(3);
+
+            const cacheDir = cacheDirFor("stale root", FIXTURES["full cache"]);
+            const args = ["advisories", "bloom", "status", "--format", "json", "--cache-dir", cacheDir];
+
+            const stale = run(binary as string, args, { ci: true, extraEnv: { ...nativeOnly, VIS_MONOREPO_ROOT: dirname(scratch) } });
+            const node = run(process.execPath, [nodeEntry, ...args], { ci: true, extraEnv: { VIS_MONOREPO_ROOT: dirname(scratch) } });
+
+            expect(stale.status).not.toBe(0);
+            expect(node.status).toBe(0);
+            expect(stale.stdout).toBe("");
+        });
+
+        it("delegates when no workspace root resolves, and matches Node's failure", () => {
+            expect.assertions(3);
+
+            // A bare package.json is a marker, not a workspace: Node fails with "Could not determine workspace root".
+            // It sits outside `scratch`, because Node's search would otherwise climb to the pnpm workspace there.
+            const bare = mkdtempSync(join(tmpdir(), "vis-advisories-bare-"));
+
+            writeFileSync(join(bare, "package.json"), "{}");
+
+            const cacheDir = cacheDirFor("bare package root", FIXTURES["full cache"]);
+            const args = ["advisories", "bloom", "status", "--format", "json", "--cache-dir", cacheDir];
+
+            const native = run(binary as string, args, { ci: true, cwd: bare, extraEnv: delegation });
+            const node = run(process.execPath, [nodeEntry, ...args], { ci: true, cwd: bare });
+
+            expect(native.status).not.toBe(0);
+            expect(native.status).toBe(node.status);
+            expect(native.stdout).toBe(node.stdout);
+
+            rmSync(bare, { force: true, recursive: true });
         });
 
         it("delegates outside CI and matches Node's exit status and stdout", () => {

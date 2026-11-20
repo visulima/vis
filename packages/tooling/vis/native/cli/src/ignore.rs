@@ -2,11 +2,10 @@
 //!
 //! The pattern lists and the merge are copied from `ignore-file.ts`. The output also depends on
 //! the workspace root, which Node finds with `@visulima/package`'s search. This crate only
-//! answers when `VIS_MONOREPO_ROOT` is the working directory and no ancestor holds a marker that
-//! the search could stop at ([`native_context`]). Only the `--target`, `--json` and `--write`
-//! shapes are native. Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8
-//! files), a config or Deno file, a terminal, colour support, and a run outside CI all go to Node
-//! via [`crate::delegate`].
+//! answers when the working directory is that root by the rule in [`native_root_is_cwd`]
+//! ([`native_context`]). Only the `--target`, `--json` and `--write` shapes are native.
+//! Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8 files), a config or
+//! Deno file, a terminal, colour support, and a run outside CI all go to Node via [`crate::delegate`].
 
 use std::collections::HashSet;
 use std::env;
@@ -16,7 +15,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{any_ancestor_has, in_ci, DENO_FILES};
+use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
@@ -68,21 +67,6 @@ const SLUG_EXTRAS: [&str; 1] = ["node_modules"];
 const VERCEL_EXTRAS: [&str; 2] = ["node_modules", ".vercel/"];
 
 const VIS_SECTION_HEADER: &str = "# Added by vis ignore";
-
-/// Markers that Node's root search (`findMonorepoRootSync`) reads in an ancestor. Finding one
-/// strictly above the working directory means the root may not be the working directory.
-const ROOT_MARKERS: [&str; 10] = [
-    "lerna.json",
-    "turbo.json",
-    "pnpm-workspace.yaml",
-    "package.json",
-    "pnpm-lock.yaml",
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "yarn.lock",
-    "bun.lock",
-    "bun.lockb",
-];
 
 /// Environment variables that make Node's colour detection turn colour on for the stdout log
 /// lines (the dimmed hint is printed there). Any of them sends the command to Node.
@@ -184,13 +168,9 @@ fn native_context(cwd: &Path) -> bool {
         return false;
     }
 
-    let root = env::var_os("VIS_MONOREPO_ROOT").filter(|root| !root.is_empty()).map(PathBuf::from);
+    let env_root = env::var_os("VIS_MONOREPO_ROOT");
 
-    if root.as_deref() != Some(cwd) {
-        return false;
-    }
-
-    if cwd.ancestors().skip(1).any(|ancestor| ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists())) {
+    if !native_root_is_cwd(cwd, env_root.as_deref()) {
         return false;
     }
 
