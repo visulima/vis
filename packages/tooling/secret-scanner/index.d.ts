@@ -158,6 +158,22 @@ export interface ScanOptions {
     commit?: string;
 }
 
+/**
+ * An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+ * nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+ * suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+ * lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+ * or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+ * token that is neither a known rule id nor id-shaped.
+ */
+export interface AllowWarning {
+    file: string;
+    /** 1-based line of the marker. */
+    line: number;
+    /** Each unknown id once, in order of appearance. */
+    unknownRuleIds: Array<string>;
+}
+
 /** Result of every scan entry point. */
 export interface ScanReport {
     /** Active findings. */
@@ -166,6 +182,8 @@ export interface ScanReport {
     suppressed: Array<SuppressedFinding>;
     /** Content that could not be read. Always empty for `scanTextSync`. */
     skipped: Array<SkippedFile>;
+    /** Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`. */
+    allowWarnings: Array<AllowWarning>;
 }
 
 /** `scanDetailed` on the calling thread. */

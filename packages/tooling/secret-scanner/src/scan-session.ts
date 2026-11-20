@@ -6,7 +6,7 @@ import type { SuppressionContext } from "./pipeline";
 import { createSuppressionContext } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { prepareScan } from "./prepare-scan";
-import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
 
 export interface ScanSession {
     context: SuppressionContext;
@@ -29,6 +29,8 @@ export const beginScan = async (options: ScanOptions | undefined, bases: Readonl
 };
 
 export interface FinishResultOptions {
+    /** Allow-marker warnings of the scan. */
+    allowWarnings?: AllowWarning[];
     /** Report unused commit-scoped `.gitleaksignore` entries too (git history scans). */
     includeCommitEntries?: boolean;
 }
@@ -39,8 +41,9 @@ export const finishResult = <F extends Finding, S>(
     skipped: S[],
     context: SuppressionContext,
     options: FinishResultOptions = {},
-): { findings: F[]; skipped: S[]; suppressed: SuppressedFinding<F>[]; unusedIgnores: GitleaksIgnoreEntry[] } => {
+): { allowWarnings: AllowWarning[]; findings: F[]; skipped: S[]; suppressed: SuppressedFinding<F>[]; unusedIgnores: GitleaksIgnoreEntry[] } => {
     return {
+        allowWarnings: options.allowWarnings ?? [],
         findings: processed.findings,
         skipped,
         suppressed: processed.suppressed,

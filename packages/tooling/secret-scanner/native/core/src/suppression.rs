@@ -1,7 +1,9 @@
 // Suppression checks: inline allow markers (same-line comment, allow-start/end regions,
 // nextline pragma) and config allowlists.
 
-use crate::lines::line_slice;
+use std::path::{Path, PathBuf};
+
+use crate::lines::{compute_line_offsets, line_slice};
 use crate::rules::{AllowlistTarget, CompiledAllowlist, CompiledRuleset};
 
 /// Why a match was suppressed. Only surfaced with `reportSuppressed`.
@@ -37,7 +39,7 @@ pub enum AllowScope {
 
 impl AllowScope {
     fn from_trailing(trailing: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Self {
-        let ids = trailing_rule_ids(trailing, is_known_rule);
+        let ids = parse_trailing_ids(trailing, is_known_rule).known;
 
         if ids.is_empty() {
             Self::All
@@ -62,16 +64,47 @@ pub struct AllowRegion {
     scope: AllowScope,
 }
 
-/// Leading comma/space separated tokens that are active rule ids. The first token
-/// that is not one ends the list, so prose after a bare marker ("gitleaks:allow
-/// safe in tests") and mistyped ids leave the marker bare. Marker text is
-/// case-insensitive; rule ids are not.
-fn trailing_rule_ids(trailing: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<String> {
-    trailing
-        .split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|token| !token.is_empty())
-        .map_while(|token| is_known_rule(token).then(|| token.to_string()))
-        .collect()
+/// The rule ids a marker's trailing text lists.
+struct TrailingIds {
+    /// Leading comma/space separated tokens that are active rule ids. The first token
+    /// that is not one ends the list, so prose after a bare marker ("gitleaks:allow
+    /// safe in tests") and mistyped ids leave the marker bare. Marker text is
+    /// case-insensitive; rule ids are not.
+    known: Vec<String>,
+    /// Id-shaped tokens in the same leading run that name no active rule, in order.
+    unknown: Vec<String>,
+}
+
+fn parse_trailing_ids(trailing: &str, is_known_rule: &dyn Fn(&str) -> bool) -> TrailingIds {
+    let mut ids = TrailingIds { known: Vec::new(), unknown: Vec::new() };
+
+    for token in trailing.split(|c: char| c == ',' || c.is_whitespace()).filter(|token| !token.is_empty()) {
+        if is_known_rule(token) {
+            if ids.unknown.is_empty() {
+                ids.known.push(token.to_string());
+            }
+        } else if looks_like_rule_id(token) {
+            if !ids.unknown.iter().any(|seen| seen == token) {
+                ids.unknown.push(token.to_string());
+            }
+        } else {
+            break;
+        }
+    }
+
+    ids
+}
+
+/// Whether `token` is shaped like a rule id: starts with a lowercase letter, uses only
+/// lowercase letters, digits, `_`, `-` and `.`, has no empty segment, and is either
+/// kebab-case with at least one hyphen (`github-pat`) or a dotted id with at least two
+/// dots (`kingfisher.stripe.1`). Single words and capitalised or punctuated prose are
+/// not id-shaped, so they never warn; hyphenated prose ("test-only") does.
+fn looks_like_rule_id(token: &str) -> bool {
+    token.starts_with(|c: char| c.is_ascii_lowercase())
+        && token.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.'))
+        && token.split(['-', '.']).all(|segment| !segment.is_empty())
+        && (token.contains('-') || token.matches('.').count() >= 2)
 }
 
 /// Marker offsets in a lowercased buffer, found lazily. Each marker keeps its next
@@ -120,18 +153,12 @@ fn find_marker<'a>(lc: &str, markers: &[&'a str]) -> Option<(usize, &'a str)> {
         .min_by_key(|(position, _)| *position)
 }
 
-/// Scopes of every marker on `line`; a finding is suppressed when any of them
-/// covers its rule. A `-start` / `-end` suffix directly after the marker is skipped
-/// so a region boundary line also acts as an inline allow, with any rule ids
-/// following the suffix as its scope.
-fn allow_scopes_on_line(
-    line: &str,
-    markers: &[&str],
-    skip_suffixes: &[&str],
-    is_known_rule: &dyn Fn(&str) -> bool,
-) -> Vec<AllowScope> {
+/// Trailing text after every marker on `line`. A `-start` / `-end` suffix directly
+/// after the marker is skipped so a region boundary line also acts as an inline allow,
+/// with any rule ids following the suffix as its scope.
+fn marker_trailers<'a>(line: &'a str, markers: &[&str], skip_suffixes: &[&str]) -> Vec<&'a str> {
     let lc = line.to_ascii_lowercase();
-    let mut scopes = Vec::new();
+    let mut trailers = Vec::new();
     let mut base = 0;
 
     while base < lc.len() {
@@ -144,11 +171,25 @@ fn allow_scopes_on_line(
 
         // `to_ascii_lowercase` keeps byte offsets, so this slice preserves the
         // original case of any rule id.
-        scopes.push(AllowScope::from_trailing(&line[after_marker + suffix_len..], is_known_rule));
+        trailers.push(&line[after_marker + suffix_len..]);
         base = after_marker;
     }
 
-    scopes
+    trailers
+}
+
+/// Scopes of every marker on `line`; a finding is suppressed when any of them
+/// covers its rule.
+fn allow_scopes_on_line(
+    line: &str,
+    markers: &[&str],
+    skip_suffixes: &[&str],
+    is_known_rule: &dyn Fn(&str) -> bool,
+) -> Vec<AllowScope> {
+    marker_trailers(line, markers, skip_suffixes)
+        .into_iter()
+        .map(|trailing| AllowScope::from_trailing(trailing, is_known_rule))
+        .collect()
 }
 
 /// Scopes of the inline allow-comments on `line`. Accepts `gitleaks:allow`,
@@ -177,6 +218,66 @@ fn next_line_scopes(line: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<All
     }
 
     allow_scopes_on_line(line, &NEXT_LINE_MARKERS, &[], is_known_rule)
+}
+
+/// An allow marker (same-line, region boundary or nextline pragma) that lists id-shaped
+/// tokens naming no active rule. The marker still applies to every rule, so a renamed
+/// rule id would otherwise widen the suppression unnoticed. `path` and `entry` locate
+/// the content like [`crate::skip::Skipped`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownAllowIds {
+    pub path: PathBuf,
+    pub entry: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub ids: Vec<String>,
+}
+
+/// Every marker line of `content` that lists unknown rule ids, one entry per line.
+pub fn unknown_allow_ids(content: &str, ruleset: &CompiledRuleset, path: &Path, entry: &str) -> Vec<UnknownAllowIds> {
+    unknown_ids_by_line(content, &|id| ruleset.has_rule(id))
+        .into_iter()
+        .map(|(line, ids)| UnknownAllowIds { path: path.to_path_buf(), entry: entry.to_string(), line, ids })
+        .collect()
+}
+
+fn unknown_ids_by_line(content: &str, is_known_rule: &dyn Fn(&str) -> bool) -> Vec<(u32, Vec<String>)> {
+    let lc = content.to_ascii_lowercase();
+    let offsets = compute_line_offsets(content);
+    let mut found = Vec::new();
+    let mut last_line = 0;
+
+    // Every marker contains "allow", so only the lines holding it need a closer look.
+    for (position, _) in lc.match_indices("allow") {
+        let line = offsets.partition_point(|&offset| offset <= position) as u32;
+
+        if line == last_line {
+            continue;
+        }
+
+        last_line = line;
+
+        let text = line_slice(content, &offsets, line);
+        let mut ids: Vec<String> = Vec::new();
+
+        for trailing in marker_trailers(text, &SAME_LINE_MARKERS, &["-start", "-end"])
+            .into_iter()
+            .chain(marker_trailers(text, &NEXT_LINE_MARKERS, &[]))
+        {
+            for id in parse_trailing_ids(trailing, is_known_rule).unknown {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+
+        if !ids.is_empty() {
+            found.push((line, ids));
+        }
+    }
+
+    found
 }
 
 fn scope_after_marker(
@@ -491,6 +592,54 @@ mod tests {
 
         assert_eq!(allow_regions(&src, &is_known_rule).len(), 50_000);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn unknown_id_shaped_tokens_are_reported_once_per_line() {
+        let src = "ok\nx = 1 // gitleaks:allow renamed-id, github-pat, renamed-id kingfisher.acme.1\ny // gitleaks:allow safe in tests\n# pragma: allowlist nextline secret old-name\nz // secret-scanner:allow-start gone-rule\n";
+        let found = unknown_ids_by_line(src, &is_known_rule);
+
+        assert_eq!(
+            found,
+            vec![
+                (2, vec!["renamed-id".to_string(), "kingfisher.acme.1".to_string()]),
+                (4, vec!["old-name".to_string()]),
+                (5, vec!["gone-rule".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn valid_ids_prose_and_non_ids_do_not_warn() {
+        for line in [
+            "x // gitleaks:allow github-pat, aws-access-token",
+            "x // gitleaks:allow",
+            "x // gitleaks:allow safe in tests",
+            "x // gitleaks:allow Test-Only",
+            "x // gitleaks:allow @alice",
+            "x // gitleaks:allow 2024-01-15",
+            "x // gitleaks:allow snake_case",
+            "x // gitleaks:allow example.com",
+            "x // the allow list is long-lived",
+        ] {
+            assert!(unknown_ids_by_line(line, &is_known_rule).is_empty(), "{line}");
+        }
+    }
+
+    #[test]
+    fn unknown_id_after_prose_is_not_reported() {
+        assert!(unknown_ids_by_line("x // gitleaks:allow because renamed-id", &is_known_rule).is_empty());
+    }
+
+    #[test]
+    fn rule_id_shape() {
+        for id in ["github-pat", "kingfisher.stripe.1", "kingfisher.aws.bedrock.long_lived", "a-b"] {
+            assert!(looks_like_rule_id(id), "{id}");
+        }
+
+        for token in ["jwt", "GitHub-Pat", "-a", "a-", "a--b", "a.b", "a.", "1-a", "v", "a b", ""] {
+            assert!(!looks_like_rule_id(token), "{token}");
+        }
     }
 
     #[test]

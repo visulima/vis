@@ -30,6 +30,8 @@ const other = "ghp_zY9xW8vU7tS6rQ5pO4nM3lK2jI1hG0fE9dC8bA7a"; // secret-scanner:
 
 Ids are separated by commas or spaces and compared case-sensitively against the active ruleset. Anything that is not an active rule id is read as prose, and the list ends at the first such token. A marker with no active id stays bare and suppresses every rule on the line, so `// gitleaks:allow safe in tests` and `// gitleaks:allow test-only` behave like `// gitleaks:allow`. This also means a mistyped or disabled id (`// gitleaks:allow githb-pat`) does not narrow the marker: it still suppresses everything. Marker text stays case-insensitive.
 
+Because a marker with an unknown id keeps suppressing everything, a renamed or removed rule id would widen the suppression unnoticed, so the scanner reports it: `scanDetailed`, `scanFilesDetailed`, `scanGitStaged` and `scanGitHistoryDetailed` return `allowWarnings` (`{ file, line, unknownRuleIds }`, each id once per line), and `vis secrets` prints them to stderr. A token counts as an id when it is lowercase kebab-case with at least one hyphen (`github-pat-v2`) or a dotted id with two or more dots (`kingfisher.stripe.1`); the list ends at the first token that is neither a known nor an id-shaped one. Plain prose (`safe in tests`) never warns, but hyphenated prose (`test-only`) does, and the marker keeps its bare behaviour either way. `inlineAllow: false` produces no warnings.
+
 ## 2. Block region — `gitleaks:allow-start` / `-end`
 
 Suppresses every finding between two markers. Use for fixture blocks, test data, migration scripts and the like.

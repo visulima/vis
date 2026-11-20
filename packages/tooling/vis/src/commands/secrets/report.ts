@@ -1,12 +1,12 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { dim, green, yellow } from "@visulima/colorize";
 import { relative, resolve } from "@visulima/path";
-import type { Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
 import { listRules } from "@visulima/secret-scanner";
 
 import { pail } from "../../io/logger";
 import type { BaselineDiff } from "../../secrets/baseline";
-import { formatSkipped } from "../../secrets/format";
+import { formatAllowWarnings, formatSkipped } from "../../secrets/format";
 import type { ReportFormat, ReportTarget } from "../../secrets/report";
 import { formatSuppressed, formatUnusedIgnores, renderReport } from "../../secrets/report";
 import { writeReportFileSync } from "../../secrets/secure-write";
@@ -24,6 +24,8 @@ export const status: typeof pail = pail.child({ stdout: process.stderr });
 
 /** Everything a scan produced, whichever mode ran it. */
 export interface ScanOutcome {
+    /** Allow markers naming rule ids that are not active. */
+    allowWarnings: AllowWarning[];
     findings: Finding[];
     /** Files (working-tree scans) or git blobs (`--history`, `--staged`) the scan did not read. */
     skipped: (GitSkippedBlob | SkippedFile)[];
@@ -53,6 +55,10 @@ export const printDiagnostics = (outcome: ScanOutcome, context: ReportingContext
     if (!flags.quiet) {
         if (outcome.skipped.length > 0) {
             process.stderr.write(`${formatSkipped(outcome.skipped, outcome.skippedUnit, useColor, { verbose: flags.verbose })}\n`);
+        }
+
+        if (outcome.allowWarnings.length > 0) {
+            process.stderr.write(`${formatAllowWarnings(outcome.allowWarnings, root, useColor)}\n`);
         }
 
         if (context.fullScan && outcome.unusedIgnores.length > 0) {

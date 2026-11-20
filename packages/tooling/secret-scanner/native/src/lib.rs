@@ -274,6 +274,28 @@ impl From<core::SkippedFile> for SkippedFile {
     }
 }
 
+/// An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+/// nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+/// suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+/// lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+/// or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+/// token that is neither a known rule id nor id-shaped.
+#[napi(object)]
+pub struct AllowWarning {
+    pub file: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub unknown_rule_ids: Vec<String>,
+}
+
+impl From<core::AllowWarning> for AllowWarning {
+    fn from(v: core::AllowWarning) -> Self {
+        let core::AllowWarning { file, line, unknown_rule_ids } = v;
+        Self { file, line, unknown_rule_ids }
+    }
+}
+
 /// Result of every scan entry point.
 #[napi(object)]
 #[derive(Default)]
@@ -284,15 +306,18 @@ pub struct ScanReport {
     pub suppressed: Vec<SuppressedFinding>,
     /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
+    /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
+    pub allow_warnings: Vec<AllowWarning>,
 }
 
 impl From<core::ScanReport> for ScanReport {
     fn from(v: core::ScanReport) -> Self {
-        let core::ScanReport { findings, suppressed, skipped } = v;
+        let core::ScanReport { findings, suppressed, skipped, allow_warnings } = v;
         Self {
             findings: findings.into_iter().map(Into::into).collect(),
             suppressed: suppressed.into_iter().map(Into::into).collect(),
             skipped: skipped.into_iter().map(Into::into).collect(),
+            allow_warnings: allow_warnings.into_iter().map(Into::into).collect(),
         }
     }
 }

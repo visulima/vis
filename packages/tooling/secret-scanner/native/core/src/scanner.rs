@@ -11,6 +11,7 @@ use crate::decode::{scan_text_with_decoding, DecodeOptions};
 use crate::detector::{DetectOptions, RawFinding};
 use crate::rules::CompiledRuleset;
 use crate::skip::Skipped;
+use crate::suppression::{unknown_allow_ids, UnknownAllowIds};
 
 /// Per-scan switches for one unit of text: the decode pass and the detection options.
 #[derive(Debug, Clone, Copy, Default)]
@@ -20,16 +21,25 @@ pub struct TextScanOptions<'a> {
 }
 
 /// What scanning one file produced. `skipped` lists content inside it that was not scanned
-/// (archive entries over a size cap, unreadable entries).
+/// (archive entries over a size cap, unreadable entries); `allow_warnings` the allow
+/// markers that name unknown rule ids.
 #[derive(Debug, Default)]
 pub struct FileScan {
     pub findings: Vec<RawFinding>,
     pub skipped: Vec<Skipped>,
+    pub allow_warnings: Vec<UnknownAllowIds>,
 }
 
-impl From<Vec<RawFinding>> for FileScan {
-    fn from(findings: Vec<RawFinding>) -> Self {
-        Self { findings, skipped: Vec::new() }
+/// [`scan_text_full`] plus the allow-marker warnings of `content`, as a [`FileScan`].
+pub fn scan_unit(ruleset: &CompiledRuleset, path: &Path, content: &str, opts: TextScanOptions<'_>) -> FileScan {
+    FileScan {
+        findings: scan_text_full(ruleset, path, content, opts),
+        allow_warnings: if opts.detect.inline_allow {
+            unknown_allow_ids(content, ruleset, path, "")
+        } else {
+            Vec::new()
+        },
+        ..FileScan::default()
     }
 }
 
@@ -103,7 +113,7 @@ fn scan_bytes(
     if is_binary(bytes) {
         return FileScan::default();
     }
-    scan_text_full(ruleset, path, &lossy_text(bytes), opts).into()
+    scan_unit(ruleset, path, &lossy_text(bytes), opts)
 }
 
 /// `bytes` as text: borrowed when valid UTF-8, else decoded with replacement characters

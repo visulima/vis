@@ -20,5 +20,6 @@ mod walker;
 
 pub use scan::{inspect_ruleset, list_rules, scan_dirs, scan_files, scan_text, ScanError};
 pub use types::{
-    Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule, SuppressedFinding,
+    AllowWarning, Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule,
+    SuppressedFinding,
 };

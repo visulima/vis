@@ -13,6 +13,7 @@ use flate2::read::MultiGzDecoder;
 use crate::rules::CompiledRuleset;
 use crate::scanner::{is_binary, lossy_text, scan_text_full, FileScan, TextScanOptions};
 use crate::skip::{SkipReason, Skipped};
+use crate::suppression::unknown_allow_ids;
 
 /// Off by default: opening archives costs time and changes results for existing users.
 pub const DEFAULT_MAX_ARCHIVE_DEPTH: u32 = 0;
@@ -318,6 +319,9 @@ fn handle_entry(ctx: &mut Ctx<'_>, data: Vec<u8>, prefix: &str, name: &str, dept
     for mut finding in scan_text_full(ctx.ruleset, Path::new(&virtual_path), &text, ctx.text) {
         finding.archive_entry = Some(suffix.clone());
         ctx.out.findings.push(finding);
+    }
+    if ctx.text.detect.inline_allow {
+        ctx.out.allow_warnings.extend(unknown_allow_ids(&text, ctx.ruleset, &ctx.path, &suffix));
     }
 }
 

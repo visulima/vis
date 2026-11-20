@@ -346,10 +346,33 @@ export interface SkippedFile {
 }
 
 /**
+ * An inline allow marker (`gitleaks:allow`, `secret-scanner:allow`, an allow-start /
+ * allow-end boundary or a `pragma: allowlist nextline secret`) that lists rule ids
+ * naming no active rule. The marker still suppresses every rule, so a renamed or
+ * removed rule id widens the suppression instead of narrowing it.
+ *
+ * A token counts as an id when it is lowercase kebab-case with at least one hyphen
+ * (`github-pat`) or a dotted id with two or more dots (`kingfisher.stripe.1`), and the
+ * list ends at the first token that is neither a known id nor id-shaped. Plain prose
+ * (`gitleaks:allow safe in tests`) never warns; hyphenated prose (`test-only`) does.
+ * Each unknown id is reported once per line. Not produced with `inlineAllow: false`.
+ */
+export interface AllowWarning {
+    /** Path, like `Finding.file`; archive entries use their virtual path. */
+    file: string;
+    /** 1-based line of the marker. */
+    line: number;
+    /** Each unknown id once, in order of appearance. */
+    unknownRuleIds: string[];
+}
+
+/**
  * Result of `scanDetailed` / `scanFilesDetailed`: the findings plus everything
  * needed to tell a clean scan from one that didn't look at everything.
  */
 export interface ScanResult {
+    /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
+    allowWarnings: AllowWarning[];
     findings: Finding[];
     /** Files that could not be read. A scan with entries here is not proof of "no secrets". */
     skipped: SkippedFile[];

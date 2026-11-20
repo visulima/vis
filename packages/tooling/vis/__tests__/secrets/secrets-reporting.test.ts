@@ -333,6 +333,34 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(process.exitCode).toBe(1);
     }, 60_000);
 
+    it("keeps a marker with a renamed rule id suppressing and warns about the unknown id", async () => {
+        expect.assertions(4);
+
+        const root = tempDir();
+
+        writeFileSync(join(root, "a.ts"), `const a = "${PAT_A}"; // gitleaks:allow github-pat-v2\nconst b = "${PAT_B}"; // gitleaks:allow github-pat\n`);
+
+        await runSecrets({ format: "json", quiet: false }, root);
+
+        expect(JSON.parse(stdout.join(""))).toStrictEqual([]);
+        expect(stderr.join("")).toContain("1 allow marker(s) name unknown rule ids");
+        expect(stderr.join("")).toContain("a.ts:1 unknown: github-pat-v2");
+        expect(stderr.join("")).not.toContain("a.ts:2");
+    }, 60_000);
+
+    it("prints no allow warning for a marker with a valid id", async () => {
+        expect.assertions(2);
+
+        const root = tempDir();
+
+        writeFileSync(join(root, "a.ts"), `const b = "${PAT_B}"; // gitleaks:allow github-pat\n`);
+
+        await runSecrets({ format: "json", quiet: false }, root);
+
+        expect(JSON.parse(stdout.join(""))).toStrictEqual([]);
+        expect(stderr.join("")).not.toContain("allow marker");
+    }, 60_000);
+
     it("doesn't call entries for files outside a --staged scan unused", async () => {
         expect.assertions(2);
 

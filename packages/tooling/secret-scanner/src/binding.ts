@@ -8,12 +8,13 @@
 
 import type * as Native from "../index.js";
 import loadNativeRootBinding from "./load-native-root-binding";
-import type { Finding, SkippedFile, SuppressedFinding } from "./types";
+import type { AllowWarning, Finding, SkippedFile, SuppressedFinding } from "./types";
 
 const native = loadNativeRootBinding(import.meta.url) as typeof Native;
 
 /** What a native scan returns: active findings, suppressed ones (with `reportSuppressed`) and unreadable files. */
 export interface NativeReport {
+    allowWarnings: AllowWarning[];
     findings: Finding[];
     skipped: SkippedFile[];
     /** Allowlisted / inline-allowed matches; empty unless `reportSuppressed`. */
@@ -23,6 +24,7 @@ export interface NativeReport {
 /** Types native output into the public shapes; native already splits active, suppressed and skipped. */
 const toNativeReport = (report: Native.ScanReport): NativeReport => {
     return {
+        allowWarnings: report.allowWarnings,
         findings: report.findings as Finding[],
         skipped: report.skipped as SkippedFile[],
         suppressed: report.suppressed as SuppressedFinding[],
