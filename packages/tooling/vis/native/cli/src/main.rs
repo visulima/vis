@@ -28,6 +28,7 @@ use std::process::{exit, Command, ExitStatus};
 mod advisories;
 mod clean;
 mod complete;
+mod config_cache;
 mod exec;
 mod graph;
 mod help;
