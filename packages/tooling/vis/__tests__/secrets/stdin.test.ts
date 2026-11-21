@@ -72,6 +72,23 @@ describe("vis secrets --stdin", () => {
 
     const files = (findings: Finding[]): string[] => findings.map((finding) => finding.file);
 
+    it("warns about allow markers in piped content that name unknown rule ids", async () => {
+        expect.assertions(2);
+
+        const stderr: string[] = [];
+
+        vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            stderr.push(String(chunk));
+
+            return true;
+        });
+
+        const findings = await run({ quiet: false, stdin: "a.env" }, { chunks: [`TOKEN=${FAKE_PAT} # gitleaks:allow github-pat-v2\n`] });
+
+        expect(findings).toStrictEqual([]);
+        expect(stderr.join("")).toContain("a.env:1 unknown: github-pat-v2");
+    });
+
     it("scans input a cerebro caller injected instead of the process stdin", async () => {
         expect.assertions(1);
 

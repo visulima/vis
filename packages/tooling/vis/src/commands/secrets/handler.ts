@@ -14,7 +14,7 @@ import {
     scanFilesDetailed,
     scanGitHistoryDetailed,
     scanGitStaged,
-    scanString,
+    scanStringDetailed,
 } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../../errors/vis-user-error";
@@ -222,9 +222,11 @@ const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string
 
 const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOptions, root: string): Promise<ScanOutcome> => {
     if (mode.kind === "stdin") {
-        const findings = isPathExcluded(mode.filename, scanOptions, root) ? [] : await scanString(mode.content, mode.filename, scanOptions);
+        const { allowWarnings, findings } = isPathExcluded(mode.filename, scanOptions, root)
+            ? { allowWarnings: [], findings: [] }
+            : await scanStringDetailed(mode.content, mode.filename, scanOptions);
 
-        return { allowWarnings: [], findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
+        return { allowWarnings, findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
     }
 
     if (mode.kind === "history") {

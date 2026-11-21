@@ -166,7 +166,7 @@ export { inspectRuleset } from "./inspect-ruleset";
 export { maskFinding } from "./mask";
 export { DEFAULT_KEYWORD_MIN_LENGTH, type DefinedRule, defineRule, defineRuleset, inferKeywords, type KeywordHint, type RuleInput } from "./rule";
 export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
-export { scanString } from "./scan-string";
+export { scanString, scanStringDetailed } from "./scan-string";
 export {
     createRuleTester,
     type RuleCase,

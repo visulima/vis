@@ -6,7 +6,25 @@
 import { binding } from "./binding";
 import { createSuppressionContext, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
-import type { Finding, ScanOptions } from "./types";
+import type { AllowWarning, Finding, ScanOptions } from "./types";
+
+/**
+ * Scan an in-memory buffer like `scanString`, and also return the allow markers
+ * in it that name rule ids which are not active.
+ */
+export const scanStringDetailed = async (
+    content: string,
+    file: string,
+    options?: ScanOptions,
+): Promise<{ allowWarnings: AllowWarning[]; findings: Finding[] }> => {
+    const prepared = prepareScan(options);
+    const context = await createSuppressionContext(options, [process.cwd()]);
+    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
+
+    const { findings } = await postProcessDetailed(report, prepared, options, context);
+
+    return { allowWarnings: report.allowWarnings, findings };
+};
 
 /**
  * Scan an in-memory buffer as if it lived at `file`. Useful for editor
@@ -20,11 +38,7 @@ import type { Finding, ScanOptions } from "./types";
  * input yourself or offload to a worker.
  */
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
-    const prepared = prepareScan(options);
-    const context = await createSuppressionContext(options, [process.cwd()]);
-    const report = binding.scanTextSync(content, file, prepared.nativeOptions);
-
-    const { findings } = await postProcessDetailed(report, prepared, options, context);
+    const { findings } = await scanStringDetailed(content, file, options);
 
     return findings;
 };
