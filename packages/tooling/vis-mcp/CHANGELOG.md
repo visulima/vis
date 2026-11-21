@@ -1,3 +1,18 @@
+## @visulima/vis-mcp [3.1.0](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.22...@visulima/vis-mcp@3.1.0) (2026-11-20)
+
+### Features
+
+* **vis:** link the native binary as the vis command on install ([#103](https://github.com/visulima/vis/issues/103)) ([afcf849](https://github.com/visulima/vis/commit/afcf84957980a19cb8ba35b34706512d73fc1082))
+
+### Bug Fixes
+
+* **vis:** address the CodeRabbit review on the native launcher ([#107](https://github.com/visulima/vis/issues/107)) ([9227cbb](https://github.com/visulima/vis/commit/9227cbbd285cab295a97330d8037bf9e2950d468))
+
+
+### Dependencies
+
+* **@visulima/vis:** upgraded to 6.8.0
+
 ## @visulima/vis-mcp [3.0.22](https://github.com/visulima/vis/compare/@visulima/vis-mcp@3.0.21...@visulima/vis-mcp@3.0.22) (2026-11-17)
 
 
