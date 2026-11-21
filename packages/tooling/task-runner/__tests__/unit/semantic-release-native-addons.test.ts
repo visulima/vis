@@ -61,9 +61,11 @@ describe(isAlreadyPublishedError, () => {
 });
 
 describe(patchVersionCheck, () => {
+    // The loader interpolates `bindingPackageVersion` at runtime; spell the placeholder out so the fixture stays a plain string.
+    const versionReference = ["$", "{bindingPackageVersion}"].join("");
     const generated = [
-        "if (bindingPackageVersion !== '6.7.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {",
-        "  throw new Error(`Native binding package version mismatch, expected 6.8.0 but got ${bindingPackageVersion}. Reinstall.`)",
+        "if (bindingPackageVersion !== '6.7.0' && enforceVersionCheck) {",
+        `  throw new Error('mismatch, expected 6.8.0 but got ${versionReference}.')`,
         "}",
     ].join("\n");
 
@@ -80,6 +82,6 @@ describe(patchVersionCheck, () => {
     it("fails loudly when only one of the two forms is present", () => {
         expect.assertions(1);
 
-        expect(() => patchVersionCheck("expected 6.8.0 but got ${bindingPackageVersion}", "6.9.0")).toThrow(/no NAPI version-check/u);
+        expect(() => patchVersionCheck(`expected 6.8.0 but got ${versionReference}`, "6.9.0")).toThrow(/no NAPI version-check/u);
     });
 });
