@@ -1184,6 +1184,20 @@ pub struct DlxOptions {
 }
 
 /// Resolve `vis dlx`.
+/// The executable `npm exec` runs for a package spec: the package name without its scope and
+/// version (`@scope/pkg@1.0` -> `pkg`, `create-vite@6.0.0` -> `create-vite`). A spec with a `:`
+/// is a git, URL or file location, where an `@` belongs to the location (`git@host`,
+/// `user:token@host`) and is not a version separator, so only its last path segment is used.
+fn npm_bin_name(spec: &str) -> String {
+    let name = if spec.contains(':') {
+        spec
+    } else {
+        let name_start = usize::from(spec.starts_with('@'));
+        spec[name_start..].split('@').next().unwrap_or_default()
+    };
+    name.rsplit('/').next().unwrap_or_default().to_string()
+}
+
 pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
@@ -1220,16 +1234,7 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 args.push("--loglevel".into());
                 args.push("silent".into());
             }
-            // Extract binary name: handle scoped packages like @scope/pkg@1.0
-            let without_version = opts
-                .package
-                .split('@')
-                .enumerate()
-                .take_while(|(i, _)| *i < 2) // keep @scope/pkg, drop @version
-                .map(|(_, s)| s)
-                .collect::<Vec<_>>()
-                .join("@");
-            let bin_name = without_version.rsplit('/').next().unwrap_or(&opts.package).to_string();
+            let bin_name = npm_bin_name(&opts.package);
             args.push("--".into());
             args.push(if bin_name.is_empty() { opts.package.clone() } else { bin_name });
             args.extend(opts.args);
@@ -1282,9 +1287,9 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_add, resolve_dedupe, resolve_dlx, resolve_exec, resolve_install, resolve_link, resolve_outdated,
-        resolve_pm_command, resolve_remove, resolve_unlink, resolve_why, AddOptions, DlxOptions, ExecOptions,
-        InstallOptions, OutdatedOptions, RemoveOptions, WhyOptions,
+        npm_bin_name, resolve_add, resolve_dedupe, resolve_dlx, resolve_exec, resolve_install, resolve_link,
+        resolve_outdated, resolve_pm_command, resolve_remove, resolve_unlink, resolve_why, AddOptions, DlxOptions,
+        ExecOptions, InstallOptions, OutdatedOptions, RemoveOptions, WhyOptions,
     };
 
     fn argv(list: &[&str]) -> Vec<String> {
@@ -1574,6 +1579,37 @@ mod tests {
 
         assert_eq!((pnpm.bin.as_str(), pnpm.args), ("pnpm", argv(&["dlx", "create-vite", "my-app"])));
         assert_eq!((bun.bin.as_str(), bun.args[0].as_str()), ("bun", "x"));
+    }
+
+    #[test]
+    fn dlx_npm_runs_the_bin_without_the_version() {
+        let bin_for = |package: &str| {
+            let opts = DlxOptions { package: package.to_owned(), ..Default::default() };
+            let resolved = resolve_dlx("npm", "11.0.0", opts).unwrap();
+
+            (resolved.args[resolved.args.len() - 2..].to_vec(), resolved.args)
+        };
+
+        let (tail, args) = bin_for("create-vite@6.0.0");
+        assert_eq!(tail, ["--", "create-vite"]);
+        assert!(args.contains(&"--package=create-vite@6.0.0".to_owned()));
+
+        assert_eq!(bin_for("create-vite").0, ["--", "create-vite"]);
+        assert_eq!(bin_for("@scope/tool@1.2.3").0, ["--", "tool"]);
+        assert_eq!(bin_for("@scope/tool").0, ["--", "tool"]);
+    }
+
+    #[test]
+    fn npm_bin_name_keeps_the_location_of_a_git_or_url_spec_out_of_the_version_split() {
+        for (spec, bin) in [
+            ("git+ssh://git@github.com/org/tool.git", "tool.git"),
+            ("git@github.com:org/tool.git", "tool.git"),
+            ("https://user:token@host.example/pkg.tgz", "pkg.tgz"),
+            ("create-vite@6.0.0", "create-vite"),
+            ("@scope/tool@1.2.3", "tool"),
+        ] {
+            assert_eq!(npm_bin_name(spec), bin, "{spec}");
+        }
     }
 
     #[test]
