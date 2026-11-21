@@ -1339,6 +1339,7 @@ fn a_config_outside_a_monorepo_root_is_not_evaluated() {
     fixture.run(&[]);
 
     assert_eq!(fixture.emitter_runs(), 0);
+}
 
 /// Run `vis <args>` in an empty project (a pnpm lockfile pins the detected PM) with an
 /// empty `PATH`, so no package manager or runtime binary can be spawned. Returns the exit
