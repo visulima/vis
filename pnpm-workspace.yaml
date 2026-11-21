@@ -166,7 +166,7 @@ catalogs:
     '@shikijs/langs': ^4.5.0
     '@shikijs/themes': ^4.5.0
     '@sveltejs/adapter-auto': ^7.0.1
-    '@sveltejs/kit': ^3.0.0
+    '@sveltejs/kit': ^3.1.1
     '@total-typescript/ts-reset': ^0.6.1
     '@tsconfig/node22': ^22.0.5
     '@vercel/blob': 2.8.0
