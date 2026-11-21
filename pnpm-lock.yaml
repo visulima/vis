@@ -7,8 +7,8 @@ settings:
 catalogs:
   backend:
     '@hono/node-server':
-      specifier: ^2.1.5
-      version: 2.1.5
+      specifier: ^2.1.6
+      version: 2.1.9
     hono:
       specifier: 4.13.16
       version: 4.13.16
@@ -1340,7 +1340,7 @@ importers:
         version: 43.8.0
       '@hono/node-server':
         specifier: catalog:backend
-        version: 2.1.5(hono@4.13.16)
+        version: 2.1.9(hono@4.13.16)
       '@napi-rs/cli':
         specifier: catalog:dev
         version: 3.10.8(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@types/node@26.6.5)(emnapi@1.11.3(node-addon-api@7.1.1))(supports-color@10.2.2)
@@ -2921,6 +2921,12 @@ packages:
 
   '@hono/node-server@2.1.5':
     resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: '>=4.13.7 <5'
+
+  '@hono/node-server@2.1.9':
+    resolution: {integrity: sha512-Sk4NQd3GFY0WZWCzndwFMPwJhtD0y9qjsQ+pjID0/03nK9pxyBCUoUHCho8QYBLBVhi0ssL8UkNPHqbgSOFPIQ==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: '>=4.13.7 <5'
@@ -4806,6 +4812,7 @@ packages:
   '@secretlint/secretlint-rule-preset-recommend@13.0.7':
     resolution: {integrity: sha512-hfdYra+ZB6RmviEApxeL/YCx4ovBtpj0d9c+uhlCZaCikObjb8Sb8yqBN6g8/9tt7qD7LXGE3k9RtVvGK1fNVw==}
     engines: {node: '>=22.0.0'}
+    deprecated: Built into secretlint v14 and later. Remove this package; the rule id still works. https://github.com/secretlint/secretlint/blob/HEAD/docs/rules/preset-recommend.md
 
   '@secretlint/source-creator@13.0.7':
     resolution: {integrity: sha512-agf2lHf3f5CRHl7ZSQV2NTx4niPOf9qkLnuowSGoqeWycK5PTuyinlTqp6iq0gQt6TBhvyFu3nKNkXcrB9jWxw==}
@@ -13832,6 +13839,10 @@ snapshots:
       yargs: 17.7.3
 
   '@hono/node-server@2.1.5(hono@4.13.16)':
+    dependencies:
+      hono: 4.13.16
+
+  '@hono/node-server@2.1.9(hono@4.13.16)':
     dependencies:
       hono: 4.13.16
 
