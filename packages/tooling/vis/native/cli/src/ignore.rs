@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
-use crate::error::{self, WrapperError};
+use crate::error::WrapperError;
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
@@ -218,7 +218,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         Ok(()) => exit(0),
         // A closed pipe is not an error worth reporting.
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
-        Err(error) => error::finish(Err(WrapperError::write("ignore", "the output", error))),
+        Err(error) => WrapperError::write("ignore", "the output", error).exit(),
     }
 }
 
@@ -249,8 +249,7 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
         let mut file = open_for_write(&write_target(&path)?).ok()?;
 
         if let Err(error) = overwrite(&mut file, &merged.content) {
-            eprintln!("vis ignore: failed to write {}: {error}", options.filename);
-            exit(1);
+            WrapperError::write("ignore", options.filename, error).exit();
         }
 
         return Some(format!("Added {} pattern(s) to {}.\n", merged.added.len(), options.filename));

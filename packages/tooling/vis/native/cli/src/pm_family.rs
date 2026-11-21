@@ -20,7 +20,7 @@ use vis_core::resolve::{
 use crate::error::{self, WrapperError};
 
 /// Surface warnings, exec the resolved command, and return the exit status to forward.
-fn finish(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
+fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
     for warning in &resolved.warnings {
         eprintln!("vis {verb}: {warning}");
     }
@@ -350,7 +350,7 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     };
 
     let outcome = match resolved {
-        Ok(command) => finish(verb, command, &cwd),
+        Ok(command) => run_resolved(verb, command, &cwd),
         Err(message) => Err(WrapperError::usage(verb, message)),
     };
 

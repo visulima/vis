@@ -17,7 +17,7 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::{exit, Command};
+use std::process::Command;
 
 use crate::error::{self, WrapperError};
 
@@ -135,12 +135,6 @@ fn preload_path() -> Option<PathBuf> {
     Path::new(&entry).parent().map(|dist| dist.join("runtime").join("preload.js"))
 }
 
-/// Replaces this process with `command` (or spawns and waits, off Unix); only returns
-/// the failure to start it, since a started command exits with its own status.
-fn launch_runtime(mut command: Command) -> WrapperError {
-    WrapperError::launch("x", "runtime", crate::run_in_place(&mut command))
-}
-
 /// Entry point. `args` is the full invocation including the leading `x` (so the
 /// Node-fallback path can replay it verbatim). Never returns.
 pub fn run(args: &[String]) -> ! {
@@ -154,10 +148,7 @@ fn try_run(args: &[String]) -> Result<i32, WrapperError> {
 
     let file = match parsed.file {
         Some(file) => file,
-        None => {
-            eprintln!("No file specified. Usage: vis x <file> [args...]");
-            exit(1);
-        }
+        None => return Err(WrapperError::bare_usage("No file specified. Usage: vis x <file> [args...]")),
     };
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -200,7 +191,10 @@ fn try_run(args: &[String]) -> Result<i32, WrapperError> {
             let mut command = Command::new(node);
 
             command.arg("--import").arg(&preload).arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
-            Err(launch_runtime(command))
+
+            // Replaces this process (or spawns and waits, off Unix); only returns the failure to
+            // start it, since a started command exits with its own status.
+            Err(WrapperError::launch("x", "runtime", crate::run_in_place(&mut command)))
         }
     }
 }

@@ -24,7 +24,7 @@ use std::process::exit;
 
 use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
-use crate::error::{self, WrapperError};
+use crate::error::WrapperError;
 use crate::vis_config::{self, ConfigState};
 
 /// pail's default line width when `COLUMNS` is unset (stdout is not a terminal).
@@ -84,7 +84,7 @@ pub fn run(raw: &[OsString]) -> ! {
             Ok(()) => {}
             // A closed pipe is not an error worth reporting.
             Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-            Err(error) => error::finish(Err(WrapperError::write("clean", "the output", error))),
+            Err(error) => WrapperError::write("clean", "the output", error).exit(),
         }
     }
 
