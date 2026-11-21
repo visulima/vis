@@ -93,6 +93,7 @@
         { "args": ["ignore"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1" } },
         { "args": ["ignore"], "launcher": "node", "binary": "node", "env": { "CI": "1", "GITHUB_ACTIONS": "true" } },
         { "args": ["ignore"], "launcher": "native", "binary": "native", "env": { "CI": "1", "TERM": "dumb" } },
+        { "args": ["ignore", "--target", "slug"], "launcher": "native", "binary": "native", "env": { "CI": "1" } },
         { "args": ["ignore"], "launcher": "node", "env": { "CI": "1" }, "interactive": true },
         { "args": ["remove", "lodash"], "launcher": "native", "binary": "native" },
         {
@@ -122,6 +123,9 @@
         { "args": ["status", "--help"], "launcher": "node", "platform": "win32" },
         { "args": ["ignore", "--help"], "launcher": "node", "platform": "win32" },
         { "args": ["clean", "--help"], "launcher": "node", "platform": "win32" },
+        { "args": ["clean", "-h"], "launcher": "node", "platform": "win32" },
+        { "args": ["ignore"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
+        { "args": ["ignore", "--target=npm", "--write"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
         { "args": ["list", "--help"], "launcher": "node", "platform": "win32" },
         { "args": ["--version"], "launcher": "native", "platform": "win32" },
         { "args": ["hook", "run", "pre-commit"], "launcher": "native", "platform": "win32" },

@@ -20,16 +20,39 @@ struct Fixture {
     cases: Vec<Case>,
 }
 
+/// Where a call ends up: the binary answers it itself, or it hands it to the Node CLI.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Route {
+    Native,
+    Node,
+}
+
+/// What running the binary on a case showed.
+enum Outcome {
+    Route(Route),
+    /// Neither a native answer nor a Node hand-off: killed by a signal, a panic, or an exit 70 that
+    /// is not the Node-launch failure.
+    Unexpected(String),
+}
+
+// `launcher` and `note` belong to the Node half of the fixture; they are named here so that
+// `deny_unknown_fields` still catches a misspelt key.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Case {
     args: Vec<String>,
-    binary: Option<String>,
+    binary: Option<Route>,
     #[serde(default)]
     env: BTreeMap<String, String>,
     #[serde(default)]
     files: BTreeMap<String, String>,
     #[serde(default)]
     interactive: bool,
+    #[serde(rename = "launcher")]
+    _launcher: Route,
+    #[serde(rename = "note")]
+    _note: Option<String>,
     platform: Option<String>,
 }
 
@@ -48,7 +71,7 @@ fn write_file(directory: &Path, name: &str, content: &str) {
     fs::write(path, content).expect("write project file");
 }
 
-fn delegates(case: &Case, directory: &Path, empty_path: &Path) -> bool {
+fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
     for (name, content) in PROJECT {
         write_file(directory, name, content);
     }
@@ -70,7 +93,13 @@ fn delegates(case: &Case, directory: &Path, empty_path: &Path) -> bool {
         .output()
         .expect("run binary");
 
-    output.status.code() == Some(70) && String::from_utf8_lossy(&output.stderr).contains("failed to launch Node CLI")
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    match output.status.code() {
+        Some(70) if stderr.contains("failed to launch Node CLI") => Outcome::Route(Route::Node),
+        Some(70 | 101) | None => Outcome::Unexpected(format!("{:?}: {stderr}", output.status)),
+        Some(_) => Outcome::Route(Route::Native),
+    }
 }
 
 #[test]
@@ -86,7 +115,9 @@ fn binary_routes_match_the_shared_fixture() {
     for (index, case) in fixture.cases.iter().enumerate() {
         // The launcher's platform and terminal rules have no counterpart here: the binary cannot be
         // given a terminal, and on Windows the launcher keeps the call away from it.
-        let Some(expected) = case.binary.as_deref().filter(|_| case.platform.is_none() && !case.interactive) else {
+        let Some(expected) =
+            case.binary.filter(|_| case.platform.as_deref().unwrap_or("linux") == "linux" && !case.interactive)
+        else {
             continue;
         };
 
@@ -95,15 +126,18 @@ fn binary_routes_match_the_shared_fixture() {
 
         fs::create_dir_all(&directory).expect("create case directory");
 
-        let actual = if delegates(case, &directory, &empty_path) { "node" } else { "native" };
-
         checked += 1;
 
-        if actual != expected {
-            failures.push(format!(
-                "vis {:?} with {:?}: fixture says {expected}, binary went {actual}",
+        match run_case(case, &directory, &empty_path) {
+            Outcome::Route(actual) if actual == expected => {}
+            Outcome::Route(actual) => failures.push(format!(
+                "vis {:?} with {:?}: fixture says {expected:?}, binary went {actual:?}",
                 case.args, case.env
-            ));
+            )),
+            Outcome::Unexpected(detail) => failures.push(format!(
+                "vis {:?} with {:?}: binary neither answered nor delegated ({detail})",
+                case.args, case.env
+            )),
         }
     }
 
