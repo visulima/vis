@@ -1,6 +1,6 @@
 /* eslint-disable no-useless-concat -- fake tokens are split so GitHub push protection does not flag the fixtures */
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -429,6 +429,34 @@ describe(scanGitStaged, () => {
         const result = await scanGitStaged({ cwd: repo, walk: { excludePatterns: ["staged.ts"] } });
 
         expect(result.findings).toHaveLength(0);
+    });
+
+    it("discovers .secretlintignore from options.cwd, not the process cwd", async () => {
+        expect.assertions(2);
+
+        const { git, repo, write } = createRepo();
+
+        write("staged.ts", `t = "${SECRET_A}"\n`);
+        write(".secretlintignore", "staged.ts\n");
+        git("add", ".");
+
+        await expect(scanGitStaged({ cwd: repo })).resolves.toMatchObject({ findings: [] });
+        await expect(scanGitStaged({ cwd: repo, redact: false, secretlintIgnore: false })).resolves.toMatchObject({ findings: [expect.objectContaining({ secret: SECRET_A })] });
+    });
+
+    it.skipIf(process.platform === "win32")("matches a staged path by its index name after a working-tree directory becomes a symlink", async () => {
+        expect.assertions(1);
+
+        const { git, repo, write } = createRepo();
+
+        mkdirSync(join(repo, "alias"));
+        write("alias/secret.env", `t = "${SECRET_A}"\n`);
+        write(".secretlintignore", "alias/**\n");
+        git("add", ".");
+        renameSync(join(repo, "alias"), join(repo, "real"));
+        symlinkSync(join(repo, "real"), join(repo, "alias"));
+
+        await expect(scanGitStaged({ cwd: repo })).resolves.toMatchObject({ findings: [] });
     });
 
     it("reports paths relative to the process cwd, so a scanFiles baseline suppresses them", async () => {

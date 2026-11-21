@@ -30,7 +30,7 @@ import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
-import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
+import { buildIgnoreMatcher, canonicalize, isWithin } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
 import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
@@ -586,8 +586,9 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     const cwd = options?.cwd ?? process.cwd();
     const environment = gitEnvironment(true);
     const toplevel = await repositoryRoot(cwd, environment);
-    // Findings are reported relative to the process cwd, like native `scanFiles`.
-    const { context, prepared } = await beginScan(options, [process.cwd()]);
+    // Findings are reported relative to the process cwd, like native `scanFiles`;
+    // ignore files are discovered from, and inline patterns anchored at, `cwd`.
+    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [cwd]);
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
     const absolute = (path: string): string => resolve(toplevel, path);
@@ -604,14 +605,24 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
         return relativePath.replaceAll("\\", "/");
     };
+    // Test the index pathname under the canonical repository root rather than the
+    // working-tree path's realpath: a working-tree directory swapped for a symlink
+    // must not move a staged blob out from under its ignore pattern. Both sides use
+    // the matcher's own canonical form, so Windows short names and drive-letter case
+    // compare equal.
+    const matcher = buildIgnoreMatcher(effective, cwd);
+    const ignoreToplevel = canonicalize(toplevel);
+    const realIgnoreBase = canonicalize(cwd);
     const kept = new Set(
-        filterIgnoredFiles(
-            entries.map((entry) => absolute(entry.newPath)),
-            buildIgnoreMatcher(options),
-            cwd,
-        ),
+        entries
+            .filter((entry) => {
+                const indexed = resolve(ignoreToplevel, entry.newPath);
+
+                return matcher === undefined || !isWithin(realIgnoreBase, indexed) || !matcher.ignores(indexed);
+            })
+            .map((entry) => absolute(entry.newPath)),
     );
-    const scanner = new BlobScanner(toplevel, options, prepared, context);
+    const scanner = new BlobScanner(toplevel, effective, prepared, context);
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
 

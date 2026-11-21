@@ -211,6 +211,87 @@ leaked = "${secret2}"
         expect(findings).toHaveLength(0);
     });
 
+    it("auto-discovers .secretlintignore and honours explicit files alongside it", async () => {
+        expect.assertions(3);
+
+        await writeFile(resolve(tmpDir, "leak.env"), 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+        await writeFile(resolve(tmpDir, ".secretlintignore"), "*.env\n");
+        await writeFile(resolve(tmpDir, "extra.ignore"), "*.log\n");
+        await writeFile(resolve(tmpDir, "leak.log"), 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+
+        await expect(scan([tmpDir])).resolves.toHaveLength(1);
+        await expect(scan([tmpDir], { secretlintIgnore: [resolve(tmpDir, "extra.ignore")] })).resolves.toHaveLength(0);
+        await expect(scan([tmpDir], { secretlintIgnore: false })).resolves.toHaveLength(2);
+    });
+
+    it("scanFiles applies .secretlintignore from ignoreRoot for files outside the process cwd", async () => {
+        expect.assertions(2);
+
+        const leak = resolve(tmpDir, "leak.env");
+
+        await writeFile(leak, 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+        await writeFile(resolve(tmpDir, ".secretlintignore"), "*.env\n");
+
+        await expect(scanFiles([leak])).resolves.toHaveLength(1);
+        await expect(scanFiles([leak], { ignoreRoot: tmpDir })).resolves.toHaveLength(0);
+    });
+
+    it("scanFiles matches a relative entry where the scan reads it, not under ignoreRoot", async () => {
+        expect.assertions(1);
+
+        const ignoreRoot = resolve(tmpDir, "root");
+        const cwd = resolve(tmpDir, "cwd");
+        const previous = process.cwd();
+
+        await mkdir(ignoreRoot);
+        await mkdir(cwd);
+        await writeFile(resolve(ignoreRoot, ".secretlintignore"), "a.env\n");
+        await writeFile(resolve(cwd, "a.env"), 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+
+        try {
+            process.chdir(cwd);
+
+            await expect(scanFiles(["a.env"], { ignoreRoot })).resolves.toHaveLength(1);
+        } finally {
+            process.chdir(previous);
+        }
+    });
+
+    it("applies ignore sources independently during a walker scan", async () => {
+        expect.assertions(2);
+
+        await writeFile(resolve(tmpDir, "drop.env"), 'token = "ghp_cB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+        await writeFile(resolve(tmpDir, "keep.env"), 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+
+        // A negation in another file must not re-include what this file excludes.
+        await writeFile(resolve(tmpDir, ".secretlintignore"), "*.env\n");
+        await writeFile(resolve(tmpDir, "exceptions.ignore"), "!drop.env\n");
+
+        await expect(scan([tmpDir], { secretlintIgnore: [resolve(tmpDir, "exceptions.ignore")] })).resolves.toHaveLength(0);
+
+        // Within one source, negation still works.
+        await writeFile(resolve(tmpDir, ".secretlintignore"), "*.env\n!keep.env\n");
+
+        await expect(scan([tmpDir], { secretlintIgnore: false, walk: { excludeFromFiles: [resolve(tmpDir, ".secretlintignore")] } })).resolves.toHaveLength(1);
+    });
+
+    it("anchors a discovered ignore file at its own directory, not the scan root", async () => {
+        expect.assertions(2);
+
+        const secret = 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n';
+
+        await mkdir(resolve(tmpDir, "app/config"), { recursive: true });
+        await mkdir(resolve(tmpDir, "config"));
+        await writeFile(resolve(tmpDir, "app/config/leak.txt"), secret);
+        await writeFile(resolve(tmpDir, "config/leak.txt"), secret);
+        await writeFile(resolve(tmpDir, "app/.secretlintignore"), "/config/\n");
+
+        const findings = await scan([tmpDir], { secretlintIgnore: [resolve(tmpDir, "app/.secretlintignore")] });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.file).toBe("config/leak.txt");
+    });
+
     it("scanFiles respects excludeFromFiles and excludePatterns via JS matcher", async () => {
         expect.assertions(1);
 

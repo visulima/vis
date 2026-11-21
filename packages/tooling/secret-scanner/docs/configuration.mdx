@@ -40,9 +40,13 @@ export interface ScanOptions {
             include?: string[];
         };
     }[];
+    ignoreRoot?: string;
+
     overridesRoot?: string;
 
     redact?: boolean;
+
+    secretlintIgnore?: string[] | false;
 
     rules?: {
         enable?: string[];
@@ -64,19 +68,21 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option             | Type              | Default | Description                                                                                                                                                             |
-| ------------------ | ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                                       |
-| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                                      |
-| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                                           |
-| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                                             |
-| `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                     |
-| `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                   |
-| `overrides`        | `object[]`        | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                               |
-| `overridesRoot`    | `string`          | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                |
-| `redact`           | `boolean`         | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values. |
-| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                  |
-| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                             |
+| Option             | Type                | Default | Description                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`         | `string`            | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                                                                                                                                     |
+| `concurrency`      | `number`            | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                                                                                                                                    |
+| `gitleaksIgnore`   | `string \| false`   | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                                                                                                                                         |
+| `inlineAllow`      | `boolean`           | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                                                                                                                                           |
+| `maxArchiveDepth`  | `number`            | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                                                                                                                   |
+| `maxDecodeDepth`   | `number`            | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                                                                                                                 |
+| `overrides`        | `object[]`          | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                                                                                                                             |
+| `ignoreRoot`       | `string`            | cwd     | `scanFiles` only: directory `.secretlintignore` files are discovered from and ignore patterns are anchored at. Set it to the repository root when scanning a file list from a subdirectory. Findings and baselines are unaffected. |
+| `overridesRoot`    | `string`            | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                                                                                                              |
+| `redact`           | `boolean`           | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values.                                                                                               |
+| `secretlintIgnore` | `string[] \| false` | auto    | `.secretlintignore` files to honour. Auto-discovered in each scan root and its parents up to the repository root; a `.secretlintignore` is anchored at its own directory, any other path at the scan root. Pass paths to add more, or `false` to disable all of them. |
+| `reportSuppressed` | `boolean`           | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                                                                                                                |
+| `verbose`          | `boolean`           | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                                                                                                                           |
 
 ### `maxArchiveDepth`
 
@@ -185,7 +191,9 @@ Supported today: Kingfisher-style HTTP validators with `StatusMatch` / `WordMatc
 | `includeHidden`    | `boolean`  | `false` | Visit dotfiles and hidden directory entries.                                                                        |
 | `maxFileSize`      | `number`   | 10 MiB  | Skip files larger than this (in bytes). Files above the threshold never enter the detector.                         |
 
-Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it; there the JS wrapper applies `excludePatterns` / `excludeFromFiles` via the `ignore` npm package so the two code paths behave the same.
+Ignore sources are combined: `.gitignore`, auto-discovered `.secretlintignore` files, explicit `secretlintIgnore` paths, `walk.excludeFromFiles` and `walk.excludePatterns`. A `!` line only re-includes a path _within its own source_ — it cannot undo an exclusion from another file. Set `walk.gitignore: false` to drop the git sources entirely.
+
+Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it; there the JS wrapper applies the same sources via the `ignore` npm package so the two code paths behave the same.
 
 ## `rules` — id + tag filters
 

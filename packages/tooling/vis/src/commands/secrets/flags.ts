@@ -44,6 +44,7 @@ export interface SecretsFlags {
     redact?: boolean;
     replaceBaseline?: boolean;
     report?: RepeatableString;
+    secretlintignore?: RepeatableString | false;
     since?: string;
     staged?: boolean;
     stdin?: string | null;
@@ -67,6 +68,8 @@ export interface VisSecretsConfig {
     overrides?: ScanOptions["overrides"];
     redact?: boolean;
     rules?: { enable?: string[]; exclude?: string[]; include?: string[] };
+    /** `.secretlintignore` paths, or `false` to disable auto-discovery. */
+    secretlintIgnore?: string[] | false;
     walk?: {
         excludeFromFiles?: string[];
         excludePatterns?: string[];
@@ -76,7 +79,7 @@ export interface VisSecretsConfig {
     };
 }
 
-export const toArray = (value: RepeatableString | undefined): string[] => {
+export const toArray = (value: RepeatableString | false | undefined): string[] => {
     if (!value) {
         return [];
     }
@@ -161,10 +164,30 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
     const includeRules = pickList(flags.includeRule, cfg.rules?.include);
     const excludePatterns = pickList(flags.exclude, cfg.walk?.excludePatterns);
     const excludeFromFlag = toArray(flags.excludeFrom).map((p) => resolve(root, p));
-    const excludeFromFiles = excludeFromFlag.length > 0 ? excludeFromFlag : cfg.walk?.excludeFromFiles?.map((p) => resolve(root, p));
+    const configExcludeFrom = cfg.walk?.excludeFromFiles?.map((p) => resolve(root, p));
     const baselinePath = resolvePath(flags.baseline) ?? resolvePath(cfg.baseline);
     const configPath = resolvePath(flags.config) ?? resolvePath(cfg.config?.path);
     const minConfidence = validateConfidence(flags.minConfidence ?? cfg.config?.minConfidence);
+    const secretlintFromFlag = toArray(flags.secretlintignore).map((path) => resolve(root, path));
+    let secretlintIgnore: ScanOptions["secretlintIgnore"];
+    let excludeFromFiles = excludeFromFlag.length > 0 ? excludeFromFlag : configExcludeFrom;
+
+    if (flags.secretlintignore === false) {
+        secretlintIgnore = false;
+    } else if (secretlintFromFlag.length > 0 && cfg.secretlintIgnore === false) {
+        // Discovery is off in config: apply exactly the CLI files. They ride in
+        // `walk.excludeFromFiles`, since a `secretlintIgnore` array re-enables discovery.
+        secretlintIgnore = false;
+        excludeFromFiles = [...(excludeFromFiles ?? []), ...secretlintFromFlag];
+    } else if (secretlintFromFlag.length > 0) {
+        const fromConfig = Array.isArray(cfg.secretlintIgnore) ? cfg.secretlintIgnore.map((path) => resolve(root, path)) : [];
+
+        secretlintIgnore = [...new Set([...fromConfig, ...secretlintFromFlag])];
+    } else if (cfg.secretlintIgnore === false) {
+        secretlintIgnore = false;
+    } else {
+        secretlintIgnore = cfg.secretlintIgnore?.map((path) => resolve(root, path));
+    }
 
     return {
         baseline: baselinePath,
@@ -185,6 +208,7 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
         redact: flags.redact ?? cfg.redact ?? true,
         reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },
+        secretlintIgnore,
         verbose: flags.verbose ?? false,
         walk: {
             excludeFromFiles,

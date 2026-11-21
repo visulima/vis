@@ -18,6 +18,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
+import { isWithin } from "./ignore-matcher";
 import type { Finding, GitleaksIgnoreEntry } from "./types";
 
 type Matcher = (value: string) => boolean;
@@ -304,10 +305,10 @@ export class GitleaksIgnore {
         const absolutes = isAbsolute(file) ? [file] : bases.map((base) => resolve(realOrSelf(base), file));
 
         for (const absolute of absolutes) {
-            const relativePath = relative(this.root, realOrSelf(absolute));
+            const real = realOrSelf(absolute);
 
-            if (relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath)) {
-                candidates.add(normalizePath(relativePath));
+            if (isWithin(this.root, real)) {
+                candidates.add(normalizePath(relative(this.root, real)));
             }
         }
 

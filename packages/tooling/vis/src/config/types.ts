@@ -772,6 +772,9 @@ export interface VisConfig {
             include?: string[];
         };
 
+        /** `.secretlintignore` paths, or `false` to disable auto-discovery (`--secretlintignore` files still apply). */
+        secretlintIgnore?: string[] | false;
+
         /** Walker / filesystem traversal. */
         walk?: {
             /**

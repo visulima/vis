@@ -16,7 +16,8 @@ describe("detector (integration)", () => {
     it("scans the fixture directory and reports findings", async () => {
         expect.assertions(3);
 
-        const findings = await scan([resolve(here, "__fixtures__")]);
+        // The package ships a .secretlintignore that excludes this fixture directory.
+        const findings = await scan([resolve(here, "__fixtures__")], { secretlintIgnore: false });
 
         expect(Array.isArray(findings)).toBe(true);
         expect(findings.length).toBeGreaterThan(0);

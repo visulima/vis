@@ -170,6 +170,16 @@ export interface ScanOptions {
     gitleaksIgnore?: string | false;
 
     /**
+     * Directory `.secretlintignore` files are discovered from and ignore
+     * patterns (`walk.excludePatterns`, `walk.excludeFromFiles`) are anchored at
+     * when `scanFiles` filters a file list. Default: `process.cwd()`. Set it to
+     * the repository root when the listed files come from there and the process
+     * runs in a subdirectory. A listed file outside it is never filtered.
+     * Finding paths and baselines are unaffected.
+     */
+    ignoreRoot?: string;
+
+    /**
      * Honour inline suppressions — `gitleaks:allow`, `secret-scanner:allow`,
      * `pragma: allowlist secret`, `pragma: allowlist nextline secret` and
      * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Append rule ids to
@@ -246,6 +256,17 @@ export interface ScanOptions {
      * enable anything.
      */
     rules?: RuleFilters;
+
+    /**
+     * `.secretlintignore` files to honour alongside `.gitignore` and
+     * `walk.excludeFromFiles`. By default the file is auto-discovered in each
+     * scan root and its parents up to the repository root; an array adds
+     * explicit paths; `false` disables both. A `.secretlintignore` is anchored
+     * at its own directory, any other path at the scan root, and negation (`!`) only re-includes paths within
+     * the file that declared it. Applies to path walks, `scanFiles` and staged
+     * scans; git history scans read blobs and ignore it.
+     */
+    secretlintIgnore?: string[] | false;
 
     /**
      * Abort the scan's validation stage. When `config.validate: true` a scan can

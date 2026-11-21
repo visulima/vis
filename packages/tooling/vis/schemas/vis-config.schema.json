@@ -1153,6 +1153,21 @@
                     "additionalProperties": false,
                     "description": "Rule-id filters applied after scanning."
                 },
+                "secretlintIgnore": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        {
+                            "type": "boolean",
+                            "const": false
+                        }
+                    ],
+                    "description": "`.secretlintignore` paths, or `false` to disable auto-discovery."
+                },
                 "walk": {
                     "type": "object",
                     "properties": {
