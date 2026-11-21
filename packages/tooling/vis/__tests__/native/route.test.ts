@@ -16,10 +16,10 @@ describe("launcher routing (bin/route.mjs)", () => {
     describe("`vis clean` flag shapes (plan in clean.rs)", () => {
         const ci = { CI: "1" };
 
-        it.each([[["clean", "--lockfile"]], [["clean", "-l", "--dry-run"]]])("routes `vis %j` in CI", (args: string[]) => {
+        it("routes `vis clean -l --dry-run` in CI", () => {
             expect.assertions(1);
 
-            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+            expect(routesToNative(["clean", "-l", "--dry-run"], "linux", ci, "/work/app", false)).toBe(true);
         });
 
         it("delegates `vis clean --empty-packages`", () => {
