@@ -62,11 +62,11 @@ describe(emitConfig, () => {
         expect(validate(emitted.config), JSON.stringify(validate.errors)).toBe(true);
     });
 
-    it("marks a config that reads files without a path as not reusable", async () => {
+    it("marks a config that globs as not reusable", async () => {
         expect.assertions(1);
 
         const emitted = await emitConfig(
-            write("vis.config.ts", `import { openSync, closeSync } from "node:fs";\ncloseSync(openSync(${JSON.stringify(join(scratch, "package.json"))}, "r"));\nexport default {};\n`),
+            write("vis.config.ts", `import { globSync } from "node:fs";\nglobSync("*.json", { cwd: ${JSON.stringify(scratch)} });\nexport default {};\n`),
         );
 
         expect(emitted.uncacheable).toContain("reads files in a way that cannot be tracked");

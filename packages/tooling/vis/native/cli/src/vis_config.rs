@@ -91,8 +91,12 @@ fn read_config(cwd: &Path, evaluate: bool) -> ConfigState {
     match value {
         Some(value) if value.is_object() => ConfigState::Static(value),
         // Not readable as a literal: Node's evaluation of it, cached by `config_cache`, stands in. A `.json`
-        // file is data or nothing (Node does not load it), so it never reaches the evaluator.
-        None if evaluate && path.extension().is_some_and(|extension| extension != "json") => {
+        // file is data or nothing (Node does not load it), and a config in a directory Node would not read
+        // `vis.config` from is never run, so neither reaches the evaluator.
+        None if evaluate
+            && path.extension().is_some_and(|extension| extension != "json")
+            && node_config_root(cwd).as_deref() == path.parent() =>
+        {
             match crate::config_cache::resolve(&path) {
                 Some(crate::config_cache::Resolved::Data(value)) if value.is_object() => ConfigState::Static(value),
                 _ => ConfigState::Dynamic,

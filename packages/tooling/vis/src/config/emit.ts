@@ -109,10 +109,15 @@ interface Tracker {
 const FS_PATH_FIRST: Record<string, TrackedKind> = {
     access: "exists",
     accessSync: "exists",
+    createReadStream: "file",
     exists: "exists",
     existsSync: "exists",
     lstat: "exists",
     lstatSync: "exists",
+    open: "file",
+    opendir: "dir",
+    opendirSync: "dir",
+    openSync: "file",
     readdir: "dir",
     readdirSync: "dir",
     readFile: "file",
@@ -121,8 +126,8 @@ const FS_PATH_FIRST: Record<string, TrackedKind> = {
     statSync: "exists",
 };
 
-/** File APIs whose reads cannot be attributed to a path, so a config using them is not reusable. */
-const UNTRACKED_READS = ["createReadStream", "glob", "globSync", "open", "openSync", "opendir", "opendirSync"];
+/** File APIs whose results cannot be attributed to a path, so a config using them is not reusable. */
+const UNTRACKED_READS = ["glob", "globSync"];
 
 const FLAGGED: [object, string, string][] = [
     [childProcess, "spawn", "starts a process"],

@@ -203,7 +203,14 @@ fn emit(config_path: &Path) -> Option<Emitted> {
     ));
 
     // Claimed before Node writes to it, so a file or link another user left at that name is refused.
-    fs::OpenOptions::new().write(true).create_new(true).open(&out).ok()?;
+    let mut claim = fs::OpenOptions::new();
+
+    claim.write(true).create_new(true);
+
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut claim, 0o600);
+
+    claim.open(&out).ok()?;
 
     let output = Command::new(node)
         .arg(entry)

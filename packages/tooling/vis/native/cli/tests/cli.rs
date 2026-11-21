@@ -1328,3 +1328,15 @@ fn a_config_that_fails_to_evaluate_is_delegated_to_node() {
 
     assert!(fixture.run(&[]).starts_with("NODE:"));
 }
+
+/// A config in a directory Node would not read `vis.config` from is never run, since Node would not run it either.
+#[cfg(unix)]
+#[test]
+fn a_config_outside_a_monorepo_root_is_not_evaluated() {
+    let fixture = EmitFixture::new("not-root", EMITTED_NPM);
+
+    std::fs::remove_file(fixture.project.join("lerna.json")).unwrap();
+    fixture.run(&[]);
+
+    assert_eq!(fixture.emitter_runs(), 0);
+}
