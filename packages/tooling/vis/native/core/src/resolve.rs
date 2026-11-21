@@ -312,6 +312,35 @@ pub struct RemoveOptions {
     pub filter: Vec<String>,
 }
 
+/// Scope a Yarn command to one workspace: `yarn workspace <name> <cmd>`. `yarn
+/// workspace` targets a single workspace, so more than one filter is refused
+/// instead of silently running against only the first.
+fn yarn_workspace_prefix(filter: &[String], args: &mut Vec<String>) -> Result<(), String> {
+    match filter {
+        [] => {}
+        [workspace] => {
+            args.push("workspace".into());
+            args.push(workspace.clone());
+        }
+        _ => return Err("yarn `workspace` supports a single --filter workspace".into()),
+    }
+
+    Ok(())
+}
+
+/// Scope a Yarn Berry command to several workspaces: `yarn workspaces foreach
+/// --all [--include <name>]... <cmd>`. With no filter it runs in every workspace.
+fn yarn_foreach_prefix(filter: &[String], args: &mut Vec<String>) {
+    args.push("workspaces".into());
+    args.push("foreach".into());
+    args.push("--all".into());
+
+    for f in filter {
+        args.push("--include".into());
+        args.push(f.clone());
+    }
+}
+
 /// Resolve `vis remove <packages>`.
 pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
@@ -381,23 +410,14 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
         }
         "yarn" => {
             if version.starts_with("1.") {
-                if !opts.filter.is_empty() {
-                    args.push("workspace".into());
-                    args.push(opts.filter[0].clone());
-                }
-
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("remove".into());
                 args.extend(opts.packages);
             } else {
-                if opts.recursive {
-                    args.push("workspaces".into());
-                    args.push("foreach".into());
-                    args.push("--all".into());
-
-                    for f in &opts.filter {
-                        args.push("--include".into());
-                        args.push(f.clone());
-                    }
+                if opts.recursive || opts.filter.len() > 1 {
+                    yarn_foreach_prefix(&opts.filter, &mut args);
+                } else {
+                    yarn_workspace_prefix(&opts.filter, &mut args)?;
                 }
 
                 args.push("remove".into());
@@ -1082,10 +1102,7 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                 if opts.global {
                     args.push("global".into());
                 }
-                if !opts.filter.is_empty() {
-                    args.push("workspace".into());
-                    args.push(opts.filter[0].clone());
-                }
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("add".into());
                 if opts.save_dev {
                     args.push("--dev".into());
@@ -1110,14 +1127,10 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                     a.extend(opts.packages);
                     return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
                 }
-                // `yarn workspace <name> add` targets one workspace; refuse more
-                // rather than silently adding the package somewhere else.
                 if opts.filter.len() > 1 {
-                    return Err("yarn berry add supports a single --filter workspace".into());
-                }
-                if let Some(workspace) = opts.filter.first() {
-                    args.push("workspace".into());
-                    args.push(workspace.clone());
+                    yarn_foreach_prefix(&opts.filter, &mut args);
+                } else {
+                    yarn_workspace_prefix(&opts.filter, &mut args)?;
                 }
                 args.push("add".into());
                 if opts.save_dev {
@@ -1496,10 +1509,45 @@ mod tests {
     }
 
     #[test]
-    fn add_yarn_berry_rejects_multiple_filters() {
+    fn add_yarn_berry_fans_multiple_filters_out_with_foreach() {
+        let opts = AddOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+        let resolved = resolve_add("yarn", "4.5.0", opts).unwrap();
+
+        assert_eq!(
+            resolved.args,
+            ["workspaces", "foreach", "--all", "--include", "app", "--include", "web", "add", "react"]
+        );
+    }
+
+    #[test]
+    fn add_yarn_classic_rejects_multiple_filters() {
         let opts = AddOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
 
-        assert!(resolve_add("yarn", "4.5.0", opts).is_err());
+        assert!(resolve_add("yarn", "1.22.0", opts).is_err());
+    }
+
+    #[test]
+    fn remove_yarn_classic_rejects_multiple_filters() {
+        let opts = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+
+        assert!(resolve_remove("yarn", "1.22.0", opts).is_err());
+    }
+
+    #[test]
+    fn remove_yarn_berry_applies_the_filter_without_recursive() {
+        let one = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app"]), ..Default::default() };
+        let many = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+        let recursive = RemoveOptions { packages: argv(&["react"]), recursive: true, ..Default::default() };
+
+        assert_eq!(resolve_remove("yarn", "4.5.0", one).unwrap().args, ["workspace", "app", "remove", "react"]);
+        assert_eq!(
+            resolve_remove("yarn", "4.5.0", many).unwrap().args,
+            ["workspaces", "foreach", "--all", "--include", "app", "--include", "web", "remove", "react"]
+        );
+        assert_eq!(
+            resolve_remove("yarn", "4.5.0", recursive).unwrap().args,
+            ["workspaces", "foreach", "--all", "remove", "react"]
+        );
     }
 
     #[test]
