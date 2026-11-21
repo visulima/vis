@@ -95,6 +95,14 @@ const detectFromGitRemote = async (cwd: string, runner: CommandRunner): Promise<
     return undefined;
 };
 
+/**
+ * The forge the CI environment or the `origin` remote points at, or
+ * `undefined` when neither says (unlike {@link detectRemoteProvider}, which
+ * falls back to GitHub).
+ */
+export const detectKnownRemoteProvider = async (cwd: string, runner: CommandRunner, env: NodeJS.ProcessEnv = process.env): Promise<RemoteProvider | undefined> =>
+    detectFromEnv(env) ?? (await detectFromGitRemote(cwd, runner));
+
 export const detectRemoteProvider = async (
     cwd: string,
     runner: CommandRunner,
@@ -109,7 +117,7 @@ export const detectRemoteProvider = async (
         throw new Error(`Unsupported release.provider: ${explicit}. Expected "github", "gitlab", or "auto".`);
     }
 
-    return detectFromEnv(env) ?? (await detectFromGitRemote(cwd, runner)) ?? "github";
+    return (await detectKnownRemoteProvider(cwd, runner, env)) ?? "github";
 };
 
 export interface CreateRemoteClientOptions {

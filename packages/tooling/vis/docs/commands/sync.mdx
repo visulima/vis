@@ -118,6 +118,97 @@ flowchart TD
     I -- no --> K["Error + exitCode=1\n(not reset by clean CODEOWNERS)"]
 ```
 
+### ci-workflow
+
+Generates a CI workflow that runs your targets at the same time. Settings come from `ci.workflow` in `vis.config.ts`; re-run the command after changing them, and add `vis sync ci-workflow --check` to CI to catch a stale file.
+
+```bash
+vis sync ci-workflow                             # Write .github/workflows/vis-ci.yml
+vis sync ci-workflow --provider=github,gitlab    # Write both, whatever the repository uses
+vis sync ci-workflow --check                     # CI: exit 1 if a generated file is stale
+```
+
+```ts
+// vis.config.ts
+export default defineConfig({
+    ci: {
+        workflow: {
+            targets: ["lint", "build", "test"], // default: whichever of lint, typecheck, lint:types, build, test exist
+            partitions: { test: 3 }, // split test into 3 shards that run at the same time
+            providers: ["github", "gitlab"], // default: detected (see below)
+            affected: true, // default: only affected projects (`vis ci`); false runs every project (`vis run`)
+            buildFirst: true, // default: build runs before targets dependsOn does not order relative to it
+            checkDrift: true, // default: the workflow runs `vis sync ci-workflow --check`
+            timeoutMinutes: 60, // default: job timeout
+            branches: ["main"], // default: [defaultBase ?? "main"]
+            nodeVersion: "22", // default: toolchain.tools.node, then 22
+            runsOn: "ubuntu-latest",
+        },
+    },
+});
+```
+
+The providers come from the first of these that answers: `--provider`, `ci.workflow.providers`, the CI files already in the repository (`.github/workflows`, `.gitlab-ci.yml`), the CI environment or `origin` remote (GitHub or GitLab, including self-hosted `gitlab.*` hosts), and only then a prompt. In CI, without a terminal, or with `--check`, vis fails instead of asking, and names `--provider` and `ci.workflow.providers`. The command logs which providers it picked and why.
+
+Targets are grouped by `dependsOn`: a target waits for the listed targets it depends on (directly, through `^target`, or through targets you did not list), and the rest of a group runs at once. With `buildFirst` (the default), `build` also runs before every listed target that `dependsOn` leaves unordered relative to it: most workspaces never declare that `test` or `typecheck` needs the dependencies' `dist`, because a sequential job built first anyway. Set `buildFirst: false` once `dependsOn` says what needs `build`.
+
+**GitHub Actions** gets one job that uses [parallel steps](https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel):
+
+1. install once,
+2. `vis ci <target> --deps-only` for every target, which builds everything the targets depend on once,
+3. one `parallel:` step group per target group, each step running `vis ci <target> --skip-deps` (one step per shard for a partitioned target). `--skip-deps` still hashes the dependencies, so a dependency change invalidates the cached results of what depends on it.
+
+Step 2 is what makes step 3 safe: the parallel steps share one checkout, so two of them building or restoring the same dependency at the same time would race on its outputs. GitHub runs at most 10 steps of a group at once, so the generator rejects a group that needs more. A target whose tasks depend on the same target in other projects (`dependsOn: ["^build"]`) cannot be partitioned, because its shards would depend on each other. The task cache (`taskRunner.cacheDirectory`, by default `node_modules/.cache/vis`) is kept between runs with `actions/cache`.
+
+**Toolchains.** vis always runs on Node.js. Other toolchains are detected from the manifests in the workspace root and the project roots (`Cargo.toml`, `go.mod`, `pyproject.toml`/`requirements.txt`, `build.gradle`/`pom.xml`, `composer.json`, `Gemfile`, `*.csproj`/`global.json`, `pubspec.yaml`, `build.zig`, `mix.exs`). On GitHub, each gets its setup action with that action's own cache (cargo, Go modules, pip, Gradle/Maven, Bundler). Versions come from `toolchain.tools` in vis.config.ts first, then the ecosystem's version file (`rust-toolchain.toml`, `go.mod`, `.python-version`, `.ruby-version`, `global.json`, `.tool-versions`, `build.zig.zon`), then a current default. Swift ships on the GitHub runners. A workspace without a JS lockfile gets vis installed on its own (`npm install --global @visulima/vis@<version>`, the version that generated the file) instead of a package-manager install.
+
+**Hardening.** Every action is pinned to a commit SHA with its version as a trailing comment, so Dependabot and `vis update` can bump it. The job has a timeout (`timeoutMinutes`), read-only `permissions`, and `persist-credentials: false`. With `checkDrift` (the default), the workflow runs `vis sync ci-workflow --check`, so CI fails when the committed workflow no longer matches vis.config.ts or the workspace.
+
+**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage, ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. The jobs run in a `node` image: cargo, Go module and pip caches move into the project so GitLab can cache them, vis's pre-flight installs go, python, ruby or rust when they are pinned in `toolchain.tools`, and any other detected toolchain is named in the file's header (and in a warning) so you can give `.vis-ci-base` an image that has it. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
+
+```yaml
+include:
+    - local: ".gitlab/vis-ci.gitlab-ci.yml"
+```
+
+#### Customizing the generated files
+
+The generated files are not edited by hand (`--check` would flag the edit and the next sync would undo it). Add to them through `ci.workflow` instead. Every option is typed, so `vis.config.ts` gets autocompletion and type errors:
+
+```ts
+export default defineConfig({
+    ci: {
+        workflow: {
+            // A target in object form gets its own environment variables (GitHub step env / GitLab job variables).
+            targets: ["lint", "build", { name: "test", env: { TZ: "UTC" } }],
+            github: {
+                env: { DATABASE_URL: "postgres://postgres:postgres@localhost:5432/test", NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" },
+                permissions: { "id-token": "write" }, // added to the default `contents: read`
+                services: {
+                    postgres: { image: "postgres:17", env: { POSTGRES_PASSWORD: "postgres" }, ports: ["5432:5432"], options: "--health-cmd pg_isready" },
+                },
+                steps: {
+                    // After the toolchains are installed, before the drift check and the dependency build.
+                    afterSetup: [{ name: "Start docker compose", run: "docker compose up -d --wait" }],
+                    // After every target; `if: always()` also runs it after a failure.
+                    after: [{ name: "Upload coverage", if: "always()", uses: "codecov/codecov-action@<sha>", with: { files: "coverage/lcov.info" } }],
+                },
+            },
+            gitlab: {
+                image: "registry.example.com/ci/node-java:22", // must have Node.js; replaces node:<nodeVersion>
+                variables: { POSTGRES_PASSWORD: "postgres" },
+                services: ["postgres:17"],
+                beforeScript: ["./scripts/prepare.sh"], // after the install
+                afterScript: ["./scripts/collect-reports.sh"],
+                tags: ["docker"],
+            },
+        },
+    },
+});
+```
+
+A step needs exactly one of `run` and `uses`, and a target can only be listed once; anything else is an error rather than being dropped. Pin `uses` to a commit SHA, as the generated steps are.
+
 ### package-json-fields
 
 Mirrors a small set of metadata fields from the **root** `package.json` to every workspace package, so each package keeps a consistent `license`, `author`, `bugs`, `homepage`, `engines`, and `repository`. `repository.directory` is preserved per package — only `type` and `url` are copied from root.
@@ -154,3 +245,4 @@ Fields missing from root are skipped — sync never deletes from a package. Fiel
 | `--ignore-package-name`  |                          | Glob of package names to skip (package-json-fields only). Repeatable.                                                      |
 | `--format`               | `human`                  | Output format for package-json-fields: `human` or `json`.                                                                  |
 | `--quiet`                | `false`                  | Suppress per-package log lines; print only the summary (package-json-fields only).                                         |
+| `--provider`             | detected                 | CI providers to generate for (ci-workflow only): `github`, `gitlab`. Comma-separated or repeatable. Detected when omitted. |

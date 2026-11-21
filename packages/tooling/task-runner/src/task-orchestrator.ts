@@ -645,6 +645,11 @@ class TaskOrchestrator {
                 return this.#applyCachedResult(task, cachedResult, startTime);
             }
 
+            // Nothing to fetch for a task that will neither run nor restore outputs.
+            if (task.satisfied) {
+                return this.#satisfiedResult(task, startTime);
+            }
+
             if (this.#remoteCache) {
                 const retrieved = await retrieveByTaskHash(this.#remoteCache, hash, this.#cache.cacheDirectory, this.#onRemoteUploadError);
 
@@ -660,6 +665,10 @@ class TaskOrchestrator {
                     }
                 }
             }
+        }
+
+        if (task.satisfied) {
+            return this.#satisfiedResult(task, startTime);
         }
 
         const result = await this.#executeTask(task, startTime);
@@ -751,6 +760,10 @@ class TaskOrchestrator {
             }
         }
 
+        if (task.satisfied) {
+            return this.#satisfiedResult(task, startTime);
+        }
+
         return this.#executeTaskWithTracking(task, startTime, cacheMissReasons, declaredKey, chainKey);
     }
 
@@ -797,7 +810,8 @@ class TaskOrchestrator {
     }
 
     async #applyCachedResult(task: Task, cachedResult: CachedResult, startTime: number, hashSource?: TaskResult["hashSource"]): Promise<TaskResult> {
-        const restored = await this.#cache.restoreOutputs(cachedResult.hash, task.outputs, task.cacheRestore);
+        // A satisfied task's outputs are already on disk from the run that produced them.
+        const restored = task.satisfied !== true && (await this.#cache.restoreOutputs(cachedResult.hash, task.outputs, task.cacheRestore));
         const status: TaskStatus = restored ? "local-cache" : "local-cache-kept-existing";
 
         const result: TaskResult = {
@@ -1174,6 +1188,26 @@ class TaskOrchestrator {
         return zeroAccesses
             ? "Tracker observed no workspace file accesses — likely a static binary on a platform without strace. Caching skipped."
             : "Tracker returned accesses but none fell inside the workspace. Caching skipped to avoid false cache hits.";
+    }
+
+    /**
+     * A satisfied task (see {@link Task.satisfied}) that has no cache entry to
+     * keep: it ran earlier in the job without storing one (cache disabled, or a
+     * traced task that stored no key). Its dependents still run.
+     */
+    #satisfiedResult(task: Task, startTime: number): TaskResult {
+        const result: TaskResult = {
+            code: 0,
+            endTime: Date.now(),
+            startTime,
+            status: "skipped",
+            task,
+            terminalOutput: "Already ran earlier in this job (--deps-only).",
+        };
+
+        this.#results.set(task.id, result);
+
+        return result;
     }
 
     #dryRunResult(task: Task, startTime: number): TaskResult {

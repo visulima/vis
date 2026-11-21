@@ -179,7 +179,9 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
             workspaceRoot,
         });
 
-        if (affectedExternalInputState) {
+        // A --deps-only / --skip-deps run is one of several steps over the same
+        // change; saving the snapshot here would hide the change from the steps after it.
+        if (affectedExternalInputState && !options.depsOnly && !options.skipDeps) {
             runtime.hooks.hook("run:after", async (results) => {
                 const failed = [...results.values()].some((result) => result.code !== 0);
 

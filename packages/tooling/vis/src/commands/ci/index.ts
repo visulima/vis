@@ -30,6 +30,12 @@ const ciOptionDefinitions = {
         description: "Git base ref for affected detection (default: auto-detected from CI env)",
         type: String,
     },
+    ...negatable({
+        defaultValue: false,
+        description: "Run only the dependencies of the requested targets (forwarded to `vis run`)",
+        name: "deps-only",
+        type: Boolean,
+    }),
     downstream: {
         defaultValue: "deep",
         description: "Downstream scope: none | direct | deep",
@@ -58,6 +64,12 @@ const ciOptionDefinitions = {
         description: "Filter affected projects by a query (e.g. 'language=typescript && tag=lib')",
         type: String,
     },
+    ...negatable({
+        defaultValue: false,
+        description: "Run only the requested targets; assume an earlier --deps-only run built their dependencies (forwarded to `vis run`)",
+        name: "skip-deps",
+        type: Boolean,
+    }),
     "skip-toolchain": {
         defaultValue: false,
         description:
@@ -83,6 +95,8 @@ const ci = defineCommand({
         ["vis ci test --base=origin/main", "Override the base ref"],
         ["vis ci build --no-install", "Skip the install step (assume deps already present)"],
         ["vis ci build --parallel=6", "Increase concurrency"],
+        ["vis ci lint,test --deps-only", "Build the dependencies of lint and test once, before fanning out"],
+        ["vis ci test --skip-deps --no-install --skip-toolchain --partition=1/2", "One parallel CI step after a --deps-only step"],
     ],
     group: "Run & Execute",
     loader: () => import("./handler"),

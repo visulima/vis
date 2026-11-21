@@ -10,6 +10,9 @@
  * **external adopters** running `vis release init` in their own repo.
  */
 
+import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
+import type { GeneratedFile } from "../../util/generated-files";
+import { GITHUB_ACTIONS, usesPinned } from "../../util/github-actions";
 import type { VisReleaseConfig } from "../types";
 import type { RemoteProvider } from "./remote/interface";
 
@@ -29,71 +32,22 @@ export interface WorkflowGenerationOptions {
     useOidc: boolean;
 }
 
-export interface GeneratedFile {
-    /** File content. */
-    content: string;
-    /** Repo-relative path to write. */
-    path: string;
-}
+/**
+ * The step that makes the package manager available on GitHub: its action
+ * when it ships one, otherwise the shared shell setup (corepack for yarn).
+ * Interpolated after `setup-node`, which the shell setup needs.
+ */
+const githubPmSetup = (pm: WorkflowGenerationOptions["packageManager"]): string => {
+    const { githubAction, setup } = CI_PACKAGE_MANAGER_COMMANDS[pm];
 
-const installCmd = (pm: WorkflowGenerationOptions["packageManager"]): string => {
-    switch (pm) {
-        case "bun": {
-            return "bun install --frozen-lockfile";
-        }
-        case "npm": {
-            return "npm ci";
-        }
-        case "pnpm": {
-            return "pnpm install --frozen-lockfile";
-        }
-        case "yarn": {
-            return "yarn install --immutable";
-        }
-        default: {
-            return `${pm as string} install`;
-        }
+    if (githubAction !== undefined) {
+        return `            - uses: ${usesPinned(githubAction)}\n`;
     }
+
+    return setup.length === 0 ? "" : `            - run: |\n${setup.map((line) => `                  ${line}\n`).join("")}`;
 };
 
 const buildCmd = (pm: WorkflowGenerationOptions["packageManager"]): string => `${pm} run build`;
-
-const execCmd = (pm: WorkflowGenerationOptions["packageManager"]): string => {
-    if (pm === "npm") {
-        return "npx";
-    }
-
-    if (pm === "bun") {
-        return "bunx";
-    }
-
-    return `${pm} exec`;
-};
-
-/**
- * Per-PM bootstrap snippet for GitLab CI's `before_script` block. GitHub
- * Actions has dedicated `setup-*` actions for each PM; GitLab doesn't,
- * so we install the PM via npm or corepack.
- */
-const gitlabPmSetup = (pm: WorkflowGenerationOptions["packageManager"]): string => {
-    switch (pm) {
-        case "bun": {
-            return "npm install -g bun";
-        }
-        case "npm": {
-            return "";
-        }
-        case "pnpm": {
-            return "npm install -g pnpm";
-        }
-        case "yarn": {
-            return "corepack enable && corepack prepare yarn@stable --activate";
-        }
-        default: {
-            return "";
-        }
-    }
-};
 
 // ── GitHub Actions templates ───────────────────────────────────────
 
@@ -120,20 +74,20 @@ jobs:
     release:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   token: \${{ secrets.VIS_GH_TOKEN || github.token }}
                   persist-credentials: false
 
-            - uses: actions/setup-node@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
 
-${options.packageManager === "pnpm" ? "            - uses: pnpm/action-setup@v4\n" : ""}${options.packageManager === "bun" ? "            - uses: oven-sh/setup-bun@v2\n" : ""}            - run: ${installCmd(options.packageManager)}
+${githubPmSetup(options.packageManager)}            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}
             - run: ${buildCmd(options.packageManager)}
 
-            - run: ${execCmd(options.packageManager)} vis release ci release
+            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci release
               env:
                   GH_TOKEN: \${{ github.token }}
                   VIS_GH_TOKEN: \${{ secrets.VIS_GH_TOKEN || github.token }}
@@ -160,15 +114,15 @@ jobs:
     check:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   persist-credentials: false
-            - uses: actions/setup-node@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
-${options.packageManager === "pnpm" ? "            - uses: pnpm/action-setup@v4\n" : ""}${options.packageManager === "bun" ? "            - uses: oven-sh/setup-bun@v2\n" : ""}            - run: ${installCmd(options.packageManager)}
-            - run: ${execCmd(options.packageManager)} vis release ci check
+${githubPmSetup(options.packageManager)}            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}
+            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci check
               env:
                   GH_TOKEN: \${{ github.token }}
 `;
@@ -194,16 +148,16 @@ jobs:
     snapshot:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.checkout)}
               with:
                   fetch-depth: 0
                   persist-credentials: false
-            - uses: actions/setup-node@v4
+            - uses: ${usesPinned(GITHUB_ACTIONS.setupNode)}
               with:
                   node-version: "22"
-${options.packageManager === "pnpm" ? "            - uses: pnpm/action-setup@v4\n" : ""}${options.packageManager === "bun" ? "            - uses: oven-sh/setup-bun@v2\n" : ""}            - run: ${installCmd(options.packageManager)}
+${githubPmSetup(options.packageManager)}            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}
             - run: ${buildCmd(options.packageManager)}
-            - run: ${execCmd(options.packageManager)} vis release ci snapshot
+            - run: ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci snapshot
               env:
                   GH_TOKEN: \${{ github.token }}
 ${options.useOidc ? "" : "                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}\n"}`;
@@ -231,7 +185,7 @@ variables:
     PM: "${options.packageManager}"
 
 before_script:
-${gitlabPmSetup(options.packageManager) ? `    - ${gitlabPmSetup(options.packageManager)}\n` : ""}    - ${installCmd(options.packageManager)}
+${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].setup.map((line) => `    - ${line}\n`).join("")}    - ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].install}
 
 ${
     options.includeCheck
@@ -240,7 +194,7 @@ ${
     rules:
         - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     script:
-        - ${execCmd(options.packageManager)} vis release ci check
+        - ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci check
 
 `
         : ""
@@ -252,7 +206,7 @@ ${
         - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     script:
         - ${buildCmd(options.packageManager)}
-        - ${execCmd(options.packageManager)} vis release ci snapshot
+        - ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci snapshot
 
 `
         : ""
@@ -266,7 +220,7 @@ ${
 ${options.branches.map((b) => `        - if: $CI_COMMIT_BRANCH == "${b}"`).join("\n")}
     script:
         - ${buildCmd(options.packageManager)}
-        - ${execCmd(options.packageManager)} vis release ci release
+        - ${CI_PACKAGE_MANAGER_COMMANDS[options.packageManager].exec} vis release ci release
 `;
 
 // ── Public API ─────────────────────────────────────────────────────

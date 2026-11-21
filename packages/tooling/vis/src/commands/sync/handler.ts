@@ -1,14 +1,25 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { CerebroFs, CommandExecute, Toolbox } from "@visulima/cerebro";
-import { ensureDirSync, writeFileSync, writeJsonSync } from "@visulima/fs";
-import { dirname, join, relative } from "@visulima/path";
+import { writeJsonSync } from "@visulima/fs";
+import { join, relative } from "@visulima/path";
+import { parse as parseYaml } from "@visulima/yaml";
 import zeptomatch from "zeptomatch";
 
 import type { CodeownersSource } from "../../config/workspace";
 import { discoverWorkspace } from "../../config/workspace";
+import { VisUserError } from "../../errors/vis-user-error";
+import { detectPackageManager } from "../../preflight/lockfile";
+import { buildCiWorkflowPlan, isCiWorkflowProvider, renderCiWorkflows } from "../../util/ci-workflow";
+import { detectEcosystems } from "../../util/ci-workflow/ecosystems";
+import { gitlabMissingToolchains } from "../../util/ci-workflow/gitlab";
+import { resolveCiWorkflowProviders } from "../../util/ci-workflow/providers";
 import type { CodeownersLine } from "../../util/codeowners";
 import { buildCodeownersLines, DEFAULT_BLOCK_MARKER, mergeIntoExisting, renderCodeowners, renderCodeownersBlock } from "../../util/codeowners";
 import { collectMaintainerLines, collectNestedCodeownersLines } from "../../util/codeowners-sources";
 import { resolveIndentForExistingFile } from "../../util/editorconfig";
+import { syncGeneratedFiles } from "../../util/generated-files";
+import getPackageVersion from "../../util/package-version";
 import type { SyncFieldsChange } from "../../util/sync-package-json-fields";
 import { applyFieldChanges, computeFieldChanges, DEFAULT_SYNCED_FIELDS } from "../../util/sync-package-json-fields";
 import { collectWorkspaceDirectories, readPkg } from "../../util/workspace-deps";
@@ -58,7 +69,7 @@ const parseCsvOption = <T extends string>(raw: string[] | undefined, fallback: R
 
 const isCodeownersSource = (value: string): value is CodeownersSource => KNOWN_SOURCES.has(value as CodeownersSource);
 
-const KNOWN_KINDS = ["codeowners", "package-json-fields"] as const;
+const KNOWN_KINDS = ["ci-workflow", "codeowners", "package-json-fields"] as const;
 
 interface PackageWrite {
     filePath: string;
@@ -114,43 +125,22 @@ const handleWriteGuard = async (
         return;
     }
 
+    const { stale } = await syncGeneratedFiles(artifacts, {
+        fs,
+        logger,
+        mode: checkMode ? "check" : "write",
+        regenerateCommand: "vis sync codeowners --write-guard",
+        root,
+    });
+
     if (checkMode) {
-        let drift = false;
-
-        for (const artifact of artifacts) {
-            const outPath = join(root, artifact.path);
-
-            let existing = "";
-
-            try {
-                existing = await fs.readFile(outPath, "utf8");
-            } catch (error: unknown) {
-                if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-                    throw error;
-                }
-            }
-
-            if (existing.trim() !== artifact.content.trim()) {
-                logger.error(`${artifact.path} is out of date. Run \`vis sync codeowners --write-guard\` to update it.`);
-                drift = true;
-            }
-        }
-
-        if (drift) {
+        if (stale.length > 0) {
             process.exitCode = 1;
         } else {
             logger.info(`Write Guard CI is up to date (${artifacts.length} files, ${restricted.length} restricted projects).`);
         }
 
         return;
-    }
-
-    for (const artifact of artifacts) {
-        const outPath = join(root, artifact.path);
-
-        ensureDirSync(dirname(outPath));
-        writeFileSync(outPath, artifact.content);
-        logger.info(`Wrote ${artifact.path}`);
     }
 
     logger.info(`Write Guard CI scoped to ${restricted.length} restricted project${restricted.length === 1 ? "" : "s"}.`);
@@ -217,21 +207,21 @@ const runCodeowners = async ({ fs, logger, options, visConfig, workspaceRoot: ws
         ? mergeIntoExisting(existing, renderCodeownersBlock(lines, marker, renderOptions), marker)
         : renderCodeowners(lines, renderOptions);
 
-    if (options.check) {
-        if (existing.trim() !== rendered.trim()) {
-            logger.error(`${outPath} is out of date. Run \`vis sync codeowners\` to update it.`);
-            process.exitCode = 1;
+    const { stale } = await syncGeneratedFiles([{ content: rendered, path: relative(root, outPath) }], {
+        fs,
+        logger,
+        mode: options.check ? "check" : "write",
+        regenerateCommand: "vis sync codeowners",
+        root,
+    });
 
-            return;
-        }
-
+    if (stale.length > 0) {
+        process.exitCode = 1;
+    } else if (options.check) {
         logger.info(`${outPath} is up to date.`);
-
-        return;
+    } else {
+        logger.info(`Wrote ${lines.length} entries to ${outPath}`);
     }
-
-    writeFileSync(outPath, rendered);
-    logger.info(`Wrote ${lines.length} entries to ${outPath}`);
 };
 
 const runPackageJsonFields = ({ logger, options, visConfig, workspaceRoot: wsRoot }: Toolbox<Console, SyncOptions>): void => {
@@ -346,6 +336,125 @@ const runPackageJsonFields = ({ logger, options, visConfig, workspaceRoot: wsRoo
     }
 };
 
+/** Compared as parsed YAML, so a formatter re-indenting or re-quoting the committed file is not drift. */
+const sameYaml = (existing: string, generated: string): boolean => {
+    try {
+        return isDeepStrictEqual(parseYaml(existing), parseYaml(generated));
+    } catch {
+        return false;
+    }
+};
+
+/**
+ * Generates (or, with --check, verifies) the CI workflow described by
+ * `ci.workflow` in vis.config.ts: a GitHub Actions workflow that runs the
+ * targets as parallel steps and/or an includable GitLab CI file.
+ */
+const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: wsRoot }: Toolbox<Console, SyncOptions>): Promise<void> => {
+    const root = wsRoot as string;
+    const { config, workspace } = discoverWorkspace(root, visConfig);
+    const settings = config.ci?.workflow ?? {};
+    const flag = options.provider === undefined ? undefined : parseCsvOption(options.provider, []);
+    const unknown = [...(flag ?? []), ...(settings.providers ?? [])].filter((provider) => !isCiWorkflowProvider(provider));
+
+    if (unknown.length > 0) {
+        throw new VisUserError(`Unknown CI provider: ${unknown.map((provider) => `"${provider}"`).join(", ")}. Known: github, gitlab.`);
+    }
+
+    const { providers, reason } = await resolveCiWorkflowProviders({
+        configured: settings.providers,
+        detectRemote: async () => {
+            const [{ detectKnownRemoteProvider }, { createShellRunner }] = await Promise.all([
+                import("../../release/core/remote/detect"),
+                import("../../release/core/shell-runner"),
+            ]);
+
+            return detectKnownRemoteProvider(root, createShellRunner());
+        },
+        exists: async (path) => {
+            try {
+                await fs.stat(join(root, path));
+
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        flag: flag?.filter(isCiWorkflowProvider),
+        prompt:
+            options.check || !process.stdout.isTTY || process.env["CI"] === "true"
+                ? undefined
+                : async () => {
+                    const { multiSelectPrompt } = await import("../../release/core/prompts");
+
+                    return multiSelectPrompt("Which CI providers should vis generate a workflow for?", [
+                        { label: "GitHub Actions", value: "github" },
+                        { label: "GitLab CI", value: "gitlab" },
+                    ]);
+                },
+    });
+
+    if (providers.length === 0) {
+        throw new VisUserError("No CI provider selected. Pass --provider=github,gitlab or set ci.workflow.providers.");
+    }
+
+    logger.info(`▸ CI providers: ${providers.join(", ")} (${reason})`);
+
+    // The workspace root plus every project root, with the files directly in each.
+    const directories = await Promise.all(
+        [...new Set([".", ...Object.values(workspace.projects).map((project) => project.root ?? ".")])].toSorted().map(async (path) => {
+            return { files: await fs.readdir(join(root, path)).catch(() => []), path };
+        }),
+    );
+    const rootFiles = new Set(directories.find(({ path }) => path === ".")?.files);
+
+    const { buildFirstOrdered, plan } = buildCiWorkflowPlan({
+        cacheDirectory: config.taskRunner?.cacheDirectory,
+        defaultBase: config.defaultBase,
+        ecosystems: detectEcosystems(directories),
+        packageManager: detectPackageManager(root)?.manager,
+        projects: workspace.projects,
+        rootFiles,
+        settings,
+        targetDefaults: config.tasks,
+        toolchainPins: config.toolchain?.tools,
+        visVersion: getPackageVersion(),
+    });
+
+    if (plan.ecosystems.length > 0) {
+        logger.info(`▸ Toolchains: ${plan.ecosystems.map(({ name }) => name).join(", ")}`);
+    }
+
+    const missing = providers.includes("gitlab") ? gitlabMissingToolchains(plan) : [];
+
+    if (missing.length > 0) {
+        logger.warn(
+            `GitLab jobs run in a node image without ${missing.join(", ")}. Pin go, python, ruby or rust in toolchain.tools so vis installs them, or give .vis-ci-base an image that has them.`,
+        );
+    }
+
+    if (buildFirstOrdered.length > 0) {
+        logger.info(`▸ Running build before ${buildFirstOrdered.join(", ")} (ci.workflow.buildFirst; set it to false if dependsOn already says what needs build).`);
+    }
+
+    const { stale } = await syncGeneratedFiles(renderCiWorkflows(plan, providers), {
+        fs,
+        isCurrent: sameYaml,
+        logger,
+        mode: options.check ? "check" : "write",
+        regenerateCommand: "vis sync ci-workflow",
+        root,
+    });
+
+    if (stale.length > 0) {
+        process.exitCode = 1;
+
+        return;
+    }
+
+    logger.info(`CI workflow ${options.check ? "is up to date" : "generated"}: ${plan.layers.map((layer) => layer.map(({ name }) => name).join(" + ")).join(" → ")}`);
+};
+
 const execute = async (toolbox: Toolbox<Console, SyncOptions>): Promise<void> => {
     const kind = toolbox.argument[0];
 
@@ -355,6 +464,16 @@ const execute = async (toolbox: Toolbox<Console, SyncOptions>): Promise<void> =>
 
     if (!toolbox.workspaceRoot) {
         throw new Error("Could not determine workspace root. Run inside a monorepo.");
+    }
+
+    if (kind !== "ci-workflow" && toolbox.options.provider !== undefined) {
+        throw new VisUserError(`--provider only applies to \`vis sync ci-workflow\`, not ${kind}.`);
+    }
+
+    if (kind === "ci-workflow") {
+        await runCiWorkflow(toolbox);
+
+        return;
     }
 
     if (kind === "codeowners") {

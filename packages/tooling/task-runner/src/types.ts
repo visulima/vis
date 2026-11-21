@@ -68,6 +68,7 @@ export interface Task {
      * from {@link TargetConfiguration.always} at task graph creation.
      */
     always?: boolean;
+
     /** Whether this task is eligible for caching */
     cache?: boolean;
 
@@ -166,6 +167,7 @@ export interface Task {
      * graph-derived heuristics. Defaults to `"normal"` when absent.
      */
     priority?: TaskPriority;
+
     /** The project root directory */
     projectRoot?: string;
 
@@ -178,6 +180,16 @@ export interface Task {
      * the flag and leaves the spawn decision to the executor.
      */
     pty?: boolean;
+
+    /**
+     * When `true`, the task already ran earlier in this job (`vis run
+     * --deps-only` before a `--skip-deps` run). It is still hashed, so the
+     * tasks that depend on it fold the same key as in a normal run, but it is
+     * never executed and its cached outputs are never restored: the files on
+     * disk are the ones that earlier run produced, and restoring them again
+     * would race with concurrent runs reading them.
+     */
+    satisfied?: boolean;
 
     /**
      * Position of a synthetic segment task produced by `splitCompound`:
