@@ -1141,3 +1141,98 @@ fn pm_family_delegates_dedupe_from_a_workspace_package_with_a_literal_config() {
     assert!(stdout.contains("node:"), "workspace-package dedupe was not delegated: {stdout}");
     assert!(!stdout.contains("pnpm:"), "workspace-package dedupe ran natively: {stdout}");
 }
+
+/// Run `vis <args>` in an empty project (a pnpm lockfile pins the detected PM) with an
+/// empty `PATH`, so no package manager or runtime binary can be spawned. Returns the exit
+/// code and stderr.
+fn run_failing(args: &[&str], lockfile: &str) -> (Option<i32>, String) {
+    let base =
+        std::env::temp_dir().join(format!("vis-fail-{}-{}", std::process::id(), args.join("-").replace('/', "_")));
+    let project = base.join("project");
+    let empty_path = base.join("empty");
+
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&empty_path).unwrap();
+    std::fs::write(project.join(lockfile), "lockfileVersion: 9\n").unwrap();
+
+    let output = binary()
+        .args(args)
+        .current_dir(&project)
+        .env("PATH", &empty_path)
+        .env_remove("npm_config_user_agent")
+        .env_remove("VIS_RUNTIME")
+        .env_remove("VIS_UNFLAG")
+        .env_remove("VIS_AUGMENT_SUBPROCESS")
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    (output.status.code(), String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+#[test]
+fn exec_without_a_command_reports_usage() {
+    let (code, stderr) = run_failing(&["exec"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "vis exec: No command specified. Usage: vis exec <command> [args...]\n");
+}
+
+#[test]
+fn exec_filter_without_a_value_reports_the_flag() {
+    let (code, stderr) = run_failing(&["exec", "--filter"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "vis exec: --filter requires a value\n");
+}
+
+#[test]
+fn exec_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["exec", "eslint"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis exec: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_without_a_subcommand_lists_the_available_ones() {
+    let (code, stderr) = run_failing(&["pm"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert!(stderr.starts_with("vis pm: No subcommand specified. Available: cache, publish, "), "stderr: {stderr}");
+    assert!(stderr.ends_with(", prune, plugin\n"), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["pm", "cache", "dir"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis pm: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_family_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["remove", "left-pad"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis remove: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn x_without_a_file_reports_usage_without_a_command_prefix() {
+    let (code, stderr) = run_failing(&["x"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "No file specified. Usage: vis x <file> [args...]\n");
+}
+
+#[test]
+fn x_reports_a_missing_bun_binary() {
+    let (code, stderr) = run_failing(&["x", "app.ts"], "bun.lock");
+
+    assert_eq!(code, Some(127));
+    assert_eq!(stderr, "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.\n");
+}
