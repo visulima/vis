@@ -236,6 +236,27 @@ leaked = "${secret2}"
         await expect(scanFiles([leak], { ignoreRoot: tmpDir })).resolves.toHaveLength(0);
     });
 
+    it("scanFiles matches a relative entry where the scan reads it, not under ignoreRoot", async () => {
+        expect.assertions(1);
+
+        const ignoreRoot = resolve(tmpDir, "root");
+        const cwd = resolve(tmpDir, "cwd");
+        const previous = process.cwd();
+
+        await mkdir(ignoreRoot);
+        await mkdir(cwd);
+        await writeFile(resolve(ignoreRoot, ".secretlintignore"), "a.env\n");
+        await writeFile(resolve(cwd, "a.env"), 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+
+        try {
+            process.chdir(cwd);
+
+            await expect(scanFiles(["a.env"], { ignoreRoot })).resolves.toHaveLength(1);
+        } finally {
+            process.chdir(previous);
+        }
+    });
+
     it("applies ignore sources independently during a walker scan", async () => {
         expect.assertions(2);
 

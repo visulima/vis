@@ -125,7 +125,10 @@ export const scanFilesDetailed = async (files: string[], options?: ScanOptions):
     const ignoreRoot = options?.ignoreRoot === undefined ? process.cwd() : resolve(options.ignoreRoot);
     const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [ignoreRoot]);
     const matcher = buildIgnoreMatcher(effective, ignoreRoot);
-    const filteredFiles = filterIgnoredFiles(files, matcher, ignoreRoot);
+    // The native scan reads relative entries from the process cwd, so resolve them
+    // there before matching against `ignoreRoot`, and hand on the entries as given.
+    const kept = new Set(filterIgnoredFiles(files.map((file) => resolve(file)), matcher, ignoreRoot));
+    const filteredFiles = files.filter((file) => kept.has(resolve(file)));
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
     return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });
