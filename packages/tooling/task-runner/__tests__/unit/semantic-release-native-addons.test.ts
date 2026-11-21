@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 // eslint-disable-next-line import/no-relative-packages -- workspace release script, not a package entry point
-import { isAlreadyPublishedError } from "../../../../../scripts/semantic-release-native-addons.mjs";
+import { isAlreadyPublishedError, patchVersionCheck } from "../../../../../scripts/semantic-release-native-addons.mjs";
 
 const publishError = (properties: { message?: string; stderr?: string; stdout?: string }): Error =>
     Object.assign(new Error(properties.message ?? "Command failed: pnpm publish"), properties);
@@ -57,5 +57,29 @@ describe(isAlreadyPublishedError, () => {
 
         expect(isAlreadyPublishedError("403 Forbidden: You cannot publish over the previously published versions")).toBe(true);
         expect(isAlreadyPublishedError(undefined)).toBe(false);
+    });
+});
+
+describe(patchVersionCheck, () => {
+    const generated = [
+        "if (bindingPackageVersion !== '6.7.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {",
+        "  throw new Error(`Native binding package version mismatch, expected 6.8.0 but got ${bindingPackageVersion}. Reinstall.`)",
+        "}",
+    ].join("\n");
+
+    it("rewrites the comparison literal together with the error message", () => {
+        expect.assertions(3);
+
+        const { count, patched } = patchVersionCheck(`${generated}\n${generated}`, "6.9.0");
+
+        expect(count).toBe(2);
+        expect(patched).not.toContain("6.7.0");
+        expect(patched.match(/!== '6\.9\.0'/g)).toHaveLength(2);
+    });
+
+    it("fails loudly when only one of the two forms is present", () => {
+        expect.assertions(1);
+
+        expect(() => patchVersionCheck("expected 6.8.0 but got ${bindingPackageVersion}", "6.9.0")).toThrow(/no NAPI version-check/u);
     });
 });
