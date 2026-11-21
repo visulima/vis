@@ -1,4 +1,3 @@
 {
-    "extends": "@anolilab/semantic-release-preset/pnpm",
-    "extends": "../../../.releaserc.branches.json"
+    "extends": ["@anolilab/semantic-release-preset/pnpm", "../../../.releaserc.branches.json"]
 }
