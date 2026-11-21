@@ -34,7 +34,7 @@ import { join } from "node:path";
 const OFFICIAL_REGISTRY = "https://registry.npmjs.org/";
 const OIDC_AUDIENCE = "npm:registry.npmjs.org";
 
-const getNpmTag = (version) => {
+export const getNpmTag = (version) => {
     if (version.includes("-alpha.")) {
         return "alpha";
     }
@@ -43,7 +43,8 @@ const getNpmTag = (version) => {
         return "beta";
     }
 
-    if (version.includes("-rc.")) {
+    // `next` is a prerelease branch, so its versions read `x.y.z-next.N`.
+    if (version.includes("-next.") || version.includes("-rc.")) {
         return "next";
     }
 
