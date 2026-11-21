@@ -4,18 +4,16 @@
 use std::path::PathBuf;
 
 use crate::detector::RawFinding;
+use crate::scanner::FileScan;
 use crate::skip::Skipped;
-use crate::types::{Finding, RequiredFinding, ScanReport, SkippedFile};
+use crate::suppression::UnknownAllowIds;
+use crate::types::{AllowWarning, Finding, RequiredFinding, ScanReport, SkippedFile};
 
-/// Build the report: finalize findings, rewrite skipped paths like findings. `roots`
-/// are the scan roots that paths are made relative to; an in-memory scan passes `&[]` and
-/// keeps its paths as given.
-pub fn build_report(
-    findings: Vec<RawFinding>,
-    skipped: Vec<Skipped>,
-    roots: &[PathBuf],
-    redact_secrets: bool,
-) -> ScanReport {
+/// Build the report: finalize findings, rewrite skipped and warning paths like findings.
+/// `roots` are the scan roots that paths are made relative to; an in-memory scan passes
+/// `&[]` and keeps its paths as given.
+pub fn build_report(scan: FileScan, roots: &[PathBuf], redact_secrets: bool) -> ScanReport {
+    let FileScan { findings, skipped, allow_warnings } = scan;
     let canon_roots = canonicalize_roots(roots);
     let mut skipped: Vec<SkippedFile> = skipped
         .into_iter()
@@ -26,6 +24,16 @@ pub fn build_report(
         })
         .collect();
     skipped.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut allow_warnings: Vec<AllowWarning> = allow_warnings
+        .into_iter()
+        .map(|UnknownAllowIds { path, entry, line, ids }| {
+            let raw = path.to_string_lossy().to_string();
+            let on_disk = relative_to_root(&raw, &canon_roots).unwrap_or(raw);
+            AllowWarning { file: format!("{on_disk}{entry}"), line, unknown_rule_ids: ids }
+        })
+        .collect();
+    allow_warnings.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
 
     let (active, suppressed) = finalize_findings(findings, &canon_roots);
     ScanReport {
@@ -39,6 +47,7 @@ pub fn build_report(
             })
             .collect(),
         skipped,
+        allow_warnings,
     }
 }
 

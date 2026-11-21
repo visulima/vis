@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
 use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
-use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, SuppressionReason};
+use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, AllowRegion, SuppressionReason};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
 /// windowed scanning kicks in. Covers the entire span of every kingfisher +
@@ -148,7 +148,7 @@ pub fn detect(
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let allow_regions = if opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let allow_regions = if opts.inline_allow { find_allow_regions(content, ruleset) } else { Vec::new() };
 
     // 1) Candidate rules via AC keyword prefilter on the whole file. Empty-keywords rules
     //    are pre-marked so they always run. We use a bitmap indexed by rule id — O(rules)
@@ -296,17 +296,26 @@ pub fn detect(
         // `preRegexReplace` and a content buffer of size M the worst case is O(N·M) in
         // allocation + replace_all work. Fine for ≤ a handful of rules (the intended use).
         // Avoid bulk-applying it on `generic-api-key`-sized allowlists.
-        let (text, text_offsets): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, [usize]>) =
+        // `lines_kept` holds while every replacement stays within one line (no match
+        // spans a newline) and adds no line (the newline count is unchanged, which also
+        // catches a newline inserted through a lookaround capture). Then every line of the
+        // rewritten text is the same line of `content`.
+        let (text, text_offsets, lines_kept): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, [usize]>, bool) =
             if rule.pre_regex_replace.is_empty() {
-                (std::borrow::Cow::Borrowed(content), std::borrow::Cow::Borrowed(&line_offsets))
+                (std::borrow::Cow::Borrowed(content), std::borrow::Cow::Borrowed(&line_offsets), true)
             } else {
                 let mut buf = content.to_string();
+                let mut lines_kept = true;
                 for (from, to) in &rule.pre_regex_replace {
+                    let newlines = lines_kept.then(|| count_newlines(&buf));
+                    lines_kept = lines_kept
+                        && from.find_iter(&buf).all(|found| found.is_ok_and(|found| !found.as_str().contains('\n')));
                     let replaced = from.replace_all(&buf, to.as_str());
+                    lines_kept = lines_kept && newlines == Some(count_newlines(&replaced));
                     buf = replaced.into_owned();
                 }
                 let lo = compute_line_offsets(&buf);
-                (std::borrow::Cow::Owned(buf), std::borrow::Cow::Owned(lo))
+                (std::borrow::Cow::Owned(buf), std::borrow::Cow::Owned(lo), lines_kept)
             };
 
         let offsets_ref: &[usize] = text_offsets.as_ref();
@@ -337,6 +346,10 @@ pub fn detect(
             path: &path_str,
             text: text_ref,
             line_offsets: offsets_ref,
+            // Allow markers are read from the file as written, so a replacement cannot
+            // rewrite their scope. That needs every line to map to itself; a replacement
+            // that touches a newline falls back to the rewritten text.
+            marker_source: if lines_kept { (content, &line_offsets) } else { (text_ref, offsets_ref) },
             allow_regions: &allow_regions,
             opts,
         };
@@ -412,6 +425,10 @@ struct MatchSpan {
     secret_end: usize,
 }
 
+fn count_newlines(text: &str) -> usize {
+    text.bytes().filter(|&byte| byte == b'\n').count()
+}
+
 /// Everything [`MatchCtx::emit`] needs about the rule and the text it ran over.
 struct MatchCtx<'a> {
     ruleset: &'a CompiledRuleset,
@@ -421,7 +438,9 @@ struct MatchCtx<'a> {
     /// The text the rule ran over (post `preRegexReplace`) and its line offsets.
     text: &'a str,
     line_offsets: &'a [usize],
-    allow_regions: &'a [(usize, usize)],
+    /// Text and line offsets that inline allow markers are read from.
+    marker_source: (&'a str, &'a [usize]),
+    allow_regions: &'a [AllowRegion],
     opts: DetectOptions<'a>,
 }
 
@@ -485,7 +504,15 @@ impl MatchCtx<'_> {
         // `pragma: allowlist nextline secret` on the line preceding the match.
         // `inline_allow: false` disables all three so CI can audit them.
         let inline_allowed = self.opts.inline_allow
-            && inline_suppressed(self.text, self.line_offsets, self.allow_regions, sl, span.match_start);
+            && inline_suppressed(
+                self.marker_source.0,
+                self.marker_source.1,
+                self.allow_regions,
+                self.ruleset,
+                &self.rule.id,
+                sl,
+                span.match_start,
+            );
 
         // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
         let allowlisted = |lists: &[CompiledAllowlist]| {

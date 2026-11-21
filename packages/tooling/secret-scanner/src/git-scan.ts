@@ -35,7 +35,7 @@ import type { ProcessedFindings, SuppressionContext } from "./pipeline";
 import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { beginScan, finishResult } from "./scan-session";
-import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
 
 /** Raw detection results kept for parent-blob lookups across commits. */
 const PARENT_CACHE_LIMIT = 256;
@@ -78,6 +78,8 @@ export interface GitSkippedBlob {
 
 /** Findings plus the blobs that were skipped, so a caller can tell "clean" from "not looked at". */
 export interface GitScanResult<F extends Finding = Finding> {
+    /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
+    allowWarnings: AllowWarning[];
     findings: F[];
     skipped: GitSkippedBlob[];
     /** Suppressed findings; empty unless `reportSuppressed` is on. */
@@ -317,6 +319,9 @@ const realOrSelf = (path: string): string => {
 
 /** Shared per-scan state: prepared options, the blob reader and the skip log. */
 class BlobScanner {
+    /** Each marker once, however many commits touch its blob. */
+    readonly #allowWarnings = new Map<string, AllowWarning>();
+
     public readonly skipped: GitSkippedBlob[] = [];
 
     readonly #context: SuppressionContext;
@@ -334,6 +339,10 @@ class BlobScanner {
         this.#options = options;
         this.#prepared = prepared;
         this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
+    }
+
+    public get allowWarnings(): AllowWarning[] {
+        return [...this.#allowWarnings.values()];
     }
 
     public close(): void {
@@ -371,8 +380,14 @@ class BlobScanner {
      * confuse two secrets that mask alike (`ghp***xY4`). `commit` lets AND
      * allowlists that list `commits` match.
      */
-    public detect(content: string, path: string, commit?: string): ProcessedFindings {
+    public detect(content: string, path: string, commit?: string, reportedAs?: string): ProcessedFindings {
         const report = binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
+
+        if (reportedAs !== undefined) {
+            for (const warning of report.allowWarnings) {
+                this.#allowWarnings.set(`${warning.line}\0${warning.unknownRuleIds.join("\0")}\0${reportedAs}`, { ...warning, file: reportedAs });
+            }
+        }
 
         return dropShadowedGenericFindings(report, this.#prepared, this.#options);
     }
@@ -433,7 +448,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    let fresh = scanner.detect(content, path, commit.info.sha);
+    let fresh = scanner.detect(content, path, commit.info.sha, path);
 
     if (isEmpty(fresh)) {
         return none;
@@ -527,7 +542,7 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context, { includeCommitEntries: true });
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, includeCommitEntries: true });
 };
 
 /**
@@ -617,7 +632,7 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             // Detection sees the absolute path, as native `scanFiles` does; the
             // reported path is rewritten afterwards.
-            const raw = scanner.detect(content, file);
+            const raw = scanner.detect(content, file, undefined, reportedPath(entry.newPath));
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
@@ -631,5 +646,5 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context);
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings });
 };

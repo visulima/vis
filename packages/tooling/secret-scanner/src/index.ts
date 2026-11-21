@@ -105,8 +105,9 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
  * tell a clean scan from an incomplete one: `skipped` lists files and
  * directories that could not be read (permission denied, I/O error, larger
  * than `walk.maxFileSize`), `suppressed` the findings a baseline, allowlist,
- * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`), and
- * `unusedIgnores` the `.gitleaksignore` entries nothing matched.
+ * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`),
+ * `unusedIgnores` the `.gitleaksignore` entries nothing matched, and
+ * `allowWarnings` the allow markers that name rule ids which are not active.
  */
 export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
     const { context, prepared } = await beginScan(
@@ -115,7 +116,7 @@ export const scanDetailed = async (paths: string[], options?: ScanOptions): Prom
     );
     const report = await binding.scanDetailed(paths, prepared.nativeOptions);
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context, { allowWarnings: report.allowWarnings });
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -135,7 +136,7 @@ export const scanFilesDetailed = async (files: string[], options?: ScanOptions):
     const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
+    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context, { allowWarnings: report.allowWarnings });
 };
 
 /**
@@ -173,6 +174,7 @@ export { scanString } from "./scan-string";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
 export type {
+    AllowWarning,
     Confidence,
     Finding,
     GitleaksIgnoreEntry,

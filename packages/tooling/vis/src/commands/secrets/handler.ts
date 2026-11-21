@@ -17,7 +17,7 @@ import {
 import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
-import { diffBaseline, rebaseBaseline, rebaseFinding, writeBaseline } from "../../secrets/baseline";
+import { diffBaseline, rebaseBaseline, rebaseFile, rebaseFinding, writeBaseline } from "../../secrets/baseline";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
 import { pathExists } from "../../util/toolbox-fs";
@@ -176,6 +176,9 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
     const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, options);
 
     return {
+        allowWarnings: result.allowWarnings.map((warning) => {
+            return { ...warning, file: rebaseFile(warning.file, base, root) };
+        }),
         findings: result.findings.map((finding) => rebaseFinding(finding, base, root)),
         skipped: result.skipped,
         skippedUnit: mode.kind === "staged" ? "blob" : "file",

@@ -7,7 +7,7 @@ import { baselineKeys, fingerprint, legacyFingerprint, maskFinding, wholeMatchFi
 
 import { writeReportFileSync } from "./secure-write";
 
-const toRelative = (file: string, root: string): string => {
+export const toRelative = (file: string, root: string): string => {
     if (!isAbsolute(file)) {
         return file;
     }
@@ -58,9 +58,14 @@ const readBaseline = (baselinePath: string): Finding[] => {
  * staged and file-list scans relative to the process cwd) so it is relative
  * to `root`, like every other finding vis reports.
  */
+export const rebaseFile = (file: string, base: string, root: string): string => {
+    const absolute = isAbsolute(file) ? file : resolve(base, file);
+
+    return relativeInside(realOrSelf(root), absolute);
+};
+
 export const rebaseFinding = <F extends Finding>(finding: F, base: string, root: string): F => {
-    const absolute = isAbsolute(finding.file) ? finding.file : resolve(base, finding.file);
-    const file = relativeInside(realOrSelf(root), absolute);
+    const file = rebaseFile(finding.file, base, root);
 
     return file === finding.file ? finding : { ...finding, file };
 };

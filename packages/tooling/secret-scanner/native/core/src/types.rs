@@ -141,6 +141,21 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
+/// An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+/// nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+/// suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+/// lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+/// or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+/// token that is neither a known rule id nor id-shaped.
+#[derive(Clone, Debug)]
+pub struct AllowWarning {
+    pub file: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub unknown_rule_ids: Vec<String>,
+}
+
 /// Result of every scan entry point.
 #[derive(Clone, Debug, Default)]
 pub struct ScanReport {
@@ -150,6 +165,8 @@ pub struct ScanReport {
     pub suppressed: Vec<SuppressedFinding>,
     /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
+    /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
+    pub allow_warnings: Vec<AllowWarning>,
 }
 
 #[derive(Clone, Debug)]

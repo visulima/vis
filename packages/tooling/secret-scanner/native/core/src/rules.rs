@@ -184,6 +184,13 @@ pub struct CompiledRuleset {
     pub has_composite: bool,
 }
 
+impl CompiledRuleset {
+    /// Whether the active ruleset has a rule with this id.
+    pub fn has_rule(&self, id: &str) -> bool {
+        self.rules.iter().any(|rule| rule.id == id)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
     #[error("invalid regex in rule '{0}': {1}")]
