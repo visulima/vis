@@ -23,7 +23,7 @@ const ignore: () => Ignore = (ignoreModule as { default?: () => Ignore }).defaul
 // leaves 8.3 short names and drive-letter case unnormalized, so canonicalize
 // through realpathSync.native — that way relative() compares like with like
 // instead of emitting an absolute path that makes matcher.ignores() throw.
-const canonicalize = (path: string): string => {
+export const canonicalize = (path: string): string => {
     try {
         return realpathSync.native(path);
     } catch {

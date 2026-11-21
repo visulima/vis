@@ -30,7 +30,7 @@ import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
-import { buildIgnoreMatcher, isWithin } from "./ignore-matcher";
+import { buildIgnoreMatcher, canonicalize, isWithin } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
 import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
@@ -607,13 +607,16 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     };
     // Test the index pathname under the canonical repository root rather than the
     // working-tree path's realpath: a working-tree directory swapped for a symlink
-    // must not move a staged blob out from under its ignore pattern.
+    // must not move a staged blob out from under its ignore pattern. Both sides use
+    // the matcher's own canonical form, so Windows short names and drive-letter case
+    // compare equal.
     const matcher = buildIgnoreMatcher(effective, cwd);
-    const realIgnoreBase = realOrSelf(cwd);
+    const ignoreToplevel = canonicalize(toplevel);
+    const realIgnoreBase = canonicalize(cwd);
     const kept = new Set(
         entries
             .filter((entry) => {
-                const indexed = resolve(realToplevel, entry.newPath);
+                const indexed = resolve(ignoreToplevel, entry.newPath);
 
                 return matcher === undefined || !isWithin(realIgnoreBase, indexed) || !matcher.ignores(indexed);
             })
