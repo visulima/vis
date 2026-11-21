@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
+use crate::error::{self, WrapperError};
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
@@ -217,10 +218,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         Ok(()) => exit(0),
         // A closed pipe is not an error worth reporting.
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
-        Err(error) => {
-            eprintln!("vis ignore: failed to write the output: {error}");
-            exit(1);
-        }
+        Err(error) => error::finish(Err(WrapperError::write("ignore", "the output", error))),
     }
 }
 

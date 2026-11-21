@@ -1146,7 +1146,8 @@ fn pm_family_delegates_dedupe_from_a_workspace_package_with_a_literal_config() {
 /// empty `PATH`, so no package manager or runtime binary can be spawned. Returns the exit
 /// code and stderr.
 fn run_failing(args: &[&str], lockfile: &str) -> (Option<i32>, String) {
-    let base = std::env::temp_dir().join(format!("vis-fail-{}-{}", std::process::id(), args.join("-").replace('/', "_")));
+    let base =
+        std::env::temp_dir().join(format!("vis-fail-{}-{}", std::process::id(), args.join("-").replace('/', "_")));
     let project = base.join("project");
     let empty_path = base.join("empty");
 
@@ -1233,8 +1234,5 @@ fn x_reports_a_missing_bun_binary() {
     let (code, stderr) = run_failing(&["x", "app.ts"], "bun.lock");
 
     assert_eq!(code, Some(127));
-    assert_eq!(
-        stderr,
-        "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.\n"
-    );
+    assert_eq!(stderr, "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.\n");
 }

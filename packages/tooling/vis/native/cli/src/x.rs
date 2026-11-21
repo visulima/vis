@@ -19,6 +19,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
+use crate::error::{self, WrapperError};
+
 enum Runtime {
     Bun,
     Node,
@@ -133,16 +135,20 @@ fn preload_path() -> Option<PathBuf> {
     Path::new(&entry).parent().map(|dist| dist.join("runtime").join("preload.js"))
 }
 
-fn spawn_and_exit(mut command: Command) -> ! {
-    let error = crate::run_in_place(&mut command);
-
-    eprintln!("vis x: failed to launch runtime: {error}");
-    exit(127);
+/// Replaces this process with `command` (or spawns and waits, off Unix); only returns
+/// the failure to start it, since a started command exits with its own status.
+fn launch_runtime(mut command: Command) -> WrapperError {
+    WrapperError::launch("x", "runtime", crate::run_in_place(&mut command))
 }
 
 /// Entry point. `args` is the full invocation including the leading `x` (so the
 /// Node-fallback path can replay it verbatim). Never returns.
 pub fn run(args: &[String]) -> ! {
+    error::finish(try_run(args))
+}
+
+/// Runs the file and returns the exit status to adopt, or the failure to report.
+fn try_run(args: &[String]) -> Result<i32, WrapperError> {
     let rest = if args.len() > 1 { &args[1..] } else { &[] };
     let parsed = parse(rest);
 
@@ -163,13 +169,8 @@ pub fn run(args: &[String]) -> ! {
 
     let absolute = if Path::new(&file).is_absolute() { file } else { cwd.join(&file).to_string_lossy().into_owned() };
 
-    let runtime = match resolve_runtime(parsed.runtime_flag.as_deref(), &cwd) {
-        Ok(runtime) => runtime,
-        Err(message) => {
-            eprintln!("vis x: {message}");
-            exit(1);
-        }
-    };
+    let runtime =
+        resolve_runtime(parsed.runtime_flag.as_deref(), &cwd).map_err(|message| WrapperError::usage("x", message))?;
 
     match runtime {
         Runtime::Bun => {
@@ -178,17 +179,12 @@ pub fn run(args: &[String]) -> ! {
             command.arg("run").arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
 
             match command.status() {
-                Ok(status) => exit(crate::forward_code(status)),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    eprintln!(
-                        "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh."
-                    );
-                    exit(127);
-                }
-                Err(error) => {
-                    eprintln!("vis x: failed to launch bun: {error}");
-                    exit(127);
-                }
+                Ok(status) => Ok(crate::forward_code(status)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(WrapperError::unavailable(
+                    "x",
+                    "runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.",
+                )),
+                Err(error) => Err(WrapperError::launch("x", "bun", error)),
             }
         }
         Runtime::Node => {
@@ -204,7 +200,7 @@ pub fn run(args: &[String]) -> ! {
             let mut command = Command::new(node);
 
             command.arg("--import").arg(&preload).arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
-            spawn_and_exit(command);
+            Err(launch_runtime(command))
         }
     }
 }
