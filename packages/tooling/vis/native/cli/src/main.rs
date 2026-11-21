@@ -60,6 +60,8 @@ const EX_SOFTWARE: i32 = 70;
 
 fn main() {
     node_contract::init();
+    // Before any output, so the styled help and `clean` text renders on a Windows console.
+    term::enable_virtual_terminal();
 
     // argv[0] is the binary path; the remainder is the `vis` invocation,
     // forwarded verbatim by the JS launcher.

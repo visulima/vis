@@ -96,6 +96,7 @@ const plainTerm = (environment) => {
 
 // Whether `vis ignore` can pass the binary's native gate (`native_context` in `ignore.rs`). The
 // binary re-checks everything; this only skips the extra process when it would delegate anyway.
+// It never answers `ignore` on Windows (Node's colour detection and path handling differ there).
 const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMarker) => {
     if (platform === "win32" || interactive) {
         return false;
@@ -125,7 +126,8 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMark
 
 // Whether `vis clean` can pass the binary's native gate (`plan` in `clean.rs`). The binary re-checks
 // everything; this only skips the extra process when it would delegate anyway. Flags are the
-// default, `--dry-run` and `--lockfile`/`-l`, each at most once.
+// default, `--dry-run` and `--lockfile`/`-l`, each at most once. `plan` delegates everywhere but
+// unix (its header clock is unix-only), so Windows stays in Node.
 const cleanMayRunNatively = (platform, environment, args, interactive) => {
     if (platform === "win32" || interactive) {
         return false;
@@ -157,11 +159,12 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
     return LIST_NATIVE_SHAPES.some((shape) => shape.length === flags.length && shape.every((flag, index) => flags[index] === flag));
 };
 
-// Commands with a native gate answer help through the binary everywhere but Windows, and
-// otherwise follow the gate. `mayRunNatively` is only called when the help surface is not asked for.
-const helpOrNative = (args, platform, mayRunNatively) => {
+// Commands with a native gate answer help through the binary on every platform (it enables
+// virtual-terminal processing on a Windows console), and otherwise follow the gate.
+// `mayRunNatively` is only called when the help surface is not asked for.
+const helpOrNative = (args, mayRunNatively) => {
     if (asksForHelp(args)) {
-        return platform !== "win32";
+        return true;
     }
 
     return mayRunNatively();
@@ -178,35 +181,33 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
 
     // `hook run` is native, but the other `hook` subcommands (install, migrate, …)
     // are not: sending those through the binary would only add a second Node boot.
-    // On Windows, `hook run --help` stays in Node, which keeps the help surface there.
     if (command === "hook" && subcommand === "run") {
-        return platform !== "win32" || !asksForHelp(args);
+        return true;
     }
 
     // `advisories bloom status` is answered natively for `--format json --cache-dir <dir>`.
     // The binary hands every other shape of it to Node itself, as it does for `hook run`.
     if (command === "advisories" && subcommand === "bloom" && args[2] === "status") {
-        return platform !== "win32" || !asksForHelp(args);
+        return true;
     }
 
     // `ignore` is native for its plain shapes in a CI context (`native/cli/src/ignore.rs`); any
-    // other run would be delegated by the binary, which costs a second Node boot. Help is
-    // answered by the binary everywhere but Windows, as for `advisories bloom status`.
+    // other run would be delegated by the binary, which costs a second Node boot.
     if (command === "ignore") {
-        return helpOrNative(args, platform, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker));
+        return helpOrNative(args, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker));
     }
 
     // `list` is native for the plain listing in a CI context (`native/cli/src/list.rs`); any other
     // run would be delegated by the binary, which costs a second Node boot.
     if (command === "list") {
-        return helpOrNative(args, platform, () => listMayRunNatively(platform, environment, args, interactive));
+        return helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive));
     }
 
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
-    // other shape to Node itself. Help stays in Node on Windows, as for `advisories`. A terminal
-    // stdout stays in Node too: pail colours its output there, and the binary does not.
+    // other shape to Node itself. A terminal
+    // stdout stays in Node: pail colours its output there, and the binary does not.
     if (command === "clean") {
-        return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, interactive));
+        return helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive));
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
@@ -237,12 +238,6 @@ const routesToNative = (
 
     if (decided !== undefined) {
         return decided;
-    }
-
-    // Windows keeps the help surface in Node: the binary paints it with raw ANSI codes
-    // and does not enable virtual-terminal processing, which classic conhost needs.
-    if (platform === "win32") {
-        return false;
     }
 
     // The binary also renders the help surface from its generated manifest: bare

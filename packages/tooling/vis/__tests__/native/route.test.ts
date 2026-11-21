@@ -50,23 +50,23 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(args, "linux")).toBe(expected);
     });
 
-    it.each([[["clean", "--help"]], [["clean", "-h"]]])(
-        "keeps `vis %j` in Node on Windows",
-        (args: string[]) => {
-            expect.assertions(1);
+    it.each([
+        [["clean", "--help"]],
+        [["clean", "-h"]],
+        [[]],
+        [["--help"]],
+        [["-h"]],
+        [["help", "install"]],
+        [["status", "--help"]],
+        [["ignore", "--help"]],
+        [["list", "--help"]],
+        [["hook", "run", "--help"]],
+        [["advisories", "bloom", "status", "--help"]],
+    ])("routes the help surface `vis %j` to native on Windows, where the binary enables virtual-terminal processing", (args: string[]) => {
+        expect.assertions(1);
 
-            expect(routesToNative(args, "win32")).toBe(false);
-        },
-    );
-
-    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]]])(
-        "keeps the help surface `vis %j` in Node on Windows",
-        (args: string[]) => {
-            expect.assertions(1);
-
-            expect(routesToNative(args, "win32")).toBe(false);
-        },
-    );
+        expect(routesToNative(args, "win32")).toBe(true);
+    });
 
     it.each([[["clean"]], [["clean", "--dry-run"]], [["clean", "--lockfile"]]])(
         "keeps `vis %j` in Node when stdout is a terminal",
@@ -80,6 +80,7 @@ describe("launcher routing (bin/route.mjs)", () => {
     it("still routes the native commands on Windows", () => {
         expect.assertions(4);
 
+        // `clean`, `ignore` and `list` answer natively only on unix; elsewhere the binary delegates.
         expect(routesToNative(["--version"], "win32")).toBe(true);
         expect(routesToNative(["clean", "--dry-run"], "win32", process.env, "/work/app", false)).toBe(false);
         expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
@@ -119,11 +120,11 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect(routesToNative(["list"], "linux", {}, "/work/app", false)).toBe(false);
         });
 
-        it("keeps `list --help` native outside Windows", () => {
+        it("keeps `list --help` native on every platform", () => {
             expect.assertions(2);
 
             expect(routesToNative(["list", "--help"], "linux", {}, "/work/app", false)).toBe(true);
-            expect(routesToNative(["list", "--help"], "win32", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(["list", "--help"], "win32", {}, "/work/app", false)).toBe(true);
         });
     });
 
