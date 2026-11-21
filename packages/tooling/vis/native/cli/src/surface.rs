@@ -28,6 +28,10 @@ pub fn without_leading_globals(args: &[String]) -> &[String] {
     &args[start..]
 }
 
+/// Command groups that have no command of their own. Their bare form and `--help` list the
+/// subcommands, as `help <group>` does; the Node CLI prints the same (`src/commands/cache/group-help.ts`).
+const GROUP_LISTINGS: &[&str] = &["cache"];
+
 /// What an invocation asks for, once leading global flags are set aside.
 struct Request<'a> {
     /// Leading non-flag words: the command path, then any positionals.
@@ -43,6 +47,11 @@ impl<'a> Request<'a> {
             rest.iter().take_while(|argument| !argument.starts_with('-')).map(String::as_str).collect();
 
         Self { flags: &rest[words.len()..], words }
+    }
+
+    /// A listed group with nothing but help and valueless global flags after it.
+    fn is_group_listing(&self) -> bool {
+        matches!(self.words.as_slice(), [group] if GROUP_LISTINGS.contains(group)) && self.flags_are_plain()
     }
 
     fn wants_help(&self) -> bool {
@@ -77,7 +86,9 @@ pub fn answer(args: &[String]) -> Option<i32> {
     let root_help = request.words.is_empty() && request.flags_are_plain() && (bare || request.wants_help());
     let help_command = request.words.first() == Some(&"help");
 
-    if !root_help && !help_command && !(request.wants_help() && !request.words.is_empty()) {
+    let group_listing = request.is_group_listing();
+
+    if !root_help && !help_command && !group_listing && !(request.wants_help() && !request.words.is_empty()) {
         return None;
     }
 
@@ -98,6 +109,13 @@ pub fn answer(args: &[String]) -> Option<i32> {
 
     if help_command {
         return answer_help_command(&manifest, &help, &request);
+    }
+
+    if group_listing {
+        emit(&help.subcommands(&request.words, &manifest.subcommands_of(&request.words)));
+
+        // The bare group is a usage error for Node, which exits 1 after listing; `--help` is not.
+        return Some(i32::from(!request.wants_help()));
     }
 
     let command = manifest::resolve(&manifest.commands, &request.words)?;

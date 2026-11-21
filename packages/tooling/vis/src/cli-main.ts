@@ -10,6 +10,7 @@ import { findMonorepoRootSync } from "@visulima/package";
 import { join } from "@visulima/path";
 
 import { runAndExit } from "./cli-run";
+import { cacheGroupHelpArguments, cacheGroupHelpExitCode } from "./commands/cache/group-help";
 import { isBareMigrateInvocation } from "./commands/migrate/detect-bare";
 import { runMigrateInteractive } from "./commands/migrate/interactive";
 import { isUserError } from "./errors/vis-user-error";
@@ -59,7 +60,12 @@ export const runCli = async (): Promise<void> => {
     // Start background upgrade check immediately (non-blocking)
     const upgradeCheckCallback = startUpgradeCheck(getPackageVersion(), process.argv[2] ?? "");
 
+    // `cache` has no command of its own, so cerebro would print nothing for it: run `vis help cache`
+    // instead. The exit code is set below, once the CLI is built.
+    const groupHelpExitCode = cacheGroupHelpExitCode(process.argv.slice(2));
+
     const cli = createCerebro("vis", {
+        argv: groupHelpExitCode === undefined ? undefined : cacheGroupHelpArguments(process.argv.slice(2)),
         packageName: "vis",
         packageVersion: getPackageVersion(),
     });
@@ -148,6 +154,10 @@ export const runCli = async (): Promise<void> => {
         }
 
         return;
+    }
+
+    if (groupHelpExitCode !== undefined) {
+        process.exitCode = groupHelpExitCode;
     }
 
     await runAndExit(cli);

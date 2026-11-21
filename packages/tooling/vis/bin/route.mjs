@@ -209,6 +209,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, interactive));
     }
 
+    // Bare `cache` lists its subcommands, which the binary answers like `cache --help` (any other
+    // shape is Node's, which prints the same listing). Windows keeps the help surface in Node.
+    if (command === "cache" && args.length === 1) {
+        return platform !== "win32";
+    }
+
     // `complete --` is the dynamic endpoint the generated completion scripts call on
     // every <TAB>; any other `complete` shape is not a native command, so it stays
     // in-process (script generation is `vis completion --shell=<shell>`, Node's too).

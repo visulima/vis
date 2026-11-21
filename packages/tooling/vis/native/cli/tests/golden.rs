@@ -150,6 +150,35 @@ fn help_output_matches_goldens() {
     assert!(failures.is_empty(), "golden mismatches:\n{}", failures.join("\n"));
 }
 
+/// `vis cache` has no command of its own: its `--help`, `-h` and bare form print the stored
+/// `help cache` capture, exiting 0 for the help flags and 1 for the bare group, as the Node CLI does.
+#[test]
+fn cache_group_help_matches_the_help_cache_golden() {
+    let cwd = fixture("cache-group");
+    let mut failures = Vec::new();
+
+    for (args, expected_code) in
+        [(&["cache", "--help"][..], 0), (&["cache", "-h"], 0), (&["cache"], 1), (&["-v", "cache", "-h"], 0)]
+    {
+        for width in WIDTHS {
+            let path = golden_dir().join(format!("help-cache-{width}.txt"));
+            let expected = fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let (code, actual) = capture(&subject(), args, true, width, &cwd);
+
+            if code != Some(expected_code) || actual != expected {
+                failures.push(format!(
+                    "{args:?} at {width} columns (exit {code:?}, want {expected_code}): {}",
+                    first_difference(&expected, &actual)
+                ));
+            }
+        }
+    }
+
+    fs::remove_dir_all(&cwd).ok();
+
+    assert!(failures.is_empty(), "cache group help differs from the golden:\n{}", failures.join("\n"));
+}
+
 /// Commands whose `--help` is forwarded to the package manager or tool they run (the
 /// native front-end already did this before it rendered help), so only `help <name>`
 /// is comparable. `dedupe --help` in particular really runs `<pm> dedupe`.

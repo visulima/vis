@@ -50,6 +50,19 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(args, "linux")).toBe(expected);
     });
 
+    it.each([
+        [["cache"], true],
+        [["cache", "--help"], true],
+        [["cache", "list", "--help"], true],
+        [["cache", "list"], false],
+        // Only the plain shapes are the binary's; any other flag is Node's, which prints the same listing.
+        [["cache", "--no-color"], false],
+    ])("routes the `cache` group `vis %j` to native: %s", (args: string[], expected: boolean) => {
+        expect.assertions(1);
+
+        expect(routesToNative(args, "linux")).toBe(expected);
+    });
+
     it.each([[["clean", "--help"]], [["clean", "-h"]]])(
         "keeps `vis %j` in Node on Windows",
         (args: string[]) => {
@@ -59,7 +72,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         },
     );
 
-    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]]])(
+    it.each([[[]], [["--help"]], [["-h"]], [["help", "install"]], [["status", "--help"]], [["ignore", "--help"]], [["cache"]], [["cache", "--help"]]])(
         "keeps the help surface `vis %j` in Node on Windows",
         (args: string[]) => {
             expect.assertions(1);
