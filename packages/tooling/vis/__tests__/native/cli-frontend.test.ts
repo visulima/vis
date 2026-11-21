@@ -16,8 +16,6 @@ const packageVersion = JSON.parse(readFileSync(join(packageRoot, "package.json")
 // package in CI. When absent (e.g. a PR that didn't build native), skip rather
 // than fail — the binary's pure legs are covered by the Rust integration tests.
 const binary = resolveNativeBinary(packageRoot);
-// Windows keeps the help surface in Node (see `bin/route.mjs`), so the launcher never hands it to the binary there.
-const isWindows = process.platform === "win32";
 
 describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
     let temporaryDirectory: string;
@@ -127,8 +125,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
         const viaBinary = (...args: string[]) =>
             spawnSync(binary as string, args, { encoding: "utf8", env: launcherEnvironment({ VIS_NODE: process.execPath }) });
 
-        // Windows keeps the help surface in Node (see `bin/route.mjs`), so the launcher never hands it to the binary there.
-        it.skipIf(isWindows).each([[["--help"]], [["-h"]], [[]], [["help"]], [["help", "install"]], [["status", "--help"]]])(
+        it.each([[["--help"]], [["-h"]], [[]], [["help"]], [["help", "install"]], [["status", "--help"]]])(
             "answers `vis %j` with the native binary's output",
             (args: string[]) => {
                 expect.assertions(4);
@@ -144,16 +141,7 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
             },
         );
 
-        it.runIf(isWindows)("keeps help in-process on Windows even with a native binary available", () => {
-            expect.assertions(2);
-
-            const result = viaLauncher("--help");
-
-            expect(result.stdout).toContain("FALLBACK:--help");
-            expect(result.status).toBe(5);
-        });
-
-        it.skipIf(isWindows)("prints the command list for `--help`", () => {
+        it("prints the command list for `--help`", () => {
             expect.assertions(2);
 
             const result = viaLauncher("--help");
