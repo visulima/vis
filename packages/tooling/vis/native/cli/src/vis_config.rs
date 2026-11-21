@@ -54,8 +54,20 @@ pub enum ConfigState {
     Dynamic,
 }
 
-/// Read the config that applies to `cwd`, walking up like the Node loader does.
+/// Read the config that applies to `cwd`, walking up like the Node loader does. A config that is not a
+/// literal is [`ConfigState::Dynamic`]; this never starts Node and never writes anything.
 pub fn read(cwd: &Path) -> ConfigState {
+    read_config(cwd, false)
+}
+
+/// Like [`read`], but a lone config file that is not a literal is evaluated by Node (or read back from the
+/// cache of an earlier evaluation, see `config_cache`). Callers use it only once nothing but the config's
+/// value can still decide between the native path and Node, because an evaluation costs a Node start.
+pub fn read_evaluated(cwd: &Path) -> ConfigState {
+    read_config(cwd, true)
+}
+
+fn read_config(cwd: &Path, evaluate: bool) -> ConfigState {
     let mut paths = configs(cwd);
 
     // Node loads the config of the workspace root, which is not known here. With several
@@ -78,6 +90,14 @@ pub fn read(cwd: &Path) -> ConfigState {
 
     match value {
         Some(value) if value.is_object() => ConfigState::Static(value),
+        // Not readable as a literal: Node's evaluation of it, cached by `config_cache`, stands in. A `.json`
+        // file is data or nothing (Node does not load it), so it never reaches the evaluator.
+        None if evaluate && path.extension().is_some_and(|extension| extension != "json") => {
+            match crate::config_cache::resolve(&path) {
+                Some(crate::config_cache::Resolved::Data(value)) if value.is_object() => ConfigState::Static(value),
+                _ => ConfigState::Dynamic,
+            }
+        }
         _ => ConfigState::Dynamic,
     }
 }

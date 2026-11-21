@@ -129,6 +129,14 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
 
 /// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
 /// lockfiles, so a native choice from the lockfile would differ.
+/// Whether `verb` runs Node's handler at the workspace root, which is not `cwd` when the root is above it:
+/// `link`, `dedupe`, `unlink` and `why`, below a monorepo root or a turbo.json. Applies to any config at all.
+fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
+    matches!(verb, "dedupe" | "link" | "unlink" | "why")
+        && (crate::vis_config::node_config_root(cwd).is_some_and(|root| root != cwd)
+            || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()))
+}
+
 fn installer_selected_by_environment() -> bool {
     const AUBE_NAMES: [&str; 4] = ["aube", "aube.exe", "aube.cmd", "aube.bat"];
 
@@ -193,7 +201,18 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     // plain data without those keys stays native, unless the environment or a global
     // option can change which installer or workspace Node would use.
     // (exec/x make the opposite, documented cold-start trade-off.)
-    let config = crate::vis_config::read(&cwd);
+    let mut config = crate::vis_config::read(&cwd);
+
+    // A config that needs evaluating is evaluated (one Node start, then cached) only when its value can still
+    // matter: the reasons below that apply to any config at all are checked first.
+    if config == crate::vis_config::ConfigState::Dynamic
+        && !(installer_selected_by_environment()
+            || uses_global_option(full_args)
+            || ancestor_pins_package_manager(&cwd)
+            || runs_at_workspace_root(verb, &cwd))
+    {
+        config = crate::vis_config::read_evaluated(&cwd);
+    }
 
     // A plain `install.backend` of npm, pnpm or bun runs here, but only where Node reads the same
     // config (a monorepo root) and never for `outdated`, whose Node form is the `check` command.
@@ -207,10 +226,7 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
 
     // link, dedupe, unlink and why run Node's handler at the workspace root, not at the invocation directory.
     // A turbo.json above `cwd` makes that folder Node's root even where no package manager marks a workspace.
-    let runs_at_workspace_root = matches!(verb, "dedupe" | "link" | "unlink" | "why")
-        && config != crate::vis_config::ConfigState::Absent
-        && (crate::vis_config::node_config_root(&cwd).is_some_and(|root| root != cwd)
-            || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()));
+    let at_workspace_root = config != crate::vis_config::ConfigState::Absent && runs_at_workspace_root(verb, &cwd);
 
     // Node runs `remove` and `dedupe` through its security-enforcement plugin, whose warnings and errors the
     // native path does not reproduce, so those two verbs stay with Node under a pin.
@@ -219,7 +235,7 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     if crate::vis_config::requires_node(&config)
         || security_checked_by_node
         || (pinned.is_some() && pin.is_none() && !ignored_by_node)
-        || runs_at_workspace_root
+        || at_workspace_root
         || (config != crate::vis_config::ConfigState::Absent
             && (installer_selected_by_environment()
                 || uses_global_option(full_args)

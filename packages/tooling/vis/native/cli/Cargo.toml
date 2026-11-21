@@ -34,6 +34,8 @@ regex = { version = "1", default-features = false, features = [
   "std",
   "perf"
 ] }
+# Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
+blake3 = { version = "1", default-features = false }
 serde = { version = "1", features = [ "derive" ] }
 serde_json = { version = "1", features = [ "float_roundtrip" ] }
 # Reads `vis.config.*` as data (see src/vis_config.rs). Pinned like the addon's copies.
