@@ -2,7 +2,7 @@
 // them (platform packages first, then the root) to a throw-away local registry,
 // installs the root with each available package manager, and runs the CLI.
 //
-//   node scripts/install-smoke.mjs [--pm npm,pnpm,yarn-classic,yarn-berry,bun]
+//   node scripts/install-smoke.mjs [--pm npm,pnpm,pnpm-10,yarn-classic,yarn-berry,bun]
 //
 // Needs `dist/` built and the host platform package laid out with its
 // `vis-native-cli` and `.node` files (what the release job produces). A package
@@ -14,7 +14,9 @@
 // path). pnpm gets a third row, "unapproved": by default pnpm 12 refuses to run a dependency's
 // install script until it is listed in `allowBuilds` and ends the install with
 // ERR_PNPM_IGNORED_BUILDS, yet the package is installed, so `vis` must still work
-// through the Node launcher. Never publishes anywhere but the local registry.
+// through the Node launcher. `pnpm-10` runs the same three rows on pnpm 10, which names the approval
+// `onlyBuiltDependencies` and only warns about an unapproved build (the install still succeeds).
+// Never publishes anywhere but the local registry.
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,13 +31,15 @@ const REGISTRY = `http://localhost:${REGISTRY_PORT}/`;
 const VERDACCIO = "verdaccio@6.11.2";
 // The pnpm row runs the exact release it documents; `npx` keeps it independent of the pnpm that builds the repo.
 const PNPM = "pnpm@12.21.0";
+// pnpm 10 still sees installs from projects that have not moved on; it reads `onlyBuiltDependencies` and does not fail on an unapproved build.
+const PNPM_10 = "pnpm@10.34.9";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
 // `--pm npm,bun` and `--pm=npm,bun` both name the managers; a missing value is a usage error, not a crash.
 const pmFlag = process.argv.findIndex((argument) => argument === "--pm" || argument.startsWith("--pm="));
 const explicitlyRequested = pmFlag !== -1;
-const knownManagers = ["npm", "pnpm", "yarn-classic", "yarn-berry", "bun"];
+const knownManagers = ["npm", "pnpm", "pnpm-10", "yarn-classic", "yarn-berry", "bun"];
 const pmValue = explicitlyRequested ? (process.argv[pmFlag].startsWith("--pm=") ? process.argv[pmFlag].slice("--pm=".length) : process.argv[pmFlag + 1]) : undefined;
 
 if (explicitlyRequested && (pmValue === undefined || pmValue === "" || pmValue.startsWith("--"))) {
@@ -277,6 +281,34 @@ const spec = `@visulima/vis@${manifest.version}`;
 const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
 const berryRc = `npmRegistryServer: "${REGISTRY}"\nunsafeHttpWhitelist: ["localhost"]\nenableImmutableInstalls: false\nnodeLinker: node-modules\nenableTelemetry: false\n`;
 
+// One pnpm release as a manager. `approval` gives the workspace-file lines that approve the build for a mode;
+// `unapprovedFailure` is the error text a release ends an unapproved install with, when it fails it at all.
+const pnpmManager = (pnpm, approval, unapprovedFailure) => ({
+    available: () => have("npx"),
+    launch: { exec: ["npx", "--yes", pnpm, "exec", "vis", "--version"], run: ["npx", "--yes", pnpm, "run", "v"] },
+    modes: ["enabled", "disabled", "unapproved"],
+    install: (mode, directory) => ({
+        // A store of its own per row: pnpm keeps the files an install script produced in its store (the
+        // side-effects cache) and would hand them to a later row that disabled scripts.
+        args: ["--yes", pnpm, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
+        command: "npx",
+        // Such a release installs the files and then fails the command until the build is approved.
+        ...(mode === "unapproved" && unapprovedFailure !== undefined ? { expectInstall: unapprovedFailure } : {}),
+        files: {
+            ...registryFiles,
+            "pnpm-workspace.yaml": [
+                // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package
+                // the earlier `--ignore-scripts` install skipped.
+                "verifyDepsBeforeRun: false",
+                // The scripts-disabled row keeps the approval so only `--ignore-scripts` turns the fast path
+                // off; the unapproved row leaves it out and nothing else.
+                ...approval(mode),
+                "",
+            ].join("\n"),
+        },
+    }),
+});
+
 const managers = {
     bun: {
         available: () => have("bun"),
@@ -288,31 +320,8 @@ const managers = {
         launch: { exec: ["npm", "exec", "--", "vis", "--version"], run: ["npm", "run", "v"] },
         install: (mode) => ({ args: ["install", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npm", files: registryFiles }),
     },
-    pnpm: {
-        available: () => have("npx"),
-        launch: { exec: ["npx", "--yes", PNPM, "exec", "vis", "--version"], run: ["npx", "--yes", PNPM, "run", "v"] },
-        modes: ["enabled", "disabled", "unapproved"],
-        install: (mode, directory) => ({
-            // A store of its own per row: pnpm keeps the files an install script produced in its store (the
-            // side-effects cache) and would hand them to a later row that disabled scripts.
-            args: ["--yes", PNPM, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
-            command: "npx",
-            // pnpm installs the files and then fails the command until the build is approved.
-            ...(mode === "unapproved" ? { expectInstall: "ERR_PNPM_IGNORED_BUILDS" } : {}),
-            files: {
-                ...registryFiles,
-                "pnpm-workspace.yaml": [
-                    // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package
-                    // the earlier `--ignore-scripts` install skipped.
-                    "verifyDepsBeforeRun: false",
-                    // pnpm reads `allowBuilds` from the workspace file. The scripts-disabled row keeps the approval so only
-                    // `--ignore-scripts` turns the fast path off; the unapproved row leaves it out and nothing else.
-                    ...(mode === "unapproved" ? [] : ["allowBuilds:", "  '@visulima/vis': true"]),
-                    "",
-                ].join("\n"),
-            },
-        }),
-    },
+    pnpm: pnpmManager(PNPM, (mode) => (mode === "unapproved" ? [] : ["allowBuilds:", "  '@visulima/vis': true"]), "ERR_PNPM_IGNORED_BUILDS"),
+    "pnpm-10": pnpmManager(PNPM_10, (mode) => (mode === "unapproved" ? [] : ["onlyBuiltDependencies:", "  - '@visulima/vis'"])),
     "yarn-berry": {
         available: () => have("npx"),
         launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },

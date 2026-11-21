@@ -131,5 +131,5 @@ jobs:
                   if [ "$RUNNER_OS" = "Windows" ]; then
                       node scripts/install-smoke.mjs --pm npm
                   else
-                      node scripts/install-smoke.mjs --pm npm,pnpm,yarn-classic,yarn-berry,bun
+                      node scripts/install-smoke.mjs --pm npm,pnpm,pnpm-10,yarn-classic,yarn-berry,bun
                   fi
