@@ -16,7 +16,7 @@ mod unix {
     /// # Safety
     ///
     /// Must be called inside `Command::pre_exec` (unsafe).
-    pub unsafe fn pre_exec_setsid() -> io::Result<()> {
+    pub(crate) unsafe fn pre_exec_setsid() -> io::Result<()> {
         if libc::setsid() == -1 {
             return Err(io::Error::last_os_error());
         }
@@ -33,7 +33,7 @@ mod unix {
     /// package.json scripts (shells, node, vitest, packem) don't do
     /// this, but it's worth knowing if a future bug report names a
     /// process being signalled that shouldn't have been.
-    pub fn kill_process_group(pid: u32, signal_name: &str) -> io::Result<()> {
+    pub(crate) fn kill_process_group(pid: u32, signal_name: &str) -> io::Result<()> {
         let sig = parse_signal(signal_name).unwrap_or(Signal::SIGTERM);
         let pgid = Pid::from_raw(-(pid as i32));
         signal::kill(pgid, sig).map_err(io::Error::other)
@@ -73,7 +73,7 @@ mod windows {
     /// Note: `CTRL_C_EVENT` is silently ignored by processes in a new process
     /// group (Microsoft documents this), so we use `CTRL_BREAK_EVENT` for the
     /// graceful path. Well-behaved CLIs handle Ctrl+Break the same as Ctrl+C.
-    pub fn graceful_shutdown(pid: u32) -> io::Result<()> {
+    pub(crate) fn graceful_shutdown(pid: u32) -> io::Result<()> {
         let result = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) };
         if result == 0 {
             return Err(io::Error::last_os_error());
@@ -83,12 +83,12 @@ mod windows {
 
     /// A Windows Job Object handle that ensures child process tree cleanup.
     /// When the Job Object is dropped, all assigned processes are terminated.
-    pub struct JobObject {
+    pub(crate) struct JobObject {
         handle: HANDLE,
     }
 
     impl JobObject {
-        pub fn new() -> io::Result<Self> {
+        pub(crate) fn new() -> io::Result<Self> {
             let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             if handle.is_null() {
                 return Err(io::Error::last_os_error());
@@ -117,7 +117,7 @@ mod windows {
 
         /// Assign a process to this Job Object by PID.
         /// Opens the process handle, assigns it, then closes the handle.
-        pub fn assign_process_by_pid(&self, pid: u32) -> io::Result<()> {
+        pub(crate) fn assign_process_by_pid(&self, pid: u32) -> io::Result<()> {
             // Minimum permissions needed for Job Object assignment + termination
             let process_handle = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
             // OpenProcess returns NULL on failure per MSDN, not
@@ -136,7 +136,7 @@ mod windows {
             Ok(())
         }
 
-        pub fn terminate(&self, exit_code: u32) -> io::Result<()> {
+        pub(crate) fn terminate(&self, exit_code: u32) -> io::Result<()> {
             let result = unsafe { TerminateJobObject(self.handle, exit_code) };
             if result == 0 {
                 return Err(io::Error::last_os_error());
@@ -157,7 +157,7 @@ mod windows {
 }
 
 /// Kill a process tree by PID with the given signal.
-pub fn kill_tree(pid: u32, signal: &str) -> std::io::Result<()> {
+pub(crate) fn kill_tree(pid: u32, signal: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         unix::kill_process_group(pid, signal)
@@ -181,7 +181,7 @@ pub fn kill_tree(pid: u32, signal: &str) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-pub use unix::pre_exec_setsid;
+pub(crate) use unix::pre_exec_setsid;
 
 #[cfg(windows)]
-pub use windows::{graceful_shutdown, JobObject};
+pub(crate) use windows::{graceful_shutdown, JobObject};

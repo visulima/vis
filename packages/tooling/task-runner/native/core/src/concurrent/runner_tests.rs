@@ -3,7 +3,16 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::concurrent::runner::ConcurrentRunner;
-    use crate::concurrent::types::{ConcurrentCommandConfig, ConcurrentRunnerOptions, ProcessEvent};
+    use crate::concurrent::types::{
+        ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent,
+    };
+
+    /// Run all commands and collect results without streaming events.
+    async fn run_batch(runner: &ConcurrentRunner) -> ConcurrentRunResult {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+
+        runner.run(event_tx).await
+    }
 
     fn make_config(command: &str, name: Option<&str>) -> ConcurrentCommandConfig {
         ConcurrentCommandConfig {
@@ -99,7 +108,7 @@ mod tests {
             make_config("echo three", Some("third")),
         ];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(result.success);
         assert_eq!(result.close_events.len(), 3);
@@ -112,7 +121,7 @@ mod tests {
     async fn test_failing_command() {
         let commands = vec![make_config("exit 42", None)];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(!result.success);
         assert_eq!(result.close_events.len(), 1);
@@ -123,7 +132,7 @@ mod tests {
     async fn test_mixed_success_and_failure() {
         let commands = vec![make_config("echo ok", Some("good")), make_config("exit 1", Some("bad"))];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(!result.success); // default is "all" -- one failed
         assert_eq!(result.close_events.len(), 2);
@@ -135,7 +144,7 @@ mod tests {
         let mut opts = default_options();
         opts.success_condition = Some("first".to_string());
         let runner = ConcurrentRunner::new(commands, &opts);
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         // First to complete should be "echo ok" (instant)
         assert!(result.success);
@@ -149,7 +158,7 @@ mod tests {
         let mut opts = default_options();
         opts.max_processes = Some(1);
         let runner = ConcurrentRunner::new(commands, &opts);
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(result.success);
         assert_eq!(result.close_events.len(), 3);
@@ -168,7 +177,7 @@ mod tests {
         let runner = ConcurrentRunner::new(commands, &opts);
 
         let start = std::time::Instant::now();
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
         let elapsed = start.elapsed();
 
         assert!(!result.success);
@@ -244,7 +253,7 @@ mod tests {
     async fn test_empty_commands() {
         let commands = vec![];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(result.success);
         assert!(result.close_events.is_empty());
@@ -290,7 +299,7 @@ mod tests {
     async fn test_close_event_has_duration() {
         let commands = vec![make_config("sleep 0.1", None)];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         assert!(result.success);
         assert!(
@@ -306,7 +315,7 @@ mod tests {
         let mut opts = default_options();
         opts.success_condition = Some("command-important".to_string());
         let runner = ConcurrentRunner::new(commands, &opts);
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         // Only "important" needs to succeed
         assert!(result.success);
@@ -407,7 +416,7 @@ mod tests {
             stdin: None, // defaults to "null"
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
-        let result = runner.run_batch().await;
+        let result = run_batch(&runner).await;
 
         // cat with no stdin should exit 0 (reads EOF)
         assert!(result.success);
