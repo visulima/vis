@@ -26,6 +26,8 @@ interface RunInput {
     argument?: string[];
     chunks?: (Buffer | string)[];
     cwd?: string;
+    /** Buffered input a cerebro caller passes as `CliOptions.stdin`. */
+    injected?: string;
     isTTY?: boolean;
 }
 
@@ -50,7 +52,7 @@ describe("vis secrets --stdin", () => {
         process.exitCode = undefined;
     });
 
-    const run = async (options: SecretsFlags, { argument = [], chunks = [], cwd = root, isTTY = false }: RunInput = {}): Promise<Finding[]> => {
+    const run = async (options: SecretsFlags, { argument = [], chunks = [], cwd = root, injected = "", isTTY = false }: RunInput = {}): Promise<Finding[]> => {
         const stdin = Object.assign(Readable.from(chunks, { objectMode: false }), { isTTY });
 
         vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
@@ -61,7 +63,7 @@ describe("vis secrets --stdin", () => {
             console: { error: vi.fn(), flush: vi.fn() },
             fs: { access },
             options: { format: "json", quiet: true, ...options },
-            process: { cwd } as Toolbox["process"],
+            process: { cwd, stdin: injected } as Toolbox["process"],
             workspaceRoot: root,
         } as unknown as Partial<Toolbox>);
 
@@ -69,6 +71,12 @@ describe("vis secrets --stdin", () => {
     };
 
     const files = (findings: Finding[]): string[] => findings.map((finding) => finding.file);
+
+    it("scans input a cerebro caller injected instead of the process stdin", async () => {
+        expect.assertions(1);
+
+        expect(files(await run({ stdin: "config/.env" }, { injected: SECRET_LINE, isTTY: true }))).toStrictEqual(["config/.env"]);
+    });
 
     it("scans piped content as the named virtual file", async () => {
         expect.assertions(3);

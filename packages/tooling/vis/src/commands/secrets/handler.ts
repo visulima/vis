@@ -163,10 +163,22 @@ const readStdin = async (): Promise<string> => {
     return Buffer.concat(chunks).toString("utf8");
 };
 
-const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string, cwd: string): Promise<ScanMode> => {
+/**
+ * `injectedStdin` is the buffered input a cerebro caller passed as `CliOptions.stdin`
+ * (`toolbox.process.stdin`); when it is empty the real stdin pipe is read.
+ */
+const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string, cwd: string, injectedStdin: string): Promise<ScanMode> => {
     const stdinName = stdinFilename(flags);
 
     if (stdinName !== undefined) {
+        if (injectedStdin !== "") {
+            if (Buffer.byteLength(injectedStdin) > DEFAULT_MAX_FILE_SIZE) {
+                throw new VisUserError(`--stdin input exceeds ${String(DEFAULT_MAX_FILE_SIZE)} bytes, the largest file the scanner reads. Scan it as a file instead.`);
+            }
+
+            return { content: injectedStdin, filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
+        }
+
         if (process.stdin.isTTY) {
             throw new VisUserError("--stdin expects piped input, but stdin is a terminal. Pipe content in, e.g. `cat .env | vis secrets --stdin .env`.");
         }
@@ -304,7 +316,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const mode = await resolveScanMode(flags, args, root, toolbox.process.cwd);
+    const mode = await resolveScanMode(flags, args, root, toolbox.process.cwd, toolbox.process.stdin);
     const history = mode.kind === "history";
 
     if (mode.kind === "files" && mode.files.length === 0) {
