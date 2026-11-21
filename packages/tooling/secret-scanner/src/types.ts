@@ -28,6 +28,23 @@ export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
  */
 export type ValidationStatus = "error" | "rejected" | "skipped" | "verified";
 
+/** Rule selectors (rule ids or `tag:&lt;name>`) that narrow or widen which rules report. */
+export interface RuleFilters {
+    /** Enable opt-in rules without restricting the output. Additive. */
+    enable?: string[];
+    /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
+    exclude?: string[];
+    /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
+    include?: string[];
+}
+
+/** Rule filters applied only to findings in files matching `files`. */
+export interface ScanOverride {
+    /** Gitignore-syntax globs (e.g. `*.env`, `src/**`), relative to {@link ScanOptions.overridesRoot}. */
+    files: string | string[];
+    rules?: RuleFilters;
+}
+
 /**
  * Grouped scan options. Keys are namespaced by concern — config source, walker,
  * rule filters, output, baseline — so autocomplete surfaces only related settings
@@ -189,6 +206,15 @@ export interface ScanOptions {
      */
     maxDecodeDepth?: number;
 
+    /** File-specific rule filters, applied in order on top of the global `rules` filters. */
+    overrides?: ScanOverride[];
+
+    /**
+     * Directory `overrides[].files` globs are relative to. Default: `process.cwd()`.
+     * A file outside it is matched by its basename.
+     */
+    overridesRoot?: string;
+
     /**
      * Mask `match` / `secret` strings in every emitted finding. Default `true`;
      * set `false` to reveal values. Detection, heuristics, checksum filtering,
@@ -219,14 +245,7 @@ export interface ScanOptions {
      * - `exclude` — **blacklist**. Drops findings matching this list. Doesn't
      * enable anything.
      */
-    rules?: {
-        /** Enable opt-in rules without restricting the output. Additive. */
-        enable?: string[];
-        /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
-        exclude?: string[];
-        /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
-        include?: string[];
-    };
+    rules?: RuleFilters;
 
     /**
      * Abort the scan's validation stage. When `config.validate: true` a scan can
@@ -282,6 +301,13 @@ export interface Finding {
      * order the rule declares them. Redacted along with `secret` when `redact` is on.
      */
     requiredFindings?: RequiredFinding[];
+
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. Absent when
+     * `file` was not made relative to a root (stdin, `scanString`, git history).
+     * Not part of the finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */

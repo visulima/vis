@@ -113,6 +113,10 @@ pub struct Finding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
 }
 
 impl From<core::Finding> for Finding {
@@ -134,6 +138,7 @@ impl From<core::Finding> for Finding {
             alternate_matches,
             decoded,
             required_findings,
+            root,
         } = v;
         Self {
             rule_id,
@@ -152,6 +157,7 @@ impl From<core::Finding> for Finding {
             alternate_matches,
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
         }
     }
 }
@@ -188,6 +194,10 @@ pub struct SuppressedFinding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
@@ -211,6 +221,7 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             alternate_matches,
             decoded,
             required_findings,
+            root,
             suppressed_by,
         } = v;
         Self {
@@ -230,6 +241,7 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             alternate_matches,
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
             suppressed_by,
         }
     }

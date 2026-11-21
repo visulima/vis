@@ -32,6 +32,16 @@ export interface ScanOptions {
     maxArchiveDepth?: number;
     maxDecodeDepth?: number;
 
+    overrides?: {
+        files: string | string[];
+        rules?: {
+            enable?: string[];
+            exclude?: string[];
+            include?: string[];
+        };
+    }[];
+    overridesRoot?: string;
+
     redact?: boolean;
 
     rules?: {
@@ -62,6 +72,8 @@ export interface ScanOptions {
 | `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                                             |
 | `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                     |
 | `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                   |
+| `overrides`        | `object[]`        | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                               |
+| `overridesRoot`    | `string`          | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                |
 | `redact`           | `boolean`         | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values. |
 | `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                  |
 | `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                             |
@@ -190,6 +202,29 @@ Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it;
 - "enable the weak-passwords rules alongside my normal scan" → `rules.enable: ["tag:preset:weak-passwords"]`
 - "scan **only** for password-manager exports" → `rules.include: ["tag:preset:password-manager"]`
 - "keep defaults but mute `generic-api-key`" → `rules.exclude: ["generic-api-key"]`
+
+## `overrides` — per-file rule filters
+
+`overrides` layers extra `rules` filters onto findings whose file matches a gitignore-syntax glob. Overrides run in listed order, folded into the global `rules` filter in a single stage: an override's `include` can re-enable a rule the global `exclude` dropped.
+
+Globs are relative to `overridesRoot` (default: the process cwd), whichever way the scanner reports the path (relative to the scan root, relative to cwd, or absolute). A file outside `overridesRoot` is matched by its basename, so slash-less globs such as `*.env` still apply while `src/**` does not. A single-file scan matches the file the same way. When a scan covers several roots that hold the same relative path, each finding is matched against the root it came from.
+
+- `files`: one glob or an array of globs (`"*.env"`, `"src/**"`, `"!src/vendor/**"`).
+- `rules.enable`: turn on opt-in rules for matching files only. The rules still run on every file, but findings from them are reported only when the file matches.
+- `rules.include`: replace the effective allowlist for matching files. An explicit `include` clears earlier exclusions for those files.
+- `rules.exclude`: add to the effective denylist for matching files. `tag:<name>` selectors work here too.
+
+```typescript
+await scan(["."], {
+    rules: { exclude: ["generic-api-key"] },
+    overrides: [
+        { files: "*.env", rules: { include: ["tag:preset:exposed-files"] } },
+        { files: "tests/fixtures/**", rules: { exclude: ["private-key"] } },
+    ],
+});
+```
+
+Overrides affect output filters only; they do not skip files. Use `walk.excludePatterns` to keep matching paths out of the scan entirely.
 
 ## `baseline` — fingerprint suppression
 

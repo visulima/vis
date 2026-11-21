@@ -39,6 +39,12 @@ export interface Finding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+     * was not rewritten against a root (in-memory scans, history scans, paths outside every
+     * root). Not part of a finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
 }
 
 /**
@@ -252,6 +258,12 @@ export interface SuppressedFinding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+     * was not rewritten against a root (in-memory scans, history scans, paths outside every
+     * root). Not part of a finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
     /** `"allowlist"` or `"inline-allow"`. */
     suppressedBy: string;
 }

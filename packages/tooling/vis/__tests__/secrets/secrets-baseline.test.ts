@@ -32,6 +32,7 @@ describe("secrets-baseline", () => {
         entropy: number;
         file: string;
         match: string;
+        root?: string;
         ruleId: string;
         secret: string;
         startColumn: number;
@@ -74,6 +75,19 @@ describe("secrets-baseline", () => {
     });
 
     describe(writeBaseline, () => {
+        it("leaves the scan-time root out of the persisted entries", () => {
+            expect.assertions(2);
+
+            const baselinePath = join(tmpDir, "baseline.json");
+
+            writeBaseline([makeFinding({ file: "a.env", root: tmpDir, ruleId: "aws" })], baselinePath, tmpDir);
+
+            const [entry] = JSON.parse(readFileSync(baselinePath, "utf8")) as { file: string }[];
+
+            expect(entry?.file).toBe("a.env");
+            expect(entry).not.toHaveProperty("root");
+        });
+
         it("creates a new baseline when none exists", () => {
             expect.assertions(3);
 

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildIgnoreMatcher, filterIgnoredFiles, isPathExcluded } from "../src/ignore-matcher";
+import { buildIgnoreMatcher, filterIgnoredFiles, isPathExcluded, overrideMatchPath } from "../src/ignore-matcher";
 
 let tmp: string;
 
@@ -181,5 +181,17 @@ describe(isPathExcluded, () => {
         expect.assertions(1);
 
         expect(isPathExcluded("../dist/x.env", { walk: { excludePatterns: ["**"] } }, tmp)).toBe(false);
+    });
+});
+
+describe(overrideMatchPath, () => {
+    it("keeps the directory of a path whose first component merely starts with two dots", async () => {
+        expect.assertions(2);
+
+        await mkdir(resolve(tmp, "..config"));
+        await writeFile(resolve(tmp, "..config", "app.env"), "x");
+
+        expect(overrideMatchPath("..config/app.env", [tmp], tmp)).toBe("..config/app.env");
+        expect(overrideMatchPath(resolve(tmp, "..", "outside.env"), [tmp], tmp)).toBe("outside.env");
     });
 });

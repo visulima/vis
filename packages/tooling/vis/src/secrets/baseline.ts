@@ -32,11 +32,17 @@ const relativeInside = (base: string, absolute: string): string => {
     return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? absolute : rel;
 };
 
-/** Convert a finding to the shape we persist in baselines (with paths relative to root). */
+/**
+ * Convert a finding to the shape we persist in baselines and reports: `file` relative to
+ * `root`, without the scan-time `root` field (an absolute path that is no part of the
+ * finding's identity).
+ */
 export const toRelativeFinding = (f: Finding, root: string): Finding => {
-    const relativeFile = toRelative(f.file, root);
+    const relativeFinding = { ...f, file: toRelative(f.file, root) };
 
-    return relativeFile === f.file ? f : { ...f, file: relativeFile };
+    delete relativeFinding.root;
+
+    return relativeFinding;
 };
 
 const readBaseline = (baselinePath: string): Finding[] => {

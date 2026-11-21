@@ -389,7 +389,7 @@ class BlobScanner {
             }
         }
 
-        return dropShadowedGenericFindings(report, this.#prepared, this.#options);
+        return dropShadowedGenericFindings(report, this.#prepared, this.#options, this.#context.bases);
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */

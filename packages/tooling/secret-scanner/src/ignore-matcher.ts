@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 
 import ignoreModule from "ignore";
 
@@ -14,6 +14,19 @@ export interface IgnoreMatcher {
 type IgnoreFactory = () => IgnoreMatcher;
 
 const ignore: IgnoreFactory = (ignoreModule as { default?: IgnoreFactory }).default ?? ignoreModule;
+
+/** Build a matcher from a set of gitignore-syntax patterns. */
+export const createIgnoreMatcher = (patterns: string | string[]): IgnoreMatcher | undefined => {
+    if (patterns.length === 0) {
+        return undefined;
+    }
+
+    const matcher = ignore();
+
+    matcher.add(patterns);
+
+    return matcher;
+};
 
 /**
  * Build a gitignore matcher for the `scanFiles` path — it bypasses the native
@@ -53,49 +66,56 @@ export const buildIgnoreMatcher = (options: ScanOptions | undefined): IgnoreMatc
     return matcher;
 };
 
+// On macOS, process.cwd() resolves symlinks (/private/var/…) while
+// mkdtemp & path.resolve keep the un-resolved form (/var/…). On Windows the
+// JS realpathSync also leaves 8.3 short names (RUNNER~1) and drive-letter
+// case unnormalized, so canonicalize through realpathSync.native — that way
+// relative() compares like with like instead of emitting an absolute path
+// (different-drive/-case) that would make matcher.ignores() throw.
+const canonicalize = (path: string): string => {
+    try {
+        return realpathSync.native(path);
+    } catch {
+        try {
+            return realpathSync(path);
+        } catch {
+            return path;
+        }
+    }
+};
+
+/**
+ * `absolute` as a posix path relative to `root`, or `undefined` when it is the
+ * root itself or lies outside it (including another drive). The result is
+ * always safe to hand to `matcher.ignores()`, which throws on anything that is
+ * not a plain relative path.
+ */
+const insideRoot = (absolute: string, root: string): string | undefined => {
+    const relativePath = relative(root, canonicalize(absolute));
+
+    if (relativePath === "" || relativePath === ".." || relativePath.startsWith("../") || relativePath.startsWith("..\\") || isAbsolute(relativePath)) {
+        return undefined;
+    }
+
+    return relativePath.replaceAll("\\", "/");
+};
+
 /**
  * Filter `files` down to those *not* matched by `matcher`. When `matcher` is
  * undefined, the list passes through unchanged (callers don't need to special-
- * case the empty-matcher path).
+ * case the empty-matcher path). Files outside `cwd` are never filtered.
  */
 export const filterIgnoredFiles = (files: string[], matcher: IgnoreMatcher | undefined, cwd: string): string[] => {
     if (!matcher) {
         return files;
     }
 
-    // On macOS, process.cwd() resolves symlinks (/private/var/…) while
-    // mkdtemp & path.resolve keep the un-resolved form (/var/…). On Windows the
-    // JS realpathSync also leaves 8.3 short names (RUNNER~1) and drive-letter
-    // case unnormalized, so canonicalize through realpathSync.native — that way
-    // relative() compares like with like instead of emitting an absolute path
-    // (different-drive/-case) that would make matcher.ignores() throw.
-    const canonicalize = (p: string): string => {
-        try {
-            return realpathSync.native(p);
-        } catch {
-            try {
-                return realpathSync(p);
-            } catch {
-                return p;
-            }
-        }
-    };
-
     const resolvedCwd = canonicalize(cwd);
 
     return files.filter((file) => {
-        const absolute = isAbsolute(file) ? file : resolve(resolvedCwd, file);
-        const realAbsolute = canonicalize(absolute);
-        const relativePath = relative(resolvedCwd, realAbsolute);
+        const relativePath = insideRoot(isAbsolute(file) ? file : resolve(resolvedCwd, file), resolvedCwd);
 
-        // Outside cwd (── "", "..", or an absolute path when on a different
-        // drive) → not subject to cwd-relative ignore patterns. The absolute
-        // guard is load-bearing: `ignore` throws on a non-relative path.
-        if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
-            return true;
-        }
-
-        return !matcher.ignores(relativePath);
+        return relativePath === undefined || !matcher.ignores(relativePath);
     });
 };
 
@@ -106,3 +126,31 @@ export const filterIgnoredFiles = (files: string[], matcher: IgnoreMatcher | und
  */
 export const isPathExcluded = (file: string, options: ScanOptions | undefined, root: string): boolean =>
     filterIgnoredFiles([file], buildIgnoreMatcher(options), root).length === 0;
+
+const WINDOWS_ABSOLUTE_PATH = /^[a-z]:\//i;
+
+/**
+ * The path an override glob is tested against. A finding's `file` is relative
+ * to the scan root, to the process cwd, or absolute (and empty for a single
+ * file scan), so it is first made absolute through `fileRoot` (the scan root
+ * the finding carries) or, without one, through `bases` (the first base it
+ * exists under wins), then expressed relative to `root`. A file outside `root`,
+ * or `root` itself, is matched by its basename, so slash-less globs such as
+ * `*.env` still apply and the result is never an input `ignore` throws on.
+ */
+export const overrideMatchPath = (file: string, bases: ReadonlyArray<string>, root: string, fileRoot?: string): string => {
+    const posix = file.replaceAll("\\", "/");
+    let absolute: string;
+
+    if (isAbsolute(posix) || WINDOWS_ABSOLUTE_PATH.test(posix)) {
+        absolute = posix;
+    } else {
+        const searchBases = fileRoot === undefined ? bases : [fileRoot];
+        const candidates = (searchBases.length > 0 ? searchBases : [root]).map((base) => resolve(base, posix));
+
+        absolute = candidates.find((candidate) => existsSync(candidate)) ?? candidates[0] ?? root;
+    }
+
+    // A filesystem root has no basename, and `ignore` rejects an empty path.
+    return insideRoot(absolute, canonicalize(root)) ?? (basename(absolute) || "_");
+};
