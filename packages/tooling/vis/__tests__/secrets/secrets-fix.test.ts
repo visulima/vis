@@ -1,5 +1,6 @@
 import {
     chmodSync,
+    chownSync,
     existsSync,
     linkSync,
     lstatSync,
@@ -134,6 +135,25 @@ describe("vis secrets --fix", () => {
             expect(process.exitCode).toBeUndefined();
         },
     );
+
+    // A supplementary group the current user may hand a file to without root.
+    const otherGroup = process.platform === "win32" ? undefined : process.getgroups?.().find((group) => group !== process.getegid());
+
+    it.skipIf(otherGroup === undefined)("keeps the rewritten file's owner and group", { timeout: 60_000 }, async () => {
+        expect.assertions(3);
+
+        const root = tempDir();
+        const file = join(root, "a.ts");
+
+        writeFileSync(file, `const token = "${PAT}";\n`);
+        chownSync(file, process.getuid?.() ?? 0, otherGroup ?? 0);
+
+        await runSecrets({ fix: true, quiet: true }, root);
+
+        expect(readFileSync(file, "utf8")).toBe(`const token = "${FIX_REPLACEMENT}";\n`);
+        expect(statSync(file).gid).toBe(otherGroup);
+        expect(statSync(file).uid).toBe(process.getuid?.());
+    });
 
     it("resolves findings relative to a positional directory scan root", { timeout: 60_000 }, async () => {
         expect.assertions(3);

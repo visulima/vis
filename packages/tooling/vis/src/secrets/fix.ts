@@ -10,7 +10,7 @@
 // No secret value is ever formatted into a message here.
 
 import { randomUUID } from "node:crypto";
-import { closeSync, fchmodSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { Finding, SourceSpan } from "@visulima/secret-scanner";
@@ -44,10 +44,12 @@ export interface FixResult {
 interface FileBytes {
     bytes: Buffer;
     dev: number;
+    gid: number;
     ino: number;
     mode: number;
     mtimeMs: number;
     size: number;
+    uid: number;
 }
 
 interface UnreadableFile {
@@ -94,13 +96,22 @@ const lineAt = (bytes: Buffer, offset: number): number => {
 };
 
 /** Replace atomically, in the same directory, keeping the original permission bits. */
-const atomicWrite = (path: string, bytes: Buffer, mode: number): void => {
+const atomicWrite = (path: string, bytes: Buffer, { gid, mode, uid }: Pick<FileBytes, "gid" | "mode" | "uid">): void => {
     const temporary = join(dirname(path), `.${basename(path)}.vis-fix-${process.pid}-${randomUUID()}`);
 
     try {
         const descriptor = openSync(temporary, "wx", mode);
 
         try {
+            const created = fstatSync(descriptor);
+
+            // The replacement is a new inode: keep the original owner and group, so the
+            // mode bits grant access to the same people. When that is not permitted the
+            // write fails and the file is left as it was.
+            if (created.uid !== uid || created.gid !== gid) {
+                fchownSync(descriptor, uid, gid);
+            }
+
             fchmodSync(descriptor, mode);
             writeFileSync(descriptor, bytes);
             fsyncSync(descriptor);
@@ -140,7 +151,7 @@ const snapshotRegularFile = (path: string): FileBytes | UnreadableFile => {
             return { reason: "read-only file" };
         }
 
-        return { bytes: readFileSync(path), dev: stat.dev, ino: stat.ino, mode: stat.mode % 0o1_0000, mtimeMs: stat.mtimeMs, size: stat.size };
+        return { bytes: readFileSync(path), dev: stat.dev, gid: stat.gid, ino: stat.ino, mode: stat.mode % 0o1_0000, mtimeMs: stat.mtimeMs, size: stat.size, uid: stat.uid };
     } catch {
         return { reason: "file unavailable" };
     }
@@ -328,7 +339,7 @@ export const fixSecrets = (findings: Finding[], root: string, dryRun: boolean, s
 
             if (isUnchanged(path, file)) {
                 try {
-                    atomicWrite(path, replaceSpans(file.bytes, merged), file.mode);
+                    atomicWrite(path, replaceSpans(file.bytes, merged), file);
                 } catch {
                     failureReason = "write failed";
                 }
