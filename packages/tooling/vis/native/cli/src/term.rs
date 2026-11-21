@@ -25,7 +25,8 @@ pub fn color_enabled(args: &[String]) -> bool {
         return false;
     }
 
-    std::io::stdout().is_terminal() && env::var("TERM").map_or(true, |term| term != "dumb")
+    // On Windows the console only shows colour once virtual-terminal processing is on.
+    std::io::stdout().is_terminal() && env::var("TERM").map_or(true, |term| term != "dumb") && enable_virtual_terminal()
 }
 
 fn positive(value: Option<String>) -> Option<usize> {
@@ -51,57 +52,54 @@ pub fn terminal_width() -> usize {
     positive(env::var("COLUMNS").ok()).unwrap_or(80)
 }
 
-/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING`: the console interprets ANSI escape sequences.
-#[cfg_attr(not(any(windows, test)), allow(dead_code))]
-const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
-
-/// `mode` with ANSI escape processing switched on, every other flag untouched.
-#[cfg_attr(not(any(windows, test)), allow(dead_code))]
-fn with_virtual_terminal(mode: u32) -> u32 {
-    mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-}
-
 /// Make a Windows console render the ANSI codes the native output prints (colour, styling).
-/// A legacy console prints them as literal `←[1m` text until this flag is set on the screen
-/// buffer. Handles that are not a console (a pipe, a file) are left alone, and a console too
-/// old to know the flag keeps its mode, which is the state before this call. No-op elsewhere.
-pub fn enable_virtual_terminal() {
+/// A legacy console prints them as literal `←[1m` text until `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
+/// is set on the screen buffer. Handles that are not a console (a pipe, a file) are left alone,
+/// and a console too old to know the flag keeps its mode, which is the state before this call.
+/// Returns whether stdout ends up able to interpret ANSI codes: always `true` outside Windows.
+pub fn enable_virtual_terminal() -> bool {
     #[cfg(windows)]
-    windows_console::enable();
+    {
+        windows_console::enable()
+    }
+
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 #[cfg(windows)]
 mod windows_console {
-    use super::with_virtual_terminal;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_ERROR_HANDLE,
+        STD_OUTPUT_HANDLE,
+    };
 
-    type Handle = *mut std::ffi::c_void;
+    /// Switch the flag on for stdout and stderr; the result is stdout's final state.
+    pub fn enable() -> bool {
+        let mut stdout_ready = false;
 
-    const STD_OUTPUT_HANDLE: u32 = -11_i32 as u32;
-    const STD_ERROR_HANDLE: u32 = -12_i32 as u32;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetStdHandle(which: u32) -> Handle;
-        fn GetConsoleMode(console: Handle, mode: *mut u32) -> i32;
-        fn SetConsoleMode(console: Handle, mode: u32) -> i32;
-    }
-
-    pub fn enable() {
         for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             // SAFETY: the handle comes from `GetStdHandle` and is only passed to console
             // calls that report failure through their return value; `mode` outlives the call.
-            unsafe {
+            let ready = unsafe {
                 let handle = GetStdHandle(which);
                 let mut mode = 0_u32;
 
                 // Fails for an invalid handle or a non-console one: nothing to switch on.
-                if handle.is_null() || GetConsoleMode(handle, &mut mode) == 0 {
-                    continue;
-                }
+                !handle.is_null()
+                    && GetConsoleMode(handle, &mut mode) != 0
+                    && (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0
+                        || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0)
+            };
 
-                SetConsoleMode(handle, with_virtual_terminal(mode));
+            if which == STD_OUTPUT_HANDLE {
+                stdout_ready = ready;
             }
         }
+
+        stdout_ready
     }
 }
 
@@ -110,22 +108,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn virtual_terminal_flag_is_added_and_nothing_else_changes() {
-        // ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT, the usual legacy mode.
-        assert_eq!(with_virtual_terminal(0x0003), 0x0007);
-        assert_eq!(with_virtual_terminal(0), 0x0004);
-    }
-
-    #[test]
-    fn virtual_terminal_flag_is_idempotent() {
-        let once = with_virtual_terminal(0x0003);
-
-        assert_eq!(with_virtual_terminal(once), once);
-    }
-
-    #[test]
     fn enabling_on_a_non_console_does_not_panic() {
         // Test output is captured through pipes on every platform, so this takes the no-console path.
-        enable_virtual_terminal();
+        let _ = enable_virtual_terminal();
     }
 }
