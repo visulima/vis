@@ -2,7 +2,7 @@ use super::types::ConcurrentCloseEvent;
 
 /// Determines what constitutes a successful run.
 #[derive(Debug, Clone)]
-pub enum SuccessCondition {
+pub(crate) enum SuccessCondition {
     /// All commands must exit with code 0.
     All,
     /// Only the first command to close must succeed.
@@ -18,7 +18,7 @@ pub enum SuccessCondition {
 impl SuccessCondition {
     /// Parse a success condition from a string.
     /// Formats: "all", "first", "last", "command-<name>", "!command-<name>"
-    pub fn parse(input: &str) -> Self {
+    pub(crate) fn parse(input: &str) -> Self {
         match input.trim().to_lowercase().as_str() {
             "all" => Self::All,
             "first" => Self::First,
@@ -30,7 +30,7 @@ impl SuccessCondition {
     }
 
     /// Evaluate whether the run succeeded given the close events (in completion order).
-    pub fn evaluate(&self, events: &[ConcurrentCloseEvent]) -> bool {
+    pub(crate) fn evaluate(&self, events: &[ConcurrentCloseEvent]) -> bool {
         if events.is_empty() {
             return true;
         }

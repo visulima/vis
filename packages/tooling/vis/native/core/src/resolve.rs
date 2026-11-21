@@ -312,6 +312,35 @@ pub struct RemoveOptions {
     pub filter: Vec<String>,
 }
 
+/// Scope a Yarn command to one workspace: `yarn workspace <name> <cmd>`. `yarn
+/// workspace` targets a single workspace, so more than one filter is refused
+/// instead of silently running against only the first.
+fn yarn_workspace_prefix(filter: &[String], args: &mut Vec<String>) -> Result<(), String> {
+    match filter {
+        [] => {}
+        [workspace] => {
+            args.push("workspace".into());
+            args.push(workspace.clone());
+        }
+        _ => return Err("yarn `workspace` supports a single --filter workspace".into()),
+    }
+
+    Ok(())
+}
+
+/// Scope a Yarn Berry command to several workspaces: `yarn workspaces foreach
+/// --all [--include <name>]... <cmd>`. With no filter it runs in every workspace.
+fn yarn_foreach_prefix(filter: &[String], args: &mut Vec<String>) {
+    args.push("workspaces".into());
+    args.push("foreach".into());
+    args.push("--all".into());
+
+    for f in filter {
+        args.push("--include".into());
+        args.push(f.clone());
+    }
+}
+
 /// Resolve `vis remove <packages>`.
 pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
@@ -381,23 +410,14 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
         }
         "yarn" => {
             if version.starts_with("1.") {
-                if !opts.filter.is_empty() {
-                    args.push("workspace".into());
-                    args.push(opts.filter[0].clone());
-                }
-
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("remove".into());
                 args.extend(opts.packages);
             } else {
-                if opts.recursive {
-                    args.push("workspaces".into());
-                    args.push("foreach".into());
-                    args.push("--all".into());
-
-                    for f in &opts.filter {
-                        args.push("--include".into());
-                        args.push(f.clone());
-                    }
+                if opts.recursive || opts.filter.len() > 1 {
+                    yarn_foreach_prefix(&opts.filter, &mut args);
+                } else {
+                    yarn_workspace_prefix(&opts.filter, &mut args)?;
                 }
 
                 args.push("remove".into());
@@ -1082,10 +1102,7 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                 if opts.global {
                     args.push("global".into());
                 }
-                if !opts.filter.is_empty() {
-                    args.push("workspace".into());
-                    args.push(opts.filter[0].clone());
-                }
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("add".into());
                 if opts.save_dev {
                     args.push("--dev".into());
@@ -1109,6 +1126,11 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                     let mut a = vec!["install".into(), "--global".into()];
                     a.extend(opts.packages);
                     return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
+                }
+                if opts.filter.len() > 1 {
+                    yarn_foreach_prefix(&opts.filter, &mut args);
+                } else {
+                    yarn_workspace_prefix(&opts.filter, &mut args)?;
                 }
                 args.push("add".into());
                 if opts.save_dev {
@@ -1162,6 +1184,20 @@ pub struct DlxOptions {
 }
 
 /// Resolve `vis dlx`.
+/// The executable `npm exec` runs for a package spec: the package name without its scope and
+/// version (`@scope/pkg@1.0` -> `pkg`, `create-vite@6.0.0` -> `create-vite`). A spec with a `:`
+/// is a git, URL or file location, where an `@` belongs to the location (`git@host`,
+/// `user:token@host`) and is not a version separator, so only its last path segment is used.
+fn npm_bin_name(spec: &str) -> String {
+    let name = if spec.contains(':') {
+        spec
+    } else {
+        let name_start = usize::from(spec.starts_with('@'));
+        spec[name_start..].split('@').next().unwrap_or_default()
+    };
+    name.rsplit('/').next().unwrap_or_default().to_string()
+}
+
 pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
@@ -1198,16 +1234,7 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 args.push("--loglevel".into());
                 args.push("silent".into());
             }
-            // Extract binary name: handle scoped packages like @scope/pkg@1.0
-            let without_version = opts
-                .package
-                .split('@')
-                .enumerate()
-                .take_while(|(i, _)| *i < 2) // keep @scope/pkg, drop @version
-                .map(|(_, s)| s)
-                .collect::<Vec<_>>()
-                .join("@");
-            let bin_name = without_version.rsplit('/').next().unwrap_or(&opts.package).to_string();
+            let bin_name = npm_bin_name(&opts.package);
             args.push("--".into());
             args.push(if bin_name.is_empty() { opts.package.clone() } else { bin_name });
             args.extend(opts.args);
@@ -1260,9 +1287,9 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_add, resolve_dedupe, resolve_dlx, resolve_exec, resolve_install, resolve_link, resolve_outdated,
-        resolve_pm_command, resolve_remove, resolve_unlink, resolve_why, AddOptions, DlxOptions, ExecOptions,
-        InstallOptions, OutdatedOptions, RemoveOptions, WhyOptions,
+        npm_bin_name, resolve_add, resolve_dedupe, resolve_dlx, resolve_exec, resolve_install, resolve_link,
+        resolve_outdated, resolve_pm_command, resolve_remove, resolve_unlink, resolve_why, AddOptions, DlxOptions,
+        ExecOptions, InstallOptions, OutdatedOptions, RemoveOptions, WhyOptions,
     };
 
     fn argv(list: &[&str]) -> Vec<String> {
@@ -1477,6 +1504,58 @@ mod tests {
     }
 
     #[test]
+    fn add_yarn_berry_routes_filter_to_the_workspace() {
+        let opts =
+            AddOptions { packages: argv(&["react"]), save_dev: true, filter: argv(&["app"]), ..Default::default() };
+        let resolved = resolve_add("yarn", "4.5.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "yarn");
+        assert_eq!(resolved.args, ["workspace", "app", "add", "--dev", "react"]);
+    }
+
+    #[test]
+    fn add_yarn_berry_fans_multiple_filters_out_with_foreach() {
+        let opts = AddOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+        let resolved = resolve_add("yarn", "4.5.0", opts).unwrap();
+
+        assert_eq!(
+            resolved.args,
+            ["workspaces", "foreach", "--all", "--include", "app", "--include", "web", "add", "react"]
+        );
+    }
+
+    #[test]
+    fn add_yarn_classic_rejects_multiple_filters() {
+        let opts = AddOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+
+        assert!(resolve_add("yarn", "1.22.0", opts).is_err());
+    }
+
+    #[test]
+    fn remove_yarn_classic_rejects_multiple_filters() {
+        let opts = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+
+        assert!(resolve_remove("yarn", "1.22.0", opts).is_err());
+    }
+
+    #[test]
+    fn remove_yarn_berry_applies_the_filter_without_recursive() {
+        let one = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app"]), ..Default::default() };
+        let many = RemoveOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+        let recursive = RemoveOptions { packages: argv(&["react"]), recursive: true, ..Default::default() };
+
+        assert_eq!(resolve_remove("yarn", "4.5.0", one).unwrap().args, ["workspace", "app", "remove", "react"]);
+        assert_eq!(
+            resolve_remove("yarn", "4.5.0", many).unwrap().args,
+            ["workspaces", "foreach", "--all", "--include", "app", "--include", "web", "remove", "react"]
+        );
+        assert_eq!(
+            resolve_remove("yarn", "4.5.0", recursive).unwrap().args,
+            ["workspaces", "foreach", "--all", "remove", "react"]
+        );
+    }
+
+    #[test]
     fn add_global_uses_npm_except_on_bun() {
         let global = |pm: &str, version: &str| {
             let opts = AddOptions { packages: argv(&["typescript"]), global: true, ..Default::default() };
@@ -1500,6 +1579,37 @@ mod tests {
 
         assert_eq!((pnpm.bin.as_str(), pnpm.args), ("pnpm", argv(&["dlx", "create-vite", "my-app"])));
         assert_eq!((bun.bin.as_str(), bun.args[0].as_str()), ("bun", "x"));
+    }
+
+    #[test]
+    fn dlx_npm_runs_the_bin_without_the_version() {
+        let bin_for = |package: &str| {
+            let opts = DlxOptions { package: package.to_owned(), ..Default::default() };
+            let resolved = resolve_dlx("npm", "11.0.0", opts).unwrap();
+
+            (resolved.args[resolved.args.len() - 2..].to_vec(), resolved.args)
+        };
+
+        let (tail, args) = bin_for("create-vite@6.0.0");
+        assert_eq!(tail, ["--", "create-vite"]);
+        assert!(args.contains(&"--package=create-vite@6.0.0".to_owned()));
+
+        assert_eq!(bin_for("create-vite").0, ["--", "create-vite"]);
+        assert_eq!(bin_for("@scope/tool@1.2.3").0, ["--", "tool"]);
+        assert_eq!(bin_for("@scope/tool").0, ["--", "tool"]);
+    }
+
+    #[test]
+    fn npm_bin_name_keeps_the_location_of_a_git_or_url_spec_out_of_the_version_split() {
+        for (spec, bin) in [
+            ("git+ssh://git@github.com/org/tool.git", "tool.git"),
+            ("git@github.com:org/tool.git", "tool.git"),
+            ("https://user:token@host.example/pkg.tgz", "pkg.tgz"),
+            ("create-vite@6.0.0", "create-vite"),
+            ("@scope/tool@1.2.3", "tool"),
+        ] {
+            assert_eq!(npm_bin_name(spec), bin, "{spec}");
+        }
     }
 
     #[test]

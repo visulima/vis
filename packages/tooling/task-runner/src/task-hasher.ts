@@ -31,6 +31,13 @@ import type {
 import { hashStrings, sortObjectKeys } from "./utils";
 
 /**
+ * Byte layout of the command and task hashes. Bump it whenever the native hashers
+ * change what they feed to xxh3, so diagnostics can tell a layout change from a
+ * changed command. Layout 1 is every summary written before this field existed.
+ */
+const HASH_LAYOUT = 2;
+
+/**
  * Interface for task hashers.
  */
 interface TaskHasher {
@@ -540,6 +547,7 @@ class InProcessTaskHasher implements TaskHasher {
         return {
             command: commandHash,
             implicitDeps: Object.keys(implicitDeps).length > 0 ? implicitDeps : undefined,
+            layout: HASH_LAYOUT,
             nodes,
             runtime: Object.keys(runtime).length > 0 ? runtime : undefined,
         };

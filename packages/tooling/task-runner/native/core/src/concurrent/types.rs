@@ -94,7 +94,7 @@ impl ProcessEvent {
     /// process has been spawned. `pid` is the OS pid (or `None` if the
     /// platform could not return one). Consumers use this to register
     /// children for SIGINT/SIGTERM cleanup at the JS layer.
-    pub fn started(index: u32, pid: Option<u32>) -> Self {
+    pub(crate) fn started(index: u32, pid: Option<u32>) -> Self {
         Self {
             kind: "started".to_string(),
             index,
@@ -108,7 +108,7 @@ impl ProcessEvent {
         }
     }
 
-    pub fn stdout(index: u32, text: String) -> Self {
+    pub(crate) fn stdout(index: u32, text: String) -> Self {
         Self {
             kind: "stdout".to_string(),
             index,
@@ -122,7 +122,7 @@ impl ProcessEvent {
         }
     }
 
-    pub fn stderr(index: u32, text: String) -> Self {
+    pub(crate) fn stderr(index: u32, text: String) -> Self {
         Self {
             kind: "stderr".to_string(),
             index,
@@ -136,7 +136,7 @@ impl ProcessEvent {
         }
     }
 
-    pub fn close(index: u32, exit_code: i32, killed: bool, name: Option<String>, duration_ms: f64) -> Self {
+    pub(crate) fn close(index: u32, exit_code: i32, killed: bool, name: Option<String>, duration_ms: f64) -> Self {
         Self {
             kind: "close".to_string(),
             index,
@@ -150,7 +150,7 @@ impl ProcessEvent {
         }
     }
 
-    pub fn error(index: u32, message: String) -> Self {
+    pub(crate) fn error(index: u32, message: String) -> Self {
         Self {
             kind: "error".to_string(),
             index,

@@ -188,7 +188,7 @@ pub fn hash_strings(inputs: &[String]) -> String {
 pub(crate) mod hex {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
+    pub(crate) fn encode(bytes: impl AsRef<[u8]>) -> String {
         let bytes = bytes.as_ref();
         let mut result = String::with_capacity(bytes.len() * 2);
         for &byte in bytes {
