@@ -40,6 +40,8 @@ export interface ScanOptions {
             include?: string[];
         };
     }[];
+    ignoreRoot?: string;
+
     overridesRoot?: string;
 
     redact?: boolean;
@@ -75,6 +77,7 @@ export interface ScanOptions {
 | `maxArchiveDepth`  | `number`            | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                                                                                                                   |
 | `maxDecodeDepth`   | `number`            | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                                                                                                                 |
 | `overrides`        | `object[]`          | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                                                                                                                             |
+| `ignoreRoot`       | `string`            | cwd     | `scanFiles` only: directory `.secretlintignore` files are discovered from and ignore patterns are anchored at. Set it to the repository root when scanning a file list from a subdirectory. Findings and baselines are unaffected. |
 | `overridesRoot`    | `string`            | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                                                                                                              |
 | `redact`           | `boolean`           | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values.                                                                                               |
 | `secretlintIgnore` | `string[] \| false` | auto    | `.secretlintignore` files to honour. Auto-discovered in each scan root and its parents up to the repository root; a `.secretlintignore` is anchored at its own directory, any other path at the scan root. Pass paths to add more, or `false` to disable all of them. |

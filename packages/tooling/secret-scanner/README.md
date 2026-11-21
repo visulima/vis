@@ -389,6 +389,9 @@ interface ScanOptions {
         };
     }[];
 
+    /** `scanFiles` only: directory `.secretlintignore` files are discovered from and ignore patterns are anchored at. Default: `process.cwd()`. */
+    ignoreRoot?: string;
+
     /** Directory the `overrides` globs are relative to. Default: `process.cwd()`; files outside it match by basename. */
     overridesRoot?: string;
 

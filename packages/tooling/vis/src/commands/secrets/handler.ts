@@ -250,7 +250,7 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         ...scanOptions,
         baseline: typeof scanOptions.baseline === "string" ? rebaseBaseline(scanOptions.baseline, root, base) : scanOptions.baseline,
     };
-    const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, options);
+    const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, { ...options, ignoreRoot: root });
 
     return {
         allowWarnings: result.allowWarnings.map((warning) => {

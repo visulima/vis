@@ -122,9 +122,10 @@ export const scan = async (paths: string[], options?: ScanOptions): Promise<Find
  * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
  */
 export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [process.cwd()]);
-    const matcher = buildIgnoreMatcher(effective, process.cwd());
-    const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
+    const ignoreRoot = options?.ignoreRoot === undefined ? process.cwd() : resolve(options.ignoreRoot);
+    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [ignoreRoot]);
+    const matcher = buildIgnoreMatcher(effective, ignoreRoot);
+    const filteredFiles = filterIgnoredFiles(files, matcher, ignoreRoot);
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
 
     return finishResult(await postProcessDetailed(report, prepared, effective, context), report.skipped, context, { allowWarnings: report.allowWarnings });

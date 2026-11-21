@@ -224,6 +224,18 @@ leaked = "${secret2}"
         await expect(scan([tmpDir], { secretlintIgnore: false })).resolves.toHaveLength(2);
     });
 
+    it("scanFiles applies .secretlintignore from ignoreRoot for files outside the process cwd", async () => {
+        expect.assertions(2);
+
+        const leak = resolve(tmpDir, "leak.env");
+
+        await writeFile(leak, 'token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"\n');
+        await writeFile(resolve(tmpDir, ".secretlintignore"), "*.env\n");
+
+        await expect(scanFiles([leak])).resolves.toHaveLength(1);
+        await expect(scanFiles([leak], { ignoreRoot: tmpDir })).resolves.toHaveLength(0);
+    });
+
     it("applies ignore sources independently during a walker scan", async () => {
         expect.assertions(2);
 
