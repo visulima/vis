@@ -772,6 +772,18 @@ mod tests {
     }
 
     #[test]
+    fn a_replacement_that_moves_newlines_does_not_borrow_another_lines_marker() {
+        // Same line count after the rewrite, but the secret now sits on line 2, which in
+        // the file as written holds a marker for a different line.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"key = ","to":"\n"},{"from":"p\nq","to":"pq"}]}]}"#,
+        );
+        let text = "key = TOK_ABCDEFGH\nz // gitleaks:allow\np\nq\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert_eq!(findings.len(), 1, "{findings:?}");
+    }
+
+    #[test]
     fn keeps_context_for_keyword_rules() {
         // `password: <base64>` — the keyword sits outside the encoded span.
         let rs = ruleset(
