@@ -20,11 +20,15 @@ pub struct TaskHashDetails {
 /// Takes project name, target name, optional configuration, and sorted overrides JSON.
 pub fn hash_command(project: &str, target: &str, configuration: Option<&str>, overrides_json: &str) -> String {
     let mut data = Vec::new();
+    // NUL-terminate each identity field so `("ab", "c")` and `("a", "bc")` hash differently.
     data.extend_from_slice(project.as_bytes());
+    data.push(0);
     data.extend_from_slice(target.as_bytes());
+    data.push(0);
 
     if let Some(config) = configuration {
         data.extend_from_slice(config.as_bytes());
+        data.push(0);
     }
 
     data.extend_from_slice(overrides_json.as_bytes());
@@ -91,4 +95,29 @@ pub fn hash_env_var(name: &str, value: &str) -> String {
 
     let h = xxh3_128(&data);
     hex::encode(h.to_be_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hash_command;
+
+    #[test]
+    fn hash_command_separates_project_and_target() {
+        assert_ne!(hash_command("ab", "c", None, "{}"), hash_command("a", "bc", None, "{}"));
+    }
+
+    #[test]
+    fn hash_command_separates_target_and_configuration() {
+        assert_ne!(hash_command("app", "build", Some("prod"), "{}"), hash_command("app", "buil", Some("dprod"), "{}"));
+    }
+
+    #[test]
+    fn hash_command_tells_a_missing_configuration_from_an_empty_one() {
+        assert_ne!(hash_command("app", "build", None, "{}"), hash_command("app", "build", Some(""), "{}"));
+    }
+
+    #[test]
+    fn hash_command_is_stable_for_the_same_inputs() {
+        assert_eq!(hash_command("app", "build", Some("prod"), "{}"), hash_command("app", "build", Some("prod"), "{}"));
+    }
 }
