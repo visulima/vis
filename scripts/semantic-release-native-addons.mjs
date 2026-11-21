@@ -120,26 +120,36 @@ const writeNpmrc = (path, token) => {
     writeFileSync(path, `//registry.npmjs.org/:_authToken=${token}\nregistry=${OFFICIAL_REGISTRY}\n`);
 };
 
-// napi-rs hard-codes the host package's version into the runtime version-check
-// error string, generated per platform branch in index.js. The string is emitted
-// by @napi-rs/cli's loader template (see packages/cli/src/api/templates/load-host.ts
-// in napi-rs/napi-rs) — if napi-rs changes that template, this regex needs to
-// follow. We validate that we matched at least one occurrence to fail loudly
-// rather than silently shipping a stale version on the next codegen drift.
-const VERSION_CHECK_PATTERN = /expected \S+ but got \$\{bindingPackageVersion\}/g;
+// napi-rs hard-codes the host package's version into the runtime version check,
+// generated per platform branch in index.js: the comparison
+// (`bindingPackageVersion !== '<version>'`) and the error string
+// (`expected <version> but got ...`). Both are emitted by @napi-rs/cli's loader
+// template (see packages/cli/src/api/templates/load-host.ts in napi-rs/napi-rs)
+// from the package.json version at build time, which is the previous release —
+// so both must be rewritten, or a correctly versioned binding throws
+// "expected 6.8.0 but got 6.8.0" when NAPI_RS_ENFORCE_VERSION_CHECK is set. If
+// napi-rs changes that template, these patterns need to follow. We validate that
+// each matched at least once to fail loudly rather than silently shipping a
+// stale version on the next codegen drift.
+const VERSION_COMPARE_PATTERN = /bindingPackageVersion !== '[^']*'/g;
+const VERSION_MESSAGE_PATTERN = /expected \S+ but got \$\{bindingPackageVersion\}/g;
 
 export const patchVersionCheck = (content, version) => {
-    const matches = content.match(VERSION_CHECK_PATTERN);
+    const messages = content.match(VERSION_MESSAGE_PATTERN);
+    const comparisons = content.match(VERSION_COMPARE_PATTERN);
 
-    if (!matches || matches.length === 0) {
+    if (!messages || messages.length === 0 || !comparisons || comparisons.length === 0) {
         throw new Error(
-            "index.js contains no NAPI version-check strings — napi-rs codegen format may have changed. Update VERSION_CHECK_PATTERN in scripts/semantic-release-native-addons.mjs.",
+            "index.js contains no NAPI version-check strings — napi-rs codegen format may have changed. Update VERSION_COMPARE_PATTERN / VERSION_MESSAGE_PATTERN in scripts/semantic-release-native-addons.mjs.",
         );
     }
 
-    const replacement = `expected ${version} but got \${bindingPackageVersion}`;
-
-    return { count: matches.length, patched: content.replace(VERSION_CHECK_PATTERN, replacement) };
+    return {
+        count: messages.length,
+        patched: content
+            .replace(VERSION_MESSAGE_PATTERN, `expected ${version} but got \${bindingPackageVersion}`)
+            .replace(VERSION_COMPARE_PATTERN, `bindingPackageVersion !== '${version}'`),
+    };
 };
 
 // A publish retried after a partial release must treat "that version is
