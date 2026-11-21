@@ -6,7 +6,7 @@ on: # yamllint disable-line rule:truthy
     push:
         branches:
             - "main"
-            # Publishes under the `next` dist-tag (.releaserc.json lists the branch): the channel
+            # Publishes under the `next` dist-tag (.releaserc.branches.json lists the branch): the channel
             # for changes that should not reach `latest` yet.
             - "next"
     workflow_dispatch: # yamllint disable-line rule:empty-values
