@@ -41,16 +41,20 @@ const PROJECT: [(&str, &str); 4] = [
     ("packages/a/package.json", "{\"name\":\"a\",\"version\":\"1.0.0\",\"scripts\":{\"build\":\"x\"}}"),
 ];
 
-fn delegates(case: &Case, directory: &Path, empty_path: &Path) -> bool {
-    for (name, content) in PROJECT
-        .iter()
-        .map(|(name, content)| (*name, *content))
-        .chain(case.files.iter().map(|(name, content)| (name.as_str(), content.as_str())))
-    {
-        let path = directory.join(name);
+fn write_file(directory: &Path, name: &str, content: &str) {
+    let path = directory.join(name);
 
-        fs::create_dir_all(path.parent().expect("file has a parent")).expect("create project directory");
-        fs::write(path, content).expect("write project file");
+    fs::create_dir_all(path.parent().expect("file has a parent")).expect("create project directory");
+    fs::write(path, content).expect("write project file");
+}
+
+fn delegates(case: &Case, directory: &Path, empty_path: &Path) -> bool {
+    for (name, content) in PROJECT {
+        write_file(directory, name, content);
+    }
+
+    for (name, content) in &case.files {
+        write_file(directory, name, content);
     }
 
     let output = Command::new(env!("CARGO_BIN_EXE_vis"))
