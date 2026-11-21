@@ -2,7 +2,7 @@
 // them (platform packages first, then the root) to a throw-away local registry,
 // installs the root with each available package manager, and runs the CLI.
 //
-//   node scripts/install-smoke.mjs [--pm npm,pnpm,pnpm-10,yarn-classic,yarn-berry,bun]
+//   node scripts/install-smoke.mjs [--pm npm,pnpm,pnpm-10,yarn-classic,yarn-berry,bun | --pm all]
 //
 // Needs `dist/` built and the host platform package laid out with its
 // `vis-native-cli` and `.node` files (what the release job produces). A package
@@ -36,22 +36,84 @@ const PNPM_10 = "pnpm@10.34.9";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
+// The package managers the smoke can run, in the order a default run reports them. Declared before the
+// arguments are read so `--pm` is checked against it, and so a mistyped name fails before the registry starts.
+// Their install steps only run later, once the registry is up.
+const spec = `@visulima/vis@${manifest.version}`;
+const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
+const berryRc = `npmRegistryServer: "${REGISTRY}"\nunsafeHttpWhitelist: ["localhost"]\nenableImmutableInstalls: false\nnodeLinker: node-modules\nenableTelemetry: false\n`;
+
+// One pnpm release as a manager. `approval` is the workspace-file lines that approve the build; the unapproved
+// row leaves them out. `unapprovedFailure` is the error text a release ends an unapproved install with, when it
+// fails it at all.
+const pnpmManager = (pnpm, { approval, unapprovedFailure }) => ({
+    available: () => have("npx"),
+    launch: { exec: ["npx", "--yes", pnpm, "exec", "vis", "--version"], run: ["npx", "--yes", pnpm, "run", "v"] },
+    modes: ["enabled", "disabled", "unapproved"],
+    install: (mode, directory) => ({
+        // A store of its own per row: pnpm keeps the files an install script produced in its store (the
+        // side-effects cache) and would hand them to a later row that disabled scripts.
+        args: ["--yes", pnpm, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
+        command: "npx",
+        // Such a release installs the files and then fails the command until the build is approved.
+        ...(mode === "unapproved" && unapprovedFailure !== undefined ? { expectInstall: unapprovedFailure } : {}),
+        files: {
+            ...registryFiles,
+            "pnpm-workspace.yaml": [
+                // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package
+                // the earlier `--ignore-scripts` install skipped.
+                "verifyDepsBeforeRun: false",
+                // The scripts-disabled row keeps the approval so only `--ignore-scripts` turns the fast path
+                // off; the unapproved row leaves it out and nothing else.
+                ...(mode === "unapproved" ? [] : approval),
+                "",
+            ].join("\n"),
+        },
+    }),
+});
+
+const managers = {
+    npm: {
+        available: () => have("npm"),
+        launch: { exec: ["npm", "exec", "--", "vis", "--version"], run: ["npm", "run", "v"] },
+        install: (mode) => ({ args: ["install", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npm", files: registryFiles }),
+    },
+    pnpm: pnpmManager(PNPM, { approval: ["allowBuilds:", "  '@visulima/vis': true"], unapprovedFailure: "ERR_PNPM_IGNORED_BUILDS" }),
+    "pnpm-10": pnpmManager(PNPM_10, { approval: ["onlyBuiltDependencies:", "  - '@visulima/vis'"] }),
+    "yarn-classic": {
+        available: () => have("npx"),
+        launch: { run: ["npx", "--yes", "yarn@1.22.22", "run", "v"] },
+        install: (mode) => ({ args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npx", files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` } }),
+    },
+    "yarn-berry": {
+        available: () => have("npx"),
+        launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },
+        install: (mode) => ({ args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec], command: "npx", files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" } }),
+    },
+    bun: {
+        available: () => have("bun"),
+        launch: { run: ["bun", "run", "v"] },
+        install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
+    },
+};
+
 // `--pm npm,bun` and `--pm=npm,bun` both name the managers; a missing value is a usage error, not a crash.
 const pmFlag = process.argv.findIndex((argument) => argument === "--pm" || argument.startsWith("--pm="));
 const explicitlyRequested = pmFlag !== -1;
-const knownManagers = ["npm", "pnpm", "pnpm-10", "yarn-classic", "yarn-berry", "bun"];
+const knownManagers = Object.keys(managers);
 const pmValue = explicitlyRequested ? (process.argv[pmFlag].startsWith("--pm=") ? process.argv[pmFlag].slice("--pm=".length) : process.argv[pmFlag + 1]) : undefined;
 
 if (explicitlyRequested && (pmValue === undefined || pmValue === "" || pmValue.startsWith("--"))) {
-    console.error("install-smoke: --pm needs a list of package managers, for example --pm npm,bun");
+    console.error(`install-smoke: --pm needs a list of package managers (${knownManagers.join(", ")}) or "all", for example --pm npm,bun`);
     process.exit(2);
 }
 
-const requested = explicitlyRequested ? pmValue.split(",") : knownManagers;
+// `--pm all` names every known manager, so CI does not carry a list that drifts from this file.
+const requested = explicitlyRequested && pmValue !== "all" ? pmValue.split(",") : knownManagers;
 
 for (const name of requested) {
     if (!knownManagers.includes(name)) {
-        console.error(`install-smoke: unknown package manager ${name}`);
+        console.error(`install-smoke: unknown package manager ${name} (known: ${knownManagers.join(", ")})`);
         process.exit(2);
     }
 }
@@ -276,63 +338,6 @@ for (const tarball of [...bindings, rootTarball]) {
 }
 
 check("publish", "platform packages are published before the root", published.at(-1) === rootTarball && published.slice(0, -1).every((name) => name.includes("binding")));
-
-const spec = `@visulima/vis@${manifest.version}`;
-const registryFiles = { ".npmrc": `registry=${REGISTRY}\n` };
-const berryRc = `npmRegistryServer: "${REGISTRY}"\nunsafeHttpWhitelist: ["localhost"]\nenableImmutableInstalls: false\nnodeLinker: node-modules\nenableTelemetry: false\n`;
-
-// One pnpm release as a manager. `approval` gives the workspace-file lines that approve the build for a mode;
-// `unapprovedFailure` is the error text a release ends an unapproved install with, when it fails it at all.
-const pnpmManager = (pnpm, approval, unapprovedFailure) => ({
-    available: () => have("npx"),
-    launch: { exec: ["npx", "--yes", pnpm, "exec", "vis", "--version"], run: ["npx", "--yes", pnpm, "run", "v"] },
-    modes: ["enabled", "disabled", "unapproved"],
-    install: (mode, directory) => ({
-        // A store of its own per row: pnpm keeps the files an install script produced in its store (the
-        // side-effects cache) and would hand them to a later row that disabled scripts.
-        args: ["--yes", pnpm, "add", "-D", spec, "--store-dir", join(directory, ".pnpm-store"), ...(mode === "disabled" ? ["--ignore-scripts"] : [])],
-        command: "npx",
-        // Such a release installs the files and then fails the command until the build is approved.
-        ...(mode === "unapproved" && unapprovedFailure !== undefined ? { expectInstall: unapprovedFailure } : {}),
-        files: {
-            ...registryFiles,
-            "pnpm-workspace.yaml": [
-                // `pnpm run` / `pnpm exec` would otherwise re-install first and build the approved package
-                // the earlier `--ignore-scripts` install skipped.
-                "verifyDepsBeforeRun: false",
-                // The scripts-disabled row keeps the approval so only `--ignore-scripts` turns the fast path
-                // off; the unapproved row leaves it out and nothing else.
-                ...approval(mode),
-                "",
-            ].join("\n"),
-        },
-    }),
-});
-
-const managers = {
-    bun: {
-        available: () => have("bun"),
-        launch: { run: ["bun", "run", "v"] },
-        install: (mode) => ({ args: ["add", "-d", spec], command: "bun", extra: { packageManager: `bun@${run("bun", ["--version"]).stdout.trim()}`, ...(mode === "enabled" ? { trustedDependencies: ["@visulima/vis"] } : {}) }, files: { ...registryFiles, "bunfig.toml": `[install]\nregistry = "${REGISTRY}"\n` } }),
-    },
-    npm: {
-        available: () => have("npm"),
-        launch: { exec: ["npm", "exec", "--", "vis", "--version"], run: ["npm", "run", "v"] },
-        install: (mode) => ({ args: ["install", "-D", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npm", files: registryFiles }),
-    },
-    pnpm: pnpmManager(PNPM, (mode) => (mode === "unapproved" ? [] : ["allowBuilds:", "  '@visulima/vis': true"]), "ERR_PNPM_IGNORED_BUILDS"),
-    "pnpm-10": pnpmManager(PNPM_10, (mode) => (mode === "unapproved" ? [] : ["onlyBuiltDependencies:", "  - '@visulima/vis'"])),
-    "yarn-berry": {
-        available: () => have("npx"),
-        launch: { exec: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "exec", "vis", "--version"], run: ["npx", "--yes", "@yarnpkg/cli-dist@4.9.2", "run", "v"] },
-        install: (mode) => ({ args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "-D", spec], command: "npx", files: { ".yarnrc.yml": berryRc + (mode === "disabled" ? "enableScripts: false\n" : ""), "yarn.lock": "" } }),
-    },
-    "yarn-classic": {
-        available: () => have("npx"),
-        launch: { run: ["npx", "--yes", "yarn@1.22.22", "run", "v"] },
-        install: (mode) => ({ args: ["--yes", "yarn@1.22.22", "add", "-D", "-W", spec, ...(mode === "disabled" ? ["--ignore-scripts"] : [])], command: "npx", files: { ...registryFiles, ".yarnrc": `registry "${REGISTRY}"\n` } }),
-    },
-};
 
 const isNativeFile = (file) => {
     const head = readFileSync(file).subarray(0, 4).toString("hex");
