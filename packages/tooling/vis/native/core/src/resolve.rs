@@ -1069,7 +1069,11 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                 args.push(f.clone());
             }
             if opts.workspace_root {
-                args.push("-w".into());
+                // npm's `-w` is `--workspace` and consumes the next argument, so it
+                // cannot select the root. Pin the root explicitly instead.
+                args.push(
+                    if opts.filter.is_empty() { "--workspaces=false" } else { "--include-workspace-root" }.into(),
+                );
             }
             args.extend(opts.packages);
         }
@@ -1448,6 +1452,28 @@ mod tests {
 
         assert_eq!(resolved.bin, "pnpm");
         assert_eq!(resolved.args, ["--filter", "app", "add", "-D", "react"]);
+    }
+
+    #[test]
+    fn add_npm_workspace_root_keeps_package_as_argument() {
+        let opts = AddOptions { packages: argv(&["react"]), workspace_root: true, ..Default::default() };
+        let resolved = resolve_add("npm", "11.0.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "npm");
+        assert_eq!(resolved.args, ["install", "--workspaces=false", "react"]);
+    }
+
+    #[test]
+    fn add_npm_workspace_root_with_filter_includes_the_root() {
+        let opts = AddOptions {
+            packages: argv(&["react"]),
+            workspace_root: true,
+            filter: argv(&["app"]),
+            ..Default::default()
+        };
+        let resolved = resolve_add("npm", "11.0.0", opts).unwrap();
+
+        assert_eq!(resolved.args, ["install", "--workspace", "app", "--include-workspace-root", "react"]);
     }
 
     #[test]
