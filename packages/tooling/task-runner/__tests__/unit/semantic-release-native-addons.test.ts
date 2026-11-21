@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 // eslint-disable-next-line import/no-relative-packages -- workspace release script, not a package entry point
-import { isAlreadyPublishedError } from "../../../../../scripts/semantic-release-native-addons.mjs";
+import { getNpmTag, isAlreadyPublishedError } from "../../../../../scripts/semantic-release-native-addons.mjs";
 
 const publishError = (properties: { message?: string; stderr?: string; stdout?: string }): Error =>
     Object.assign(new Error(properties.message ?? "Command failed: pnpm publish"), properties);
@@ -57,5 +57,17 @@ describe(isAlreadyPublishedError, () => {
 
         expect(isAlreadyPublishedError("403 Forbidden: You cannot publish over the previously published versions")).toBe(true);
         expect(isAlreadyPublishedError(undefined)).toBe(false);
+    });
+});
+
+describe(getNpmTag, () => {
+    it.each([
+        ["7.0.0-next.1", "next"],
+        ["7.0.0-rc.2", "next"],
+        ["7.0.0-beta.3", "beta"],
+        ["7.0.0-alpha.4", "alpha"],
+        ["6.8.0", "latest"],
+    ])("maps %s to the %s dist-tag", (version, tag) => {
+        expect(getNpmTag(version)).toBe(tag);
     });
 });
