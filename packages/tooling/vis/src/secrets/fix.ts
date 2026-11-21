@@ -168,6 +168,8 @@ const isUnchanged = (path: string, file: FileBytes): boolean => {
             && current.dev === file.dev
             && current.ino === file.ino
             && current.mode === file.mode
+            && current.uid === file.uid
+            && current.gid === file.gid
             && current.size === file.size
             && current.mtimeMs === file.mtimeMs
             && current.bytes.equals(file.bytes)
