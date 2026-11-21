@@ -9,7 +9,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{exit, Command};
+use std::process::Command;
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
@@ -17,30 +17,29 @@ use vis_core::resolve::{
     RemoveOptions, ResolvedCommand, WhyOptions,
 };
 
-/// Surface warnings, exec the resolved command, forward its exit status.
-fn finish(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> ! {
+use crate::error::{self, WrapperError};
+
+/// Surface warnings, exec the resolved command, and return the exit status to forward.
+fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
     for warning in &resolved.warnings {
         eprintln!("vis {verb}: {warning}");
     }
 
-    match Command::new(&resolved.bin).args(&resolved.args).current_dir(cwd).status() {
-        Ok(status) => {
-            let mut code = crate::forward_code(status);
+    let status = Command::new(&resolved.bin)
+        .args(&resolved.args)
+        .current_dir(cwd)
+        .status()
+        .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))?;
+    let mut code = crate::forward_code(status);
 
-            // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
-            // non-error case the Node handlers suppress. Match that so the native
-            // path doesn't break `&&` chains / CI on the common case.
-            if (verb == "outdated" || verb == "why") && code == 1 {
-                code = 0;
-            }
-
-            exit(code);
-        }
-        Err(error) => {
-            eprintln!("vis {verb}: failed to run '{}': {error}", resolved.bin);
-            exit(127);
-        }
+    // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
+    // non-error case the Node handlers suppress. Match that so the native
+    // path doesn't break `&&` chains / CI on the common case.
+    if (verb == "outdated" || verb == "why") && code == 1 {
+        code = 0;
     }
+
+    Ok(code)
 }
 
 /// Walk up from `cwd` looking for a `vis.config.*` file.
@@ -350,13 +349,12 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
         _ => unreachable!("unknown pm-family verb: {verb}"),
     };
 
-    match resolved {
-        Ok(command) => finish(verb, command, &cwd),
-        Err(message) => {
-            eprintln!("vis {verb}: {message}");
-            exit(1);
-        }
-    }
+    let outcome = match resolved {
+        Ok(command) => run_resolved(verb, command, &cwd),
+        Err(message) => Err(WrapperError::usage(verb, message)),
+    };
+
+    error::finish(outcome)
 }
 
 #[cfg(test)]

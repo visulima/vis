@@ -21,6 +21,7 @@ use std::process::exit;
 
 use serde_json::Value;
 
+use crate::error::WrapperError;
 use crate::pm_family::has_vis_config;
 
 /// Keys of the manifest object, in the order `parseManifest` returns them, with the upstream
@@ -104,10 +105,7 @@ pub fn run(args: &[String]) -> ! {
                 Ok(()) => exit(0),
                 // A closed pipe is not an error worth reporting.
                 Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
-                Err(error) => {
-                    eprintln!("vis advisories: failed to write the status: {error}");
-                    exit(1);
-                }
+                Err(error) => WrapperError::write("advisories", "the status", error).exit(),
             }
         }
         None => crate::delegate(args),
