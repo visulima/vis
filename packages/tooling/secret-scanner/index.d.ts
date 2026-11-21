@@ -56,6 +56,41 @@ export declare function inspectRuleset(options?: ScanOptions | undefined | null)
 /** Return metadata for every rule compiled from the config. */
 export declare function listRules(options?: ScanOptions | undefined | null): Array<RuleInfo>;
 
+/** Wall-clock cost of scanning one file, relative to the scan root like findings. */
+export interface ProfileFile {
+    file: string;
+    ms: number;
+}
+
+/** A coarse scan phase (ruleset load, walk, detect, finalize, …). */
+export interface ProfilePhase {
+    /** How many times the phase ran. */
+    count: number;
+    /** Total milliseconds spent in the phase. */
+    ms: number;
+    name: string;
+}
+
+/** Opt-in timing breakdown of one native scan. Each list is sorted by descending `ms`. */
+export interface ProfileReport {
+    files: Array<ProfileFile>;
+    phases: Array<ProfilePhase>;
+    rules: Array<ProfileRule>;
+    /** Total wall-clock of the native scan, in milliseconds. */
+    totalMs: number;
+}
+
+/** Time spent in one rule's matcher, aggregated across every file and pass. */
+export interface ProfileRule {
+    /** How many times the rule's matcher ran. */
+    count: number;
+    /** Total milliseconds spent in the rule. */
+    ms: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+    ruleId: string;
+}
+
 /** A dependency finding attached to a composite-rule finding. Same file as its primary. */
 export interface RequiredFinding {
     ruleId: string;
@@ -162,6 +197,8 @@ export interface ScanOptions {
      * match; without it they never do.
      */
     commit?: string;
+    /** Collect opt-in timing data (phases, per-file, per-rule) and attach it to `ScanReport.profile`. */
+    profile?: boolean;
 }
 
 /**
@@ -190,6 +227,8 @@ export interface ScanReport {
     skipped: Array<SkippedFile>;
     /** Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`. */
     allowWarnings: Array<AllowWarning>;
+    /** Timing data, present only when `profile` was requested. */
+    profile?: ProfileReport;
 }
 
 /** `scanDetailed` on the calling thread. */

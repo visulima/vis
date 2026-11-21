@@ -134,6 +134,15 @@ describe("resolveScanOptions decode and archive depth", () => {
     });
 });
 
+describe("resolveScanOptions profiling", () => {
+    it("passes --profile to the scanner and leaves it off by default", () => {
+        expect.assertions(2);
+
+        expect(resolveScanOptions({ profile: true }, undefined, ROOT).profile).toBe(true);
+        expect(resolveScanOptions(NO_FLAGS, undefined, ROOT).profile).toBe(false);
+    });
+});
+
 describe(validateFormat, () => {
     it("rejects an unknown --format as a user error", () => {
         expect.assertions(1);

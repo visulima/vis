@@ -61,6 +61,8 @@ pub struct ScanOptions {
     /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
     /// match; without it they never do.
     pub commit: Option<String>,
+    /// Collect opt-in timing data (phases, per-file, per-rule) and attach it to `ScanReport.profile`.
+    pub profile: Option<bool>,
 }
 
 impl From<ScanOptions> for core::ScanOptions {
@@ -80,6 +82,7 @@ impl From<ScanOptions> for core::ScanOptions {
             inline_allow: v.inline_allow,
             report_suppressed: v.report_suppressed,
             commit: v.commit,
+            profile: v.profile,
         }
     }
 }
@@ -320,16 +323,91 @@ pub struct ScanReport {
     pub skipped: Vec<SkippedFile>,
     /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
     pub allow_warnings: Vec<AllowWarning>,
+    /// Timing data, present only when `profile` was requested.
+    pub profile: Option<ProfileReport>,
 }
 
 impl From<core::ScanReport> for ScanReport {
     fn from(v: core::ScanReport) -> Self {
-        let core::ScanReport { findings, suppressed, skipped, allow_warnings } = v;
+        let core::ScanReport { findings, suppressed, skipped, allow_warnings, profile } = v;
         Self {
             findings: findings.into_iter().map(Into::into).collect(),
             suppressed: suppressed.into_iter().map(Into::into).collect(),
             skipped: skipped.into_iter().map(Into::into).collect(),
             allow_warnings: allow_warnings.into_iter().map(Into::into).collect(),
+            profile: profile.map(Into::into),
+        }
+    }
+}
+
+/// A coarse scan phase (ruleset load, walk, detect, finalize, …).
+#[napi(object)]
+pub struct ProfilePhase {
+    /// How many times the phase ran.
+    pub count: u32,
+    /// Total milliseconds spent in the phase.
+    pub ms: f64,
+    pub name: String,
+}
+
+impl From<core::ProfilePhase> for ProfilePhase {
+    fn from(v: core::ProfilePhase) -> Self {
+        let core::ProfilePhase { count, ms, name } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, name }
+    }
+}
+
+/// Time spent in one rule's matcher, aggregated across every file and pass.
+#[napi(object)]
+pub struct ProfileRule {
+    /// How many times the rule's matcher ran.
+    pub count: u32,
+    /// Total milliseconds spent in the rule.
+    pub ms: f64,
+    /// The rule's main regex, when it has one.
+    pub pattern: Option<String>,
+    pub rule_id: String,
+}
+
+impl From<core::ProfileRule> for ProfileRule {
+    fn from(v: core::ProfileRule) -> Self {
+        let core::ProfileRule { count, ms, pattern, rule_id } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, pattern, rule_id }
+    }
+}
+
+/// Wall-clock cost of scanning one file, relative to the scan root like findings.
+#[napi(object)]
+pub struct ProfileFile {
+    pub file: String,
+    pub ms: f64,
+}
+
+impl From<core::ProfileFile> for ProfileFile {
+    fn from(v: core::ProfileFile) -> Self {
+        let core::ProfileFile { file, ms } = v;
+        Self { file, ms }
+    }
+}
+
+/// Opt-in timing breakdown of one native scan. Each list is sorted by descending `ms`.
+#[napi(object)]
+pub struct ProfileReport {
+    pub files: Vec<ProfileFile>,
+    pub phases: Vec<ProfilePhase>,
+    pub rules: Vec<ProfileRule>,
+    /// Total wall-clock of the native scan, in milliseconds.
+    pub total_ms: f64,
+}
+
+impl From<core::ProfileReport> for ProfileReport {
+    fn from(v: core::ProfileReport) -> Self {
+        let core::ProfileReport { files, phases, rules, total_ms } = v;
+        Self {
+            files: files.into_iter().map(Into::into).collect(),
+            phases: phases.into_iter().map(Into::into).collect(),
+            rules: rules.into_iter().map(Into::into).collect(),
+            total_ms,
         }
     }
 }

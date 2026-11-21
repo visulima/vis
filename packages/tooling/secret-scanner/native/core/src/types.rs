@@ -1,6 +1,7 @@
 //! Plain-Rust option, finding and report types of the scanner API. The napi addon
 //! mirrors these one-to-one (same field names, camelCased on the JS side).
 
+use crate::profile::ProfileReport;
 use crate::suppression::SuppressionReason;
 
 #[derive(Clone, Debug, Default)]
@@ -48,6 +49,9 @@ pub struct ScanOptions {
     /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
     /// match; without it they never do.
     pub commit: Option<String>,
+    /// Collect opt-in timing data (phases, per-file, per-rule) and attach it to
+    /// `ScanReport.profile`. Adds minor overhead; off by default.
+    pub profile: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +179,8 @@ pub struct ScanReport {
     pub skipped: Vec<SkippedFile>,
     /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
     pub allow_warnings: Vec<AllowWarning>,
+    /// Timing data. `None` unless `ScanOptions.profile` was set.
+    pub profile: Option<ProfileReport>,
 }
 
 #[derive(Clone, Debug)]

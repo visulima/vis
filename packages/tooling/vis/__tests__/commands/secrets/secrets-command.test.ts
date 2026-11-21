@@ -37,6 +37,7 @@ describe("secrets command", () => {
                 "include-hidden",
                 "no-gitignore",
                 "max-size",
+                "profile",
                 "stdin",
                 "update-baseline",
             ]),

@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 
 import { isAccessibleSync, readJsonSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding } from "@visulima/secret-scanner";
+import type { Finding, ScanProfile } from "@visulima/secret-scanner";
 import { baselineKeys, fingerprint, legacyFingerprint, maskFinding, wholeMatchFingerprint } from "@visulima/secret-scanner";
 
 import { writeReportFileSync } from "./secure-write";
@@ -74,6 +74,15 @@ export const rebaseFinding = <F extends Finding>(finding: F, base: string, root:
     const file = rebaseFile(finding.file, base, root);
 
     return file === finding.file ? finding : { ...finding, file };
+};
+
+/** The same rewrite for the file rows of a scan profile. */
+export const rebaseProfile = (profile: ScanProfile, base: string, root: string): ScanProfile => {
+    const files = profile.files.map((entry) => {
+        return { ...entry, file: rebaseFile(entry.file, base, root) };
+    });
+
+    return { ...profile, files };
 };
 
 /**

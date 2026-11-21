@@ -1,7 +1,16 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { dim, green, yellow } from "@visulima/colorize";
 import { relative, resolve } from "@visulima/path";
-import type { AllowWarning, Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import type {
+    AllowWarning,
+    Finding,
+    GitleaksIgnoreEntry,
+    GitSkippedBlob,
+    RuleInfo,
+    ScanProfile,
+    SkippedFile,
+    SuppressedFinding,
+} from "@visulima/secret-scanner";
 import { listRules } from "@visulima/secret-scanner";
 
 import { pail } from "../../io/logger";
@@ -27,6 +36,8 @@ export interface ScanOutcome {
     /** Allow markers naming rule ids that are not active. */
     allowWarnings: AllowWarning[];
     findings: Finding[];
+    /** Timing breakdown; present only with `--profile`. */
+    profile?: ScanProfile;
     /** Files (working-tree scans) or git blobs (`--history`, `--staged`) the scan did not read. */
     skipped: (GitSkippedBlob | SkippedFile)[];
     skippedUnit: "blob" | "file";
@@ -69,6 +80,65 @@ export const printDiagnostics = (outcome: ScanOutcome, context: ReportingContext
     // Explicitly requested, so printed even with --quiet.
     if (flags.logIgnored) {
         process.stderr.write(`${formatSuppressed(outcome.suppressed, root, useColor)}\n`);
+    }
+};
+
+const LABEL_WIDTH = 44;
+
+/** Fit a label on one terminal line, cutting the start (paths: keep the file name) or the end (patterns). */
+const fitLabel = (value: string, width: number, keep: "end" | "start" = "start"): string => {
+    // Regexes can contain newlines; keep every row to a single terminal line.
+    const flat = value.replaceAll(/\s+/gu, " ").trim();
+
+    if (flat.length <= width) {
+        return flat.padEnd(width);
+    }
+
+    return keep === "end" ? `…${flat.slice(flat.length - width + 1)}` : `${flat.slice(0, width - 1)}…`;
+};
+
+const timingRow = (label: string, ms: number, count: number, suffix = ""): string =>
+    `  ${label} ${ms.toFixed(1).padStart(7)} ms  ×${String(count)}${suffix}`;
+
+/** A profile with nothing in it, for a scan that selected no files. */
+export const emptyProfile = (): ScanProfile => {
+    return { files: [], phases: [], rules: [], totalMs: 0 };
+};
+
+/** Render an opt-in profile for humans. Kept here so stdout stays machine-readable. */
+export const formatProfile = (profile: ScanProfile, useColor = false): string => {
+    const heading = (text: string): string => (useColor ? dim(text) : text);
+    const lines = [`${heading("profile:")} ${profile.totalMs.toFixed(1)} ms total, ${String(profile.files.length)} file(s)`];
+    const section = (name: string, rows: string[]): void => {
+        lines.push(heading(`${name}:`), ...(rows.length > 0 ? rows : ["  (none)"]));
+    };
+
+    section(
+        "phases",
+        profile.phases.slice(0, 10).map((phase) => timingRow(fitLabel(phase.name, LABEL_WIDTH), phase.ms, phase.count)),
+    );
+    section(
+        "rules",
+        profile.rules
+            .slice(0, 10)
+            .map((rule) => timingRow(fitLabel(rule.ruleId, LABEL_WIDTH), rule.ms, rule.count, `  ${String(rule.matches)} match(es)`)),
+    );
+    section(
+        "files",
+        profile.files.slice(0, 10).map((file) => `  ${fitLabel(file.file, LABEL_WIDTH, "end")} ${file.ms.toFixed(1).padStart(7)} ms`),
+    );
+
+    return lines.join("\n");
+};
+
+/**
+ * Timing is explicitly requested, so print it even with `--quiet`. Like the
+ * other diagnostics it goes to stderr: raw table output shouldn't pass through
+ * the logger, and stdout carries `--format` output.
+ */
+export const printProfile = (profile: ScanProfile | undefined, useColor: boolean): void => {
+    if (profile !== undefined) {
+        process.stderr.write(`${formatProfile(profile, useColor)}\n`);
     }
 };
 

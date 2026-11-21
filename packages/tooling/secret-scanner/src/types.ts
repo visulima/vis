@@ -226,6 +226,14 @@ export interface ScanOptions {
     overridesRoot?: string;
 
     /**
+     * Collect timing data and expose it as `ScanResult.profile`. The native
+     * scan records phases, per-file and per-rule durations; the TypeScript
+     * pipeline adds its own phases (`postprocess`, `validate`, git plumbing). Off by default — opt in from the CLI with
+     * `vis secrets --profile`.
+     */
+    profile?: boolean;
+
+    /**
      * Mask `match` / `secret` strings in every emitted finding. Default `true`;
      * set `false` to reveal values. Detection, heuristics, checksum filtering,
      * suppression and validation always use the real values; only the returned
@@ -392,6 +400,41 @@ export interface SkippedFile {
     reason: SkipReason;
 }
 
+/** One coarse phase of a scan, with its total duration and invocation count. */
+export interface ScanProfilePhase {
+    count: number;
+    ms: number;
+    name: string;
+}
+
+/** Time spent in one rule's matcher across every file and pass. */
+export interface ScanProfileRule {
+    /** Matcher invocations, not findings. */
+    count: number;
+    /** Findings the rule produced in this scan. */
+    matches: number;
+    ms: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+    ruleId: string;
+}
+
+/** Wall-clock cost of scanning one file. */
+export interface ScanProfileFile {
+    /** Relative to the scan root like findings; history scans append `@&lt;short commit>`. */
+    file: string;
+    ms: number;
+}
+
+/** Opt-in timing breakdown of a scan. Each list is sorted by descending `ms`. */
+export interface ScanProfile {
+    files: ScanProfileFile[];
+    phases: ScanProfilePhase[];
+    rules: ScanProfileRule[];
+    /** Accumulated scan time in milliseconds: native scan wall clocks plus non-overlapping phases. */
+    totalMs: number;
+}
+
 /**
  * An inline allow marker (`gitleaks:allow`, `secret-scanner:allow`, an allow-start /
  * allow-end boundary or a `pragma: allowlist nextline secret`) that lists rule ids
@@ -421,6 +464,8 @@ export interface ScanResult {
     /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
     allowWarnings: AllowWarning[];
     findings: Finding[];
+    /** Timing breakdown; present only when `ScanOptions.profile` was set. */
+    profile?: ScanProfile;
     /** Files that could not be read. A scan with entries here is not proof of "no secrets". */
     skipped: SkippedFile[];
     /** Suppressed findings; empty unless `reportSuppressed` is on. */

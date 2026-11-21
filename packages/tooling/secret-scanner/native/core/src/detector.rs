@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
+use crate::profile::{self, RuleScope};
 use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
 use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, AllowRegion, SuppressionReason};
 
@@ -233,6 +234,7 @@ pub fn detect(
     // Pre-compute line offsets for fast line/col lookup
     let line_offsets = compute_line_offsets(content);
 
+    let profiling = profile::is_active();
     let mut out: Vec<RawFinding> = Vec::new();
     for (i, &active) in candidates.iter().enumerate() {
         if !active {
@@ -245,6 +247,15 @@ pub fn detect(
                 continue;
             }
         }
+        let path_only = rule.engine.is_none() && rule.path_regex.is_some();
+        // Decoded passes skip path-only rules (the file was flagged on the plain pass) and
+        // rules with text replacements (their offsets would not map back).
+        if pass == Pass::Decoded && (path_only || !rule.pre_regex_replace.is_empty()) {
+            continue;
+        }
+        // Started only for rules that get past the filters, so the profile counts the
+        // rules whose matcher actually ran.
+        let _timer = profiling.then(|| RuleScope::start(i));
         // Path-only rules: emit a finding for the file itself.
         //
         // We consult **rule-level** allowlists only so authors can suppress matches
@@ -254,10 +265,7 @@ pub fn detect(
         // purpose is to flag those very files (e.g. `exposed-lockfile-in-build-output`).
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
-        if rule.engine.is_none() && rule.path_regex.is_some() {
-            if pass == Pass::Decoded {
-                continue;
-            }
+        if path_only {
             let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "", opts.commit);
 
             if path_suppressed && !opts.report_suppressed {
@@ -288,9 +296,6 @@ pub fn detect(
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
-        if pass == Pass::Decoded && !rule.pre_regex_replace.is_empty() {
-            continue;
-        }
 
         // Per-rule pre-regex text replacement. When a rule declares replacements we build a
         // new scratch `String` and rewrite line offsets for it; otherwise we scan the original

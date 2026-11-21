@@ -7,7 +7,8 @@ import type { SuppressionContext } from "./pipeline";
 import { createSuppressionContext } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { prepareScan } from "./prepare-scan";
-import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { ProfileAccumulator } from "./profile";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, ScanProfile, SuppressedFinding } from "./types";
 
 export interface ScanSession {
     context: SuppressionContext;
@@ -39,7 +40,18 @@ export interface FinishResultOptions {
     allowWarnings?: AllowWarning[];
     /** Report unused commit-scoped `.gitleaksignore` entries too (git history scans). */
     includeCommitEntries?: boolean;
+    /** Timing collected during the scan; the result carries a profile only when this is set. */
+    profile?: ProfileAccumulator;
 }
+
+type FinishedResult<F extends Finding, S> = {
+    allowWarnings: AllowWarning[];
+    findings: F[];
+    profile?: ScanProfile;
+    skipped: S[];
+    suppressed: SuppressedFinding<F>[];
+    unusedIgnores: GitleaksIgnoreEntry[];
+};
 
 /** Assemble a scan result, adding the `.gitleaksignore` entries nothing matched. */
 export const finishResult = <F extends Finding, S>(
@@ -47,10 +59,11 @@ export const finishResult = <F extends Finding, S>(
     skipped: S[],
     context: SuppressionContext,
     options: FinishResultOptions = {},
-): { allowWarnings: AllowWarning[]; findings: F[]; skipped: S[]; suppressed: SuppressedFinding<F>[]; unusedIgnores: GitleaksIgnoreEntry[] } => {
+): FinishedResult<F, S> => {
     return {
         allowWarnings: options.allowWarnings ?? [],
         findings: processed.findings,
+        ...(options.profile === undefined ? {} : { profile: options.profile.build(processed.findings) }),
         skipped,
         suppressed: processed.suppressed,
         unusedIgnores: context.ignore?.unused({ includeCommitEntries: options.includeCommitEntries === true }) ?? [],
