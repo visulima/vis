@@ -9,8 +9,8 @@ import { readJsonSync } from "@visulima/fs";
 import { findMonorepoRootSync } from "@visulima/package";
 import { join } from "@visulima/path";
 
+import { groupListing } from "../bin/group-listing.mjs";
 import { runAndExit } from "./cli-run";
-import { cacheGroupHelpArguments, cacheGroupHelpExitCode } from "./commands/cache/group-help";
 import { isBareMigrateInvocation } from "./commands/migrate/detect-bare";
 import { runMigrateInteractive } from "./commands/migrate/interactive";
 import { isUserError } from "./errors/vis-user-error";
@@ -57,15 +57,27 @@ export const runCli = async (): Promise<void> => {
         // No workspace root or package.json found — skip
     }
 
-    // Start background upgrade check immediately (non-blocking)
-    const upgradeCheckCallback = startUpgradeCheck(getPackageVersion(), process.argv[2] ?? "");
+    // A command group has no command of its own, so cerebro would print nothing for `vis cache`: run
+    // `vis help cache` instead, and finish with the exit code the group invocation calls for.
+    const groupHelp = groupListing(process.argv.slice(2));
+    // The command the hooks below see is the one that runs, so `help` keeps its opt-outs.
+    const effectiveArgs = groupHelp?.argv ?? process.argv.slice(2);
 
-    // `cache` has no command of its own, so cerebro would print nothing for it: run `vis help cache`
-    // instead. The exit code is set below, once the CLI is built.
-    const groupHelpExitCode = cacheGroupHelpExitCode(process.argv.slice(2));
+    if (groupHelp !== undefined) {
+        process.exitCode = groupHelp.exitCode;
+    }
+
+    // Start background upgrade check immediately (non-blocking)
+    const upgradeCheckCallback = startUpgradeCheck(getPackageVersion(), effectiveArgs[0] ?? "");
+
+    if (groupHelp?.exitCode === 1) {
+        // The bare group is a usage error: its listing goes to stderr and leaves stdout empty. The help
+        // output is formatted by the logger, which holds this stream, so only the write is redirected.
+        process.stdout.write = process.stderr.write.bind(process.stderr);
+    }
 
     const cli = createCerebro("vis", {
-        argv: groupHelpExitCode === undefined ? undefined : cacheGroupHelpArguments(process.argv.slice(2)),
+        argv: groupHelp?.argv,
         packageName: "vis",
         packageVersion: getPackageVersion(),
     });
@@ -115,7 +127,7 @@ export const runCli = async (): Promise<void> => {
     registerCommands(cli);
 
     // Post-command: upgrade notice + tips
-    cli.addPlugin(postCommandPlugin(upgradeCheckCallback));
+    cli.addPlugin(postCommandPlugin(upgradeCheckCallback, effectiveArgs));
 
     if (isBareMigrateInvocation(process.argv.slice(2))) {
         const { loadVisConfig } = await import("./config/config");
@@ -154,10 +166,6 @@ export const runCli = async (): Promise<void> => {
         }
 
         return;
-    }
-
-    if (groupHelpExitCode !== undefined) {
-        process.exitCode = groupHelpExitCode;
     }
 
     await runAndExit(cli);

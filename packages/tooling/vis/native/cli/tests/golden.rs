@@ -59,6 +59,13 @@ fn fixture(tag: &str) -> PathBuf {
 /// Run `exe` the way the goldens were captured: hermetic colour and width
 /// environment, nag output off, stdout only.
 fn capture(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Path) -> (Option<i32>, Vec<u8>) {
+    let (code, stdout, _) = capture_streams(exe, args, color, width, cwd);
+
+    (code, stdout)
+}
+
+/// As `capture`, with stderr as well.
+fn capture_streams(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Path) -> (Option<i32>, Vec<u8>, Vec<u8>) {
     let mut command = Command::new(exe);
 
     command
@@ -81,7 +88,7 @@ fn capture(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Path) -> (O
 
     let output = command.output().unwrap_or_else(|error| panic!("run {}: {error}", exe.display()));
 
-    (output.status.code(), output.stdout)
+    (output.status.code(), output.stdout, output.stderr)
 }
 
 fn subject() -> PathBuf {
@@ -150,25 +157,30 @@ fn help_output_matches_goldens() {
     assert!(failures.is_empty(), "golden mismatches:\n{}", failures.join("\n"));
 }
 
-/// `vis cache` has no command of its own: its `--help`, `-h` and bare form print the stored
-/// `help cache` capture, exiting 0 for the help flags and 1 for the bare group, as the Node CLI does.
+/// `vis cache` has no command of its own: its `--help` and `-h` print the stored `help cache` capture
+/// on stdout and exit 0. The bare group prints it on stderr, leaving stdout empty, and exits 1, as the
+/// other bare command groups do.
 #[test]
 fn cache_group_help_matches_the_help_cache_golden() {
     let cwd = fixture("cache-group");
     let mut failures = Vec::new();
 
-    for (args, expected_code) in
-        [(&["cache", "--help"][..], 0), (&["cache", "-h"], 0), (&["cache"], 1), (&["-v", "cache", "-h"], 0)]
-    {
+    for (args, expected_code, on_stdout) in [
+        (&["cache", "--help"][..], 0, true),
+        (&["cache", "-h"], 0, true),
+        (&["cache"], 1, false),
+        (&["-v", "cache", "-h"], 0, true),
+    ] {
         for width in WIDTHS {
             let path = golden_dir().join(format!("help-cache-{width}.txt"));
-            let expected = fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-            let (code, actual) = capture(&subject(), args, true, width, &cwd);
+            let golden = fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let (code, stdout, stderr) = capture_streams(&subject(), args, true, width, &cwd);
+            let (listing, silent) = if on_stdout { (stdout, stderr) } else { (stderr, stdout) };
 
-            if code != Some(expected_code) || actual != expected {
+            if code != Some(expected_code) || listing != golden || !silent.is_empty() {
                 failures.push(format!(
                     "{args:?} at {width} columns (exit {code:?}, want {expected_code}): {}",
-                    first_difference(&expected, &actual)
+                    first_difference(&golden, &listing)
                 ));
             }
         }

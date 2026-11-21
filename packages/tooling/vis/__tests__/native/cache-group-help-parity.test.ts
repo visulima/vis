@@ -11,8 +11,9 @@ import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 /**
  * `cache` is a command group with no command of its own. `vis cache`, `vis cache --help` and
  * `vis cache -h` print the same listing as `vis help cache`, in the Node CLI and in the native
- * binary alike: exit 0 for the help flags, 1 for the bare group. Both engines run every shape here
- * and must agree on stdout, stderr and the exit status.
+ * binary alike. The help flags print it on stdout and exit 0; the bare group is a usage error, as for
+ * the other bare groups: the listing goes to stderr, stdout stays empty and the exit status is 1.
+ * Both engines run every shape here and must agree on stdout, stderr and the exit status.
  */
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -32,6 +33,7 @@ const environment = (columns: string, color: boolean): Record<string, string> =>
     const env: Record<string, string> = {
         COLUMNS: columns,
         PATH: process.env["PATH"] ?? "",
+        VIS_CLI_TEST: "1",
         VIS_NO_MCP_PROMOTE: "1",
         VIS_NO_SPONSOR: "1",
         VIS_NO_UPDATE_CHECK: "1",
@@ -73,20 +75,24 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     it.each(shapes.flatMap(([args, code]) => ["80", "120"].map((columns) => [args, code, columns] as const)))(
         "`vis %j` exits %i and prints `vis help cache` at %s columns, in both engines",
         (args, code, columns) => {
-            expect.assertions(7);
+            expect.assertions(8);
 
             const env = environment(columns, !args.includes("--no-color"));
             const expected = runNode(["help", "cache"], env);
             const node = runNode(args, env);
             const native = runNative(args, env, paths.stub);
 
+            // The bare group (exit 1) lists on stderr, the help flags (exit 0) on stdout.
+            const [listing, silent] = code === 0 ? (["stdout", "stderr"] as const) : (["stderr", "stdout"] as const);
+
             expect(expected.stdout).toContain("cache list");
-            expect(node.stdout).toBe(expected.stdout);
+            expect(node[listing]).toBe(expected.stdout);
             expect(node.status).toBe(code);
-            expect(native.stdout).toBe(expected.stdout);
-            expect(native.stderr).toBe(node.stderr);
+            expect(native[listing]).toBe(expected.stdout);
+            expect(native[silent]).toBe(node[silent]);
             expect(native.status).toBe(code);
-            expect(node.stderr).toBe("");
+            expect(node[silent]).toBe("");
+            expect(native[listing]).toBe(node[listing]);
         },
     );
 });
