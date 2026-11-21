@@ -224,7 +224,7 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
     if (mode.kind === "stdin") {
         const findings = isPathExcluded(mode.filename, scanOptions, root) ? [] : await scanString(mode.content, mode.filename, scanOptions);
 
-        return { findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
+        return { allowWarnings: [], findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
     }
 
     if (mode.kind === "history") {
