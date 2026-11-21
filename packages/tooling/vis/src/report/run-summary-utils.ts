@@ -39,7 +39,8 @@ export const diffHashBuckets = (current: Record<string, string> | undefined, pre
 
 export const diffHashDetails = (current: TaskHashDetails | undefined, previous: TaskHashDetails | undefined): HashDetailsDiff => {
     return {
-        commandChanged: (current?.command ?? "") !== (previous?.command ?? ""),
+        // Command hashes from different hash layouts are not comparable.
+        commandChanged: (current?.layout ?? 1) === (previous?.layout ?? 1) && (current?.command ?? "") !== (previous?.command ?? ""),
         implicitDeps: diffHashBuckets(current?.implicitDeps, previous?.implicitDeps),
         nodes: diffHashBuckets(current?.nodes, previous?.nodes),
         runtime: diffHashBuckets(current?.runtime, previous?.runtime),
