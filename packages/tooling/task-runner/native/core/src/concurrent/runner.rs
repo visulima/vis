@@ -135,7 +135,8 @@ impl ConcurrentRunner {
     }
 
     /// Run all commands and collect results without streaming events.
-    pub async fn run_batch(&self) -> ConcurrentRunResult {
+    #[cfg(test)]
+    pub(crate) async fn run_batch(&self) -> ConcurrentRunResult {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         self.run(event_tx).await
     }

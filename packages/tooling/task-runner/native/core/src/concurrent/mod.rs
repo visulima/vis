@@ -1,8 +1,8 @@
-pub mod completion;
-pub mod process;
-pub mod process_group;
+mod completion;
+mod process;
+mod process_group;
 pub mod runner;
-pub mod signal;
+mod signal;
 pub mod types;
 
 #[cfg(test)]
