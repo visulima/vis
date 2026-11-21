@@ -28,6 +28,11 @@ pub fn without_leading_globals(args: &[String]) -> &[String] {
     &args[start..]
 }
 
+/// Command groups that have no command of their own. Their bare form and `--help` list the
+/// subcommands, as `help <group>` does; the Node CLI prints the same (`bin/group-listing.mjs`, whose
+/// list has to match this one).
+const GROUP_LISTINGS: &[&str] = &["cache"];
+
 /// What an invocation asks for, once leading global flags are set aside.
 struct Request<'a> {
     /// Leading non-flag words: the command path, then any positionals.
@@ -43,6 +48,11 @@ impl<'a> Request<'a> {
             rest.iter().take_while(|argument| !argument.starts_with('-')).map(String::as_str).collect();
 
         Self { flags: &rest[words.len()..], words }
+    }
+
+    /// A listed group with nothing but help and valueless global flags after it.
+    fn is_group_listing(&self) -> bool {
+        matches!(self.words.as_slice(), [group] if GROUP_LISTINGS.contains(group)) && self.flags_are_plain()
     }
 
     fn wants_help(&self) -> bool {
@@ -63,6 +73,14 @@ fn emit(text: &str) {
     let _ = stdout.flush();
 }
 
+/// As `emit`, on stderr, where a closed stream is no more worth a panic than on stdout.
+fn emit_stderr(text: &str) {
+    let mut stderr = io::stderr().lock();
+
+    let _ = stderr.write_all(text.as_bytes());
+    let _ = stderr.flush();
+}
+
 /// Whether the invocation asks for help (`--help` / `-h` before any `--`).
 pub fn asks_for_help(args: &[String]) -> bool {
     Request::parse(args).wants_help()
@@ -77,7 +95,9 @@ pub fn answer(args: &[String]) -> Option<i32> {
     let root_help = request.words.is_empty() && request.flags_are_plain() && (bare || request.wants_help());
     let help_command = request.words.first() == Some(&"help");
 
-    if !root_help && !help_command && !(request.wants_help() && !request.words.is_empty()) {
+    let group_listing = request.is_group_listing();
+
+    if !root_help && !help_command && !group_listing && !(request.wants_help() && !request.words.is_empty()) {
         return None;
     }
 
@@ -98,6 +118,21 @@ pub fn answer(args: &[String]) -> Option<i32> {
 
     if help_command {
         return answer_help_command(&manifest, &help, &request);
+    }
+
+    if group_listing {
+        let listing = help_text(&manifest, &help, &request.words)?;
+
+        if request.wants_help() {
+            emit(&listing);
+
+            return Some(0);
+        }
+
+        // The bare group is a usage error, like the other bare groups: nothing on stdout, exit 1.
+        emit_stderr(&listing);
+
+        return Some(1);
     }
 
     let command = manifest::resolve(&manifest.commands, &request.words)?;
@@ -180,6 +215,18 @@ pub fn reject_unknown(args: &[String]) -> Option<i32> {
     Some(1)
 }
 
+/// What `vis help <path>` prints for a command, or for a group of subcommands; `None` when the path
+/// names neither. The group listing of `vis <group>` goes through here too, so the two cannot differ.
+fn help_text(manifest: &Manifest, help: &Help, path: &[&str]) -> Option<String> {
+    if let Some(command) = manifest.find_for_help(&path.join(" ")) {
+        return Some(help.command(command, false));
+    }
+
+    let subcommands = manifest.subcommands_of(path);
+
+    (!subcommands.is_empty()).then(|| help.subcommands(path, &subcommands))
+}
+
 /// `vis help [<command path>…] [--group <name>]`.
 fn answer_help_command(manifest: &Manifest, help: &Help, request: &Request) -> Option<i32> {
     let path = &request.words[1..];
@@ -202,25 +249,15 @@ fn answer_help_command(manifest: &Manifest, help: &Help, request: &Request) -> O
         return Some(0);
     }
 
-    let joined = path.join(" ");
-
-    if let Some(command) = manifest.find_for_help(&joined) {
-        emit(&help.command(command, false));
-
-        return Some(0);
-    }
-
-    let subcommands = manifest.subcommands_of(path);
-
-    if !subcommands.is_empty() {
-        emit(&help.subcommands(path, &subcommands));
+    if let Some(text) = help_text(manifest, help, path) {
+        emit(&text);
 
         return Some(0);
     }
 
     // The Node CLI prints the banner, reports the miss on stderr, and still exits 0.
     emit(&format!("vis v{}\n", help.version));
-    eprintln!("Command \"{joined}\" not found");
+    eprintln!("Command \"{}\" not found", path.join(" "));
 
     Some(0)
 }

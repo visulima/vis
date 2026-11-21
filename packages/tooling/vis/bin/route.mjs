@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { GROUP_LISTINGS } from "./group-listing.mjs";
+
 // Which `vis` invocations the Node launcher (`bin/vis.mjs`) hands to the native
 // binary. Kept free of side effects so the routing table is unit-testable without
 // a binary, the same way `resolve-binary.mjs` is shared.
@@ -207,6 +209,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // stdout stays in Node too: pail colours its output there, and the binary does not.
     if (command === "clean") {
         return helpOrNative(args, platform, () => cleanMayRunNatively(platform, environment, args, interactive));
+    }
+
+    // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
+    // other shape is Node's, which prints the same listing). Windows keeps the help surface in Node.
+    if (GROUP_LISTINGS.includes(command) && args.length === 1) {
+        return platform !== "win32";
     }
 
     // `complete --` is the dynamic endpoint the generated completion scripts call on
