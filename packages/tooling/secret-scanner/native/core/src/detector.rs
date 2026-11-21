@@ -296,8 +296,10 @@ pub fn detect(
         // `preRegexReplace` and a content buffer of size M the worst case is O(N·M) in
         // allocation + replace_all work. Fine for ≤ a handful of rules (the intended use).
         // Avoid bulk-applying it on `generic-api-key`-sized allowlists.
-        // `lines_kept` holds while no replacement matches or inserts a newline, so every
-        // line of the rewritten text is the same line of `content`.
+        // `lines_kept` holds while every replacement stays within one line (no match
+        // spans a newline) and adds no line (the newline count is unchanged, which also
+        // catches a newline inserted through a lookaround capture). Then every line of the
+        // rewritten text is the same line of `content`.
         let (text, text_offsets, lines_kept): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, [usize]>, bool) =
             if rule.pre_regex_replace.is_empty() {
                 (std::borrow::Cow::Borrowed(content), std::borrow::Cow::Borrowed(&line_offsets), true)
@@ -305,10 +307,11 @@ pub fn detect(
                 let mut buf = content.to_string();
                 let mut lines_kept = true;
                 for (from, to) in &rule.pre_regex_replace {
+                    let newlines = lines_kept.then(|| count_newlines(&buf));
                     lines_kept = lines_kept
-                        && !to.contains('\n')
                         && from.find_iter(&buf).all(|found| found.is_ok_and(|found| !found.as_str().contains('\n')));
                     let replaced = from.replace_all(&buf, to.as_str());
+                    lines_kept = lines_kept && newlines == Some(count_newlines(&replaced));
                     buf = replaced.into_owned();
                 }
                 let lo = compute_line_offsets(&buf);
@@ -420,6 +423,10 @@ struct MatchSpan {
     match_end: usize,
     secret_start: usize,
     secret_end: usize,
+}
+
+fn count_newlines(text: &str) -> usize {
+    text.bytes().filter(|&byte| byte == b'\n').count()
 }
 
 /// Everything [`MatchCtx::emit`] needs about the rule and the text it ran over.

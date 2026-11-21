@@ -784,6 +784,18 @@ mod tests {
     }
 
     #[test]
+    fn a_newline_inserted_through_a_lookahead_capture_is_noticed() {
+        // `(?=(\n))` matches no newline itself, yet `$1` inserts one, pushing the secret
+        // onto line 3, where the file as written holds an unrelated marker.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"(?=(\n))","to":"$1"}]}]}"#,
+        );
+        let text = "a\nkey = TOK_ABCDEFGH\nz // gitleaks:allow\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert_eq!(findings.len(), 1, "{findings:?}");
+    }
+
+    #[test]
     fn keeps_context_for_keyword_rules() {
         // `password: <base64>` — the keyword sits outside the encoded span.
         let rs = ruleset(
