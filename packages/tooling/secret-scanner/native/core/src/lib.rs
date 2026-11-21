@@ -22,6 +22,6 @@ mod walker;
 pub use profile::{ProfileFile, ProfilePhase, ProfileReport, ProfileRule};
 pub use scan::{inspect_ruleset, list_rules, scan_dirs, scan_files, scan_text, ScanError};
 pub use types::{
-    AllowWarning, Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule,
+    AllowWarning, Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule, SourceSpan,
     SuppressedFinding,
 };

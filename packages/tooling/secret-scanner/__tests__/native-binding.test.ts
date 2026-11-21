@@ -32,4 +32,25 @@ describe("native-binding", () => {
         expect(listed.profile?.totalMs).toBe(0);
         expect(plain.profile).toBeUndefined();
     });
+
+    it("exposes byte spans that point back into the scanned text", { timeout: 30_000 }, async () => {
+        expect.assertions(3);
+
+        // eslint-disable-next-line no-useless-concat -- split so automated push protection doesn't flag the fixture
+        const token = "ghp_aB3dE4fG5hI6jK7l" + "M8nO9pQ0rS1tU2vW3xY4zA5b";
+        const content = `# config\r\ngithub_token = "${token}"\r\n`;
+        const findings = await scanString(content, "fake.env", { redact: false });
+        const finding = findings.find((entry) => entry.ruleId === "github-pat");
+
+        expect(finding).toBeDefined();
+
+        if (finding?.sourceSpan === undefined) {
+            return;
+        }
+
+        const bytes = Buffer.from(content, "utf8");
+
+        expect(bytes.subarray(finding.sourceSpan.secretStart, finding.sourceSpan.secretEnd).toString("utf8")).toBe(finding.secret);
+        expect(bytes.subarray(finding.sourceSpan.matchStart, finding.sourceSpan.matchEnd).toString("utf8")).toBe(finding.match);
+    });
 });

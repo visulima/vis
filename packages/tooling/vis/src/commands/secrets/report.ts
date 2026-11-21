@@ -15,6 +15,8 @@ import { listRules } from "@visulima/secret-scanner";
 
 import { pail } from "../../io/logger";
 import type { BaselineDiff } from "../../secrets/baseline";
+import type { FixResult } from "../../secrets/fix";
+import { FIX_MASK, FIX_REPLACEMENT } from "../../secrets/fix";
 import { formatAllowWarnings, formatSkipped } from "../../secrets/format";
 import type { ReportFormat, ReportTarget } from "../../secrets/report";
 import { formatSuppressed, formatUnusedIgnores, renderReport } from "../../secrets/report";
@@ -195,5 +197,36 @@ export const applyDiagnosticGates = (outcome: ScanOutcome, flags: SecretsFlags):
             `${String(outcome.unusedIgnores.length)} unused ${GITLEAKS_IGNORE} entr${outcome.unusedIgnores.length === 1 ? "y" : "ies"} (--fail-on-unused-ignores).`,
         );
         process.exitCode = 1;
+    }
+};
+
+/**
+ * Fix mode prints only rule ids, locations and fixed-length stand-ins. Never
+ * echo a finding's `match` or `secret`, even masked at the edges: a masked
+ * value is still a partial disclosure.
+ */
+export const printFixResult = (result: FixResult, unscanned: number, dryRun: boolean, quiet: boolean): void => {
+    if (result.replacements === 0 && result.skipped.length === 0) {
+        if (!quiet) {
+            process.stderr.write(unscanned > 0 ? `No secrets detected, but ${String(unscanned)} file(s) were not scanned.\n` : "No secrets detected.\n");
+        }
+
+        return;
+    }
+
+    for (const edit of result.edits) {
+        process.stderr.write(`${edit.file}:${String(edit.line)} ${edit.ruleId}: ${FIX_MASK} -> ${FIX_REPLACEMENT}${dryRun ? " (dry-run)" : ""}\n`);
+    }
+
+    for (const skip of result.skipped) {
+        process.stderr.write(`Skipped ${skip.file}:${String(skip.line)} ${skip.ruleId}: ${skip.reason}\n`);
+    }
+
+    if (!quiet) {
+        process.stderr.write(`${dryRun ? "Would replace" : "Replaced"} ${String(result.replacements)} secret(s) in ${String(result.changedFiles)} file(s).\n`);
+
+        if (unscanned > 0) {
+            process.stderr.write(`${String(unscanned)} file(s) were not scanned.\n`);
+        }
     }
 };

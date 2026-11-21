@@ -302,6 +302,21 @@ export interface ScanOptions {
     };
 }
 
+/** Why a finding carries no `sourceSpan`. Never contains a secret value. */
+export type SpanUnavailableReason = "archive entry" | "decoded content" | "lossy UTF-8 decoding" | "path-only finding" | "pre-regex-replaced content";
+
+/**
+ * Byte spans into the scanned content, for consumers that rewrite findings in
+ * place. Omitted for path-only, decoded, archive-entry and pre-replaced text
+ * findings, where the offsets cannot be matched to the source file.
+ */
+export interface SourceSpan {
+    matchEnd: number;
+    matchStart: number;
+    secretEnd: number;
+    secretStart: number;
+}
+
 export interface Finding {
     /**
      * Rule ids that matched the same byte span as this finding and were collapsed
@@ -341,6 +356,10 @@ export interface Finding {
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */
     source?: string;
+    sourceSpan?: SourceSpan;
+
+    /** Fixed explanation when `sourceSpan` is withheld. */
+    spanUnavailableReason?: SpanUnavailableReason;
     startColumn: number;
     startLine: number;
     tags: string[];
@@ -362,6 +381,8 @@ export interface RequiredFinding {
     match: string;
     ruleId: string;
     secret: string;
+    sourceSpan?: SourceSpan;
+    spanUnavailableReason?: SpanUnavailableReason;
     startColumn: number;
     startLine: number;
 }

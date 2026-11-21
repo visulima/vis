@@ -54,6 +54,17 @@ pub struct ScanOptions {
     pub profile: Option<bool>,
 }
 
+/// Byte spans into the scanned content, for consumers that rewrite findings in
+/// place. Only present when the offsets can be trusted against the source file:
+/// path-only, decoded, archive-entry and pre-replaced text findings omit it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub match_start: u32,
+    pub match_end: u32,
+    pub secret_start: u32,
+    pub secret_end: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Finding {
     pub rule_id: String,
@@ -87,6 +98,11 @@ pub struct Finding {
     /// was not rewritten against a root (in-memory scans, history scans, paths outside every
     /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
     pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld, e.g. `decoded content`.
+    /// Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 /// A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
@@ -125,6 +141,11 @@ pub struct SuppressedFinding {
     /// was not rewritten against a root (in-memory scans, history scans, paths outside every
     /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
     pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld, e.g. `decoded content`.
+    /// Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
@@ -140,6 +161,8 @@ pub struct RequiredFinding {
     pub r#match: String,
     pub secret: String,
     pub decoded: Option<Vec<String>>,
+    pub source_span: Option<SourceSpan>,
+    pub span_unavailable_reason: Option<String>,
 }
 
 /// A file the scan could not read. `reason` is `"permission-denied"`,
@@ -226,6 +249,8 @@ impl Finding {
             decoded: self.decoded,
             required_findings: self.required_findings,
             root: self.root,
+            source_span: self.source_span,
+            span_unavailable_reason: self.span_unavailable_reason,
             suppressed_by: reason.as_str().to_string(),
         }
     }

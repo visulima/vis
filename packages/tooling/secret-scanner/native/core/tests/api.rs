@@ -104,6 +104,23 @@ fn profile_file_paths_are_relative_to_the_scan_root() {
 }
 
 #[test]
+fn lossy_decoded_files_have_no_rewrite_spans() {
+    let dir = std::env::temp_dir().join(format!("secret-scanner-core-lossy-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("leak.txt");
+    let mut bytes = vec![0xff, b'!'];
+    bytes.extend_from_slice(b"demo_abcdef123456");
+    fs::write(&file, bytes).unwrap();
+
+    let report = scan_files(vec![file.to_string_lossy().into_owned()], &options()).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(report.findings.len(), 1);
+    assert!(report.findings[0].source_span.is_none());
+    assert_eq!(report.findings[0].span_unavailable_reason.as_deref(), Some("lossy UTF-8 decoding"));
+}
+
+#[test]
 fn empty_inputs_return_an_empty_report_without_needing_a_config() {
     assert!(scan_dirs(Vec::new(), &ScanOptions::default()).unwrap().findings.is_empty());
     assert!(scan_files(Vec::new(), &ScanOptions::default()).unwrap().findings.is_empty());
