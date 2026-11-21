@@ -1198,16 +1198,11 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 args.push("--loglevel".into());
                 args.push("silent".into());
             }
-            // Extract binary name: handle scoped packages like @scope/pkg@1.0
-            let without_version = opts
-                .package
-                .split('@')
-                .enumerate()
-                .take_while(|(i, _)| *i < 2) // keep @scope/pkg, drop @version
-                .map(|(_, s)| s)
-                .collect::<Vec<_>>()
-                .join("@");
-            let bin_name = without_version.rsplit('/').next().unwrap_or(&opts.package).to_string();
+            // The executable is the package name without its scope and version:
+            // `@scope/pkg@1.0` -> `pkg`, `create-vite@6.0.0` -> `create-vite`.
+            let name_start = usize::from(opts.package.starts_with('@'));
+            let without_version = opts.package[name_start..].split('@').next().unwrap_or_default();
+            let bin_name = without_version.rsplit('/').next().unwrap_or_default().to_string();
             args.push("--".into());
             args.push(if bin_name.is_empty() { opts.package.clone() } else { bin_name });
             args.extend(opts.args);
@@ -1500,6 +1495,24 @@ mod tests {
 
         assert_eq!((pnpm.bin.as_str(), pnpm.args), ("pnpm", argv(&["dlx", "create-vite", "my-app"])));
         assert_eq!((bun.bin.as_str(), bun.args[0].as_str()), ("bun", "x"));
+    }
+
+    #[test]
+    fn dlx_npm_runs_the_bin_without_the_version() {
+        let bin_for = |package: &str| {
+            let opts = DlxOptions { package: package.to_owned(), ..Default::default() };
+            let resolved = resolve_dlx("npm", "11.0.0", opts).unwrap();
+
+            (resolved.args[resolved.args.len() - 2..].to_vec(), resolved.args)
+        };
+
+        let (tail, args) = bin_for("create-vite@6.0.0");
+        assert_eq!(tail, ["--", "create-vite"]);
+        assert!(args.contains(&"--package=create-vite@6.0.0".to_owned()));
+
+        assert_eq!(bin_for("create-vite").0, ["--", "create-vite"]);
+        assert_eq!(bin_for("@scope/tool@1.2.3").0, ["--", "tool"]);
+        assert_eq!(bin_for("@scope/tool").0, ["--", "tool"]);
     }
 
     #[test]
