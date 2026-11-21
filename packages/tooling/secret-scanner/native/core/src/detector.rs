@@ -241,13 +241,21 @@ pub fn detect(
             continue;
         }
         let rule = &ruleset.rules[i];
-        let _timer = profiling.then(|| RuleScope::start(i));
         // Rule-level path filter
         if let Some(pr) = &rule.path_regex {
             if !pr.is_match(&path_str).unwrap_or(false) {
                 continue;
             }
         }
+        let path_only = rule.engine.is_none() && rule.path_regex.is_some();
+        // Decoded passes skip path-only rules (the file was flagged on the plain pass) and
+        // rules with text replacements (their offsets would not map back).
+        if pass == Pass::Decoded && (path_only || !rule.pre_regex_replace.is_empty()) {
+            continue;
+        }
+        // Started only for rules that get past the filters, so the profile counts the
+        // rules whose matcher actually ran.
+        let _timer = profiling.then(|| RuleScope::start(i));
         // Path-only rules: emit a finding for the file itself.
         //
         // We consult **rule-level** allowlists only so authors can suppress matches
@@ -257,10 +265,7 @@ pub fn detect(
         // purpose is to flag those very files (e.g. `exposed-lockfile-in-build-output`).
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
-        if rule.engine.is_none() && rule.path_regex.is_some() {
-            if pass == Pass::Decoded {
-                continue;
-            }
+        if path_only {
             let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "", opts.commit);
 
             if path_suppressed && !opts.report_suppressed {
@@ -291,9 +296,6 @@ pub fn detect(
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
-        if pass == Pass::Decoded && !rule.pre_regex_replace.is_empty() {
-            continue;
-        }
 
         // Per-rule pre-regex text replacement. When a rule declares replacements we build a
         // new scratch `String` and rewrite line offsets for it; otherwise we scan the original

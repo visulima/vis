@@ -67,6 +67,24 @@ fn profiling_is_opt_in_and_reports_phases_rules_and_files() {
 }
 
 #[test]
+fn profile_counts_only_rules_that_pass_their_path_filter() {
+    let opts = ScanOptions {
+        config: Some(json!({
+            "rules": [
+                { "id": "demo-token", "description": "demo", "regex": "demo_[a-z0-9]{12}", "keywords": ["demo_"] },
+                { "id": "json-only", "description": "json", "regex": "demo_[a-z0-9]{12}", "keywords": ["demo_"], "path": "\\.json$" }
+            ]
+        })),
+        profile: Some(true),
+        ..Default::default()
+    };
+    let profile = scan_text("demo_abcdef123456", "a.env", &opts).unwrap().profile.unwrap();
+
+    assert!(profile.rules.iter().any(|rule| rule.rule_id == "demo-token"));
+    assert!(profile.rules.iter().all(|rule| rule.rule_id != "json-only"), "{:?}", profile.rules);
+}
+
+#[test]
 fn profile_file_paths_are_relative_to_the_scan_root() {
     let dir =
         std::env::temp_dir().join(format!("ss-profile-{}", std::process::id())).join("a").join("deeply").join("nested");

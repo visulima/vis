@@ -560,8 +560,10 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         scanner.close();
     }
 
-    scanner.profiler?.addPhase("git.listCommits", commitsMs);
+    // The residual first: `git.listCommits` ran before the blob loop and must not be
+    // subtracted from its interval.
     scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+    scanner.profiler?.addPhase("git.listCommits", commitsMs);
 
     return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, includeCommitEntries: true, profile: scanner.profiler });
 };
@@ -683,8 +685,10 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         scanner.close();
     }
 
-    scanner.profiler?.addPhase("git.diff", diffMs);
+    // The residual first: `git.diff` ran before the blob loop and must not be
+    // subtracted from its interval.
     scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+    scanner.profiler?.addPhase("git.diff", diffMs);
 
     return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, profile: scanner.profiler });
 };
