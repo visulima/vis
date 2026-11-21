@@ -4817,7 +4817,7 @@
           "type": "string"
         },
         {
-          "description": "Additional .secretlintignore file to honour (repeatable). Auto-discovered .secretlintignore files are combined with these and with .gitignore; use --no-secretlintignore to disable all of them.",
+          "description": "Additional .secretlintignore file to honour (repeatable). Auto-discovered .secretlintignore files are combined with these and with .gitignore, unless the config sets `secretlintIgnore: false`, in which case only these files apply; use --no-secretlintignore to disable all of them.",
           "multiple": true,
           "name": "secretlintignore",
           "type": "string"
