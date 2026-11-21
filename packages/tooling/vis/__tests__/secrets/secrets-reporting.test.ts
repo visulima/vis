@@ -171,6 +171,14 @@ describe("report emitters", () => {
         expect(annotation).not.toContain(PAT_A);
         expect(annotation).not.toContain("leaked");
     });
+
+    it("names staged findings and archive entries in the message, without location properties", () => {
+        expect.assertions(3);
+
+        expect(emitSecretsGitHub([finding()], { staged: true })).toBe("::error title=github-pat::GitHub PAT%0Asrc/a.ts:3 (staged)\n");
+        expect(emitSecretsGitHub([finding({ file: "dist/bundle.zip!config/.env" })])).toBe("::error title=github-pat::GitHub PAT%0Adist/bundle.zip!config/.env:3\n");
+        expect(emitSecretsGitHub([finding({ file: "notes!.md" })])).toContain("::error file=notes!.md,line=3,");
+    });
 });
 
 describe(toSarifUri, () => {

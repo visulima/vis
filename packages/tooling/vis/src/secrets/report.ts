@@ -57,6 +57,8 @@ export interface RenderContext {
     redact: boolean;
     root: string;
     ruleMetadata: RuleInfo[];
+    /** Findings come from the index (`--staged`), not the checked-out files. */
+    staged?: boolean;
     toolVersion: string;
     useColor: boolean;
 }
@@ -70,7 +72,7 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
             return emitSecretsCsv(relativeFindings());
         }
         case "github": {
-            return emitSecretsGitHub(relativeFindings());
+            return emitSecretsGitHub(relativeFindings(), { staged: context.staged });
         }
         case "gitlab-code-quality": {
             return emitSecretsGitlabCodeQuality(relativeFindings());
