@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 // eslint-disable-next-line import/no-relative-packages -- workspace release script, not a package entry point
-import { isAlreadyPublishedError } from "../../../../../scripts/semantic-release-native-addons.mjs";
+import { getNpmTag, isAlreadyPublishedError, patchVersionCheck } from "../../../../../scripts/semantic-release-native-addons.mjs";
 
 const publishError = (properties: { message?: string; stderr?: string; stdout?: string }): Error =>
     Object.assign(new Error(properties.message ?? "Command failed: pnpm publish"), properties);
@@ -57,5 +57,43 @@ describe(isAlreadyPublishedError, () => {
 
         expect(isAlreadyPublishedError("403 Forbidden: You cannot publish over the previously published versions")).toBe(true);
         expect(isAlreadyPublishedError(undefined)).toBe(false);
+    });
+});
+
+describe(getNpmTag, () => {
+    it.each([
+        ["7.0.0-next.1", "next"],
+        ["7.0.0-rc.2", "next"],
+        ["7.0.0-beta.3", "beta"],
+        ["7.0.0-alpha.4", "alpha"],
+        ["6.8.0", "latest"],
+    ])("maps %s to the %s dist-tag", (version, tag) => {
+        expect(getNpmTag(version)).toBe(tag);
+    });
+});
+
+describe(patchVersionCheck, () => {
+    // The loader interpolates `bindingPackageVersion` at runtime; spell the placeholder out so the fixture stays a plain string.
+    const versionReference = ["$", "{bindingPackageVersion}"].join("");
+    const generated = [
+        "if (bindingPackageVersion !== '6.7.0' && enforceVersionCheck) {",
+        `  throw new Error('mismatch, expected 6.8.0 but got ${versionReference}.')`,
+        "}",
+    ].join("\n");
+
+    it("rewrites the comparison literal together with the error message", () => {
+        expect.assertions(3);
+
+        const { count, patched } = patchVersionCheck(`${generated}\n${generated}`, "6.9.0");
+
+        expect(count).toBe(2);
+        expect(patched).not.toContain("6.7.0");
+        expect(patched.match(/!== '6\.9\.0'/g)).toHaveLength(2);
+    });
+
+    it("fails loudly when only one of the two forms is present", () => {
+        expect.assertions(1);
+
+        expect(() => patchVersionCheck(`expected 6.8.0 but got ${versionReference}`, "6.9.0")).toThrow(/no NAPI version-check/u);
     });
 });
