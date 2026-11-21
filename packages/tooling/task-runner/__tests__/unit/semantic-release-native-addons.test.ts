@@ -69,6 +69,8 @@ describe(getNpmTag, () => {
         ["6.8.0", "latest"],
     ])("maps %s to the %s dist-tag", (version, tag) => {
         expect(getNpmTag(version)).toBe(tag);
+    });
+});
 
 describe(patchVersionCheck, () => {
     // The loader interpolates `bindingPackageVersion` at runtime; spell the placeholder out so the fixture stays a plain string.
