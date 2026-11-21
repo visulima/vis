@@ -31,7 +31,7 @@ const REGISTRY = `http://localhost:${REGISTRY_PORT}/`;
 const VERDACCIO = "verdaccio@6.11.2";
 // The pnpm row runs the exact release it documents; `npx` keeps it independent of the pnpm that builds the repo.
 const PNPM = "pnpm@12.21.0";
-// pnpm 10 still sees installs from projects that have not moved on; it reads `onlyBuiltDependencies` and does not fail on an unapproved build.
+// pnpm 10 approves builds with `onlyBuiltDependencies` and does not fail an install that leaves one unapproved.
 const PNPM_10 = "pnpm@10.34.9";
 
 const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
