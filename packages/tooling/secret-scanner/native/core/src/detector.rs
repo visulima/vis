@@ -337,6 +337,14 @@ pub fn detect(
             path: &path_str,
             text: text_ref,
             line_offsets: offsets_ref,
+            // Allow markers are read from the file as written, so a replacement cannot
+            // rewrite their scope. That needs line numbers to agree; a replacement that
+            // adds or removes lines falls back to the rewritten text.
+            marker_source: if offsets_ref.len() == line_offsets.len() {
+                (content, &line_offsets)
+            } else {
+                (text_ref, offsets_ref)
+            },
             allow_regions: &allow_regions,
             opts,
         };
@@ -421,6 +429,8 @@ struct MatchCtx<'a> {
     /// The text the rule ran over (post `preRegexReplace`) and its line offsets.
     text: &'a str,
     line_offsets: &'a [usize],
+    /// Text and line offsets that inline allow markers are read from.
+    marker_source: (&'a str, &'a [usize]),
     allow_regions: &'a [AllowRegion],
     opts: DetectOptions<'a>,
 }
@@ -486,8 +496,8 @@ impl MatchCtx<'_> {
         // `inline_allow: false` disables all three so CI can audit them.
         let inline_allowed = self.opts.inline_allow
             && inline_suppressed(
-                self.text,
-                self.line_offsets,
+                self.marker_source.0,
+                self.marker_source.1,
                 self.allow_regions,
                 self.ruleset,
                 &self.rule.id,

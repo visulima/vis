@@ -760,6 +760,18 @@ mod tests {
     }
 
     #[test]
+    fn allow_markers_are_read_before_pre_regex_replace() {
+        // The replacement rewrites the rule id inside the marker; the marker as written
+        // still names `tok-rule`, so its finding stays suppressed.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"tok-rule","to":"other-rule"}]},{"id":"other-rule","regex":"OTHER_[A-Z]{8}","keywords":["other_"]}]}"#,
+        );
+        let text = "key = TOK_ABCDEFGH // gitleaks:allow tok-rule\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
     fn keeps_context_for_keyword_rules() {
         // `password: <base64>` — the keyword sits outside the encoded span.
         let rs = ruleset(
