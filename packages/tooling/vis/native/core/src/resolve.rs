@@ -1110,6 +1110,15 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                     a.extend(opts.packages);
                     return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
                 }
+                // `yarn workspace <name> add` targets one workspace; refuse more
+                // rather than silently adding the package somewhere else.
+                if opts.filter.len() > 1 {
+                    return Err("yarn berry add supports a single --filter workspace".into());
+                }
+                if let Some(workspace) = opts.filter.first() {
+                    args.push("workspace".into());
+                    args.push(workspace.clone());
+                }
                 args.push("add".into());
                 if opts.save_dev {
                     args.push("--dev".into());
@@ -1474,6 +1483,23 @@ mod tests {
         let resolved = resolve_add("npm", "11.0.0", opts).unwrap();
 
         assert_eq!(resolved.args, ["install", "--workspace", "app", "--include-workspace-root", "react"]);
+    }
+
+    #[test]
+    fn add_yarn_berry_routes_filter_to_the_workspace() {
+        let opts =
+            AddOptions { packages: argv(&["react"]), save_dev: true, filter: argv(&["app"]), ..Default::default() };
+        let resolved = resolve_add("yarn", "4.5.0", opts).unwrap();
+
+        assert_eq!(resolved.bin, "yarn");
+        assert_eq!(resolved.args, ["workspace", "app", "add", "--dev", "react"]);
+    }
+
+    #[test]
+    fn add_yarn_berry_rejects_multiple_filters() {
+        let opts = AddOptions { packages: argv(&["react"]), filter: argv(&["app", "web"]), ..Default::default() };
+
+        assert!(resolve_add("yarn", "4.5.0", opts).is_err());
     }
 
     #[test]
