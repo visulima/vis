@@ -21,7 +21,7 @@ use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, ProcessEvent};
 /// and spawns a task that waits for both I/O streams to drain AND the process to
 /// exit before sending a `CompletionMessage` on the provided channel.
 /// This guarantees all stdout/stderr events arrive before the close event.
-pub fn spawn_process(
+pub(crate) fn spawn_process(
     index: u32,
     config: &ConcurrentCommandConfig,
     event_tx: mpsc::UnboundedSender<ProcessEvent>,
@@ -147,24 +147,24 @@ pub fn spawn_process(
 }
 
 /// Message sent when a process completes (after all I/O is drained).
-pub struct CompletionMessage {
-    pub index: u32,
-    pub close_event: ConcurrentCloseEvent,
+pub(crate) struct CompletionMessage {
+    pub(crate) index: u32,
+    pub(crate) close_event: ConcurrentCloseEvent,
 }
 
 /// Info about a spawned process (for tracking/killing).
-pub struct ProcessInfo {
-    pub index: u32,
-    pub pid: Option<u32>,
+pub(crate) struct ProcessInfo {
+    pub(crate) index: u32,
+    pub(crate) pid: Option<u32>,
     /// Set to `true` by the completion waiter once the child has exited
     /// and its event has been dispatched. The force-kill timer checks
     /// this with Acquire ordering before issuing SIGKILL so it can't
     /// hit a PID the kernel has already recycled for another process.
-    pub terminated: Arc<AtomicBool>,
+    pub(crate) terminated: Arc<AtomicBool>,
     /// Windows: Job Object that owns the process tree.
     /// When terminated or dropped, kills all child processes.
     #[cfg(windows)]
-    pub job: Option<process_group::JobObject>,
+    pub(crate) job: Option<process_group::JobObject>,
 }
 
 /// Idle interval after which a partial (non-newline-terminated) line is
