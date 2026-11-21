@@ -1,3 +1,13 @@
+## @visulima/task-runner [3.0.4](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.3...@visulima/task-runner@3.0.4) (2026-11-21)
+
+### Bug Fixes
+
+* **release:** patch the native loader's version comparison, not only its error message ([#151](https://github.com/visulima/vis/issues/151)) ([be73924](https://github.com/visulima/vis/commit/be7392497284c448224b0a18a9a59179923b1908))
+
+### Code Refactoring
+
+* **native:** move task-runner, secret-scanner and package-manager logic into napi-free core crates ([#102](https://github.com/visulima/vis/issues/102)) ([8440280](https://github.com/visulima/vis/commit/84402805dc753dfd501ff92e6f6eff82bc008ae5))
+
 ## @visulima/task-runner [3.0.3](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.2...@visulima/task-runner@3.0.3) (2026-11-03)
 
 ### Bug Fixes
