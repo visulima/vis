@@ -26,7 +26,7 @@ describe("secrets command", () => {
         const names = Object.keys(secretsCommand.options ?? {});
 
         expect(names).toStrictEqual(
-            expect.arrayContaining(["config", "format", "baseline", "redact", "include-hidden", "no-gitignore", "max-size", "update-baseline"]),
+            expect.arrayContaining(["config", "format", "baseline", "redact", "include-hidden", "no-gitignore", "max-size", "stdin", "update-baseline"]),
         );
     });
 

@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { scanGitStaged } from "../src/git-scan";
-import { scanDetailed, scanString } from "../src/index";
+import { scanDetailed, scanString, scanStringDetailed } from "../src/index";
 
 // Matches the bundled `github-pat` rule.
 /* eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake token */
@@ -33,6 +33,15 @@ const scanSource = async (name: string, source: string, options = {}) => {
 };
 
 describe("allow marker warnings", () => {
+    it("reports unknown ids for an in-memory buffer through scanStringDetailed", async () => {
+        expect.assertions(2);
+
+        const result = await scanStringDetailed(`const t = "${TOKEN}"; // gitleaks:allow github-pat-v2\n`, "buffer.ts");
+
+        expect(result.findings).toStrictEqual([]);
+        expect(result.allowWarnings).toStrictEqual([{ file: "buffer.ts", line: 1, unknownRuleIds: ["github-pat-v2"] }]);
+    });
+
     it("still suppresses a marker with a renamed rule id and reports the unknown id", async () => {
         expect.assertions(3);
 

@@ -71,7 +71,18 @@ import { scanString } from "@visulima/secret-scanner";
 const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 ```
 
-Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency.
+Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency. `scanStringDetailed` takes the same arguments and returns `{ findings, allowWarnings }`.
+
+### `isPathExcluded(file, options?, root)`
+
+Whether `file` is excluded by `walk.excludePatterns` / `walk.excludeFromFiles` in `options`, the filter `scanFiles` applies to a listed file. Relative paths resolve against `root`; a path outside `root` is never excluded. Use it before `scanString` when the buffer stands in for a file that a path scan would have skipped.
+
+```typescript
+import { isPathExcluded, scanString } from "@visulima/secret-scanner";
+
+const options = { walk: { excludePatterns: ["dist/**"] } };
+const findings = isPathExcluded("dist/app.js", options, process.cwd()) ? [] : await scanString(content, "dist/app.js", options);
+```
 
 ## Git
 
