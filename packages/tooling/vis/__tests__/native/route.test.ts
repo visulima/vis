@@ -90,4 +90,39 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect(route(["ignore"], { environment: { CONTINUOUS_INTEGRATION: "true", VIS_MONOREPO_ROOT: cwd } })).toBe(true);
         });
     });
+
+    describe("Windows console (the binary enables virtual-terminal processing)", () => {
+        it.each([
+            [["clean", "--help"]],
+            [["clean", "-h"]],
+            [[]],
+            [["--help"]],
+            [["-h"]],
+            [["help", "install"]],
+            [["status", "--help"]],
+            [["ignore", "--help"]],
+            [["list", "--help"]],
+            [["hook", "run", "--help"]],
+            [["advisories", "bloom", "status", "--help"]],
+        ])("routes the help surface `vis %j` to native", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "win32")).toBe(true);
+        });
+
+        it("still routes the native commands, and delegates the ones that answer natively only on unix", () => {
+            expect.assertions(4);
+
+            expect(routesToNative(["--version"], "win32")).toBe(true);
+            expect(routesToNative(["clean", "--dry-run"], "win32", process.env, "/work/app", false)).toBe(false);
+            expect(routesToNative(["hook", "run", "pre-commit"], "win32")).toBe(true);
+            expect(routesToNative(["list"], "win32")).toBe(false);
+        });
+    });
+
+    it.each([[["clean"]], [["clean", "--dry-run"]], [["clean", "--lockfile"]]])("keeps `vis %j` in Node when stdout is a terminal", (args: string[]) => {
+        expect.assertions(1);
+
+        expect(routesToNative(args, "linux", process.env, "/work/app", true)).toBe(false);
+    });
 });

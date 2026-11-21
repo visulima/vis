@@ -2125,6 +2125,7 @@ dependencies = [
  "serde_json",
  "terminal_size",
  "vis-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

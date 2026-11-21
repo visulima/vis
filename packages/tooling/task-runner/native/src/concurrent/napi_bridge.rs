@@ -3,8 +3,8 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use tokio::sync::mpsc;
 
-use task_runner_core::concurrent::runner::ConcurrentRunner;
 use task_runner_core::concurrent::types::ProcessEvent as CoreProcessEvent;
+use task_runner_core::ConcurrentRunner;
 
 use super::types::{ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent};
 

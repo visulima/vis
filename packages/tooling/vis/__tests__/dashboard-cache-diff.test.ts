@@ -69,6 +69,19 @@ describe(analyzeCacheMiss, () => {
         expect(result.previousHash).toBe("old-hash");
     });
 
+    it("does not blame the command when the hash layout changed between runs", () => {
+        expect.assertions(1);
+
+        const previous = makeRun("run-1", "2026-01-01T00:00:00Z", [
+            { ...makeTask(), hash: "old-hash", hashDetails: { command: "legacy-layout-hash", nodes: { "src/index.ts": "aaa" } } },
+        ]);
+        const current = makeTask({ hashDetails: { command: "new-layout-hash", layout: 2, nodes: { "src/index.ts": "aaa" } } });
+
+        const result = analyzeCacheMiss([previous], "run-2", current);
+
+        expect(result.entries.some((e) => e.kind === "command")).toBe(false);
+    });
+
     it("detects added, removed, and modified file inputs", () => {
         expect.assertions(3);
 

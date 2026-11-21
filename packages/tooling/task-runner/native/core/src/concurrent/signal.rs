@@ -2,7 +2,7 @@ use tokio::sync::watch;
 
 /// Signal that was received.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReceivedSignal {
+pub(crate) enum ReceivedSignal {
     None,
     Interrupt, // SIGINT / Ctrl+C
     Terminate, // SIGTERM, SIGHUP
@@ -10,7 +10,7 @@ pub enum ReceivedSignal {
 
 /// Creates a shutdown signal receiver that triggers on SIGINT, SIGTERM, or SIGHUP.
 /// Returns a watch::Receiver that changes from `None` to the received signal.
-pub fn create_signal_handler() -> (watch::Sender<ReceivedSignal>, watch::Receiver<ReceivedSignal>) {
+pub(crate) fn create_signal_handler() -> (watch::Sender<ReceivedSignal>, watch::Receiver<ReceivedSignal>) {
     let (tx, rx) = watch::channel(ReceivedSignal::None);
 
     let signal_tx = tx.clone();
