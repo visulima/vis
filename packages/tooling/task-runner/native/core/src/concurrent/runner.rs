@@ -134,13 +134,6 @@ impl ConcurrentRunner {
         ConcurrentRunResult { close_events, success }
     }
 
-    /// Run all commands and collect results without streaming events.
-    #[cfg(test)]
-    pub(crate) async fn run_batch(&self) -> ConcurrentRunResult {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
-        self.run(event_tx).await
-    }
-
     fn spawn_batch(
         &self,
         pending: &mut VecDeque<usize>,
