@@ -180,7 +180,9 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
         secretlintIgnore = false;
         excludeFromFiles = [...(excludeFromFiles ?? []), ...secretlintFromFlag];
     } else if (secretlintFromFlag.length > 0) {
-        secretlintIgnore = secretlintFromFlag;
+        const fromConfig = Array.isArray(cfg.secretlintIgnore) ? cfg.secretlintIgnore.map((path) => resolve(root, path)) : [];
+
+        secretlintIgnore = [...new Set([...fromConfig, ...secretlintFromFlag])];
     } else if (cfg.secretlintIgnore === false) {
         secretlintIgnore = false;
     } else {

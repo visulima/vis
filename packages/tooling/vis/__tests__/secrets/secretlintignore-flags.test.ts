@@ -50,6 +50,15 @@ describe("secretlintignore flags through the cerebro parser", () => {
         ]);
     });
 
+    it("combines config secretlintIgnore paths with --secretlintignore files", async () => {
+        expect.assertions(1);
+
+        const flags = await parseFlags("--secretlintignore", "cli.ignore", "--secretlintignore", "shared.ignore");
+        const resolved = resolveScanOptions(flags, { secretlintIgnore: ["cfg.ignore", "shared.ignore"] }, "/repo").secretlintIgnore;
+
+        expect(resolved).toStrictEqual(["/repo/cfg.ignore", "/repo/shared.ignore", "/repo/cli.ignore"]);
+    });
+
     it("disables discovery with --no-secretlintignore", async () => {
         expect.assertions(1);
 
