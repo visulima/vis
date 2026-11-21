@@ -196,7 +196,9 @@ registry.on("exit", (code, signal) => {
 
 const stop = () => {
     if (isWindows) {
-        registry.kill();
+        // `registry` is the cmd.exe wrapper; `kill()` would leave `npx` and Verdaccio running, so end the whole tree.
+        // A tree that has already exited makes taskkill fail, which is the state we want.
+        spawnSync("taskkill", ["/pid", String(registry.pid), "/T", "/F"], { stdio: "ignore" });
     } else {
         try {
             process.kill(-registry.pid);
