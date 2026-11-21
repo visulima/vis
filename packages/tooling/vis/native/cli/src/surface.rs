@@ -73,6 +73,14 @@ fn emit(text: &str) {
     let _ = stdout.flush();
 }
 
+/// As `emit`, on stderr, where a closed stream is no more worth a panic than on stdout.
+fn emit_stderr(text: &str) {
+    let mut stderr = io::stderr().lock();
+
+    let _ = stderr.write_all(text.as_bytes());
+    let _ = stderr.flush();
+}
+
 /// Whether the invocation asks for help (`--help` / `-h` before any `--`).
 pub fn asks_for_help(args: &[String]) -> bool {
     Request::parse(args).wants_help()
@@ -122,7 +130,7 @@ pub fn answer(args: &[String]) -> Option<i32> {
         }
 
         // The bare group is a usage error, like the other bare groups: nothing on stdout, exit 1.
-        eprint!("{listing}");
+        emit_stderr(&listing);
 
         return Some(1);
     }
