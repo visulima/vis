@@ -106,7 +106,7 @@
         "vitest": "catalog:test"
     },
     "peerDependencies": {
-        "@visulima/vis": "6.8.0"
+        "@visulima/vis": "7.0.0"
     },
     "engines": {
         "node": "^22.14.0 || >=24.10.0"
