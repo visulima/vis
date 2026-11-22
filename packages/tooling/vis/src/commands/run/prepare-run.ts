@@ -26,7 +26,7 @@ export interface PreparedRun {
  * Splits the target argument at commas: `build,test` is two targets. Blank items are dropped and an
  * exact repeat is collapsed, so `build,build` is one. A single target comes back as a one-item list.
  */
-export const splitTargetList = (raw: string | undefined): string[] => [
+const splitTargetList = (raw: string | undefined): string[] => [
     ...new Set(
         (raw ?? "")
             .split(",")
@@ -89,11 +89,11 @@ export const prepareRun = async ({
     workspace: DiscoveredWorkspace["workspace"];
     workspaceRoot: string;
 }): Promise<PreparedRun | undefined> => {
-    // `argument` is empty when no target was typed (the interactive picker then asks for one).
-    const raw = argument?.[0];
+    const raw = argument[0];
+    const isList = raw?.includes(",") === true;
     const listed = splitTargetList(raw);
 
-    if (raw?.includes(",") && listed.length === 0) {
+    if (isList && listed.length === 0) {
         throw new VisUserError(`"${raw}" names no target. Usage: vis run <target>[,<target>…] --deps-only`);
     }
 
@@ -102,7 +102,7 @@ export const prepareRun = async ({
     }
 
     // `build,` and `build,build` are one target: run it as such, with the arguments that follow it.
-    const singleArgument = raw?.includes(",") && listed.length === 1 ? [listed[0] as string, ...argument.slice(1)] : argument;
+    const singleArgument = isList && listed.length === 1 ? [listed[0] as string, ...argument.slice(1)] : argument;
 
     const prepared: PreparedRun[] = [];
 
