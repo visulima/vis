@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { scanDetailed, scanFilesDetailed, scanString, toSarif, toSarifUri, writeBaseline } from "../src/index";
+import { scanDetailed, scanFilesDetailed, scanString, scanStringDetailed, toSarif, toSarifUri, writeBaseline } from "../src/index";
 import type { Finding } from "../src/types";
 
 const SECRET = "TESTTOKEN_abcdefghij0123456789";
@@ -100,6 +100,33 @@ describe("reportSuppressed / inlineAllow", () => {
         const findings = await scanString(`b = "${OTHER}"\n`, "x.env", { config, reportSuppressed: true });
 
         expect(findings).toStrictEqual([]);
+    }, 30_000);
+});
+
+describe(scanStringDetailed, () => {
+    it("returns the findings, the suppressed ones with reportSuppressed, and no skipped files", async () => {
+        expect.assertions(4);
+
+        const result = await scanStringDetailed(`a = "${SECRET}"\nb = "${OTHER}"\n`, "virtual/x.env", { config, reportSuppressed: true });
+
+        expect(result.findings.map((finding) => finding.file)).toStrictEqual(["virtual/x.env"]);
+        expect(result.suppressed.map((finding) => finding.suppressedBy)).toStrictEqual(["allowlist"]);
+        expect(result.skipped).toStrictEqual([]);
+        expect(result.unusedIgnores).toStrictEqual([]);
+    }, 30_000);
+
+    it("reports .gitleaksignore entries that matched nothing", async () => {
+        expect.assertions(2);
+
+        const root = tempDir();
+        const ignore = join(root, ".gitleaksignore");
+
+        writeFileSync(ignore, "other.env:test-token:1\n");
+
+        const result = await scanStringDetailed(`a = "${SECRET}"\n`, "x.env", { config, gitleaksIgnore: ignore });
+
+        expect(result.findings).toHaveLength(1);
+        expect(result.unusedIgnores.map((entry) => entry.raw)).toStrictEqual(["other.env:test-token:1"]);
     }, 30_000);
 });
 

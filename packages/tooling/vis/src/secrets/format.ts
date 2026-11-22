@@ -26,7 +26,11 @@ const groupByFile = (findings: Finding[]): Map<string, Finding[]> => {
     return byFile;
 };
 
-const loadLines = (file: string): string[] | undefined => {
+const loadLines = (file: string, virtualSource?: string): string[] | undefined => {
+    if (virtualSource !== undefined) {
+        return virtualSource.split(/\r?\n/);
+    }
+
     try {
         return readFileSync(file).split(/\r?\n/);
     } catch {
@@ -53,7 +57,7 @@ const palette = (useColor: boolean): Record<"cyan" | "dim" | "green" | "red" | "
 };
 
 /** Pretty grouped text output with file headers, context lines, and carets. */
-export const formatText = (findings: Finding[], root: string, useColor: boolean, options: { redact?: boolean } = {}): string => {
+export const formatText = (findings: Finding[], root: string, useColor: boolean, options: { redact?: boolean; virtualSource?: string } = {}): string => {
     if (findings.length === 0) {
         return useColor ? dim("No secrets detected.") : "No secrets detected.";
     }
@@ -69,7 +73,7 @@ export const formatText = (findings: Finding[], root: string, useColor: boolean,
 
         // When redacting, skip the source-context block entirely — printing the
         // surrounding lines would leak the same secret we're trying to hide.
-        const sourceLines = options.redact ? undefined : loadLines(file);
+        const sourceLines = options.redact ? undefined : loadLines(file, options.virtualSource);
 
         for (const f of items) {
             // Provenance + quality signal ride next to the rule id so every line of

@@ -61,6 +61,8 @@ export interface RenderContext {
     staged?: boolean;
     toolVersion: string;
     useColor: boolean;
+    /** The text scanned from standard input; the text view shows it as source context instead of reading the file. */
+    virtualSource?: string;
 }
 
 /** Render findings in one report format. */
@@ -89,7 +91,7 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
         default: {
             const text = context.history
                 ? formatHistoryText(findings as GitFinding[], context.useColor, { redact: context.redact })
-                : formatText(findings, context.root, context.useColor, { redact: context.redact });
+                : formatText(findings, context.root, context.useColor, { redact: context.redact, virtualSource: context.virtualSource });
 
             return `${text}\n`;
         }

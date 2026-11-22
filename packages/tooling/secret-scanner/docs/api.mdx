@@ -71,7 +71,7 @@ import { scanString } from "@visulima/secret-scanner";
 const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 ```
 
-Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency. `scanStringDetailed` takes the same arguments and returns `{ findings, allowWarnings }`.
+Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency. `scanStringDetailed` takes the same arguments and returns the full result, see below.
 
 ### `isPathExcluded(file, options?, root)`
 
@@ -82,6 +82,16 @@ import { isPathExcluded, scanString } from "@visulima/secret-scanner";
 
 const options = { walk: { excludePatterns: ["dist/**"] } };
 const findings = isPathExcluded("dist/app.js", options, process.cwd()) ? [] : await scanString(content, "dist/app.js", options);
+```
+
+### `scanStringDetailed(content, file, options?)`
+
+Like `scanString`, with the diagnostics of `scanDetailed`: `allowWarnings` (allow markers naming rule ids that are not active), `suppressed` (with `reportSuppressed: true`) and `unusedIgnores`. `skipped` is always empty, since nothing is read from disk. `vis secrets --stdin <filename>` is built on it.
+
+```typescript
+import { scanStringDetailed } from "@visulima/secret-scanner";
+
+const { findings, suppressed } = await scanStringDetailed(source, "src/app.ts", { reportSuppressed: true });
 ```
 
 ## Git

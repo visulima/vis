@@ -6,24 +6,22 @@
 import { binding } from "./binding";
 import { createSuppressionContext, postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
-import type { AllowWarning, Finding, ScanOptions } from "./types";
+import { finishResult } from "./scan-session";
+import type { Finding, ScanOptions, ScanResult } from "./types";
 
 /**
- * Scan an in-memory buffer like `scanString`, and also return the allow markers
- * in it that name rule ids which are not active.
+ * Like {@link scanString}, with the diagnostics of `scanDetailed`: the findings a
+ * baseline, allowlist, inline pragma or `.gitleaksignore` hid (with
+ * `reportSuppressed`), the `.gitleaksignore` entries nothing matched, and the
+ * allow markers in the buffer that name rule ids which are not active.
+ * `skipped` is always empty, as nothing is read from disk.
  */
-export const scanStringDetailed = async (
-    content: string,
-    file: string,
-    options?: ScanOptions,
-): Promise<{ allowWarnings: AllowWarning[]; findings: Finding[] }> => {
+export const scanStringDetailed = async (content: string, file: string, options?: ScanOptions): Promise<ScanResult> => {
     const prepared = prepareScan(options);
     const context = await createSuppressionContext(options, [process.cwd()]);
     const report = binding.scanTextSync(content, file, prepared.nativeOptions);
 
-    const { findings } = await postProcessDetailed(report, prepared, options, context);
-
-    return { allowWarnings: report.allowWarnings, findings };
+    return finishResult(await postProcessDetailed(report, prepared, options, context), [], context, { allowWarnings: report.allowWarnings });
 };
 
 /**

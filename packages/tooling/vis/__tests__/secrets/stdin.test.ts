@@ -52,7 +52,7 @@ describe("vis secrets --stdin", () => {
         process.exitCode = undefined;
     });
 
-    const run = async (options: SecretsFlags, { argument = [], chunks = [], cwd = root, injected = "", isTTY = false }: RunInput = {}): Promise<Finding[]> => {
+    const invoke = async (options: SecretsFlags, { argument = [], chunks = [], cwd = root, injected = "", isTTY = false }: RunInput = {}): Promise<void> => {
         const stdin = Object.assign(Readable.from(chunks, { objectMode: false }), { isTTY });
 
         vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
@@ -66,6 +66,10 @@ describe("vis secrets --stdin", () => {
             process: { cwd, stdin: injected } as Toolbox["process"],
             workspaceRoot: root,
         } as unknown as Partial<Toolbox>);
+    };
+
+    const run = async (options: SecretsFlags, input: RunInput = {}): Promise<Finding[]> => {
+        await invoke(options, input);
 
         return JSON.parse(stdout.join("")) as Finding[];
     };
@@ -88,6 +92,20 @@ describe("vis secrets --stdin", () => {
         expect(findings).toStrictEqual([]);
         expect(stderr.join("")).toContain("a.env:1 unknown: github-pat-v2");
     });
+
+    it("shows the piped text, not the file of the same name on disk, as context in the text view", async () => {
+        expect.assertions(3);
+
+        writeFileSync(join(root, "a.ts"), "// stale content from disk\n");
+
+        await invoke({ format: "text", redact: false, stdin: "a.ts" }, { chunks: [`// piped line\nconst a = "${FAKE_PAT}";\n`] });
+
+        const output = stdout.join("");
+
+        expect(output).toContain("a.ts");
+        expect(output).toContain("// piped line");
+        expect(output).not.toContain("stale content");
+    }, 60_000);
 
     it("scans input a cerebro caller injected instead of the process stdin", async () => {
         expect.assertions(1);

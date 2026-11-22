@@ -33,6 +33,9 @@ vis secrets --since main
 # Scan projects affected by the current branch
 vis secrets --affected
 
+# Scan piped content as a virtual file (backed by scanStringDetailed)
+git show HEAD:src/app.ts | vis secrets --stdin src/app.ts
+
 # Scaffold an initial .secrets-baseline.json
 vis secrets --init
 

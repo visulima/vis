@@ -385,6 +385,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         reports,
         root,
         scanOptions,
+        stdin: mode.kind === "stdin" ? mode.content : undefined,
         toolbox,
         toolVersion,
         useColor,
