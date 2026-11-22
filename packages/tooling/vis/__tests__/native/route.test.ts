@@ -58,6 +58,62 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis secrets` flag shapes (parse in secrets.rs)", () => {
+        const ci = { CI: "1" };
+        const route = (args: string[], environment: Record<string, string> = ci) => routesToNative(["secrets", ...args], "linux", environment, "/work/app", false);
+
+        it.each([[["--format", "json"]], [["--format=sarif"]], [["--quiet"]], [["--quiet", "--format", "json"]], [["--format", "json", "--baseline", "b.json"]], [["--baseline=b.json", "--quiet"]]])(
+            "routes `vis secrets %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(route(args)).toBe(true);
+            },
+        );
+
+        it.each([
+            [[]],
+            [["--format", "text"]],
+            [["--format", "csv"]],
+            [["--format"]],
+            [["--format", "--quiet"]],
+            [["--format", "json", "--format", "json"]],
+            [["--quiet", "--quiet"]],
+            [["--baseline"]],
+            [["--format", "json", "--baseline="]],
+            [["--format", "json", "--no-redact"]],
+            [["--format", "json", "src"]],
+            [["--staged"]],
+        ])("delegates `vis secrets %j`", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(route(args)).toBe(false);
+        });
+
+        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1" }], [{ CI: "1", TERM: "xterm" }]])(
+            "delegates a JSON scan in the environment %j",
+            (environment: Record<string, string>) => {
+                expect.assertions(1);
+
+                expect(route(["--format", "json"], environment)).toBe(false);
+            },
+        );
+
+        it("delegates on a terminal and on Windows", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(["secrets", "--format", "json"], "linux", ci, "/work/app", true)).toBe(false);
+            expect(routesToNative(["secrets", "--format", "json"], "win32", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("renders the help surface natively on every platform", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(["secrets", "--help"], "linux")).toBe(true);
+            expect(routesToNative(["secrets", "--help"], "win32")).toBe(true);
+        });
+    });
+
     describe("`vis ignore` gate (native_context in ignore.rs)", () => {
         const cwd = "/work/app";
         const ciEnvironment = { CI: "1", PATH: "/usr/bin", VIS_MONOREPO_ROOT: cwd };

@@ -44,6 +44,7 @@ mod node_contract;
 mod pm;
 mod pm_family;
 mod pm_shim;
+mod secrets;
 mod surface;
 mod table;
 // Not routed to any command yet; the command ports call it.
@@ -134,6 +135,9 @@ fn main() {
         // `vis affected <target> --sparse-checkout` — the affected project roots. Every other shape
         // forwards to `vis run --affected` and is delegated inside `affected::run`.
         "affected" if !surface::asks_for_help(&args) => affected::run(&args, &raw_args),
+        // `vis secrets` — the working-tree scan with `--format json|sarif`, `--quiet` and `--baseline`.
+        // Every other shape is delegated inside `secrets::run`; help is left to the arm below.
+        "secrets" if !surface::asks_for_help(&args) => secrets::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

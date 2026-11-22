@@ -202,6 +202,82 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
 const affectedMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && args.includes("--sparse-checkout");
 
+// The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
+// `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
+const optionValue = (args, index, name) => {
+    if (args[index] === name) {
+        const value = args[index + 1];
+
+        return value === undefined || value === "" || value.startsWith("-") ? false : [value, index + 2];
+    }
+
+    if (args[index].startsWith(`${name}=`)) {
+        const value = args[index].slice(name.length + 1);
+
+        return value === "" || value.startsWith("-") ? false : [value, index + 1];
+    }
+
+    return undefined;
+};
+
+// Whether `vis secrets` can pass the binary's native gate (`parse` and `context` in `secrets.rs`): the
+// working-tree scan with `--format json|sarif|text`, `--quiet` and `--baseline <file>`, each at most once,
+// and the text view only with `--quiet`. The binary re-checks everything, including the workspace root
+// and the ignore and config files; this only skips the extra process when it would delegate anyway. Like
+// `clean`, it never answers on Windows or on a terminal, and not where Node's colour, `NODE_ENV`, `DEBUG`,
+// `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change what the status lines look like.
+const secretsMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+        return false;
+    }
+
+    if (
+        ["debug", "test"].includes(environment.NODE_ENV)
+        || environment.DEBUG !== undefined
+        || environment.PAIL_LOG_LEVEL !== undefined
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    let format;
+    let quiet = false;
+    let baseline = false;
+    let index = 1;
+
+    while (index < args.length) {
+        if (args[index] === "--quiet" && !quiet) {
+            quiet = true;
+            index += 1;
+
+            continue;
+        }
+
+        const given = optionValue(args, index, "--format");
+
+        if (given === false || (given !== undefined && (format !== undefined || !["json", "sarif", "text"].includes(given[0])))) {
+            return false;
+        }
+
+        if (given !== undefined) {
+            [format, index] = given;
+
+            continue;
+        }
+
+        const base = optionValue(args, index, "--baseline");
+
+        if (!Array.isArray(base) || baseline) {
+            return false;
+        }
+
+        baseline = true;
+        [, index] = base;
+    }
+
+    return (format ?? "text") !== "text" || quiet;
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -259,6 +335,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // stdout stays in Node: pail colours its output there, and the binary does not.
     if (command === "clean") {
         return helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive));
+    }
+
+    // `secrets` is native for the plain working-tree scan (`native/cli/src/secrets.rs`); any other
+    // run would be delegated by the binary, which costs a second Node boot.
+    if (command === "secrets") {
+        return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, interactive));
     }
 
     // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
