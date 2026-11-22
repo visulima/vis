@@ -11,7 +11,10 @@ export default defineConfig({
     // lazily required only when DevTools attach — which never happens in a CLI. Keep
     // it external so it isn't bundled (~284 KB), still resolvable from node_modules
     // if the lazy require ever fires.
-    externals: [/^@visulima\/vis(\/|$)/, "react-devtools-core", "ws"],
+    //
+    // `oxfmt` is the formatter `vis fmt` runs. It ships a platform binary as an optional dependency and
+    // is located at runtime (`resolveOxfmtBin`), so it must stay an installed dependency, never bundled.
+    externals: [/^@visulima\/vis(\/|$)/, /^oxfmt(\/|$)/, "react-devtools-core", "ws"],
     rollup: {
         // NOTE: forcing the React/ink/yoga renderer out of cli-main.js (it's hoisted
         // there as the common chunk of the TUI handler chunks, so non-UI commands
