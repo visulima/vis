@@ -1,3 +1,32 @@
+## @visulima/vis [7.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/vis@7.0.0...@visulima/vis@7.1.0-next.1) (2026-11-22)
+
+### Features
+
+* **vis:** add a pnpm 10 row to the install smoke ([#144](https://github.com/visulima/vis/issues/144)) ([12f1ef9](https://github.com/visulima/vis/commit/12f1ef927a692bfcbc38e8820047f17282bfa0b6))
+* **vis:** enable ANSI virtual terminal processing on the Windows console ([#142](https://github.com/visulima/vis/issues/142)) ([84fc691](https://github.com/visulima/vis/commit/84fc691b76539f96e8deaf2195badf1c4a018d10))
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+* **task-runner:** separate the identity fields in the command hash ([#143](https://github.com/visulima/vis/issues/143)) ([e8b7404](https://github.com/visulima/vis/commit/e8b7404f1b75df67fed628f30318f27147e9a596))
+* **vis:** apply the filter when adding a package with Yarn Berry ([#140](https://github.com/visulima/vis/issues/140)) ([a2b16bd](https://github.com/visulima/vis/commit/a2b16bd65e7ab5cda6edd3a80e1dd9d472c81f40))
+* **vis:** run the unversioned bin when dlx pins an unscoped package on npm ([#141](https://github.com/visulima/vis/issues/141)) ([c175f84](https://github.com/visulima/vis/commit/c175f84801c96520599dffa05d614e05f48ace65))
+
+### Miscellaneous Chores
+
+* merge main back into next after the 6.8.0 release ([#137](https://github.com/visulima/vis/issues/137)) ([b30add6](https://github.com/visulima/vis/commit/b30add6ebc1086958aeb598e1b3ba73cac03fcf8))
+
+### Code Refactoring
+
+* **vis:** report native wrapper failures through one error type ([#147](https://github.com/visulima/vis/issues/147)) ([2955c43](https://github.com/visulima/vis/commit/2955c43984924b8401595fbdad351916ab9194b0))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 3.0.1-next.1
+* **@visulima/task-runner:** upgraded to 3.0.5-next.1
+* **@visulima/tui:** upgraded to 5.0.2-next.1
+
 ## @visulima/vis [7.0.0](https://github.com/visulima/vis/compare/@visulima/vis@6.7.0...@visulima/vis@7.0.0) (2026-11-21)
 
 ### ⚠ BREAKING CHANGES
