@@ -46,6 +46,7 @@ mod pm;
 mod pm_family;
 mod pm_shim;
 mod secrets;
+mod self_update;
 mod surface;
 mod table;
 // Not routed to any command yet; the command ports call it.
@@ -145,6 +146,9 @@ fn main() {
         "sync" if args.get(1).map(String::as_str) == Some("ci-workflow") && !surface::asks_for_help(&args) => {
             ci_workflow::run(&args, &raw_args)
         }
+        // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and install, native in
+        // a CI context; every other shape (and `--help`, left to the arm below) goes to Node.
+        "self-update" if !surface::asks_for_help(&args) => self_update::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
