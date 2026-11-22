@@ -1,3 +1,14 @@
+## @visulima/vis [7.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.1...@visulima/vis@7.1.0-next.2) (2026-11-22)
+
+### Features
+
+* **vis:** list the cache subcommands for `vis cache`, `cache --help` and `cache -h` ([#149](https://github.com/visulima/vis/issues/149)) ([6b800ee](https://github.com/visulima/vis/commit/6b800eeea1c0aa3d8b16ee2299d8ee4dea91ce20))
+* **vis:** serve an evaluated vis.config from a revalidating cache in the native CLI ([#150](https://github.com/visulima/vis/issues/150)) ([0c4781f](https://github.com/visulima/vis/commit/0c4781fa90a2c21c06eeb375ebcfc8d5e113f513))
+
+### Tests
+
+* **vis:** share one routing fixture between the launcher and the native binary ([#148](https://github.com/visulima/vis/issues/148)) ([25de704](https://github.com/visulima/vis/commit/25de704151b3be74d62c26f9b54c287c3ec8d51e))
+
 ## @visulima/vis [7.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/vis@7.0.0...@visulima/vis@7.1.0-next.1) (2026-11-22)
 
 ### Features
