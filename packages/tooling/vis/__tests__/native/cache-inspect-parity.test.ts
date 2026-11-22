@@ -28,6 +28,7 @@ let scratch = "";
 let nativeBinary = "";
 let stubEntry = "";
 let home = "";
+let backslashHome = "";
 
 /** A pnpm workspace root the binary and Node both find from its own directory. */
 const makeRoot = (name: string, files: Record<string, string> = {}): string => {
@@ -208,6 +209,23 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         mkdirSync(join(makeRoot("empty"), "node_modules", ".cache", "vis"), { recursive: true });
         makeRoot("missing");
 
+        // 2b. Names with a backslash, which Node reads as a separator: an entry, and a file inside an entry.
+        const backslashCache = join(makeRoot("backslash-entry"), "node_modules", ".cache", "vis");
+
+        populate(backslashCache, { aaaa0000aaaa0000: [DAY, [100]] });
+        mkdirSync(join(backslashCache, String.raw`bad\entry`));
+        writeFileSync(join(backslashCache, String.raw`bad\entry`, "file"), "x");
+
+        const backslashNested = join(makeRoot("backslash-nested"), "node_modules", ".cache", "vis");
+
+        populate(backslashNested, { bbbb0000bbbb0000: [DAY, [100]] });
+        writeFileSync(join(backslashNested, "bbbb0000bbbb0000", String.raw`nested\file`), "x");
+
+        // ... and a store file, under a HOME of its own.
+        backslashHome = join(scratch, "home-backslash");
+        mkdirSync(join(backslashHome, ".vis", "cache", "ai"), { recursive: true });
+        writeFileSync(join(backslashHome, ".vis", "cache", "ai", String.raw`a\b.json`), "{}");
+
         // 3. Configs that are literals.
         fillCache(makeRoot("config-dir", { "vis.config.ts": 'export default { taskRunner: { cacheDirectory: "custom-cache" } };\n' }));
         populate(join(makeRoot("config-dir-2"), "custom-cache"), { a11111111111111b: [DAY, [4096]] });
@@ -346,6 +364,12 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         }
 
         both("primary worktree, scope all", "worktree-main", "native", ["cache", "size", "--type", "task", "--scope=all"]);
+
+        everyShape("entry name with a backslash", "backslash-entry", nodes);
+        everyShape("nested file name with a backslash", "backslash-nested", nodes);
+        both("store file name with a backslash", "plain", "node", ["cache", "size", "--type=ai"], { HOME: backslashHome });
+        both("store file name with a backslash", "plain", "node", ["cache", "size", "--type", "all", "--format", "json"], { HOME: backslashHome });
+        both("store file name with a backslash, task only", "plain", "native", ["cache", "size", "--type=task", "--format", "json"], { HOME: backslashHome });
 
         // Shapes the binary leaves to Node.
         both("unknown scope", "plain", "node", ["cache", "list", "--scope", "bogus"]);

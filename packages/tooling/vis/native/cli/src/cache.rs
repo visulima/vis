@@ -17,7 +17,7 @@
 
 use std::cmp::Ordering;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -467,11 +467,31 @@ fn sorted_entries(directory: &Path) -> Option<Vec<fs::DirEntry>> {
     Some(entries)
 }
 
+/// Node adds sizes as JavaScript numbers, which are exact only up to `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// `a + b`, or `None` once the sum is one a JavaScript number would round.
+fn add_safe(a: u64, b: u64) -> Option<u64> {
+    a.checked_add(b).filter(|sum| *sum <= MAX_SAFE_INTEGER)
+}
+
+/// The summed size of `entries`, or `None` when Node's number would round it.
+fn total_size(entries: &[Entry]) -> Option<u64> {
+    entries.iter().try_fold(0, |total, entry| add_safe(total, entry.size))
+}
+
+/// Whether `@visulima/path` would read a backslash in `name` as a separator: Node joins every name it
+/// reads, so a path it builds from such a name is not the one on disk.
+fn has_backslash(name: &OsStr) -> bool {
+    name.as_encoded_bytes().contains(&b'\\')
+}
+
 /// `sumDirectorySize`: files counted by `stat`, symlinks skipped, and a failure ends that directory's
-/// loop while keeping what it already added.
-fn sum_directory_size(directory: &Path) -> u64 {
+/// loop while keeping what it already added. `None` when Node would not print the same number: a name
+/// with a backslash, or a size past what a JavaScript number holds exactly.
+fn sum_directory_size(directory: &Path) -> Option<u64> {
     let Some(entries) = sorted_entries(directory) else {
-        return 0;
+        return Some(0);
     };
 
     let mut total = 0;
@@ -481,26 +501,30 @@ fn sum_directory_size(directory: &Path) -> u64 {
             break;
         };
 
+        if has_backslash(&entry.file_name()) {
+            return None;
+        }
+
         // Node reads the name as UTF-8 with replacement characters, so a path it builds from a name
         // that is not UTF-8 names nothing: the directory below it reads as empty and a file fails.
         let utf8 = entry.file_name().to_str().is_some();
 
         if kind.is_dir() {
             if utf8 {
-                total += sum_directory_size(&entry.path());
+                total = add_safe(total, sum_directory_size(&entry.path())?)?;
             }
         } else if kind.is_file() {
             match fs::metadata(entry.path()) {
-                Ok(metadata) if utf8 => total += metadata.len(),
+                Ok(metadata) if utf8 => total = add_safe(total, metadata.len())?,
                 _ => break,
             }
         }
     }
 
-    total
+    Some(total)
 }
 
-/// `collectCacheEntries`, newest first. `None` when a name needs Node's decoding.
+/// `collectCacheEntries`, newest first. `None` when a name or a size needs Node's own handling.
 fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
     let Some(names) = sorted_entries(Path::new(directory)) else {
         return Some(Vec::new());
@@ -513,6 +537,10 @@ fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
 
         if name.as_encoded_bytes().starts_with(b".") || name == BRANCH_SCOPE_DIRECTORY {
             continue;
+        }
+
+        if has_backslash(&name) {
+            return None;
         }
 
         // A name that is not UTF-8 cannot be stat-ed by the path Node builds from it: the entry is dropped.
@@ -535,7 +563,7 @@ fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
         entries.push(Entry {
             hash: hash.to_owned(),
             mtime_ms: mtime_ms(&metadata),
-            size: sum_directory_size(&entry.path()),
+            size: sum_directory_size(&entry.path())?,
         });
     }
 
@@ -574,11 +602,15 @@ fn store_stats(directories: &[PathBuf]) -> Option<Stats> {
             // A name that is not UTF-8 reaches `statSync` mangled and fails there.
             name.to_str()?;
 
+            if has_backslash(&name) {
+                return None;
+            }
+
             let metadata = fs::metadata(directory.join(&name)).ok()?;
             let modified = mtime_ms(&metadata);
 
             stats.entries += 1;
-            stats.total += metadata.len();
+            stats.total = add_safe(stats.total, metadata.len())?;
             stats.oldest = Some(stats.oldest.map_or(modified, |oldest| oldest.min(modified)));
             stats.newest = Some(stats.newest.map_or(modified, |newest| newest.max(modified)));
         }
@@ -704,7 +736,7 @@ fn now_ms() -> f64 {
 fn list_output(directory: &str, format: Format) -> Option<String> {
     let exists = fs::metadata(directory).is_ok();
     let entries = if exists { collect_entries(directory)? } else { Vec::new() };
-    let total: u64 = entries.iter().map(|entry| entry.size).sum();
+    let total = total_size(&entries)?;
     let quoted = json_string(directory)?;
 
     if format == Format::Json {
@@ -849,7 +881,7 @@ fn size_output(options: &Options, directories: &[String]) -> Option<String> {
             let mut rows = Vec::new();
 
             for (directory, entries, exists) in collected {
-                let total: u64 = entries.iter().map(|entry| entry.size).sum();
+                let total = total_size(entries)?;
 
                 rows.push(format!(
                     "    {{\n      \"directory\": {},\n      \"entries\": {},\n      \"exists\": {exists},\n      \"newestEntry\": {},\n      \"oldestEntry\": {},\n      \"totalBytes\": {total}\n    }}",
@@ -888,7 +920,7 @@ fn size_output(options: &Options, directories: &[String]) -> Option<String> {
             entries: entries.len() as u64,
             newest: entries.first().map(|entry| entry.mtime_ms),
             oldest: entries.last().map(|entry| entry.mtime_ms),
-            total: entries.iter().map(|entry| entry.size).sum(),
+            total: total_size(entries)?,
         };
 
         out.push_str(&stats_block("Task cache", Some(directory), &stats)?);
@@ -988,6 +1020,34 @@ mod tests {
         ] {
             assert_eq!(format_bytes(bytes).as_deref(), Some(text), "{bytes}");
         }
+    }
+
+    #[test]
+    fn sizes_past_a_javascript_number_are_left_to_node() {
+        assert_eq!(add_safe(MAX_SAFE_INTEGER - 1, 1), Some(MAX_SAFE_INTEGER));
+        assert_eq!(add_safe(MAX_SAFE_INTEGER, 1), None);
+        assert_eq!(add_safe(u64::MAX, 1), None);
+        assert_eq!(add_safe(0, MAX_SAFE_INTEGER + 1), None);
+
+        let entry = |size| Entry { hash: String::new(), mtime_ms: 0.0, size };
+
+        assert_eq!(total_size(&[entry(MAX_SAFE_INTEGER - 5), entry(5)]), Some(MAX_SAFE_INTEGER));
+        assert_eq!(total_size(&[entry(MAX_SAFE_INTEGER - 5), entry(6)]), None);
+    }
+
+    #[test]
+    fn backslash_names_are_left_to_node() {
+        assert!(has_backslash(OsStr::new("a\\b")));
+        assert!(!has_backslash(OsStr::new("a/b")));
+
+        let directory = std::env::temp_dir().join(format!("vis-cache-backslash-{}", std::process::id()));
+
+        fs::create_dir_all(directory.join("entry")).unwrap();
+        fs::write(directory.join("entry").join("a\\b"), "x").unwrap();
+        assert_eq!(sum_directory_size(&directory.join("entry")), None);
+        assert!(collect_entries(directory.to_str().unwrap()).is_none());
+
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
