@@ -40,18 +40,18 @@ const run = async (fmt?: NonNullable<VisConfig["fmt"]>): Promise<void> => {
 const SOURCES: ReadonlyArray<[name: string, setup: () => Promise<void>, placement: () => boolean]> = [
     [
         "a config kept in the cache file",
-        () => run({ options: { singleQuote: false } }),
+        () => run({ options: { semi: false } }),
         () => existsSync(join(root, "node_modules", ".cache", "vis", "fmt")) && readdirSync(root).every((name) => !name.startsWith(TRANSIENT_CONFIG_PREFIX)),
     ],
     [
         "a config with globs, in the root file",
-        () => run({ ignorePatterns: ["ignored/**"], options: { singleQuote: false } }),
+        () => run({ ignorePatterns: ["ignored/**"], options: { semi: false } }),
         () => !existsSync(join(root, "node_modules", ".cache", "vis", "fmt")) && readdirSync(root).every((name) => !name.startsWith(TRANSIENT_CONFIG_PREFIX)),
     ],
     [
         "a discovered .oxfmtrc.json",
         () => {
-            writeFileSync(join(root, ".oxfmtrc.json"), JSON.stringify({ singleQuote: false }));
+            writeFileSync(join(root, ".oxfmtrc.json"), JSON.stringify({ semi: false }));
 
             return run();
         },
@@ -83,7 +83,7 @@ describe.skipIf(!oxfmtRuns)(".editorconfig through vis fmt (real bundled oxfmt)"
 
             await setup();
 
-            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n\treturn {\n\t\tvalue: 1,\n\t};\n}\n");
+            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n\treturn {\n\t\tvalue: 1,\n\t}\n}\n");
             expect(process.exitCode).toBeUndefined();
             expect(placement()).toBe(true);
         });
@@ -96,7 +96,7 @@ describe.skipIf(!oxfmtRuns)(".editorconfig through vis fmt (real bundled oxfmt)"
 
             await setup();
 
-            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n    return {\n        value: 1,\n    };\n}\n");
+            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n    return {\n        value: 1,\n    }\n}\n");
         });
 
         it("applies tab_width when the indent size is `tab`", async () => {
@@ -107,7 +107,7 @@ describe.skipIf(!oxfmtRuns)(".editorconfig through vis fmt (real bundled oxfmt)"
 
             await setup();
 
-            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n   return {\n      value: 1,\n   };\n}\n");
+            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("export function f() {\n   return {\n      value: 1,\n   }\n}\n");
         });
 
         it("applies max_line_length", async () => {
@@ -118,17 +118,17 @@ describe.skipIf(!oxfmtRuns)(".editorconfig through vis fmt (real bundled oxfmt)"
 
             await setup();
 
-            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("const result = someFunction(\n  argumentNumberOne,\n  argumentNumberTwo,\n);\n");
+            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe("const result = someFunction(\n  argumentNumberOne,\n  argumentNumberTwo,\n)\n");
         });
 
-        it("leaves the file alone when there is no .editorconfig", async () => {
+        it("applies the config itself, and keeps the width when there is no .editorconfig", async () => {
             expect.assertions(1);
 
             writeFileSync(join(root, "a.ts"), LONG);
 
             await setup();
 
-            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe(LONG);
+            expect(readFileSync(join(root, "a.ts"), "utf8")).toBe(LONG.replace(";", ""));
         });
     });
 

@@ -57,7 +57,7 @@ export interface FmtDoctorReport {
  * optional dependency, so a package that resolves can still fail to load).
  * @returns What was found, or why not.
  */
-export const inspectBundledOxfmt = (): FmtDoctorOxfmt => {
+const inspectBundledOxfmt = (): FmtDoctorOxfmt => {
     let path: string;
     let version: string | undefined;
 
@@ -104,6 +104,12 @@ const describeConfigFile = (resolution: FmtResolution): FmtDoctorConfigFile => {
     };
 };
 
+const configSourceFile = (resolution: FmtResolution, root: string, visConfigFile: string | undefined): string | undefined => {
+    const file = resolution.source === "vis.config" ? visConfigFile : resolution.file;
+
+    return file === undefined ? undefined : relative(root, file);
+};
+
 export interface CollectFmtDoctorInput {
     /** Formatters detected for the adapter orchestration, after `enabled: false` was applied. */
     adapters: ReadonlyArray<string>;
@@ -111,6 +117,8 @@ export interface CollectFmtDoctorInput {
     /** Set when the bundled oxfmt runs. */
     resolution?: FmtResolution;
     root: string;
+    /** Absolute path of the `vis.config` file the `fmt` section came from, when there is one. */
+    visConfigFile?: string;
 }
 
 /**
@@ -120,9 +128,10 @@ export interface CollectFmtDoctorInput {
  * @param input.engine The engine decision.
  * @param input.resolution The resolved options source.
  * @param input.root Workspace root.
+ * @param input.visConfigFile The `vis.config` file, shown as the path of a `vis.config` source.
  * @returns The report.
  */
-export const collectFmtDoctor = ({ adapters, engine, resolution, root }: CollectFmtDoctorInput): FmtDoctorReport => {
+export const collectFmtDoctor = ({ adapters, engine, resolution, root, visConfigFile }: CollectFmtDoctorInput): FmtDoctorReport => {
     const bundled = engine.engine === "bundled";
     const present = (name: string): string | undefined => (isAccessibleSync(join(root, name)) ? name : undefined);
 
@@ -131,7 +140,7 @@ export const collectFmtDoctor = ({ adapters, engine, resolution, root }: Collect
             resolution === undefined
                 ? undefined
                 : {
-                    file: resolution.file === undefined ? undefined : relative(root, resolution.file),
+                    file: configSourceFile(resolution, root, visConfigFile),
                     label: describeFmtSource(resolution, root),
                     source: resolution.source,
                 },
@@ -171,7 +180,7 @@ export const formatFmtDoctor = (report: FmtDoctorReport): string[] => {
     if (report.config === undefined) {
         lines.push("Config source: not applicable, the detected formatters read their own config");
     } else {
-        lines.push(`Config source: ${report.config.label}`);
+        lines.push(`Config source: ${report.config.label}${report.config.source === "vis.config" && report.config.file !== undefined ? ` (${report.config.file})` : ""}`);
 
         if (report.ignoredSources.length === 0) {
             lines.push("  ignored lower sources: none");

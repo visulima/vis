@@ -5,6 +5,7 @@ import { bold, cyan, dim, green } from "@visulima/colorize";
 import { basename, relative } from "@visulima/path";
 
 import { resolveSharedCacheDirectory } from "../../cache/cache-directory";
+import { findVisConfigFile } from "../../config/config";
 import { collectFmtDoctor, formatFmtDoctor } from "../../fmt/doctor";
 import { decideFmtEngine } from "../../fmt/engine";
 import type { FmtResolution } from "../../fmt/resolve-options";
@@ -311,7 +312,7 @@ const runDoctor = async ({ engineInput, fmtConfig, format, logger, output, prett
     try {
         const engine = decideFmtEngine(engineInput);
         const resolution = engine.engine === "bundled" ? await resolveFmtOptions({ fmtConfig, loadModule: importTs, prettierDeclared, root }) : undefined;
-        const report = collectFmtDoctor({ adapters: engineInput.detected, engine, resolution, root });
+        const report = collectFmtDoctor({ adapters: engineInput.detected, engine, resolution, root, visConfigFile: findVisConfigFile(root) });
 
         if (format === "json") {
             const sink = resolveOutput({ cwd: root, target: output });

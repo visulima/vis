@@ -66,7 +66,7 @@ vis fmt --check --format sarif --output fmt.sarif
 `vis fmt --doctor` answers "what would `vis fmt` do here, and why" without formatting or writing anything (not even the config file). It prints:
 
 - the **engine** that would run (the bundled oxfmt, or the adapter orchestration with the detected formatters) and the rule that chose it;
-- the **config source** that wins, with its path, and every lower source that exists and is ignored;
+- the **config source** that wins, with its path (for `vis.config`, the file it was found in), and every lower source that exists and is ignored;
 - whether the **bundled oxfmt** resolves and starts, with its version;
 - the **config file** vis would hand to oxfmt: none (oxfmt reads its own file or uses its defaults), the vis cache (`node_modules/.cache/vis/fmt/<hash>.json`), or the workspace root (`.vis-fmt-<pid>-<id>.json`, when `ignorePatterns` or `overrides` are set), with the reason;
 - the `.editorconfig` and the ignore files (`.gitignore`, `.prettierignore`) in the workspace root, which oxfmt reads itself.

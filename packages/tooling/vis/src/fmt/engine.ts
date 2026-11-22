@@ -2,7 +2,7 @@ import { VisUserError } from "../errors/vis-user-error";
 import type { FmtAdapterId } from "../lint-fmt/config-types";
 import type { FmtEngine } from "./options";
 
-export interface SelectFmtEngineInput {
+export interface DecideFmtEngineInput {
     /** `fmt.adapters.oxfmt.builtin`. */
     builtin?: boolean;
 
@@ -40,7 +40,7 @@ export interface FmtEngineDecision {
  * @returns The engine and the reason for it.
  * @throws {VisUserError} When `fmt.engine` is `"oxfmt"` while `fmt.adapters.oxfmt.enabled` or `builtin` is `false`.
  */
-export const decideFmtEngine = ({ builtin, detected, engine = "auto", oxfmtEnabled }: SelectFmtEngineInput): FmtEngineDecision => {
+export const decideFmtEngine = ({ builtin, detected, engine = "auto", oxfmtEnabled }: DecideFmtEngineInput): FmtEngineDecision => {
     if (engine === "oxfmt") {
         if (!oxfmtEnabled) {
             throw new VisUserError('vis.config fmt: `engine: "oxfmt"` and `adapters.oxfmt.enabled: false` contradict each other.');
@@ -71,11 +71,3 @@ export const decideFmtEngine = ({ builtin, detected, engine = "auto", oxfmtEnabl
         ? { engine: "adapters", reason: `fmt.engine is "auto" and ${other.join(", ")} ${other.length > 1 ? "are" : "is"} detected` }
         : { engine: "bundled", reason: 'fmt.engine is "auto" and no formatter other than oxfmt or Prettier is detected' };
 };
-
-/**
- * Decides what `vis fmt` runs; see {@link decideFmtEngine} for the rules.
- * @param input The `fmt` settings and the detected formatters.
- * @returns `bundled` to run the bundled oxfmt, `adapters` to keep the adapter orchestration.
- * @throws {VisUserError} When `fmt.engine` is `"oxfmt"` while `fmt.adapters.oxfmt.enabled` or `builtin` is `false`.
- */
-export const selectFmtEngine = (input: SelectFmtEngineInput): "adapters" | "bundled" => decideFmtEngine(input).engine;

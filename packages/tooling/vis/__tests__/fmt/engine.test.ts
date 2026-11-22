@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { decideFmtEngine, selectFmtEngine } from "../../src/fmt/engine";
+import { decideFmtEngine } from "../../src/fmt/engine";
 import type { FmtEngine } from "../../src/fmt/options";
 import type { FmtAdapterId } from "../../src/lint-fmt/config-types";
 
 const select = (input: { builtin?: boolean; detected?: FmtAdapterId[]; engine?: FmtEngine; oxfmtEnabled?: boolean }) =>
-    selectFmtEngine({ detected: [], oxfmtEnabled: true, ...input });
+    decideFmtEngine({ detected: [], oxfmtEnabled: true, ...input }).engine;
 
-describe(selectFmtEngine, () => {
+describe("fmt engine selection", () => {
     it.each<[string, FmtAdapterId[]]>([
         ["nothing detected", []],
         ["only prettier", ["prettier"]],

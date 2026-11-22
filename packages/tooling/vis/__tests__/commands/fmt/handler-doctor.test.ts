@@ -145,6 +145,21 @@ describe("vis fmt --doctor", () => {
         expect(text).toContain("which oxfmt reads relative to the config file's directory");
     });
 
+    it("shows the vis.config file as the path of a vis.config source, when there is one", async () => {
+        expect.assertions(3);
+
+        const without = await doctor({}, { options: { semi: false } });
+
+        write("vis.config.ts", "export default {};\n");
+        messages.info.length = 0;
+
+        const text = await doctor({}, { options: { semi: false } });
+
+        expect(without).toContain("Config source: vis.config fmt.options\n");
+        expect(text).toContain("Config source: vis.config fmt.options (vis.config.ts)");
+        expect(process.exitCode).toBeUndefined();
+    });
+
     it("shows the mapped Prettier config as the source, with its file", async () => {
         expect.assertions(2);
 

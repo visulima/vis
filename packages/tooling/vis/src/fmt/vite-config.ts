@@ -45,7 +45,7 @@ export interface ViteFmtResult {
 }
 
 /**
- * Reads the `fmt` key of a Vite config's default export, the way a Vite+ toolchain would hand it to oxfmt.
+ * Reads the `fmt` key of a Vite config's default export as an oxfmt config.
  * The config is evaluated once, with the repo's JS/TS loader; a config that exports a function (a
  * `defineConfig(({ mode }) => …)`) cannot be evaluated without Vite's arguments and is skipped with a warning.
  * @param file Absolute path of the Vite config.
