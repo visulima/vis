@@ -103,6 +103,30 @@ bash __bench__/cli/run-hooks.sh --expect-native                   # fail unless 
 
 Needs `pnpm run build && pnpm run build:native:cli` first. `vis (native)` and the installed-hook row use `vis-native-cli`; `vis (launcher)` is `node bin/vis.mjs`, i.e. what typing `vis hook run` pays.
 
+## Formatter
+
+`run-fmt.sh` times `vis fmt --check` against the oxfmt it bundles (run directly) and `bun fmt --check`, on a generated tree with one shared `.oxfmtrc.json`:
+
+```sh
+bash __bench__/cli/run-fmt.sh                       # 1, 60 and 600 files; a clean and a dirty tree each
+bash __bench__/cli/run-fmt.sh --sizes 600 --runs 30
+```
+
+- `clean` trees are already formatted (every tool must exit 0); on `dirty` trees every 10th file has leading blank lines (every tool must exit 1 and report exactly those files). A tool that fails this check is skipped for that tree, with the reason printed.
+- The `oxfmt` row is the floor `vis fmt` adds to: the same engine without vis's launcher, config resolution and child process.
+- Check mode only, so runs are repeatable.
+
+Reference run (Apple M4, Node 22.23.4, Bun 1.4.4, hyperfine 2.0, 15 runs, mean wall time):
+
+| Files | Tree  | `vis fmt` | `oxfmt` | `bun fmt` |
+| ----- | ----- | --------- | ------- | --------- |
+| 1     | clean | 286 ms    | 86 ms   | 14 ms     |
+| 60    | clean | 307 ms    | 87 ms   | 16 ms     |
+| 600   | clean | 299 ms    | 90 ms   | 22 ms     |
+| 600   | dirty | 303 ms    | 89 ms   | 22 ms     |
+
+The `vis fmt` and `oxfmt` times barely move between 1 and 600 files, so most of the time is process start-up and not formatting; `vis fmt` spends about 200 ms more than the bundled oxfmt alone.
+
 ## Fixtures
 
 Install fixtures mirror nub's: `simple` (~435 pkgs), `monorepo` (~407 pkgs / 4 workspaces), `t3` (Next/tRPC/Drizzle — Bun's create-t3-app bench), `large` (~1168 pkgs). Generate lockfiles with `bash __bench__/cli/gen-fixtures.sh` after editing a fixture's `package.json`. Each tool installs from its own lockfile family (`pnpm-lock.yaml`, `bun.lock`, `package-lock.json`); foreign lockfiles are pruned per-tool so no tool reads a stale lock.
