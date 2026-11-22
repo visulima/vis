@@ -100,6 +100,27 @@ describe(scopeTaskGraph, () => {
             expect(Object.values(scoped.taskGraph.tasks).flatMap((t) => (t.satisfied ? [t.id] : []))).toStrictEqual(["app:build"]);
         });
 
+        it("runs the finally-task of a dependency once, in deps-only, and not in skip-deps", () => {
+            expect.assertions(4);
+
+            const { initial, isService, taskGraph } = mixed();
+            const buildCleanup = { ...task("app", "build-cleanup"), always: true } as Task;
+            const withDependencyCleanup: TaskGraph = {
+                ...taskGraph,
+                dependencies: { ...taskGraph.dependencies, "app:build-cleanup": ["app:build"] },
+                roots: [...taskGraph.roots, "app:build-cleanup"],
+                tasks: { ...taskGraph.tasks, "app:build-cleanup": buildCleanup },
+            };
+            const depsOnly = scopeTaskGraph(withDependencyCleanup, initial, "test", "deps-only", isService);
+            const skipDeps = scopeTaskGraph(withDependencyCleanup, initial, "test", "skip-deps", isService);
+
+            expect(Object.keys(depsOnly.taskGraph.tasks).toSorted()).toStrictEqual(["app:build", "app:build-cleanup"]);
+            expect(depsOnly.taskGraph.dependencies["app:build-cleanup"]).toStrictEqual(["app:build"]);
+            // The requested task's own finally-task stays on the skip-deps side.
+            expect(Object.keys(skipDeps.taskGraph.tasks)).not.toContain("app:build-cleanup");
+            expect(Object.keys(skipDeps.taskGraph.tasks)).toContain("app:cleanup");
+        });
+
         it("keeps a service that a dependency needs for deps-only, and leaves one only the requested task needs", () => {
             expect.assertions(2);
 

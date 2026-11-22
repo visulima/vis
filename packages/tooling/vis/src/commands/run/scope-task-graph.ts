@@ -38,14 +38,18 @@ const isRequested = (task: Task, target: string, selectedProjects: ReadonlySet<s
  * - `deps-only` keeps the dependency closure of the requested tasks. A service
  *   has to run alongside its dependents, not ahead of them in a separate step,
  *   so it stays only when a kept dependency needs it; a service only the
- *   requested tasks need starts in the later `--skip-deps` run. `always` tasks
- *   are left out: they run after the requested tasks, not before them. The
- *   closure is complete downwards, so every kept task keeps all its edges.
+ *   requested tasks need starts in the later `--skip-deps` run. An `always`
+ *   task that only finalizes dependencies stays, so it runs once after them;
+ *   one that finalizes a requested task is left out, since it runs after the
+ *   requested tasks, not before them. The closure is complete downwards, so
+ *   every kept task keeps all its edges.
  * - `skip-deps` keeps the whole graph the requested tasks need but marks
  *   their non-service dependencies {@link Task.satisfied}: those are hashed
  *   (a task's cache key folds its dependencies' hashes, so they must stay in
  *   the graph) but neither executed nor restored. Services still start, and
- *   `always` tasks (the requested tasks' finally-tasks) still run.
+ *   `always` tasks that finalize the requested tasks still run. The finalizers
+ *   of dependencies do not: the `deps-only` run already ran them, and every
+ *   concurrent `--skip-deps` run would otherwise run them again.
  */
 export const scopeTaskGraph = (
     taskGraph: TaskGraph,
@@ -65,11 +69,19 @@ export const scopeTaskGraph = (
         (id) => taskGraph.dependencies[id],
     );
 
+    // An `always` task depends on what it finalizes. One whose every dependency is a dependency of the
+    // requested tasks (and none is requested) belongs to the `deps-only` side.
+    const finalizesDependencies = (id: string): boolean => {
+        const finalized = taskGraph.dependencies[id] ?? [];
+
+        return finalized.length > 0 && finalized.every((dependency) => closure.has(dependency) && !requested.has(dependency));
+    };
+
     for (const [id, task] of Object.entries(taskGraph.tasks)) {
         const isDependency = closure.has(id) && !requested.has(id);
 
         if (task.always === true) {
-            if (scope === "skip-deps") {
+            if (scope === (!requested.has(id) && finalizesDependencies(id) ? "deps-only" : "skip-deps")) {
                 tasks[id] = task;
             }
         } else if (scope === "deps-only") {
