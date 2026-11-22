@@ -177,24 +177,19 @@ const helpOrNative = (args, mayRunNatively) => {
     return mayRunNatively();
 };
 
+// Commands the binary always answers: the native command set, `hook run` (the other `hook`
+// subcommands - install, migrate, ... - are not native, so routing them through the binary would only
+// add a second Node boot) and `advisories bloom status`, whose other shapes the binary hands to Node
+// itself, as it does for `hook run`.
+const alwaysNative = (command, subcommand, args) =>
+    NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
+
 // The routing of the commands that have their own native shapes: `true` or `false` when the
 // command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
 const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker) => {
     const [command = "", subcommand] = args;
 
-    if (NATIVE_COMMANDS.has(command)) {
-        return true;
-    }
-
-    // `hook run` is native, but the other `hook` subcommands (install, migrate, …)
-    // are not: sending those through the binary would only add a second Node boot.
-    if (command === "hook" && subcommand === "run") {
-        return true;
-    }
-
-    // `advisories bloom status` is answered natively for `--format json --cache-dir <dir>`.
-    // The binary hands every other shape of it to Node itself, as it does for `hook run`.
-    if (command === "advisories" && subcommand === "bloom" && args[2] === "status") {
+    if (alwaysNative(command, subcommand, args)) {
         return true;
     }
 
