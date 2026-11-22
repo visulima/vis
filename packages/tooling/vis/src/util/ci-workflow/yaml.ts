@@ -41,7 +41,7 @@ export const yamlEntry = (key: string, value: YamlValue, indent: string): string
 
     return [
         `${indent}${yamlKey(key)}:`,
-        ...(value).flatMap((item) => {
+        ...value.flatMap((item) => {
             if (isScalar(item)) {
                 return [`${nested}- ${yamlScalar(item, `${nested}    `)}`];
             }
