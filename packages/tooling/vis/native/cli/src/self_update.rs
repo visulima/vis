@@ -2,7 +2,8 @@
 //!
 //! The Node handler (`src/commands/upgrade/handler.ts`) asks npm for the latest published version,
 //! compares it with the running one and prints a verdict, or runs `npm install -g` for it. This
-//! module makes the same calls and prints the same bytes. It answers only what it can reproduce:
+//! module makes the same query and prints the same bytes for the verdicts that need no install
+//! (`--check`, up to date). It answers only what it can reproduce:
 //!
 //! - not Windows, in a CI context with neither stream a terminal (the after-command tips, notices
 //!   and update check of the Node CLI are off there), and no `vis.config.*` or Deno file at or above
@@ -17,9 +18,11 @@
 //! query and reports the error itself. The query's stderr is held back and shown after the first
 //! line, the order Node's inherited stderr produces.
 //!
-//! A failed install cannot be taken back: the lines printed so far stay, and Node, handed the call,
-//! prints them again and runs the install a second time before it reports its error. That is the one
-//! known difference from the Node path.
+//! The install is never native. A failed `npm install -g` is reported by Node as a plain `Error`
+//! that the CLI error handler renders with a stack of bundle paths, which cannot be reproduced byte
+//! for byte, and a failure cannot be taken back once lines are printed. So when the verdict is
+//! "install", the call is delegated before anything is printed and Node does the whole run. The
+//! cost is one more read-only `npm view` on the install path.
 
 use std::env;
 use std::ffi::OsString;
@@ -46,8 +49,8 @@ enum Verdict {
     UpToDate(Vec<String>),
     /// Only report what was found (`--check`).
     Found(String),
-    /// Report, then install the version.
-    Install { found: String, done: String },
+    /// An install is needed: Node's to run.
+    Install,
 }
 
 /// Answer `vis self-update` natively, or delegate to Node. Never returns.
@@ -63,23 +66,18 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let target = options.version.clone().unwrap_or(latest);
     let verdict = decide(&options, &current, &target);
 
+    // Nothing is printed yet, so Node can take over and repeat the (read-only) query.
+    if verdict == Verdict::Install {
+        crate::delegate(raw);
+    }
+
     say("info: checking for updates...");
     show_stderr(&query_stderr);
 
     match verdict {
         Verdict::UpToDate(lines) => lines.iter().for_each(|text| say(text)),
         Verdict::Found(text) => say(&text),
-        Verdict::Install { found, done } => {
-            say(&found);
-            say("info: installing...");
-
-            if !install(&target) {
-                // Nothing of the failure is printed here: Node reports it.
-                crate::delegate(raw);
-            }
-
-            say(&done);
-        }
+        Verdict::Install => unreachable!("an install is delegated above"),
     }
 
     exit(0)
@@ -190,24 +188,14 @@ fn decide(options: &Options, current: &str, latest: &str) -> Verdict {
         return Verdict::UpToDate(vec![format!("✓ Already up to date ({current})")]);
     }
 
-    let found = format!("info: found {PACKAGE}@{latest} (current: {current})");
-
     if options.check {
-        Verdict::Found(found)
+        Verdict::Found(format!("info: found {PACKAGE}@{latest} (current: {current})"))
     } else {
-        Verdict::Install { found, done: format!("\n✓ Updated {PACKAGE} from {current} → {latest}") }
+        Verdict::Install
     }
 }
 
-/// `npm install -g @visulima/vis@<version>` with the terminal inherited. `true` when it succeeded.
-fn install(version: &str) -> bool {
-    Command::new("npm")
-        .args(["install", "-g", &format!("{PACKAGE}@{version}")])
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-/// One line on stdout, flushed so that the install that may follow prints after it.
+/// One line on stdout, flushed as it is written.
 fn say(text: &str) {
     finish_write(write_all(&mut io::stdout().lock(), format!("{text}\n").as_bytes()));
 }
@@ -287,19 +275,8 @@ mod tests {
             Verdict::UpToDate(vec![String::new(), "✓ Already up to date (1.0.0)".to_owned()])
         );
         assert_eq!(decide(&both, "1.0.0", "1.0.0"), Verdict::UpToDate(vec!["✓ Already up to date (1.0.0)".to_owned()]));
-        assert_eq!(decide(&check, "1.0.0", "2.0.0"), Verdict::Found(found.clone()));
-        assert_eq!(
-            decide(&plain, "1.0.0", "2.0.0"),
-            Verdict::Install {
-                found: found.clone(), done: "\n✓ Updated @visulima/vis from 1.0.0 → 2.0.0".to_owned()
-            }
-        );
-        assert_eq!(
-            decide(&force, "2.0.0", "2.0.0"),
-            Verdict::Install {
-                found: "info: found @visulima/vis@2.0.0 (current: 2.0.0)".to_owned(),
-                done: "\n✓ Updated @visulima/vis from 2.0.0 → 2.0.0".to_owned()
-            }
-        );
+        assert_eq!(decide(&check, "1.0.0", "2.0.0"), Verdict::Found(found));
+        assert_eq!(decide(&plain, "1.0.0", "2.0.0"), Verdict::Install);
+        assert_eq!(decide(&force, "2.0.0", "2.0.0"), Verdict::Install);
     }
 }

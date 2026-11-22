@@ -529,8 +529,9 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
     }
 
-    // `self-update` is native for its plain shapes in a CI context (`native/cli/src/self_update.rs`); any other
-    // run would be delegated by the binary, which costs a second Node boot.
+    // `self-update` is native for its plain shapes in a CI context (`native/cli/src/self_update.rs`), which
+    // answers `--check` and the up-to-date verdicts and hands an install to Node before printing anything; any
+    // other run would be delegated by the binary, which costs a second Node boot.
     if (command === "self-update") {
         return helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive));
     }
