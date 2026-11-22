@@ -182,6 +182,18 @@ describe(renderGithubCiWorkflow, () => {
         expect(pnpm.indexOf("pnpm/action-setup")).toBeLessThan(pnpm.indexOf("Setup Node.js"));
     });
 
+    it("installs aube before running the install on both providers", () => {
+        expect.assertions(4);
+
+        const github = renderGithubCiWorkflow(plan({ packageManager: "aube" }));
+        const gitlab = renderGitlabCiWorkflow(plan({ packageManager: "aube" }));
+
+        expect(github.indexOf("npm install -g @endevco/aube")).toBeLessThan(github.indexOf("aube install --frozen-lockfile"));
+        expect(github.indexOf("Setup Node.js")).toBeLessThan(github.indexOf("npm install -g @endevco/aube"));
+        expect(gitlab.indexOf("npm install -g @endevco/aube")).toBeLessThan(gitlab.indexOf("aube install --frozen-lockfile"));
+        expect(`${github}${gitlab}`).not.toContain("corepack");
+    });
+
     it("caches the configured task cache directory", () => {
         expect.assertions(1);
 

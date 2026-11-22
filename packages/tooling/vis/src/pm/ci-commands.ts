@@ -33,7 +33,8 @@ export interface CiPackageManagerCommands {
 const COREPACK = ["npm install -g corepack", "corepack enable"];
 
 export const CI_PACKAGE_MANAGER_COMMANDS: Record<LockfilePackageManager, CiPackageManagerCommands> = {
-    aube: { exec: "npx", install: "aube install --frozen-lockfile", setup: COREPACK },
+    // aube is its own binary, so corepack cannot provide it.
+    aube: { exec: "npx", install: "aube install --frozen-lockfile", setup: ["npm install -g @endevco/aube"] },
     bun: { exec: "bunx", githubAction: GITHUB_ACTIONS.setupBun, install: "bun install --frozen-lockfile", setup: ["npm install -g bun"] },
     npm: { exec: "npx", githubNodeCache: "npm", install: "npm ci", setup: [] },
     pnpm: { exec: "pnpm exec", githubAction: GITHUB_ACTIONS.setupPnpm, githubNodeCache: "pnpm", install: "pnpm install --frozen-lockfile", setup: COREPACK },
