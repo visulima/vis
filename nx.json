@@ -86,7 +86,10 @@
                 "^production",
                 "{projectRoot}/vitest.config.ts",
                 "{workspaceRoot}/tools/get-vitest-config.ts",
-                "{projectRoot}/**/*.node"
+                "{projectRoot}/**/*.node",
+                { "fileset": "{projectRoot}/vis-native-cli", "includeIgnored": true },
+                { "fileset": "{projectRoot}/vis-native-cli.exe", "includeIgnored": true },
+                { "fileset": "{projectRoot}/npm/*/vis-native-cli*", "includeIgnored": true }
             ],
             "cache": true
         },

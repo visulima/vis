@@ -215,6 +215,16 @@ Applies to `dependsOn`, `inputs`, `outputs`, and `aliases`. An empty array (`dep
 
 If you find yourself writing `@inherit` in two or more projects with the same addition, that's the signal to move the addition into `scopedTasks` (scoped) or `tasks` (universal) instead, and drop the per-project overlay.
 
+### Config Evaluation Cache
+
+A `vis.config.ts` that is more than a plain object (it imports a helper, reads an environment variable, extends a preset, or exports a function) has to be run to find out what it says. The native `vis` binary has Node evaluate it once and keeps the result in `node_modules/.cache/vis/config` (or under `VIS_CACHE_DIRECTORY`), so the commands that run natively read the config without starting Node.
+
+A stored result is used again only while the things the evaluation was seen to depend on are unchanged: the config file, every module it imported, the files and directories it read, and the environment variables it read. Editing any of them, or upgrading vis, evaluates the config again. Values are compared by content hash, so secrets read from the environment are never written to disk, and a config that contains a value it read from the environment is never stored. Cache entries are readable by their owner only. What the evaluation did without being seen to (the working directory, the clock, the operating system) is not tracked.
+
+A config that starts a process, uses the network, prints output, reads files in a way that cannot be traced to a path or lists the whole environment is not used natively at all: Node runs the command, and vis remembers that, so the config is not evaluated again until it changes. The same holds for a config that contains functions (for example `plugins`).
+
+Set `VIS_NO_CONFIG_CACHE=1` to turn this off: the native binary then hands such a config to Node as it did before. Deleting `node_modules/.cache/vis/config` forgets every stored result.
+
 ### Scoped Tasks
 
 **`scopedTasks` scopes by _project_, not by task name.** `match` narrows which projects a block applies to; the keys inside `tasks` are still matched exactly against target names. There is no glob form for target names, so a rule covering `e2e:setup`, `e2e:run` and `e2e:teardown` has to name all three — or tag the projects and scope the block that way.

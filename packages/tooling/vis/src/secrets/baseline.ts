@@ -2,12 +2,12 @@ import { realpathSync } from "node:fs";
 
 import { isAccessibleSync, readJsonSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding } from "@visulima/secret-scanner";
-import { baselineKeys, fingerprint, legacyFingerprint, wholeMatchFingerprint } from "@visulima/secret-scanner";
+import type { Finding, ScanProfile } from "@visulima/secret-scanner";
+import { baselineKeys, fingerprint, legacyFingerprint, maskFinding, wholeMatchFingerprint } from "@visulima/secret-scanner";
 
 import { writeReportFileSync } from "./secure-write";
 
-const toRelative = (file: string, root: string): string => {
+export const toRelative = (file: string, root: string): string => {
     if (!isAbsolute(file)) {
         return file;
     }
@@ -32,11 +32,17 @@ const relativeInside = (base: string, absolute: string): string => {
     return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? absolute : rel;
 };
 
-/** Convert a finding to the shape we persist in baselines (with paths relative to root). */
+/**
+ * Convert a finding to the shape we persist in baselines and reports: `file` relative to
+ * `root`, without the scan-time `root` field (an absolute path that is no part of the
+ * finding's identity).
+ */
 export const toRelativeFinding = (f: Finding, root: string): Finding => {
-    const relativeFile = toRelative(f.file, root);
+    const relativeFinding = { ...f, file: toRelative(f.file, root) };
 
-    return relativeFile === f.file ? f : { ...f, file: relativeFile };
+    delete relativeFinding.root;
+
+    return relativeFinding;
 };
 
 const readBaseline = (baselinePath: string): Finding[] => {
@@ -58,11 +64,25 @@ const readBaseline = (baselinePath: string): Finding[] => {
  * staged and file-list scans relative to the process cwd) so it is relative
  * to `root`, like every other finding vis reports.
  */
+export const rebaseFile = (file: string, base: string, root: string): string => {
+    const absolute = isAbsolute(file) ? file : resolve(base, file);
+
+    return relativeInside(realOrSelf(root), absolute);
+};
+
 export const rebaseFinding = <F extends Finding>(finding: F, base: string, root: string): F => {
-    const absolute = isAbsolute(finding.file) ? finding.file : resolve(base, finding.file);
-    const file = relativeInside(realOrSelf(root), absolute);
+    const file = rebaseFile(finding.file, base, root);
 
     return file === finding.file ? finding : { ...finding, file };
+};
+
+/** The same rewrite for the file rows of a scan profile. */
+export const rebaseProfile = (profile: ScanProfile, base: string, root: string): ScanProfile => {
+    const files = profile.files.map((entry) => {
+        return { ...entry, file: rebaseFile(entry.file, base, root) };
+    });
+
+    return { ...profile, files };
 };
 
 /**
@@ -82,11 +102,34 @@ export const rebaseBaseline = (baselinePath: string, root: string, base: string)
     });
 };
 
+/**
+ * Every key a finding matches under: as given and masked. The scanner reports
+ * masked findings by default, so a baseline written with real values (before
+ * masking became the default) and one written from masked output both match.
+ */
+const matchKeys = (finding: Finding): string[] => [...baselineKeys(finding), ...baselineKeys(maskFinding(finding))];
+
+const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/** An entry read from a baseline file only needs `ruleId`, `file` and `startLine`; fill in the strings masking reads. */
+const normaliseEntry = (entry: Finding): Finding => {
+    const normalised: Finding = { ...entry, match: asString(entry.match), secret: asString(entry.secret) };
+
+    if (Array.isArray(entry.requiredFindings)) {
+        normalised.requiredFindings = entry.requiredFindings.map((required) => {
+            return { ...required, match: asString(required.match), secret: asString(required.secret) };
+        });
+    } else {
+        delete normalised.requiredFindings;
+    }
+
+    return normalised;
+};
+
+const maskEntry = (entry: Finding): Finding => maskFinding(normaliseEntry(entry));
+
 /** The keys a baseline entry suppresses under, as the scanner indexes a baseline file. */
-const entryKeys = (entry: Finding): string[] => [
-    fingerprint({ ...entry, secret: typeof entry.secret === "string" ? entry.secret : "" }),
-    legacyFingerprint(entry),
-];
+const entryKeys = (entry: Finding): string[] => [fingerprint(normaliseEntry(entry)), legacyFingerprint(entry), fingerprint(maskEntry(entry))];
 
 export interface BaselineDiff {
     fresh: Finding[];
@@ -101,8 +144,8 @@ export const diffBaseline = (findings: Finding[], baselinePath: string, root: st
     // the whole match as the secret (entries written before secret-group parity).
     const existingKeys = new Set(existing.flatMap((f) => entryKeys(f)));
     const currentRelative = findings.map((f) => toRelativeFinding(f, root));
-    const currentKeys = new Set(currentRelative.flatMap((f) => baselineKeys(f)));
-    const isKnown = (f: Finding): boolean => baselineKeys(f).some((key) => existingKeys.has(key));
+    const currentKeys = new Set(currentRelative.flatMap((f) => matchKeys(f)));
+    const isKnown = (f: Finding): boolean => matchKeys(f).some((key) => existingKeys.has(key));
 
     return {
         fresh: currentRelative.filter((f) => !isKnown(f)),
@@ -114,18 +157,25 @@ export const diffBaseline = (findings: Finding[], baselinePath: string, root: st
 export interface WriteBaselineOptions {
     /** If true, replace the file instead of merging with existing entries. */
     replace?: boolean;
-
-    /**
-     * The findings hold real secrets (no `--redact`): write the file 0600.
-     * Default `true`.
-     */
-    sensitive?: boolean;
 }
+
+/** Identity of a baseline entry regardless of masking, so a real-value entry and its masked rescan are one. */
+const maskedFingerprint = (entry: Finding): string => fingerprint(maskEntry(entry));
+
+/** Whether an entry's secret is already a mask. A real value can only be told apart from another by its real fingerprint. */
+const isMaskedEntry = (entry: Finding): boolean => {
+    const secret = asString(entry.secret);
+
+    return maskEntry(entry).secret === secret;
+};
 
 /**
  * Write `findings` to `baselinePath` with paths relative to `root`. By default
  * merges with any existing baseline (so prior triage decisions for files not
- * rescanned this run are preserved). Pass `replace: true` to overwrite.
+ * rescanned this run are preserved; an existing entry wins over a rescan of
+ * the same finding). Pass `replace: true` to overwrite. The file is always
+ * written 0600: whether an entry still holds a real value cannot be told from
+ * its text.
  */
 export const writeBaseline = (findings: Finding[], baselinePath: string, root: string, options: WriteBaselineOptions = {}): number => {
     const incoming = findings.map((f) => toRelativeFinding(f, root));
@@ -136,27 +186,40 @@ export const writeBaseline = (findings: Finding[], baselinePath: string, root: s
     } else {
         // Incoming findings supersede entries that recorded the same finding with the
         // whole match as its secret (written before secret-group parity).
-        const superseded = new Set(incoming.filter((f) => f.secret !== f.match).map((f) => wholeMatchFingerprint(f)));
+        const superseded = new Set(incoming.filter((f) => f.secret !== f.match).map((f) => wholeMatchFingerprint(maskFinding(f))));
         const existing = readBaseline(baselinePath)
             .map((f) => toRelativeFinding(f, root))
-            .filter((f) => !superseded.has(fingerprint(f)));
-        const seen = new Set<string>();
+            .filter((f) => !superseded.has(maskedFingerprint(f)));
+        const seenReal = new Set<string>();
+        // Masked identities of every kept entry, and of the kept entries that are masks.
+        const seenMasked = new Set<string>();
+        const seenMaskedEntries = new Set<string>();
 
         final = [];
 
+        // Two real values are the same entry only when their real fingerprints are;
+        // a mask stands for any real value it could have come from.
         for (const f of [...existing, ...incoming]) {
-            const key = fingerprint(f);
+            const realKey = fingerprint(normaliseEntry(f));
+            const maskedKey = maskedFingerprint(f);
+            const masked = isMaskedEntry(f);
 
-            if (seen.has(key)) {
+            if (seenReal.has(realKey) || (masked ? seenMasked.has(maskedKey) : seenMaskedEntries.has(maskedKey))) {
                 continue;
             }
 
-            seen.add(key);
+            seenReal.add(realKey);
+            seenMasked.add(maskedKey);
+
+            if (masked) {
+                seenMaskedEntries.add(maskedKey);
+            }
+
             final.push(f);
         }
     }
 
-    writeReportFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`, options.sensitive ?? true);
+    writeReportFileSync(baselinePath, `${JSON.stringify(final, null, 4)}\n`, true);
 
     return final.length;
 };

@@ -90,6 +90,35 @@ await scan([process.cwd()], {
 });
 ```
 
+### Typed authoring and rule tests
+
+`defineRule` turns a TypeScript-friendly definition into the plain object the native engine expects. A `RegExp` may be passed directly; its `i`, `m` and `s` flags become Rust inline flags, and other flags are rejected.
+
+```typescript
+import { createRuleTester, defineRule } from "@visulima/secret-scanner";
+
+const internalKey = defineRule({
+    description: "Internal API key format",
+    id: "internal-api-key",
+    regex: /int_[A-Za-z0-9]{32}/,
+    keywords: "auto",
+});
+
+const tester = createRuleTester(internalKey);
+
+await tester.run({
+    invalid: ["const key = int_abcdefghij0123456789abcdefghijkl;"],
+    valid: ["const key = 'not-a-secret';"],
+});
+
+// Stable, masked payload for expect(...).toMatchSnapshot().
+const snapshots = await tester.snapshot(["const key = int_abcdefghij0123456789abcdefghijkl;"]);
+```
+
+`keywords: "auto"` (the default) extracts only literal fragments that are mandatory on every path through the regex, and returns no keywords whenever the regex uses a construct it does not fully understand (verbose `(?x)` mode, backreferences, unusual escapes, malformed classes or quantifiers), so it never invents a keyword that a real match lacks. Set `keywords: false` when no safe fragment exists; the rule then always runs. Explicit keyword arrays replace inference — make sure every candidate contains one.
+
+The tester scans with the bundled ruleset disabled, validators off and inline allow markers ignored. It checks that each rule compiled, runs cases through the real detector, and throws a `RuleTesterError` containing positions only — never case content or raw secrets.
+
 ### Priority
 
 When two rules match the same byte span on the same line, the higher-priority wins. Default is `0`.

@@ -1,0 +1,1 @@
+{"native":[{"directory":"packages/a","name":"@fixture/a","targets":{"build":"node build.mjs","lint:fix":"eslint --fix ."}},{"directory":"packages/b","name":"b","targets":{"test":"node --test","build":"node build.mjs && node post.mjs"}}]}

@@ -27,6 +27,7 @@ crate-type = [
 ]
 
 [dependencies]
+vis-core = { path = "core" }
 blake3 = "1"
 ec4rs = "1"
 napi = { version = "3", features = [ "async" ] }
@@ -39,7 +40,7 @@ oxc_span = "=0.154.0"
 oxc_transformer = "=0.154.0"
 pep440_rs = "0.7"
 prek-identify = "0.5"
-rusqlite = { version = "0.40", features = [
+rusqlite = { version = "0.41", features = [
   "bundled",
   "blob"
 ] }

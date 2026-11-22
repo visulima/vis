@@ -1,0 +1,5 @@
+# keep
+.git
+  node_modules  
+*.md
+legacy-file.txt

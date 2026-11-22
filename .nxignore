@@ -1,9 +1,14 @@
 examples
 coverage
 __fixtures__
+# Native CLI parity fixtures are project layouts read by tests, not workspace projects.
+packages/tooling/vis/native/cli/tests/fixtures
 storybook-static
 node_modules
 dist
+packages/tooling/vis/native/cli/tests/fixtures/clean
 
 **/CHANGELOG.md
 **/README.md
+packages/tooling/vis/native/cli/tests/fixtures/ignore/
+packages/tooling/vis/native/cli/tests/fixtures/list

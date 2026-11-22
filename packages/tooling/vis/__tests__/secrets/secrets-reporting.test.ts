@@ -6,12 +6,14 @@ import { join } from "node:path";
 
 import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
+import { maskFinding } from "@visulima/secret-scanner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
 import { assertReportingFlags } from "../../src/commands/secrets/flags";
 import execute from "../../src/commands/secrets/handler";
-import { csvCell, emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
+import { formatProfile } from "../../src/commands/secrets/report";
+import { csvCell, emitSecretsCsv, emitSecretsGitHub, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../../src/report/secrets";
 import { writeBaseline } from "../../src/secrets/baseline";
 import { toSarifUri } from "../../src/secrets/format";
 import { formatSuppressed, formatUnusedIgnores, parseReportTargets } from "../../src/secrets/report";
@@ -130,6 +132,54 @@ describe("report emitters", () => {
 
         expect(first?.fingerprint).toBe(second?.fingerprint);
     });
+
+    it("emits GitHub annotations with the finding span and no secret value", () => {
+        expect.assertions(5);
+
+        const annotation = emitSecretsGitHub([finding()]);
+
+        expect(annotation).toBe("::error file=src/a.ts,line=3,endLine=3,col=10,endColumn=50,title=github-pat::GitHub PAT\n");
+        expect(annotation).not.toContain(PAT_A);
+        expect(annotation).not.toContain(`ghp${"*".repeat(PAT_A.length - 6)}xY4`);
+        expect(emitSecretsGitHub([])).toBe("");
+        expect(
+            emitSecretsGitHub([finding(), finding({ file: "b.ts" })])
+                .split("\n")
+                .filter(Boolean),
+        ).toHaveLength(2);
+    });
+
+    it("percent-encodes GitHub workflow-command properties and message bodies, leaving = alone", () => {
+        expect.assertions(4);
+
+        const annotation = emitSecretsGitHub([finding({ description: "first line%\nsecond: line", file: "src/a,b:c%=d.ts", ruleId: "rule:1,x" })]);
+
+        expect(annotation).toContain("::error file=src/a%2Cb%3Ac%25=d.ts,");
+        expect(annotation).toContain(",title=rule%3A1%2Cx::");
+        expect(annotation).toContain("first line%25%0Asecond: line");
+        expect(annotation).not.toContain("%3D");
+    });
+
+    it("names history findings by commit in the message, without location properties or the commit message", () => {
+        expect.assertions(4);
+
+        const annotation = emitSecretsGitHub([
+            finding({ commit: { authorEmail: "e@x", authorName: "A", date: "2026-01-01", message: `leaked ${PAT_A}`, sha: "a".repeat(40) } }),
+        ]);
+
+        expect(annotation).toBe("::error title=github-pat::GitHub PAT%0Asrc/a.ts:3 in commit aaaaaaa\n");
+        expect(annotation).not.toMatch(/file=|line=|col=/u);
+        expect(annotation).not.toContain(PAT_A);
+        expect(annotation).not.toContain("leaked");
+    });
+
+    it("names staged findings and archive entries in the message, without location properties", () => {
+        expect.assertions(3);
+
+        expect(emitSecretsGitHub([finding()], { staged: true })).toBe("::error title=github-pat::GitHub PAT%0Asrc/a.ts:3 (staged)\n");
+        expect(emitSecretsGitHub([finding({ file: "dist/bundle.zip!config/.env" })])).toBe("::error title=github-pat::GitHub PAT%0Adist/bundle.zip!config/.env:3\n");
+        expect(emitSecretsGitHub([finding({ file: "notes!.md" })])).toContain("::error file=notes!.md,line=3,");
+    });
 });
 
 describe(toSarifUri, () => {
@@ -161,9 +211,31 @@ describe(parseReportTargets, () => {
     });
 });
 
+describe(formatProfile, () => {
+    const profile = (files: string[]): Parameters<typeof formatProfile>[0] => {
+        return { files: files.map((file) => { return { file, ms: 1 }; }), phases: [], rules: [], totalMs: 1 };
+    };
+
+    it("cuts long file paths from the left so the file name stays visible", () => {
+        expect.assertions(3);
+
+        const long = "packages/some/deeply/nested/workspace/directory/with/many/segments";
+        const output = formatProfile(profile([`${long}/alpha.ts`, `${long}/beta.ts`]));
+
+        expect(output).toContain("…");
+        expect(output).toMatch(/…\S*alpha\.ts /);
+        expect(output).toMatch(/…\S*beta\.ts /);
+    });
+
+    it("keeps short paths whole", () => {
+        expect.assertions(1);
+        expect(formatProfile(profile(["src/a.ts"]))).toContain("  src/a.ts ");
+    });
+});
+
 describe(assertReportingFlags, () => {
     it("rejects reporting flags in modes that produce no report", () => {
-        expect.assertions(2);
+        expect.assertions(3);
 
         expect(() => {
             assertReportingFlags({ listRules: true, report: ["json=a"] }, false);
@@ -171,6 +243,9 @@ describe(assertReportingFlags, () => {
         expect(() => {
             assertReportingFlags({ logIgnored: true, updateBaseline: true }, false);
         }).toThrow(/--update-baseline/);
+        expect(() => {
+            assertReportingFlags({ init: true, profile: true }, false);
+        }).toThrow(/--profile only applies to a scan report and can't be combined with --init/);
     });
 
     it("rejects scan targets in modes that don't scan them", () => {
@@ -229,7 +304,7 @@ describe("diagnostic formatters", () => {
 });
 
 describe(writeBaseline, () => {
-    it.skipIf(process.platform === "win32")("writes 0600 unless the findings are redacted", () => {
+    it.skipIf(process.platform === "win32")("always writes 0600", () => {
         expect.assertions(3);
 
         const root = tempDir();
@@ -248,9 +323,9 @@ describe(writeBaseline, () => {
 
         writeFileSync(redacted, "[]");
         chmodSync(redacted, 0o644);
-        writeBaseline([finding()], redacted, root, { sensitive: false });
+        writeBaseline([maskFinding(finding())], redacted, root);
 
-        expect(mode(redacted)).toBe(0o644);
+        expect(mode(redacted)).toBe(0o600);
     });
 });
 
@@ -315,6 +390,63 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(JSON.parse(stdout.join(""))).toHaveLength(1);
     }, 60_000);
 
+    it("prints a timing profile to stderr without corrupting stdout or honouring --quiet", async () => {
+        expect.assertions(6);
+
+        const root = workspace();
+
+        await runSecrets({ format: "json", profile: true, quiet: true }, root);
+
+        expect(JSON.parse(stdout.join(""))).toHaveLength(1);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("profile:");
+        expect(profile).toContain("phases:");
+        expect(profile).toContain("github-pat");
+        expect(profile).toContain("1 match(es)");
+        expect(profile).toContain("files:");
+    }, 60_000);
+
+    it("names staged files relative to the workspace root in the profile", async () => {
+        expect.assertions(3);
+
+        const root = tempDir();
+        const git = (...arguments_: string[]): string => execFileSync("git", arguments_, { cwd: root, encoding: "utf8", env: hermeticGitEnv });
+
+        git("init", "-q", "-b", "main");
+        await mkdir(join(root, "sub", "dir"), { recursive: true });
+        writeFileSync(join(root, "sub", "dir", "a.ts"), `const a = "${PAT_A}";\n`);
+        git("add", "sub/dir/a.ts");
+
+        await runSecrets({ format: "json", profile: true, staged: true }, root);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("  sub/dir/a.ts ");
+        expect(profile).not.toContain(root);
+        expect(JSON.parse(stdout.join("")) as Finding[]).toHaveLength(1);
+    }, 60_000);
+
+    it("prints an empty profile when no files are selected", async () => {
+        expect.assertions(2);
+
+        const root = tempDir();
+        const git = (...arguments_: string[]): string => execFileSync("git", arguments_, { cwd: root, encoding: "utf8", env: hermeticGitEnv });
+
+        git("init", "-q", "-b", "main");
+        writeFileSync(join(root, "clean.ts"), "clean\n");
+        git("add", "clean.ts");
+        git("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "init");
+
+        await runSecrets({ profile: true, since: "HEAD" }, root);
+
+        const profile = stderr.join("");
+
+        expect(profile).toContain("profile: 0.0 ms total, 0 file(s)");
+        expect(profile).toContain("phases:");
+    }, 60_000);
+
     it("reports unused entries and fails on them with --fail-on-unused-ignores", async () => {
         expect.assertions(3);
 
@@ -330,6 +462,34 @@ describe("vis secrets reporting (end-to-end)", () => {
         await runSecrets({ failOnUnusedIgnores: true }, root);
 
         expect(process.exitCode).toBe(1);
+    }, 60_000);
+
+    it("keeps a marker with a renamed rule id suppressing and warns about the unknown id", async () => {
+        expect.assertions(4);
+
+        const root = tempDir();
+
+        writeFileSync(join(root, "a.ts"), `const a = "${PAT_A}"; // gitleaks:allow github-pat-v2\nconst b = "${PAT_B}"; // gitleaks:allow github-pat\n`);
+
+        await runSecrets({ format: "json", quiet: false }, root);
+
+        expect(JSON.parse(stdout.join(""))).toStrictEqual([]);
+        expect(stderr.join("")).toContain("1 allow marker(s) name unknown rule ids");
+        expect(stderr.join("")).toContain("a.ts:1 unknown: github-pat-v2");
+        expect(stderr.join("")).not.toContain("a.ts:2");
+    }, 60_000);
+
+    it("prints no allow warning for a marker with a valid id", async () => {
+        expect.assertions(2);
+
+        const root = tempDir();
+
+        writeFileSync(join(root, "a.ts"), `const b = "${PAT_B}"; // gitleaks:allow github-pat\n`);
+
+        await runSecrets({ format: "json", quiet: false }, root);
+
+        expect(JSON.parse(stdout.join(""))).toStrictEqual([]);
+        expect(stderr.join("")).not.toContain("allow marker");
     }, 60_000);
 
     it("doesn't call entries for files outside a --staged scan unused", async () => {
@@ -374,7 +534,7 @@ describe("vis secrets reporting (end-to-end)", () => {
 
         const root = workspace();
 
-        await runSecrets({ format: "json", report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
+        await runSecrets({ format: "json", redact: false, report: ["sarif=out/s.sarif", "csv=out/s.csv", "junit=out/s.xml", "gitlab-code-quality=out/gl.json"] }, root);
 
         expect(JSON.parse(stdout.join(""))).toHaveLength(1);
         expect(JSON.parse(readFileSync(join(root, "out", "s.sarif"), "utf8")).version).toBe("2.1.0");
@@ -382,7 +542,23 @@ describe("vis secrets reporting (end-to-end)", () => {
         expect(existsSync(join(root, "out", "s.xml")) && existsSync(join(root, "out", "gl.json"))).toBe(true);
     }, 60_000);
 
-    it("never prints or writes a raw secret with --redact", async () => {
+    it("prints GitHub annotations on stdout without the raw secret and can write them to a report", async () => {
+        expect.assertions(5);
+
+        const root = workspace();
+
+        await runSecrets({ format: "github", report: ["github=out/annotations.txt"] }, root);
+
+        const annotations = stdout.join("");
+
+        expect(annotations).toMatch(/^::error file=a\.ts,line=1,endLine=1,col=\d+,endColumn=\d+,title=github-pat::/u);
+        expect(annotations).not.toContain(PAT_A);
+        expect(annotations.split("\n").filter(Boolean)).toHaveLength(1);
+        expect(stderr.join("")).not.toContain("::error");
+        expect(readFileSync(join(root, "out", "annotations.txt"), "utf8")).toBe(annotations);
+    }, 60_000);
+
+    it("never prints or writes a raw secret by default", async () => {
         expect.assertions(5);
 
         // eslint-disable-next-line no-useless-concat -- split so GitHub push protection doesn't flag the fake tokens
@@ -393,7 +569,7 @@ describe("vis secrets reporting (end-to-end)", () => {
         writeFileSync(join(root, "c.ts"), `const c = "${patC}";\n`);
         writeFileSync(join(root, ".gitleaksignore"), `secret:${PAT_A}\npath:a.ts:rule:github-pat:secret:${PAT_B}\nsecret:${unused}\n`);
 
-        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, redact: true, report: reports }, root);
+        await runSecrets({ format: "json", inlineAllow: false, logIgnored: true, quiet: false, report: reports }, root);
 
         const outputs = [stdout.join(""), stderr.join(""), ...reports.map((report) => readFileSync(join(root, report.split("=")[1] as string), "utf8"))];
         const leaked = outputs.filter((output) => [PAT_A, PAT_B, patC, unused].some((secret) => output.includes(secret)));
@@ -406,19 +582,19 @@ describe("vis secrets reporting (end-to-end)", () => {
     }, 60_000);
 
     it.skipIf(process.platform === "win32")(
-        "writes report files owner-only unless redacted",
+        "writes report files owner-only unless findings are masked",
         async () => {
             expect.assertions(2);
 
             const root = workspace();
 
-            await runSecrets({ report: ["csv=raw.csv"] }, root);
+            await runSecrets({ redact: false, report: ["csv=raw.csv"] }, root);
 
             expect(mode(join(root, "raw.csv"))).toBe(0o600);
 
-            await runSecrets({ redact: true, report: ["csv=redacted.csv"] }, root);
+            await runSecrets({ report: ["csv=masked.csv"] }, root);
 
-            expect(mode(join(root, "redacted.csv"))).not.toBe(0o600);
+            expect(mode(join(root, "masked.csv"))).not.toBe(0o600);
         },
         60_000,
     );

@@ -7,10 +7,12 @@
 //! documents). Flag surface mirrors `src/commands/exec/index.ts`.
 
 use std::env;
-use std::process::{exit, Command};
+use std::process::Command;
 
 use vis_core::detect::detect_package_manager;
 use vis_core::resolve::{resolve_exec, ExecOptions};
+
+use crate::error::{self, WrapperError};
 
 struct Parsed {
     runtime: Option<String>,
@@ -19,41 +21,32 @@ struct Parsed {
 
 /// Entry point. `args` is everything after the `exec` subcommand. Never returns.
 pub fn run(args: &[String]) -> ! {
-    let Parsed { runtime, opts } = match parse(args) {
-        Ok(parsed) => parsed,
-        Err(message) => {
-            eprintln!("vis exec: {message}");
-            exit(1);
-        }
-    };
+    error::finish(try_run(args))
+}
+
+/// Runs the command and returns the exit status to adopt, or the failure to report.
+fn try_run(args: &[String]) -> Result<i32, WrapperError> {
+    let Parsed { runtime, opts } = parse(args).map_err(|message| WrapperError::usage("exec", message))?;
 
     if opts.command.is_empty() {
-        eprintln!("vis exec: No command specified. Usage: vis exec <command> [args...]");
-        exit(1);
+        return Err(WrapperError::usage("exec", "No command specified. Usage: vis exec <command> [args...]"));
     }
 
     let cwd = env::current_dir().map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|_| ".".to_owned());
     let (pm, version) = resolve_pm(runtime.as_deref(), &cwd);
 
-    let resolved = match resolve_exec(&pm, &version, opts) {
-        Ok(resolved) => resolved,
-        Err(message) => {
-            eprintln!("vis exec: {message}");
-            exit(1);
-        }
-    };
+    let resolved = resolve_exec(&pm, &version, opts).map_err(|message| WrapperError::usage("exec", message))?;
 
     for warning in &resolved.warnings {
         eprintln!("vis exec: {warning}");
     }
 
-    match Command::new(&resolved.bin).args(&resolved.args).current_dir(&cwd).status() {
-        Ok(status) => exit(crate::forward_code(status)),
-        Err(error) => {
-            eprintln!("vis exec: failed to run '{}': {error}", resolved.bin);
-            exit(127);
-        }
-    }
+    Command::new(&resolved.bin)
+        .args(&resolved.args)
+        .current_dir(&cwd)
+        .status()
+        .map(crate::forward_code)
+        .map_err(|source| WrapperError::spawn("exec", &resolved.bin, source))
 }
 
 /// Resolve the package manager + version to drive `resolve_exec`. A `bun` runtime

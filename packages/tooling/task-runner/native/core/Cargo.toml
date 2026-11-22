@@ -1,0 +1,64 @@
+# The task-runner engines in plain Rust: task-graph algorithms, xxh3 file and task
+# hashing, git-worktree detection and the concurrent process runner. No napi — the
+# `task-runner-native` addon (the workspace root) wraps this crate for Node, and the
+# `vis` CLI can link it directly.
+[package]
+name = "task-runner-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = [ "rlib" ]
+
+[dependencies]
+rustc-hash = "2"
+xxhash-rust = { version = "0.8", features = [ "xxh3" ] }
+walkdir = "2"
+rayon = "1"
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "process",
+  "io-util",
+  "signal",
+  "sync",
+  "time",
+  "macros"
+] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = [
+  "signal",
+  "process"
+] }
+
+# Process-tree termination on Windows (job objects, console control events). The
+# file-access tracker's injection features stay with the addon crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_System_Console",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Foundation",
+  "Win32_Security",
+] }
+
+[dev-dependencies]
+# `codspeed-criterion-compat` is a drop-in for criterion: same API (imported as
+# `criterion` via the package rename), so the bench sources are unchanged. Plain
+# `cargo bench` falls back to vanilla criterion locally; under `cargo codspeed`
+# (the CodSpeed CI path in .github/workflows/codspeed.yml) it emits instrumented
+# measurements. Pinned to the 4.x line to match `CodSpeedHQ/action@v4`.
+criterion = { package = "codspeed-criterion-compat", version = "4", default-features = false, features = [ "cargo_bench_support" ] }
+
+# Native micro-benchmarks (criterion), measuring our Rust hot paths directly — the
+# layer the hyperfine/vitest harness in packages/tooling/vis/__bench__ cannot isolate
+# because the Node-boot floor swamps it. Run with `cargo bench`.
+[[bench]]
+name = "graph"
+harness = false
+
+[[bench]]
+name = "file_hasher"
+harness = false

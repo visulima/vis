@@ -1,5 +1,6 @@
 /**
- * Report emitters for `vis secrets`: CSV, JUnit XML and GitLab Code Quality.
+ * Report emitters for `vis secrets`: CSV, JUnit XML, GitLab Code Quality and
+ * GitHub Actions annotations.
  *
  * Findings arrive with paths already relative to the workspace root (see
  * `toRelativeFinding`) and already masked when `--redact` is on. History
@@ -11,6 +12,7 @@ import { createHash } from "node:crypto";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
+import { workflowCommand } from "./github-workflow-command";
 import { cdata, escapeAttribute } from "./junit-audit";
 
 type SecretsFinding = Finding & Partial<Pick<GitFinding, "commit">>;
@@ -163,3 +165,49 @@ export const emitSecretsGitlabCodeQuality = (findings: SecretsFinding[]): string
 
     return `${JSON.stringify(issues, undefined, 2)}\n`;
 };
+
+/** `archive.zip!inner/file`: the virtual path of a finding inside an archive. */
+const ARCHIVE_ENTRY = /\.(?:zip|jar|war|ear|tar|tgz|gz)!/iu;
+
+/**
+ * GitHub Actions annotations: one `::error` command per finding. Annotations
+ * are visible to anyone who can read the PR, so they carry no secret value,
+ * not even a masked one, and no commit message. Working-tree findings anchor
+ * to their exact span. Findings whose coordinates don't describe a file in the
+ * checkout carry no location properties and name the location in the message:
+ * history findings (`file:line in commit &lt;sha>`), staged findings, whose lines
+ * come from the index blob (`file:line (staged)`), and archive entries
+ * (`archive.zip!inner/file:line`).
+ */
+export const emitSecretsGitHub = (findings: SecretsFinding[], options: { staged?: boolean } = {}): string =>
+    findings
+        .map((finding) => {
+            const description = finding.description || finding.ruleId;
+            const location = `${finding.file}:${String(finding.startLine)}`;
+
+            if (finding.commit) {
+                return workflowCommand("error", { title: finding.ruleId }, `${description}\n${location} in commit ${finding.commit.sha.slice(0, 7)}`);
+            }
+
+            if (options.staged) {
+                return workflowCommand("error", { title: finding.ruleId }, `${description}\n${location} (staged)`);
+            }
+
+            if (ARCHIVE_ENTRY.test(finding.file)) {
+                return workflowCommand("error", { title: finding.ruleId }, `${description}\n${location}`);
+            }
+
+            return workflowCommand(
+                "error",
+                {
+                    col: finding.startColumn,
+                    endColumn: finding.endColumn,
+                    endLine: finding.endLine,
+                    file: finding.file,
+                    line: finding.startLine,
+                    title: finding.ruleId,
+                },
+                description,
+            );
+        })
+        .join("");

@@ -754,7 +754,21 @@ export interface VisConfig {
             presets?: string[];
         };
 
-        /** Redact secret values in findings. */
+        /** File-specific rule filters, applied after the global `rules` filters. */
+        overrides?: {
+            /** Gitignore-syntax globs relative to the workspace root, e.g. `*.env` or `packages/api/**`. */
+            files: string | string[];
+            rules?: {
+                /** Enable opt-in rules for matching files only. */
+                enable?: string[];
+                /** Drop these rules for matching files. */
+                exclude?: string[];
+                /** Restrict matching files to these rules. */
+                include?: string[];
+            };
+        }[];
+
+        /** Mask secret values in findings and reports. Default `true`; `false` reveals them. */
         redact?: boolean;
 
         /** Rule-id filters applied after scanning. */
@@ -764,6 +778,9 @@ export interface VisConfig {
             /** Only report findings whose ruleId matches. */
             include?: string[];
         };
+
+        /** `.secretlintignore` paths, or `false` to disable auto-discovery (`--secretlintignore` files still apply). */
+        secretlintIgnore?: string[] | false;
 
         /** Walker / filesystem traversal. */
         walk?: {

@@ -6,6 +6,9 @@ on: # yamllint disable-line rule:truthy
     push:
         branches:
             - "main"
+            # Publishes under the `next` dist-tag (.releaserc.branches.json lists the branch): the channel
+            # for changes that should not reach `latest` yet.
+            - "next"
     workflow_dispatch: # yamllint disable-line rule:empty-values
 
 concurrency:
@@ -60,6 +63,9 @@ jobs:
                   # Coverage baseline reports to Codecov and runs the full suite past this
                   # deadline, and CodSpeed starts its benches only after CI has finished.
                   IGNORE_WORKFLOWS: '["Coverage baseline","CodSpeed"]'
+                  # Checks that must exist and succeed on this commit before a release. A push to `next`
+                  # would otherwise publish while CI and lint never ran for it.
+                  REQUIRED_CHECKS: '["Test","Lint (eslint, types, attw, package.json)"]'
                   IGNORE_CHECKS: '["Semantic Release","Build packages","lock-closed / lock-closed","Socket Security: Pull Request Alerts","Dependabot","CodSpeed Performance Analysis"]'
               run: |
                   set -euo pipefail
@@ -101,6 +107,12 @@ jobs:
                               *) failed+="$name:$conclusion "$'\n' ;;
                           esac
                       done <<< "$runs"
+                      while IFS= read -r required; do
+                          if ! awk -F '\t' -v n="$required" '$1 == n && $2 == "completed" && $3 == "success" { found = 1 } END { exit !found }' <<<"$runs"; then
+                              pending=$((pending + 1))
+                              pending_names+="$required (required), "
+                          fi
+                      done < <(jq -r '.[]' <<<"$REQUIRED_CHECKS")
                       if [ -n "$failed" ]; then
                           echo "Failed checks:"
                           printf '%s' "$failed"

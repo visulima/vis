@@ -245,6 +245,13 @@ export interface TaskHashDetails {
     command: string;
     /** Hash of implicit dependencies */
     implicitDeps?: Record<string, string>;
+
+    /**
+     * Version of the byte layout the hashes were computed with. Absent in summaries
+     * written before the layout was versioned (layout 1). Two details with different
+     * layouts carry command hashes that cannot be compared.
+     */
+    layout?: number;
     /** Hashes of input files */
     nodes: Record<string, string>;
     /** Hash of runtime values */

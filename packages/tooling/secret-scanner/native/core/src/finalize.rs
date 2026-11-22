@@ -1,0 +1,497 @@
+// Turns raw detector findings into the scan report: path relativisation, span dedup,
+// stable ordering, redaction.
+
+use std::path::PathBuf;
+
+use crate::detector::RawFinding;
+use crate::profile::ProfileFile;
+use crate::scanner::FileScan;
+use crate::skip::Skipped;
+use crate::suppression::UnknownAllowIds;
+use crate::types::{AllowWarning, Finding, RequiredFinding, ScanReport, SkippedFile, SourceSpan};
+
+/// Build the report: finalize findings, rewrite skipped and warning paths like findings.
+/// `roots` are the scan roots that paths are made relative to; an in-memory scan passes
+/// `&[]` and keeps its paths as given.
+pub fn build_report(scan: FileScan, roots: &[PathBuf], redact_secrets: bool) -> ScanReport {
+    let FileScan { findings, skipped, allow_warnings } = scan;
+    let canon_roots = canonicalize_roots(roots);
+    let mut skipped: Vec<SkippedFile> = skipped
+        .into_iter()
+        .map(|Skipped { path, entry, reason }| {
+            let raw = path.to_string_lossy().to_string();
+            let on_disk = relative_to_root(&raw, &canon_roots).map_or(raw, |(rel, _)| rel);
+            SkippedFile { path: format!("{on_disk}{entry}"), reason: reason.as_str().to_string() }
+        })
+        .collect();
+    skipped.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut allow_warnings: Vec<AllowWarning> = allow_warnings
+        .into_iter()
+        .map(|UnknownAllowIds { path, entry, line, ids }| {
+            let raw = path.to_string_lossy().to_string();
+            let on_disk = relative_to_root(&raw, &canon_roots).map_or(raw, |(relative, _)| relative);
+            AllowWarning { file: format!("{on_disk}{entry}"), line, unknown_rule_ids: ids }
+        })
+        .collect();
+    allow_warnings.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
+
+    let (active, suppressed) = finalize_findings(findings, &canon_roots);
+    ScanReport {
+        findings: active.into_iter().map(|f| to_finding(f, redact_secrets)).collect(),
+        // Every finding of the suppressed group carries its reason.
+        suppressed: suppressed
+            .into_iter()
+            .filter_map(|f| {
+                let reason = f.suppressed_by?;
+                Some(to_finding(f, redact_secrets).suppressed(reason))
+            })
+            .collect(),
+        skipped,
+        allow_warnings,
+        profile: None,
+    }
+}
+
+/// Post-process raw findings: relative paths, priority-based span dedup, exact-duplicate
+/// collapse, stable ordering. `canon_roots` come from [`canonicalize_roots`]. Returns the
+/// active and the suppressed findings.
+fn finalize_findings(findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> (Vec<RawFinding>, Vec<RawFinding>) {
+    // Suppressed findings (only present with `reportSuppressed`) are deduped
+    // separately: a suppressed higher-priority match must never swallow a real
+    // finding at the same span.
+    let (suppressed, active): (Vec<RawFinding>, Vec<RawFinding>) =
+        findings.into_iter().partition(|f| f.suppressed_by.is_some());
+    (finalize_group(active, canon_roots), finalize_group(suppressed, canon_roots))
+}
+
+fn finalize_group(mut findings: Vec<RawFinding>, canon_roots: &[PathBuf]) -> Vec<RawFinding> {
+    // #1059 — rewrite `file` relative to the nearest root so baselines are portable across cwd.
+    // `scan_text_sync` passes `&[]` and opts out of the rewrite (in-memory scan has no root).
+    if !canon_roots.is_empty() {
+        for f in &mut findings {
+            // Archive entries: relativise the archive's own path, then re-attach the
+            // `!entry` suffix (the virtual path doesn't exist on disk, so it can't be
+            // canonicalised as a whole).
+            let suffix = f.archive_entry.as_deref().filter(|s| f.file.ends_with(s)).unwrap_or("");
+            let on_disk = &f.file[..f.file.len() - suffix.len()];
+            if let Some((rel, root)) = relative_to_root(on_disk, canon_roots) {
+                f.file = format!("{rel}{suffix}");
+                f.root = Some(root);
+            }
+        }
+    }
+
+    // Sort so findings at the same span sit next to each other: then we can dedup + apply
+    // priority in a single linear pass.
+    //
+    // Decoded findings share their encoded span with any plain finding on the blob itself,
+    // so the decode origin (chain, then inner offsets) is part of the key; plain findings
+    // (`None`) sort first.
+    //
+    // A satisfied composite finding (`required_findings` set) sorts ahead of every other
+    // rule at its span, so the dedup below keeps it whatever its priority: its dependencies
+    // were found, which is stronger evidence than a higher-priority single-pattern match.
+    findings.sort_by(|a, b| {
+        (
+            &a.file,
+            &a.root,
+            a.start_line,
+            a.start_column,
+            a.start_offset,
+            a.end_offset,
+            &a.decoded,
+            a.required_findings.is_none(),
+            std::cmp::Reverse(a.priority),
+            &a.rule_id,
+        )
+            .cmp(&(
+                &b.file,
+                &b.root,
+                b.start_line,
+                b.start_column,
+                b.start_offset,
+                b.end_offset,
+                &b.decoded,
+                b.required_findings.is_none(),
+                std::cmp::Reverse(b.priority),
+                &b.rule_id,
+            ))
+    });
+
+    // #1054 — collapse exact duplicates (same file + rule + position + secret).
+    findings.dedup_by(|a, b| {
+        a.file == b.file
+            && a.root == b.root
+            && a.rule_id == b.rule_id
+            && a.start_line == b.start_line
+            && a.start_column == b.start_column
+            && a.end_line == b.end_line
+            && a.end_column == b.end_column
+            && a.secret == b.secret
+            && a.decode_chain() == b.decode_chain()
+    });
+
+    // #1567 / #1997 — when two rules match the **same byte span** on the same file, keep the
+    // highest-priority finding. Ties fall back to deterministic rule-id order (already sorted).
+    //
+    // Behavioural note: different rules extracting different `secretGroup` slices from the
+    // same whole-match span collapse to one finding (the higher-priority rule wins). This is
+    // intentional — one span = one leak — but it means documenting a specific-over-generic
+    // preference is the right way to model priority for custom rules.
+    //
+    // Path-only findings all emit offsets (0, 0) as a sentinel; we skip the span-dedup for
+    // them so two different path-only rules on the same file can coexist (they represent
+    // different file-level concerns — e.g. `keepass-kdbx-file` + `password-manager-export-path`).
+    let mut deduped: Vec<RawFinding> = Vec::with_capacity(findings.len());
+    for f in findings {
+        let is_path_only = f.start_offset == 0 && f.end_offset == 0;
+        if let Some(last) = deduped.last_mut() {
+            if !is_path_only
+                && last.file == f.file
+                && last.root == f.root
+                && last.start_offset == f.start_offset
+                && last.end_offset == f.end_offset
+                && last.decoded == f.decoded
+            {
+                // Same span — the sort put a composite, then the highest priority first. Record the
+                // dropped rule on the winner so reporters can show "also: id1, id2".
+                if last.rule_id != f.rule_id && !last.alternate_matches.contains(&f.rule_id) {
+                    last.alternate_matches.push(f.rule_id);
+                }
+                continue;
+            }
+        }
+        deduped.push(f);
+    }
+    deduped
+}
+
+/// Canonicalise each root and sort by descending path length so `relative_to_root` picks
+/// the deepest-matching root first (e.g. with roots `/a` and `/a/b`, a file under `/a/b/c`
+/// strips against `/a/b` → `c`, not `/a` → `b/c`).
+fn canonicalize_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut canon: Vec<PathBuf> = roots.iter().map(|r| r.canonicalize().unwrap_or_else(|_| r.clone())).collect();
+    canon.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+    canon
+}
+
+/// Rewrite profiled file paths relative to the scan roots, the same rewrite findings get.
+/// With no roots (an in-memory scan) the paths stay as given.
+pub fn relative_profile_paths(files: &mut [ProfileFile], roots: &[PathBuf]) {
+    let canon_roots = canonicalize_roots(roots);
+    if canon_roots.is_empty() {
+        return;
+    }
+    for entry in files {
+        if let Some((rel, _)) = relative_to_root(&entry.file, &canon_roots) {
+            entry.file = rel;
+        }
+    }
+}
+
+/// `file` relative to the first root containing it, with that root's canonical path.
+fn relative_to_root(file: &str, roots: &[PathBuf]) -> Option<(String, String)> {
+    let file_path = PathBuf::from(file);
+    let file_canon = file_path.canonicalize().unwrap_or(file_path);
+    for root in roots {
+        if let Ok(stripped) = file_canon.strip_prefix(root) {
+            let s = stripped.to_string_lossy();
+            // Normalise separators so baselines are identical across platforms.
+            let out = s.replace('\\', "/");
+            return Some((out, root.to_string_lossy().to_string()));
+        }
+    }
+    None
+}
+
+/// Mask all but the first and last three **characters**. Works on `chars()` rather than
+/// bytes so a multibyte secret (`pässwört`) never slices through a UTF-8 sequence (#2261).
+fn redact(s: &str) -> String {
+    let len = s.chars().count();
+    if len <= 6 {
+        return "******".into();
+    }
+    let mut out = String::with_capacity(s.len());
+    out.extend(s.chars().take(3));
+    out.extend(std::iter::repeat_n('*', len - 6));
+    out.extend(s.chars().skip(len - 3));
+    out
+}
+
+/// The rewrite span of `f`, or the fixed reason it can't be trusted against the source file.
+fn span_of(f: &RawFinding) -> (Option<SourceSpan>, Option<String>) {
+    let unavailable = if f.is_path_only() {
+        Some("path-only finding")
+    } else if f.archive_entry.is_some() {
+        Some("archive entry")
+    } else if f.decoded.is_some() {
+        Some("decoded content")
+    } else {
+        f.span_unavailable
+    };
+    match unavailable {
+        Some(reason) => (None, Some(reason.to_string())),
+        None => (
+            Some(SourceSpan {
+                match_start: f.start_offset,
+                match_end: f.end_offset,
+                secret_start: f.secret_start_offset,
+                secret_end: f.secret_end_offset,
+            }),
+            None,
+        ),
+    }
+}
+
+fn to_finding(f: RawFinding, redact_secrets: bool) -> Finding {
+    let (source_span, span_unavailable_reason) = span_of(&f);
+
+    Finding {
+        rule_id: f.rule_id,
+        description: f.description,
+        file: f.file,
+        start_line: f.start_line,
+        end_line: f.end_line,
+        start_column: f.start_column,
+        end_column: f.end_column,
+        r#match: if redact_secrets { redact(&f.r#match) } else { f.r#match },
+        secret: if redact_secrets { redact(&f.secret) } else { f.secret },
+        entropy: f.entropy as f64,
+        tags: f.tags,
+        source: f.source,
+        confidence: f.confidence.to_string(),
+        alternate_matches: f.alternate_matches,
+        decoded: f.decoded.map(|d| d.chain),
+        root: f.root,
+        required_findings: f.required_findings.map(|list| {
+            list.into_iter()
+                .map(|r| {
+                    let (source_span, span_unavailable_reason) = span_of(&r);
+                    RequiredFinding {
+                        rule_id: r.rule_id,
+                        start_line: r.start_line,
+                        end_line: r.end_line,
+                        start_column: r.start_column,
+                        end_column: r.end_column,
+                        r#match: if redact_secrets { redact(&r.r#match) } else { r.r#match },
+                        secret: if redact_secrets { redact(&r.secret) } else { r.secret },
+                        decoded: r.decoded.map(|d| d.chain),
+                        source_span,
+                        span_unavailable_reason,
+                    }
+                })
+                .collect()
+        }),
+        source_span,
+        span_unavailable_reason,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::DecodeOrigin;
+
+    fn raw_finding(rule_id: &str, priority: i32, start: u32, end: u32) -> RawFinding {
+        RawFinding {
+            rule_id: rule_id.into(),
+            file: "/tmp/fixture.txt".into(),
+            start_line: 1,
+            end_line: 1,
+            start_column: 1,
+            end_column: (end - start + 1),
+            r#match: "AKIA0123456789ABCDEF".into(),
+            secret: "AKIA0123456789ABCDEF".into(),
+            entropy: 3.5,
+            priority,
+            start_offset: start,
+            end_offset: end,
+            secret_start_offset: start + 2,
+            secret_end_offset: end.saturating_sub(2),
+            confidence: "low",
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn redact_masks_ascii_by_position() {
+        assert_eq!(redact("abcdefghij"), "abc****hij");
+        assert_eq!(redact("abcdef"), "******");
+    }
+
+    #[test]
+    fn redact_handles_multibyte_secrets() {
+        // Byte slicing would panic here: `ä` is two bytes, so byte 3 is mid-sequence.
+        assert_eq!(redact("pässwört"), "päs**ört");
+        assert_eq!(redact("€€€€€€€€"), "€€€**€€€");
+        assert_eq!(redact("äöü"), "******");
+        assert_eq!(redact("äöüäöü"), "******");
+    }
+
+    #[test]
+    fn finalize_exposes_trusted_spans() {
+        let (out, _) = finalize_findings(vec![raw_finding("rule.a", 0, 10, 30)], &[]);
+        let finding = to_finding(out.into_iter().next().unwrap(), false);
+
+        assert_eq!(
+            finding.source_span,
+            Some(SourceSpan { match_start: 10, match_end: 30, secret_start: 12, secret_end: 28 })
+        );
+        assert_eq!(finding.span_unavailable_reason, None);
+    }
+
+    #[test]
+    fn finalize_withholds_spans_that_cannot_map_to_the_source_file() {
+        let mut pre_replaced = raw_finding("rule.pre", 0, 10, 30);
+        pre_replaced.span_unavailable = Some("pre-regex-replaced content");
+        let mut decoded = raw_finding("rule.decoded", 0, 10, 30);
+        decoded.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], ..Default::default() });
+        let mut archived = raw_finding("rule.archive", 0, 10, 30);
+        archived.archive_entry = Some("!inner.env".into());
+        let path_only = raw_finding("rule.path", 0, 0, 0);
+
+        for (finding, reason) in [
+            (pre_replaced, "pre-regex-replaced content"),
+            (decoded, "decoded content"),
+            (archived, "archive entry"),
+            (path_only, "path-only finding"),
+        ] {
+            let (out, _) = finalize_findings(vec![finding], &[]);
+            let finding = to_finding(out.into_iter().next().unwrap(), false);
+            assert_eq!(finding.source_span, None);
+            assert_eq!(finding.span_unavailable_reason.as_deref(), Some(reason));
+        }
+    }
+
+    #[test]
+    fn finalize_keeps_trusted_spans_on_suppressed_findings() {
+        let mut finding = raw_finding("rule.suppressed", 0, 10, 30);
+        finding.suppressed_by = Some(crate::suppression::SuppressionReason::InlineAllow);
+        let (_, suppressed) = finalize_findings(vec![finding], &[]);
+        let finding = to_finding(suppressed.into_iter().next().unwrap(), false);
+
+        assert_eq!(
+            finding.source_span,
+            Some(SourceSpan { match_start: 10, match_end: 30, secret_start: 12, secret_end: 28 })
+        );
+    }
+
+    #[test]
+    fn finalize_records_alternate_matches_for_same_span() {
+        // Two rules matching the exact same byte span — the higher-priority wins,
+        // the loser's rule_id lands in `alternate_matches`.
+        let winner = raw_finding("kingfisher.aws.1", 2, 10, 30);
+        let loser = raw_finding("aws-access-token", 1, 10, 30);
+
+        let (out, _) = finalize_findings(vec![winner, loser], &[]);
+
+        assert_eq!(out.len(), 1, "same-span findings should collapse to one");
+        assert_eq!(out[0].rule_id, "kingfisher.aws.1");
+        assert_eq!(out[0].alternate_matches, vec!["aws-access-token"]);
+    }
+
+    #[test]
+    fn finalize_keeps_the_same_relative_path_of_two_roots_apart() {
+        let roots = canonicalize_roots(&[PathBuf::from("/scan-a"), PathBuf::from("/scan-b")]);
+        let in_a = RawFinding { file: "/scan-a/same/app.env".into(), ..raw_finding("rule.a", 0, 10, 30) };
+        let in_b = RawFinding { file: "/scan-b/same/app.env".into(), ..raw_finding("rule.a", 0, 10, 30) };
+
+        let (out, _) = finalize_findings(vec![in_a, in_b], &roots);
+
+        assert_eq!(out.len(), 2, "the same span in the same relative path of two roots is two findings");
+        assert!(out.iter().all(|f| f.file == "same/app.env"));
+        assert_eq!(out[0].root.as_deref(), Some("/scan-a"));
+        assert_eq!(out[1].root.as_deref(), Some("/scan-b"));
+    }
+
+    #[test]
+    fn finalize_keeps_distinct_spans_untouched() {
+        let a = raw_finding("rule.a", 0, 10, 30);
+        let b = raw_finding("rule.b", 0, 40, 60);
+
+        let (out, _) = finalize_findings(vec![a, b], &[]);
+
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
+    }
+
+    #[test]
+    fn finalize_keeps_decoded_finding_on_same_span_as_plain() {
+        // A plain rule matching the base64 blob and a decoded finding inside it share the
+        // encoded span; they must not collapse into one.
+        let plain = raw_finding("generic", 5, 10, 30);
+        let mut decoded = raw_finding("openrouter", 0, 10, 30);
+        decoded.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], ..Default::default() });
+        decoded.secret = "sk-or-v1-...".into();
+        let mut second = decoded.clone();
+        second.decoded = Some(DecodeOrigin { chain: vec!["base64".into()], inner_start: 40, inner_end: 60 });
+        second.secret = "other".into();
+
+        let (out, _) = finalize_findings(vec![second, decoded, plain], &[]);
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].rule_id, "generic");
+        assert!(out.iter().all(|f| f.alternate_matches.is_empty()));
+    }
+
+    #[test]
+    fn finalize_dedups_three_rules_at_same_span() {
+        // Three rules at the same span — the winner accumulates two alternates,
+        // losers collapse entirely (no duplicate entries in `alternate_matches`).
+        let a = raw_finding("rule.a", 3, 10, 30); // winner
+        let b = raw_finding("rule.b", 2, 10, 30);
+        let c = raw_finding("rule.c", 1, 10, 30);
+
+        let (out, _) = finalize_findings(vec![c, a, b], &[]);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule_id, "rule.a");
+        assert_eq!(out[0].alternate_matches.len(), 2);
+        assert!(out[0].alternate_matches.contains(&"rule.b".into()));
+        assert!(out[0].alternate_matches.contains(&"rule.c".into()));
+    }
+
+    #[test]
+    fn finalize_keeps_a_satisfied_composite_over_a_higher_priority_rule() {
+        let high = raw_finding("rule.high", 10, 10, 30);
+        let mut composite = raw_finding("rule.composite", 0, 10, 30);
+        composite.required_findings = Some(vec![raw_finding("rule.dep", 0, 40, 50)]);
+
+        let (out, _) = finalize_findings(vec![high, composite], &[]);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule_id, "rule.composite");
+        assert_eq!(out[0].alternate_matches, vec!["rule.high".to_string()]);
+    }
+
+    #[test]
+    fn finalize_gives_required_findings_their_own_spans() {
+        let mut composite = raw_finding("rule.composite", 0, 10, 30);
+        composite.required_findings = Some(vec![raw_finding("rule.dep", 0, 40, 50)]);
+
+        let (out, _) = finalize_findings(vec![composite], &[]);
+        let finding = to_finding(out.into_iter().next().unwrap(), false);
+        let required = finding.required_findings.unwrap();
+
+        assert_eq!(
+            required[0].source_span,
+            Some(SourceSpan { match_start: 40, match_end: 50, secret_start: 42, secret_end: 48 })
+        );
+        assert_eq!(required[0].span_unavailable_reason, None);
+    }
+
+    #[test]
+    fn finalize_never_collapses_a_real_finding_into_a_suppressed_one() {
+        let mut suppressed = raw_finding("rule.high", 5, 10, 30);
+        suppressed.suppressed_by = Some(crate::suppression::SuppressionReason::Allowlist);
+        let active = raw_finding("rule.low", 1, 10, 30);
+
+        let (active, suppressed) = finalize_findings(vec![suppressed, active], &[]);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].rule_id, "rule.low");
+        assert_eq!(suppressed.len(), 1);
+        assert_eq!(suppressed[0].suppressed_by, Some(crate::suppression::SuppressionReason::Allowlist));
+    }
+}

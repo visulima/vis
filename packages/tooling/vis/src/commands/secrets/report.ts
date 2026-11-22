@@ -1,16 +1,27 @@
 import type { Toolbox } from "@visulima/cerebro";
 import { dim, green, yellow } from "@visulima/colorize";
 import { relative, resolve } from "@visulima/path";
-import type { Finding, GitleaksIgnoreEntry, GitSkippedBlob, RuleInfo, ScanOptions, SkippedFile, SuppressedFinding } from "@visulima/secret-scanner";
+import type {
+    AllowWarning,
+    Finding,
+    GitleaksIgnoreEntry,
+    GitSkippedBlob,
+    RuleInfo,
+    ScanProfile,
+    SkippedFile,
+    SuppressedFinding,
+} from "@visulima/secret-scanner";
 import { listRules } from "@visulima/secret-scanner";
 
 import { pail } from "../../io/logger";
 import type { BaselineDiff } from "../../secrets/baseline";
-import { formatSkipped } from "../../secrets/format";
+import type { FixResult } from "../../secrets/fix";
+import { FIX_MASK, FIX_REPLACEMENT } from "../../secrets/fix";
+import { formatAllowWarnings, formatSkipped } from "../../secrets/format";
 import type { ReportFormat, ReportTarget } from "../../secrets/report";
 import { formatSuppressed, formatUnusedIgnores, renderReport } from "../../secrets/report";
 import { writeReportFileSync } from "../../secrets/secure-write";
-import type { SecretsFlags } from "./flags";
+import type { ResolvedScanOptions, SecretsFlags } from "./flags";
 import type { SecretsOptions } from "./index";
 
 export const GITLEAKS_IGNORE = ".gitleaksignore";
@@ -24,7 +35,11 @@ export const status: typeof pail = pail.child({ stdout: process.stderr });
 
 /** Everything a scan produced, whichever mode ran it. */
 export interface ScanOutcome {
+    /** Allow markers naming rule ids that are not active. */
+    allowWarnings: AllowWarning[];
     findings: Finding[];
+    /** Timing breakdown; present only with `--profile`. */
+    profile?: ScanProfile;
     /** Files (working-tree scans) or git blobs (`--history`, `--staged`) the scan did not read. */
     skipped: (GitSkippedBlob | SkippedFile)[];
     skippedUnit: "blob" | "file";
@@ -40,7 +55,9 @@ export interface ReportingContext {
     history: boolean;
     reports: ReportTarget[];
     root: string;
-    scanOptions: ScanOptions;
+    scanOptions: ResolvedScanOptions;
+    /** `--stdin`: the text that was scanned, for the text view's source context. */
+    stdin?: string;
     toolbox: Toolbox<Console, SecretsOptions>;
     toolVersion: string;
     useColor: boolean;
@@ -55,6 +72,10 @@ export const printDiagnostics = (outcome: ScanOutcome, context: ReportingContext
             process.stderr.write(`${formatSkipped(outcome.skipped, outcome.skippedUnit, useColor, { verbose: flags.verbose })}\n`);
         }
 
+        if (outcome.allowWarnings.length > 0) {
+            process.stderr.write(`${formatAllowWarnings(outcome.allowWarnings, root, useColor)}\n`);
+        }
+
         if (context.fullScan && outcome.unusedIgnores.length > 0) {
             process.stderr.write(`${formatUnusedIgnores(outcome.unusedIgnores, GITLEAKS_IGNORE, useColor)}\n`);
         }
@@ -63,6 +84,65 @@ export const printDiagnostics = (outcome: ScanOutcome, context: ReportingContext
     // Explicitly requested, so printed even with --quiet.
     if (flags.logIgnored) {
         process.stderr.write(`${formatSuppressed(outcome.suppressed, root, useColor)}\n`);
+    }
+};
+
+const LABEL_WIDTH = 44;
+
+/** Fit a label on one terminal line, cutting the start (paths: keep the file name) or the end (patterns). */
+const fitLabel = (value: string, width: number, keep: "end" | "start" = "start"): string => {
+    // Regexes can contain newlines; keep every row to a single terminal line.
+    const flat = value.replaceAll(/\s+/gu, " ").trim();
+
+    if (flat.length <= width) {
+        return flat.padEnd(width);
+    }
+
+    return keep === "end" ? `…${flat.slice(flat.length - width + 1)}` : `${flat.slice(0, width - 1)}…`;
+};
+
+const timingRow = (label: string, ms: number, count: number, suffix = ""): string =>
+    `  ${label} ${ms.toFixed(1).padStart(7)} ms  ×${String(count)}${suffix}`;
+
+/** A profile with nothing in it, for a scan that selected no files. */
+export const emptyProfile = (): ScanProfile => {
+    return { files: [], phases: [], rules: [], totalMs: 0 };
+};
+
+/** Render an opt-in profile for humans. Kept here so stdout stays machine-readable. */
+export const formatProfile = (profile: ScanProfile, useColor = false): string => {
+    const heading = (text: string): string => (useColor ? dim(text) : text);
+    const lines = [`${heading("profile:")} ${profile.totalMs.toFixed(1)} ms total, ${String(profile.files.length)} file(s)`];
+    const section = (name: string, rows: string[]): void => {
+        lines.push(heading(`${name}:`), ...(rows.length > 0 ? rows : ["  (none)"]));
+    };
+
+    section(
+        "phases",
+        profile.phases.slice(0, 10).map((phase) => timingRow(fitLabel(phase.name, LABEL_WIDTH), phase.ms, phase.count)),
+    );
+    section(
+        "rules",
+        profile.rules
+            .slice(0, 10)
+            .map((rule) => timingRow(fitLabel(rule.ruleId, LABEL_WIDTH), rule.ms, rule.count, `  ${String(rule.matches)} match(es)`)),
+    );
+    section(
+        "files",
+        profile.files.slice(0, 10).map((file) => `  ${fitLabel(file.file, LABEL_WIDTH, "end")} ${file.ms.toFixed(1).padStart(7)} ms`),
+    );
+
+    return lines.join("\n");
+};
+
+/**
+ * Timing is explicitly requested, so print it even with `--quiet`. Like the
+ * other diagnostics it goes to stderr: raw table output shouldn't pass through
+ * the logger, and stdout carries `--format` output.
+ */
+export const printProfile = (profile: ScanProfile | undefined, useColor: boolean): void => {
+    if (profile !== undefined) {
+        process.stderr.write(`${formatProfile(profile, useColor)}\n`);
     }
 };
 
@@ -75,15 +155,15 @@ export const printBaselineDiff = (diff: BaselineDiff): void => {
 /**
  * Print the `--format` report to stdout and write every `--report` file.
  *
- * With `--redact` the scanner has already masked every secret-bearing field,
+ * By default the scanner has already masked every secret-bearing field,
  * composite `requiredFindings` included, so the findings are rendered as is.
  */
 export const emitReports = async (outcome: ScanOutcome, context: ReportingContext): Promise<void> => {
-    const { flags, format, history, reports, root, scanOptions, toolbox, toolVersion, useColor } = context;
-    const shouldRedact = scanOptions.redact === true;
+    const { flags, format, history, reports, root, scanOptions, stdin, toolbox, toolVersion, useColor } = context;
+    const shouldRedact = scanOptions.redact;
     const needsRules = format === "sarif" || reports.some((target) => target.format === "sarif");
     const ruleMetadata = needsRules ? await listRules(scanOptions).catch(() => [] as RuleInfo[]) : [];
-    const renderContext = { history, redact: shouldRedact, root, ruleMetadata, toolVersion };
+    const renderContext = { history, redact: shouldRedact, root, ruleMetadata, staged: flags.staged === true, toolVersion, virtualSource: stdin };
     // Unredacted reports hold every secret in clear text: owner-only (gitleaks #2300).
     // History reports carry commit messages, which `--redact` doesn't mask and which
     // can quote a secret, so they stay owner-only either way.
@@ -119,5 +199,36 @@ export const applyDiagnosticGates = (outcome: ScanOutcome, flags: SecretsFlags):
             `${String(outcome.unusedIgnores.length)} unused ${GITLEAKS_IGNORE} entr${outcome.unusedIgnores.length === 1 ? "y" : "ies"} (--fail-on-unused-ignores).`,
         );
         process.exitCode = 1;
+    }
+};
+
+/**
+ * Fix mode prints only rule ids, locations and fixed-length stand-ins. Never
+ * echo a finding's `match` or `secret`, even masked at the edges: a masked
+ * value is still a partial disclosure.
+ */
+export const printFixResult = (result: FixResult, unscanned: number, dryRun: boolean, quiet: boolean): void => {
+    if (result.replacements === 0 && result.skipped.length === 0) {
+        if (!quiet) {
+            process.stderr.write(unscanned > 0 ? `No secrets detected, but ${String(unscanned)} file(s) were not scanned.\n` : "No secrets detected.\n");
+        }
+
+        return;
+    }
+
+    for (const edit of result.edits) {
+        process.stderr.write(`${edit.file}:${String(edit.line)} ${edit.ruleId}: ${FIX_MASK} -> ${FIX_REPLACEMENT}${dryRun ? " (dry-run)" : ""}\n`);
+    }
+
+    for (const skip of result.skipped) {
+        process.stderr.write(`Skipped ${skip.file}:${String(skip.line)} ${skip.ruleId}: ${skip.reason}\n`);
+    }
+
+    if (!quiet) {
+        process.stderr.write(`${dryRun ? "Would replace" : "Replaced"} ${String(result.replacements)} secret(s) in ${String(result.changedFiles)} file(s).\n`);
+
+        if (unscanned > 0) {
+            process.stderr.write(`${String(unscanned)} file(s) were not scanned.\n`);
+        }
     }
 };

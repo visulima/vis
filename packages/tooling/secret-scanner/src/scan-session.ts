@@ -2,36 +2,56 @@
 // `scanFilesDetailed`, and the git history / staged scans).
 
 import { warnOnSkippedRules } from "./diagnostics";
+import { applySecretlintIgnores } from "./ignore-matcher";
 import type { SuppressionContext } from "./pipeline";
 import { createSuppressionContext } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
 import { prepareScan } from "./prepare-scan";
-import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { ProfileAccumulator } from "./profile";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, ScanProfile, SuppressedFinding } from "./types";
 
 export interface ScanSession {
     context: SuppressionContext;
+    /** The options the scan runs with: `options` plus the discovered `.secretlintignore` files. */
+    options: ScanOptions | undefined;
     prepared: PreparedScan;
 }
 
 /**
  * Prepare a scan: resolve the config, print skipped-rule diagnostics under
  * `verbose`, and build the per-scan suppression state. `bases` are the
- * directories a relative `finding.file` may be relative to.
+ * directories a relative `finding.file` may be relative to. `ignoreRoots` are
+ * where `.secretlintignore` files are discovered; git history scans omit it
+ * because they read blobs rather than walk the file system.
  */
-export const beginScan = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>): Promise<ScanSession> => {
-    const prepared = prepareScan(options);
+export const beginScan = async (options: ScanOptions | undefined, bases: ReadonlyArray<string>, ignoreRoots?: ReadonlyArray<string>): Promise<ScanSession> => {
+    const effective = ignoreRoots === undefined ? options : applySecretlintIgnores(options, ignoreRoots);
+    const prepared = prepareScan(effective);
 
-    if (options?.verbose) {
+    if (effective?.verbose) {
         await warnOnSkippedRules(prepared.nativeOptions);
     }
 
-    return { context: await createSuppressionContext(options, bases), prepared };
+    return { context: await createSuppressionContext(effective, bases), options: effective, prepared };
 };
 
 export interface FinishResultOptions {
+    /** Allow-marker warnings of the scan. */
+    allowWarnings?: AllowWarning[];
     /** Report unused commit-scoped `.gitleaksignore` entries too (git history scans). */
     includeCommitEntries?: boolean;
+    /** Timing collected during the scan; the result carries a profile only when this is set. */
+    profile?: ProfileAccumulator;
 }
+
+type FinishedResult<F extends Finding, S> = {
+    allowWarnings: AllowWarning[];
+    findings: F[];
+    profile?: ScanProfile;
+    skipped: S[];
+    suppressed: SuppressedFinding<F>[];
+    unusedIgnores: GitleaksIgnoreEntry[];
+};
 
 /** Assemble a scan result, adding the `.gitleaksignore` entries nothing matched. */
 export const finishResult = <F extends Finding, S>(
@@ -39,9 +59,11 @@ export const finishResult = <F extends Finding, S>(
     skipped: S[],
     context: SuppressionContext,
     options: FinishResultOptions = {},
-): { findings: F[]; skipped: S[]; suppressed: SuppressedFinding<F>[]; unusedIgnores: GitleaksIgnoreEntry[] } => {
+): FinishedResult<F, S> => {
     return {
+        allowWarnings: options.allowWarnings ?? [],
         findings: processed.findings,
+        ...(options.profile === undefined ? {} : { profile: options.profile.build(processed.findings) }),
         skipped,
         suppressed: processed.suppressed,
         unusedIgnores: context.ignore?.unused({ includeCommitEntries: options.includeCommitEntries === true }) ?? [],

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import type { PackageManifest } from "../../types";
 import { parseCatalogs } from "../catalog";
 import { createVersionActions } from "../version-actions/registry";
@@ -9,6 +11,19 @@ const shouldProvenance = (context: OrchestratorContext): boolean => {
     const args = context.config.publish?.publishArgs ?? [];
 
     return args.includes("--provenance") && context.pm.id !== "bun";
+};
+
+/**
+ * Read the `package.json` the version step wrote. Throws rather than falling
+ * back to the manifest the dep graph loaded, which would publish the
+ * dependency ranges from before the version step.
+ */
+const readWrittenManifest = async (name: string, manifestPath: string): Promise<PackageManifest> => {
+    try {
+        return JSON.parse(await readFile(manifestPath, "utf8")) as PackageManifest;
+    } catch (error) {
+        throw new Error(`Cannot publish ${name}: its package.json at ${manifestPath} is missing or unreadable (${(error as Error).message})`, { cause: error });
+    }
 };
 
 /**
@@ -36,14 +51,39 @@ export const publishPackages = async (context: OrchestratorContext, wave: Publis
     // reach a dependent every blocking ancestor is already recorded here.
     const failedNames = new Set<string>();
 
-    // Build name → versioned manifest map for protocol resolution
+    // Build name → versioned manifest map for protocol resolution. The dep
+    // graph was loaded before the version step rewrote `package.json` on
+    // disk, so for npm packages the manifest to publish is the one on disk:
+    // it carries the internal dependency ranges the version step raised.
     const versionedManifestByName = new Map<string, PackageManifest>();
 
     for (const release of context.plan.releases) {
         const pkg = context.depGraph.getPackage(release.name);
 
-        if (pkg) {
-            versionedManifestByName.set(release.name, { ...pkg.manifest, version: release.newVersion });
+        if (!pkg) {
+            continue;
+        }
+
+        // Only a release this wave publishes has to be readable. The others
+        // (already published before a resume) only supply their version to
+        // protocol resolution, so an unreadable one must not block dependents.
+        const publishing = releaseByName.has(release.name);
+
+        try {
+            const versioned = pkg.ecosystem === undefined ? await readWrittenManifest(pkg.name, pkg.manifestPath) : pkg.manifest;
+
+            versionedManifestByName.set(release.name, { ...versioned, version: release.newVersion });
+        } catch (error) {
+            if (!publishing) {
+                versionedManifestByName.set(release.name, { ...pkg.manifest, version: release.newVersion });
+                continue;
+            }
+
+            // Not publishable: the action would fall back to the stale graph
+            // manifest. Fail this package and let the cascade guard skip its
+            // dependents.
+            result.failed.push({ name: release.name, reason: (error as Error).message });
+            failedNames.add(release.name);
         }
     }
 
@@ -64,7 +104,7 @@ export const publishPackages = async (context: OrchestratorContext, wave: Publis
 
         const pkg = context.depGraph.getPackage(name);
 
-        if (!pkg) {
+        if (!pkg || failedNames.has(name)) {
             continue;
         }
 

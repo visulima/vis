@@ -1,0 +1,155 @@
+//! The binary's half of the routing fixture shared with the Node launcher
+//! (`__tests__/native/routing-fixture.test.ts`): for every case that names a `binary` route, the
+//! binary must answer natively or hand the call to Node, as the fixture says.
+//!
+//! A delegation is seen through an unlaunchable Node: the binary then exits 70 with "failed to
+//! launch Node CLI", while a native answer never gets that far. Unix only: the launcher keeps
+//! the Windows cases away from the binary, and the empty `PATH` trick is a Unix one.
+
+#![cfg(unix)]
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Fixture {
+    cases: Vec<Case>,
+}
+
+/// Where a call ends up: the binary answers it itself, or it hands it to the Node CLI.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Route {
+    Native,
+    Node,
+}
+
+/// What running the binary on a case showed.
+enum Outcome {
+    Route(Route),
+    /// Neither a native answer nor a Node hand-off: killed by a signal, a panic, or an exit 70 that
+    /// is not the Node-launch failure.
+    Unexpected(String),
+}
+
+// `launcher` and `note` belong to the Node half of the fixture; they are named here so that
+// `deny_unknown_fields` still catches a misspelt key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Case {
+    args: Vec<String>,
+    binary: Option<Route>,
+    /// A directory below the project root to run in.
+    directory: Option<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default)]
+    files: BTreeMap<String, String>,
+    #[serde(default)]
+    interactive: bool,
+    #[serde(rename = "launcher")]
+    _launcher: Route,
+    #[serde(rename = "note")]
+    _note: Option<String>,
+    platform: Option<String>,
+}
+
+/// A JS-only workspace that the gated commands (`list`, `clean`) accept; a case's `files` come on top.
+const PROJECT: [(&str, &str); 4] = [
+    ("package.json", "{\"name\":\"t\"}"),
+    ("pnpm-lock.yaml", "lockfileVersion: 9\n"),
+    ("pnpm-workspace.yaml", "packages:\n  - \"packages/*\"\n"),
+    ("packages/a/package.json", "{\"name\":\"a\",\"version\":\"1.0.0\",\"scripts\":{\"build\":\"x\"}}"),
+];
+
+fn write_file(directory: &Path, name: &str, content: &str) {
+    let path = directory.join(name);
+
+    fs::create_dir_all(path.parent().expect("file has a parent")).expect("create project directory");
+    fs::write(path, content).expect("write project file");
+}
+
+fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
+    for (name, content) in PROJECT {
+        write_file(directory, name, content);
+    }
+
+    for (name, content) in &case.files {
+        write_file(directory, name, content);
+    }
+
+    let working_directory =
+        case.directory.as_ref().map_or_else(|| directory.to_path_buf(), |below| directory.join(below));
+
+    fs::create_dir_all(&working_directory).expect("create working directory");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vis"))
+        .args(&case.args)
+        .current_dir(&working_directory)
+        .env_clear()
+        // No package manager on PATH: a native pm command fails to spawn instead of running one.
+        .env("PATH", empty_path)
+        .env("VIS_NODE", "/nonexistent/node")
+        .env("VIS_FALLBACK_ENTRY", "/nonexistent/bin.js")
+        .envs(&case.env)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    match output.status.code() {
+        Some(70) if stderr.contains("failed to launch Node CLI") => Outcome::Route(Route::Node),
+        Some(70 | 101) | None => Outcome::Unexpected(format!("{:?}: {stderr}", output.status)),
+        Some(_) => Outcome::Route(Route::Native),
+    }
+}
+
+#[test]
+fn binary_routes_match_the_shared_fixture() {
+    let fixture: Fixture = serde_json::from_str(include_str!("fixtures/routing.json")).expect("routing fixture parses");
+    let base = std::env::temp_dir().join(format!("vis-routing-{}", std::process::id()));
+    let empty_path = base.join("empty");
+    let mut failures = Vec::new();
+    let mut checked = 0;
+
+    fs::create_dir_all(&empty_path).expect("create empty PATH directory");
+
+    for (index, case) in fixture.cases.iter().enumerate() {
+        // The launcher's platform and terminal rules have no counterpart here: the binary cannot be
+        // given a terminal, and on Windows the launcher keeps the call away from it.
+        let Some(expected) =
+            case.binary.filter(|_| case.platform.as_deref().unwrap_or("linux") == "linux" && !case.interactive)
+        else {
+            continue;
+        };
+
+        // A fresh project per case: `clean` and `ignore --write` change the directory they run in.
+        let directory = base.join(index.to_string());
+
+        fs::create_dir_all(&directory).expect("create case directory");
+
+        checked += 1;
+
+        match run_case(case, &directory, &empty_path) {
+            Outcome::Route(actual) if actual == expected => {}
+            Outcome::Route(actual) => failures.push(format!(
+                "vis {:?} with {:?}: fixture says {expected:?}, binary went {actual:?}",
+                case.args, case.env
+            )),
+            Outcome::Unexpected(detail) => failures.push(format!(
+                "vis {:?} with {:?}: binary neither answered nor delegated ({detail})",
+                case.args, case.env
+            )),
+        }
+    }
+
+    fs::remove_dir_all(&base).ok();
+
+    assert!(checked > 0, "no case names a binary route");
+    assert!(failures.is_empty(), "routes differ from the fixture:\n{}", failures.join("\n"));
+}

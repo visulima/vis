@@ -19,6 +19,19 @@ const third = "ghp_bB4cC5dD6eE7fF8gG9hH0iI1jJ2kK3lL4mM5nN6o"; // pragma: allowli
 
 `pragma: allowlist secret` is the [detect-secrets](https://github.com/Yelp/detect-secrets) marker, accepted for smooth migrations. The other two are the historical gitleaks + Visulima forms.
 
+### Rule-scoped markers
+
+A bare marker suppresses every rule on the line. Append one or more active rule ids to suppress only those rules:
+
+```typescript
+const token = "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zA5b"; // gitleaks:allow github-pat
+const other = "ghp_zY9xW8vU7tS6rQ5pO4nM3lK2jI1hG0fE9dC8bA7a"; // secret-scanner:allow github-pat, aws-access-token
+```
+
+Ids are separated by commas or spaces and compared case-sensitively against the active ruleset. Anything that is not an active rule id is read as prose, and the list ends at the first such token. A marker with no active id stays bare and suppresses every rule on the line, so `// gitleaks:allow safe in tests` and `// gitleaks:allow test-only` behave like `// gitleaks:allow`. This also means a mistyped or disabled id (`// gitleaks:allow githb-pat`) does not narrow the marker: it still suppresses everything. Marker text stays case-insensitive.
+
+Because a marker with an unknown id keeps suppressing everything, a renamed or removed rule id would widen the suppression unnoticed, so the scanner reports it: `scanDetailed`, `scanFilesDetailed`, `scanGitStaged` and `scanGitHistoryDetailed` return `allowWarnings` (`{ file, line, unknownRuleIds }`, each id once per line), and `vis secrets` prints them to stderr. A token counts as an id when it is lowercase kebab-case with at least one hyphen (`github-pat-v2`) or a dotted id with two or more dots (`kingfisher.stripe.1`); the list ends at the first token that is neither a known nor an id-shaped one. Plain prose (`safe in tests`) never warns, but hyphenated prose (`test-only`) does, and the marker keeps its bare behaviour either way. `inlineAllow: false` produces no warnings.
+
 ## 2. Block region — `gitleaks:allow-start` / `-end`
 
 Suppresses every finding between two markers. Use for fixture blocks, test data, migration scripts and the like.
@@ -36,6 +49,8 @@ Unpaired start markers are ignored — a stray `allow-start` never silently swal
 
 Both `gitleaks:...` and `secret-scanner:...` are accepted for every variant (inline, start, end). Case-insensitive.
 
+Append rule ids to the start marker to scope the region: `# gitleaks:allow-start github-pat`. A start pairs with the first end after it, and a second start before that end does not open its own region. A line carrying an `allow-start` or `allow-end` marker also works as an inline allow for secrets on that line, scoped by the same rule ids.
+
 ## 3. Previous-line pragma — `pragma: allowlist nextline secret`
 
 Covers the cases where an inline comment on the secret line is awkward (YAML block scalars) or impossible (PEM bodies, multi-line base64 blobs). Place the marker on the line **immediately before** the finding:
@@ -51,7 +66,7 @@ token: |
 STRIPE_KEY = "sk_live_fakefakefakefakefakefakefake"
 ```
 
-Only the immediately preceding line is checked — markers two or more lines up have no effect. For larger regions, use the `allow-start` / `allow-end` block form instead.
+Only the immediately preceding line is checked — markers two or more lines up have no effect. For larger regions, use the `allow-start` / `allow-end` block form instead. Append a rule id to scope this pragma too: `# pragma: allowlist nextline secret github-pat`.
 
 ## 4. Baseline JSON
 
@@ -119,7 +134,7 @@ path:test/a.ts:rule:generic-api-key:secret:not-a-real-token-1234
 - Paths are relative to the directory that holds the ignore file, whatever spelling the scan root had (`.`, an absolute path, a subdirectory, a symlinked path).
 - Commit fingerprints only match findings from `scanGitHistory`; the commit may be abbreviated (7+ hex characters) or `*`. Plain `file:rule:line` entries match history findings too.
 - `*` matches any run of characters, `/` included.
-- Secret-value entries need the real secret, so with `redact: true` the scan runs unredacted internally and masks the output afterwards.
+- Secret-value entries need the real secret. Masking only applies to reported findings, so these entries match even with the default `redact: true`.
 - Entries that matched nothing come back as `unusedIgnores` from the `*Detailed` scans (gitleaks #2130); lines that can't be parsed are ignored.
 - The ignore file itself is never reported, even when a scoped secret entry puts a real secret in it (staged and history scans read dotfiles).
 

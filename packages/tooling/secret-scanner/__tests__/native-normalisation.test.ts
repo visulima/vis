@@ -54,8 +54,8 @@ describe("native normalisation", () => {
     it("gives CRLF and LF files the same secret and fingerprint", async () => {
         expect.assertions(5);
 
-        const lf = await scanString("a=1\ntoken=abcDEF123456\nb=2\n", "a.env", tokenRule);
-        const crlf = await scanString("a=1\r\ntoken=abcDEF123456\r\nb=2\r\n", "a.env", tokenRule);
+        const lf = await scanString("a=1\ntoken=abcDEF123456\nb=2\n", "a.env", { ...tokenRule, redact: false });
+        const crlf = await scanString("a=1\r\ntoken=abcDEF123456\r\nb=2\r\n", "a.env", { ...tokenRule, redact: false });
 
         expect(crlf).toHaveLength(1);
         expect(crlf[0]!.secret).toBe("abcDEF123456");

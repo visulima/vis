@@ -22,6 +22,7 @@ export interface SecretsFlags {
     extendBundled?: boolean;
     failOnUnreadable?: boolean;
     failOnUnusedIgnores?: boolean;
+    fix?: boolean;
     format?: string;
     gitignore?: boolean;
     gitleaksIgnore?: boolean;
@@ -40,12 +41,15 @@ export interface SecretsFlags {
     maxSize?: number;
     minConfidence?: string;
     onlyVerified?: boolean;
+    profile?: boolean;
     quiet?: boolean;
     redact?: boolean;
     replaceBaseline?: boolean;
     report?: RepeatableString;
+    secretlintignore?: RepeatableString | false;
     since?: string;
     staged?: boolean;
+    stdin?: string | null;
     updateBaseline?: boolean;
     validate?: boolean;
     verbose?: boolean;
@@ -63,8 +67,11 @@ export interface VisSecretsConfig {
          */
         presets?: string[];
     };
+    overrides?: ScanOptions["overrides"];
     redact?: boolean;
     rules?: { enable?: string[]; exclude?: string[]; include?: string[] };
+    /** `.secretlintignore` paths, or `false` to disable auto-discovery. */
+    secretlintIgnore?: string[] | false;
     walk?: {
         excludeFromFiles?: string[];
         excludePatterns?: string[];
@@ -74,7 +81,7 @@ export interface VisSecretsConfig {
     };
 }
 
-export const toArray = (value: RepeatableString | undefined): string[] => {
+export const toArray = (value: RepeatableString | false | undefined): string[] => {
     if (!value) {
         return [];
     }
@@ -128,6 +135,9 @@ const validateConfidence = (raw: string | undefined): Confidence | undefined => 
     return raw as Confidence;
 };
 
+/** Scan options with `redact` resolved (masked unless turned off). */
+export type ResolvedScanOptions = ScanOptions & { redact: boolean };
+
 /**
  * Resolve scan options by layering (high → low precedence):
  *   CLI flags > vis.config.secrets > built-in defaults.
@@ -136,7 +146,7 @@ const validateConfidence = (raw: string | undefined): Confidence | undefined => 
  * `secrets.config.presets` and `--enable-rule` interact, and a regression
  * here is silent (the scan still runs; it just runs the wrong rule set).
  */
-export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsConfig | undefined, root: string): ScanOptions => {
+export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsConfig | undefined, root: string): ResolvedScanOptions => {
     const cfg = visSecrets ?? {};
     const resolvePath = (p: string | undefined): string | undefined => (p ? resolve(root, p) : undefined);
     const pickList = (flag: RepeatableString | undefined, fallback: string[] | undefined): string[] | undefined => {
@@ -156,10 +166,30 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
     const includeRules = pickList(flags.includeRule, cfg.rules?.include);
     const excludePatterns = pickList(flags.exclude, cfg.walk?.excludePatterns);
     const excludeFromFlag = toArray(flags.excludeFrom).map((p) => resolve(root, p));
-    const excludeFromFiles = excludeFromFlag.length > 0 ? excludeFromFlag : cfg.walk?.excludeFromFiles?.map((p) => resolve(root, p));
+    const configExcludeFrom = cfg.walk?.excludeFromFiles?.map((p) => resolve(root, p));
     const baselinePath = resolvePath(flags.baseline) ?? resolvePath(cfg.baseline);
     const configPath = resolvePath(flags.config) ?? resolvePath(cfg.config?.path);
     const minConfidence = validateConfidence(flags.minConfidence ?? cfg.config?.minConfidence);
+    const secretlintFromFlag = toArray(flags.secretlintignore).map((path) => resolve(root, path));
+    let secretlintIgnore: ScanOptions["secretlintIgnore"];
+    let excludeFromFiles = excludeFromFlag.length > 0 ? excludeFromFlag : configExcludeFrom;
+
+    if (flags.secretlintignore === false) {
+        secretlintIgnore = false;
+    } else if (secretlintFromFlag.length > 0 && cfg.secretlintIgnore === false) {
+        // Discovery is off in config: apply exactly the CLI files. They ride in
+        // `walk.excludeFromFiles`, since a `secretlintIgnore` array re-enables discovery.
+        secretlintIgnore = false;
+        excludeFromFiles = [...(excludeFromFiles ?? []), ...secretlintFromFlag];
+    } else if (secretlintFromFlag.length > 0) {
+        const fromConfig = Array.isArray(cfg.secretlintIgnore) ? cfg.secretlintIgnore.map((path) => resolve(root, path)) : [];
+
+        secretlintIgnore = [...new Set([...fromConfig, ...secretlintFromFlag])];
+    } else if (cfg.secretlintIgnore === false) {
+        secretlintIgnore = false;
+    } else {
+        secretlintIgnore = cfg.secretlintIgnore?.map((path) => resolve(root, path));
+    }
 
     return {
         baseline: baselinePath,
@@ -175,9 +205,13 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
         inlineAllow: flags.inlineAllow,
         maxArchiveDepth: validateDepth(flags.maxArchiveDepth, "--max-archive-depth", MAX_ARCHIVE_DEPTH),
         maxDecodeDepth: validateDepth(flags.maxDecodeDepth, "--max-decode-depth"),
-        redact: flags.redact ?? cfg.redact,
+        overrides: cfg.overrides,
+        overridesRoot: root,
+        profile: flags.profile === true,
+        redact: flags.redact ?? cfg.redact ?? true,
         reportSuppressed: flags.logIgnored === true,
         rules: { enable: enableRules, exclude: excludeRules, include: includeRules },
+        secretlintIgnore,
         verbose: flags.verbose ?? false,
         walk: {
             excludeFromFiles,
@@ -189,9 +223,26 @@ export const resolveScanOptions = (flags: SecretsFlags, visSecrets: VisSecretsCo
     };
 };
 
+/**
+ * The `--stdin` filename, or `undefined` when stdin mode is off. A bare
+ * `--stdin` or `--stdin=` is a usage error: the name drives rule and path matching.
+ */
+export const stdinFilename = (flags: SecretsFlags): string | undefined => {
+    if (flags.stdin === undefined) {
+        return undefined;
+    }
+
+    if (flags.stdin === null || flags.stdin === "") {
+        throw new VisUserError("--stdin needs a filename used for rule and path matching, e.g. `cat .env | vis secrets --stdin .env`.");
+    }
+
+    return flags.stdin;
+};
+
 /** The flags that pick what a scan reads; at most one may be set. */
 const scanTargetFlags = (flags: SecretsFlags): string[] =>
     [
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
         flags.history ? "--history" : undefined,
         flags.staged ? "--staged" : undefined,
         flags.since === undefined ? undefined : "--since",
@@ -267,6 +318,7 @@ export const assertArchiveFlags = (flags: SecretsFlags): void => {
  */
 export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolean): string[] =>
     [
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
         flags.staged ? "--staged" : undefined,
         flags.since === undefined ? undefined : "--since",
         flags.affected ? "--affected" : undefined,
@@ -281,10 +333,30 @@ export const partialScanReasons = (flags: SecretsFlags, hasPathArguments: boolea
  * a partial scan would call every entry for an unscanned file "unused".
  */
 export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: boolean): void => {
+    if (stdinFilename(flags) !== undefined) {
+        if (hasPathArguments) {
+            throw new VisUserError("--stdin scans piped content and can't be combined with explicit paths.");
+        }
+
+        const ineffective = [
+            flags.updateBaseline ? "--update-baseline" : undefined,
+            flags.replaceBaseline ? "--replace-baseline" : undefined,
+            flags.logIgnored ? "--log-ignored" : undefined,
+            flags.maxSize === undefined ? undefined : "--max-size",
+            flags.maxArchiveDepth === undefined ? undefined : "--max-archive-depth",
+            flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
+        ].filter((flag): flag is string => flag !== undefined);
+
+        if (ineffective.length > 0) {
+            throw new VisUserError(`${ineffective.join(", ")} can't be combined with --stdin: a single piped buffer can't seed a baseline, and there are no files to size-check, skip, list or open as archives.`);
+        }
+    }
+
     const reportless = nonScanMode(flags, true);
     const reportingFlags = [
         toArray(flags.report).length > 0 ? "--report" : undefined,
         flags.logIgnored ? "--log-ignored" : undefined,
+        flags.profile ? "--profile" : undefined,
         flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
         flags.failOnUnusedIgnores ? "--fail-on-unused-ignores" : undefined,
     ].filter((flag): flag is string => flag !== undefined);
@@ -314,5 +386,56 @@ export const assertReportingFlags = (flags: SecretsFlags, hasPathArguments: bool
         throw new VisUserError(
             `--fail-on-unused-ignores needs a full scan: with ${partial.join(", ")}, entries for files outside the scan would be reported as unused. Run it on a full \`vis secrets\` or \`vis secrets --history\` scan.`,
         );
+    }
+};
+
+/** `--dry-run` previews `--init` or `--fix`; alone it would be silently ignored. */
+export const assertDryRunFlags = (flags: SecretsFlags): void => {
+    if (flags.dryRun && !flags.fix && !flags.init) {
+        throw new VisUserError("--dry-run needs --fix (to preview rewrites) or --init (to preview a baseline).");
+    }
+};
+
+/**
+ * `--fix` rewrites working-tree files, so every mode that reads another source
+ * or emits a report that could carry an unredacted secret is rejected rather
+ * than silently ignored. Only an explicit `--redact` is rejected: fix mode scans
+ * unmasked internally, so a `redact` default or config value is harmless.
+ */
+export const assertFixFlags = (flags: SecretsFlags, scanOptions: ScanOptions, pathCount: number): void => {
+    if (!flags.fix) {
+        return;
+    }
+
+    const format = flags.format ?? "text";
+    const incompatible = [
+        flags.redact === true ? "--redact" : undefined,
+        flags.history ? "--history" : undefined,
+        flags.staged ? "--staged" : undefined,
+        flags.init ? "--init" : undefined,
+        stdinFilename(flags) === undefined ? undefined : "--stdin",
+        flags.profile ? "--profile" : undefined,
+        flags.listRules ? "--list-rules" : undefined,
+        flags.listValidators ? "--list-validators" : undefined,
+        flags.updateBaseline ? "--update-baseline" : undefined,
+        flags.replaceBaseline ? "--replace-baseline" : undefined,
+        toArray(flags.report).length > 0 ? "--report" : undefined,
+        flags.logIgnored ? "--log-ignored" : undefined,
+        flags.failOnUnreadable ? "--fail-on-unreadable" : undefined,
+        flags.failOnUnusedIgnores ? "--fail-on-unused-ignores" : undefined,
+        flags.validate || scanOptions.config?.validate ? "--validate" : undefined,
+        format === "text" ? undefined : `--format ${format}`,
+    ].filter((flag): flag is string => flag !== undefined);
+
+    if (incompatible.length > 0) {
+        throw new VisUserError(
+            `${incompatible.join(", ")} cannot be combined with --fix. Fix mode rewrites working-tree files in place and prints only a masked summary.`,
+        );
+    }
+
+    // Findings from a multi-root scan are relative to a root chosen by the native
+    // scanner, with no root provenance left to tell rewrites apart.
+    if (pathCount > 1) {
+        throw new VisUserError("--fix accepts at most one path; run one scan per path so rewrite targets stay unambiguous.");
     }
 };

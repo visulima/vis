@@ -9,7 +9,9 @@ import type { Native } from "./binding";
 import type { ChecksumSpec } from "./checksum";
 import type { GitleaksConfig } from "./config-loader";
 import { expandTagFilters, gateOptInRules, resolveConfig } from "./config-loader";
-import type { ScanOptions } from "./types";
+import type { IgnoreMatcher } from "./ignore-matcher";
+import { createIgnoreMatcher } from "./ignore-matcher";
+import type { ScanOptions, ScanOverride } from "./types";
 
 /**
  * Normalise `depends_on_rule` entries from Kingfisher YAML. Upstream uses
@@ -38,11 +40,23 @@ export interface RuleMeta {
     validation?: unknown;
 }
 
+/** A file override with its tag filters expanded and its glob matcher compiled. */
+export interface CompiledOverride {
+    /** Rules the override turns on: its `enable` plus its `include`. */
+    enables: ReadonlySet<string>;
+    excludeIds?: string[];
+    includeIds?: string[];
+    matcher: IgnoreMatcher;
+}
+
 /** The config-derived part of a prepared scan; memoised across calls. */
 interface PreparedConfig {
     config: GitleaksConfig;
     excludeIds?: string[];
     includeIds?: string[];
+    /** Opt-in rules that only overrides turn on: reported solely in files matching one that does. */
+    overrideOnlyOptIn: ReadonlySet<string>;
+    overrides?: CompiledOverride[];
     ruleMeta: Map<string, RuleMeta>;
 }
 
@@ -152,8 +166,35 @@ const preparedCacheKey = (options: ScanOptions | undefined): string | undefined 
         configMtimeMs: configStat?.mtimeMs,
         configSize: configStat?.size,
         extendBundled: options?.config?.extendBundled,
+        overrides: options?.overrides,
         path: options?.config?.path,
         rules: options?.rules,
+    });
+};
+
+const compileOverrides = (overrides: ScanOverride[] | undefined, allRules: GitleaksConfig["rules"]): CompiledOverride[] | undefined => {
+    if (overrides === undefined || overrides.length === 0) {
+        return undefined;
+    }
+
+    return overrides.flatMap((override) => {
+        const matcher = createIgnoreMatcher(override.files);
+
+        if (matcher === undefined) {
+            return [];
+        }
+
+        const enableIds = expandTagFilters(override.rules?.enable, allRules ?? [], "overrides.enable");
+        const includeIds = expandTagFilters(override.rules?.include, allRules ?? [], "overrides.include");
+
+        return [
+            {
+                enables: new Set([...(enableIds ?? []), ...(includeIds ?? [])]),
+                excludeIds: expandTagFilters(override.rules?.exclude, allRules ?? [], "overrides.exclude"),
+                includeIds,
+                matcher,
+            },
+        ];
     });
 };
 
@@ -167,13 +208,17 @@ const buildPreparedConfig = (options: ScanOptions | undefined): PreparedConfig =
     const enableIds = expandTagFilters(options?.rules?.enable, allRules, "rules.enable");
     const includeIds = expandTagFilters(options?.rules?.include, allRules, "rules.include");
     const excludeIds = expandTagFilters(options?.rules?.exclude, allRules, "rules.exclude");
+    const overrides = compileOverrides(options?.overrides, allRules);
 
     // `enable` and `include` both imply enablement: you can't filter to a rule
     // that's off. `exclude` is filter-only — it never turns anything on.
     const enabledSet = new Set<string>([...(enableIds ?? []), ...(includeIds ?? [])]);
-    const config = gateOptInRules(base, enabledSet);
+    const overrideEnabled = new Set(overrides?.flatMap((override) => [...override.enables]));
+    const optIn = new Set(allRules.filter((rule) => rule?.defaultEnabled === false && typeof rule.id === "string").map((rule) => rule.id));
+    const overrideOnlyOptIn = new Set([...overrideEnabled].filter((id) => optIn.has(id) && !enabledSet.has(id)));
+    const config = gateOptInRules(base, new Set([...enabledSet, ...overrideEnabled]));
 
-    return { config, excludeIds, includeIds, ruleMeta: buildRuleMeta(config) };
+    return { config, excludeIds, includeIds, overrideOnlyOptIn, overrides, ruleMeta: buildRuleMeta(config) };
 };
 
 const preparedConfig = (options: ScanOptions | undefined): PreparedConfig => {
@@ -222,6 +267,7 @@ const toNativeOptions = (options: ScanOptions | undefined, config: GitleaksConfi
         maxDecodeDepth: options?.maxDecodeDepth,
         maxFileSize: options?.walk?.maxFileSize,
         minConfidence: options?.config?.minConfidence,
+        profile: options?.profile,
         reportSuppressed: options?.reportSuppressed,
         respectGitignore: options?.walk?.gitignore,
     };

@@ -120,8 +120,8 @@ import {
     isNotAlphanumericString,
 } from "@visulima/secret-scanner";
 
-// 1) Scan directories (respects .gitignore)
-const findings = await scan([process.cwd()], { redact: true });
+// 1) Scan directories (respects .gitignore; findings are masked by default)
+const findings = await scan([process.cwd()]);
 
 // 2) Scan a specific file list (e.g., output of `git diff --name-only`)
 const staged = await scanFiles(["src/app.ts", "src/db.ts"]);
@@ -235,6 +235,8 @@ const other = "ghp_..."; // secret-scanner:allow
 const third = "ghp_..."; // pragma: allowlist secret   # detect-secrets compat
 ```
 
+Append active rule ids to suppress only those rules: `// gitleaks:allow github-pat` or `// secret-scanner:allow github-pat, aws-access-token`. A bare marker suppresses every rule on the line. Text that is not an active rule id is read as prose, so a mistyped id leaves the marker bare and it still suppresses every rule. A lowercase kebab-case token that names no active rule (`github-pat-v2`) is reported in `allowWarnings` of the detailed scan results, and `vis secrets` prints it.
+
 **Block region** (suppresses everything between markers)
 
 ```ts
@@ -317,6 +319,8 @@ interface ScanOptions {
     inlineAllow?: boolean;
     /** Return suppressed findings from the *Detailed scans. Default false. */
     reportSuppressed?: boolean;
+    /** Collect timing data and expose it as `ScanResult.profile`. Default false. */
+    profile?: boolean;
 
     config?: {
         /** Layer the user's rules on top of the bundled ruleset. Default: true. */
@@ -354,7 +358,7 @@ interface ScanOptions {
      */
     maxArchiveDepth?: number;
 
-    /** Mask `match` / `secret` strings in every finding. */
+    /** Mask `match` / `secret` strings in every finding. Default: `true`; set `false` to reveal values. */
     redact?: boolean;
 
     /** Abort the (network-bound) validation stage. Forwarded to each validator's `fetch()`. */
@@ -373,6 +377,26 @@ interface ScanOptions {
         include?: string[];
     };
 
+    /** File-specific rule filters, applied in listed order after the global `rules` filters. */
+    overrides?: {
+        /** Gitignore-syntax globs, e.g. `*.env` or `src/**`. */
+        files: string | string[];
+        rules?: {
+            /** Enable opt-in rules for matching files only. */
+            enable?: string[];
+            /** Drop these rules for matching files. */
+            exclude?: string[];
+            /** Restrict matching files to these rules. */
+            include?: string[];
+        };
+    }[];
+
+    /** `scanFiles` only: directory `.secretlintignore` files are discovered from and ignore patterns are anchored at. Default: `process.cwd()`. */
+    ignoreRoot?: string;
+
+    /** Directory the `overrides` globs are relative to. Default: `process.cwd()`; files outside it match by basename. */
+    overridesRoot?: string;
+
     /** Print diagnostics (skipped rules) to stderr on first run. */
     verbose?: boolean;
 
@@ -388,6 +412,33 @@ interface ScanOptions {
         /** Skip files larger than this (bytes). Default: 10 MiB. */
         maxFileSize?: number;
     };
+}
+
+interface ScanProfilePhase {
+    name: string;
+    ms: number;
+    count: number;
+}
+
+interface ScanProfileRule {
+    ruleId: string;
+    ms: number;
+    count: number;
+    matches: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+}
+
+interface ScanProfileFile {
+    file: string;
+    ms: number;
+}
+
+interface ScanProfile {
+    totalMs: number;
+    phases: ScanProfilePhase[];
+    rules: ScanProfileRule[];
+    files: ScanProfileFile[];
 }
 
 interface Finding {
@@ -421,7 +472,11 @@ interface SkippedRule {
 declare function scan(paths: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanFiles(files: string[], options?: ScanOptions): Promise<Finding[]>;
 declare function scanString(content: string, file: string, options?: ScanOptions): Promise<Finding[]>;
-// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore entries.
+declare function scanStringDetailed(content: string, file: string, options?: ScanOptions): Promise<ScanResult>;
+// True when walk.excludePatterns / walk.excludeFromFiles exclude `file` (relative to `root`), as scanFiles filters it.
+declare function isPathExcluded(file: string, options: ScanOptions | undefined, root: string): boolean;
+// Same scans plus diagnostics: unreadable files, suppressed findings, unused .gitleaksignore
+// entries, and an optional timing breakdown when `profile: true`.
 declare function scanDetailed(paths: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function scanFilesDetailed(files: string[], options?: ScanOptions): Promise<ScanResult>;
 declare function listRules(options?: ScanOptions): Promise<RuleInfo[]>;

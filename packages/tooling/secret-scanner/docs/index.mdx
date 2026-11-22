@@ -35,8 +35,8 @@ Use it as a library, through the [`vis secrets`](../vis/index.mdx) CLI, or as a 
 ```typescript
 import { scan, scanFiles, scanString, listRules, inspectRuleset, fingerprint, transformYamlBlockScalars } from "@visulima/secret-scanner";
 
-// Scan a directory (respects .gitignore)
-const findings = await scan([process.cwd()], { redact: true });
+// Scan a directory (respects .gitignore; findings are masked by default)
+const findings = await scan([process.cwd()]);
 
 // Scan a fixed list of files (e.g. `git diff --name-only`)
 const staged = await scanFiles(["src/app.ts", "src/db.ts"]);

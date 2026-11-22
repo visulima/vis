@@ -1,9 +1,11 @@
 # The native `vis` CLI front-end — the Rust migration's startup + dispatch shell.
 #
-# A deliberately lean crate: it depends only on `vis-core` (pure pm logic), never
+# A deliberately lean crate: it depends on `vis-core` (pure pm logic) plus the small
+# set needed by the `hook run` fast path (regex, prek-identify, serde_json), never
 # on the `vis-native` addon, so `cargo build -p vis-cli` stays fast and free of
-# the addon's heavy, toolchain-sensitive deps (oxc, rusqlite, …). Shared logic
-# ported off Node lives in `vis-core`.
+# the addon's heavy, toolchain-sensitive deps (rusqlite, …). The one exception is
+# the oxc parser, which reads `vis.config.*` files as data without running them.
+# Shared logic ported off Node lives in `vis-core`.
 #
 # Profiles ([profile.release] etc.) are inherited from the workspace root
 # (../Cargo.toml).
@@ -18,5 +20,43 @@ publish = false
 name = "vis"
 path = "src/main.rs"
 
+[target.'cfg(unix)'.dependencies]
+# `localtime_r` for the local clock in pail's header (see src/clean.rs).
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Switches the console to ANSI mode at startup (see src/term.rs).
+windows-sys = { version = "0.61", features = [ "Win32_System_Console" ] }
+
 [dependencies]
 vis-core = { path = "../core" }
+# The pure task-runner engines (no napi). `cache hash` reads the main worktree root through it, so
+# the shared cache directory resolves exactly like the Node path, which calls the same function.
+task-runner-core = { path = "../../../task-runner/native/core" }
+# `hook run` fast path. `prek-identify` is pinned to the addon's version so both
+# classify files identically. The fast path compiles every pattern with `unicode(false)`
+# (see src/hook/filter.rs), so ASCII semantics match JS `RegExp` whichever regex features
+# the scanner engine below unifies in (it needs the Unicode tables).
+prek-identify = "0.5"
+regex = { version = "1", default-features = false, features = [
+  "std",
+  "perf"
+] }
+# Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
+blake3 = { version = "1", default-features = false }
+# `vis secrets`: the scanner engine itself, linked as a plain crate (no napi, no addon), and the
+# SHA-256 of its baseline fingerprints. Everything in the engine's tree is pure Rust.
+secret-scanner-core = { path = "../../../secret-scanner/native/core" }
+sha2 = "0.10"
+serde = { version = "1", features = [ "derive" ] }
+serde_json = { version = "1", features = [
+  "float_roundtrip",
+  "raw_value"
+] }
+# Reads `vis.config.*` as data (see src/vis_config.rs). Pinned like the addon's copies.
+oxc_allocator = "=0.154.0"
+oxc_ast = "=0.154.0"
+oxc_parser = "=0.154.0"
+oxc_span = "=0.154.0"
+# Terminal width for help layout (the tty size, like the Node CLI's own lookup).
+terminal_size = "0.4"

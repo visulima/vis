@@ -32,7 +32,21 @@ export interface ScanOptions {
     maxArchiveDepth?: number;
     maxDecodeDepth?: number;
 
+    overrides?: {
+        files: string | string[];
+        rules?: {
+            enable?: string[];
+            exclude?: string[];
+            include?: string[];
+        };
+    }[];
+    ignoreRoot?: string;
+
+    overridesRoot?: string;
+
     redact?: boolean;
+
+    secretlintIgnore?: string[] | false;
 
     rules?: {
         enable?: string[];
@@ -54,17 +68,21 @@ export interface ScanOptions {
 
 ## Root-level
 
-| Option             | Type              | Default | Description                                                                                                                                         |
-| ------------------ | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline`         | `string`          | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                   |
-| `concurrency`      | `number`          | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                  |
-| `gitleaksIgnore`   | `string \| false` | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                       |
-| `inlineAllow`      | `boolean`         | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                         |
-| `maxArchiveDepth`  | `number`          | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below. |
-| `maxDecodeDepth`   | `number`          | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.               |
-| `redact`           | `boolean`         | `false` | Mask the `match` and `secret` strings in every emitted finding.                                                                                     |
-| `reportSuppressed` | `boolean`         | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                              |
-| `verbose`          | `boolean`         | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                         |
+| Option             | Type                | Default | Description                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`         | `string`            | —       | Path to a JSON array of `Finding` objects. Matches are suppressed by fingerprint.                                                                                                                                                                                     |
+| `concurrency`      | `number`            | auto    | Rayon worker threads. `0` or `undefined` uses rayon's global pool.                                                                                                                                                                                                    |
+| `gitleaksIgnore`   | `string \| false`   | —       | Path to a `.gitleaksignore` to honour. See [Suppression](./suppression.mdx#5-gitleaksignore).                                                                                                                                                                         |
+| `inlineAllow`      | `boolean`           | `true`  | Honour `gitleaks:allow` / `pragma: allowlist` markers. `false` audits them.                                                                                                                                                                                           |
+| `maxArchiveDepth`  | `number`            | `0`     | Nesting depth for zip / tar / gzip / tar.gz scanning. `0` leaves archives skipped as binary files. See [`maxArchiveDepth`](#maxarchivedepth) below.                                                                                                                   |
+| `maxDecodeDepth`   | `number`            | `2`     | Layers of base64 / hex / percent-encoding to decode and rescan. `0` disables decoding. See [`maxDecodeDepth`](#maxdecodedepth) below.                                                                                                                                 |
+| `overrides`        | `object[]`          | —       | Rule filters scoped to files matching gitignore-syntax globs. See [`overrides`](#overrides--per-file-rule-filters) below.                                                                                                                                             |
+| `ignoreRoot`       | `string`            | cwd     | `scanFiles` only: directory `.secretlintignore` files are discovered from and ignore patterns are anchored at. Set it to the repository root when scanning a file list from a subdirectory. Findings and baselines are unaffected. |
+| `overridesRoot`    | `string`            | cwd     | Directory the `overrides[].files` globs are relative to.                                                                                                                                                                                                              |
+| `redact`           | `boolean`           | `true`  | Mask the `match` and `secret` strings in every emitted finding. Set `false` to reveal values; detection, filters, suppression and validation still use the real values.                                                                                               |
+| `secretlintIgnore` | `string[] \| false` | auto    | `.secretlintignore` files to honour. Auto-discovered in each scan root and its parents up to the repository root; a `.secretlintignore` is anchored at its own directory, any other path at the scan root. Pass paths to add more, or `false` to disable all of them. |
+| `reportSuppressed` | `boolean`           | `false` | Return suppressed findings in `suppressed` from the `*Detailed` scans.                                                                                                                                                                                                |
+| `verbose`          | `boolean`           | `false` | Print skipped-rule diagnostics to stderr on the first call.                                                                                                                                                                                                           |
 
 ### `maxArchiveDepth`
 
@@ -161,7 +179,7 @@ Supported today: Kingfisher-style HTTP validators with `StatusMatch` / `WordMatc
 
 `onlyVerified: true` then filters the emitted set down to findings whose `validation === "verified"` — useful for CI gating where a suspect match that can't be verified is not a blocker.
 
-> **Warning:** `validate: true` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test.
+> **Warning:** `validate: true` sends the candidate secret to the provider. Some providers page their security team on failed auth attempts. Only enable on repos you own or have explicit authorisation to test. Masking (`redact`, on by default) does not prevent this: validation runs on the real value before findings are masked for output.
 
 ## `walk` — filesystem traversal
 
@@ -173,7 +191,9 @@ Supported today: Kingfisher-style HTTP validators with `StatusMatch` / `WordMatc
 | `includeHidden`    | `boolean`  | `false` | Visit dotfiles and hidden directory entries.                                                                        |
 | `maxFileSize`      | `number`   | 10 MiB  | Skip files larger than this (in bytes). Files above the threshold never enter the detector.                         |
 
-Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it; there the JS wrapper applies `excludePatterns` / `excludeFromFiles` via the `ignore` npm package so the two code paths behave the same.
+Ignore sources are combined: `.gitignore`, auto-discovered `.secretlintignore` files, explicit `secretlintIgnore` paths, `walk.excludeFromFiles` and `walk.excludePatterns`. A `!` line only re-includes a path _within its own source_ — it cannot undo an exclusion from another file. Set `walk.gitignore: false` to drop the git sources entirely.
+
+Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it; there the JS wrapper applies the same sources via the `ignore` npm package so the two code paths behave the same.
 
 ## `rules` — id + tag filters
 
@@ -190,6 +210,29 @@ Only `scan()` runs the walker. `scanFiles()` takes a fixed list and bypasses it;
 - "enable the weak-passwords rules alongside my normal scan" → `rules.enable: ["tag:preset:weak-passwords"]`
 - "scan **only** for password-manager exports" → `rules.include: ["tag:preset:password-manager"]`
 - "keep defaults but mute `generic-api-key`" → `rules.exclude: ["generic-api-key"]`
+
+## `overrides` — per-file rule filters
+
+`overrides` layers extra `rules` filters onto findings whose file matches a gitignore-syntax glob. Overrides run in listed order, folded into the global `rules` filter in a single stage: an override's `include` can re-enable a rule the global `exclude` dropped.
+
+Globs are relative to `overridesRoot` (default: the process cwd), whichever way the scanner reports the path (relative to the scan root, relative to cwd, or absolute). A file outside `overridesRoot` is matched by its basename, so slash-less globs such as `*.env` still apply while `src/**` does not. A single-file scan matches the file the same way. When a scan covers several roots that hold the same relative path, each finding is matched against the root it came from.
+
+- `files`: one glob or an array of globs (`"*.env"`, `"src/**"`, `"!src/vendor/**"`).
+- `rules.enable`: turn on opt-in rules for matching files only. The rules still run on every file, but findings from them are reported only when the file matches.
+- `rules.include`: replace the effective allowlist for matching files. An explicit `include` clears earlier exclusions for those files.
+- `rules.exclude`: add to the effective denylist for matching files. `tag:<name>` selectors work here too.
+
+```typescript
+await scan(["."], {
+    rules: { exclude: ["generic-api-key"] },
+    overrides: [
+        { files: "*.env", rules: { include: ["tag:preset:exposed-files"] } },
+        { files: "tests/fixtures/**", rules: { exclude: ["private-key"] } },
+    ],
+});
+```
+
+Overrides affect output filters only; they do not skip files. Use `walk.excludePatterns` to keep matching paths out of the scan entirely.
 
 ## `baseline` — fingerprint suppression
 

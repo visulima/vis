@@ -162,7 +162,7 @@ describe("composite rules (rules.required)", () => {
         // Scan with just the two merged rules: other bundled AWS rules would win the
         // same-span dedup and hide the composite finding.
         const pair = { rules: merged.rules?.filter((rule) => rule.id === "aws-access-token" || rule.id === "my-aws-secret") };
-        const options = { config: { extendBundled: false, inline: pair } };
+        const options = { config: { extendBundled: false, inline: pair }, redact: false };
         const paired = await scanString(lines(2), "creds.env", options);
         const alone = await scanString(`aws_access_key_id = ${KEY_ID}\n`, "creds.env", options);
 

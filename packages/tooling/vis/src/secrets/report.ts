@@ -3,11 +3,11 @@ import type { Finding, GitFinding, GitleaksIgnoreEntry, RuleInfo, SuppressedFind
 import { gitleaksIgnoreFingerprint } from "@visulima/secret-scanner";
 
 import { VisUserError } from "../errors/vis-user-error";
-import { emitSecretsCsv, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
+import { emitSecretsCsv, emitSecretsGitHub, emitSecretsGitlabCodeQuality, emitSecretsJUnit } from "../report/secrets";
 import { toRelativeFinding } from "./baseline";
 import { formatHistoryText, formatSarif, formatText } from "./format";
 
-export const REPORT_FORMATS = ["text", "json", "sarif", "csv", "junit", "gitlab-code-quality"] as const;
+export const REPORT_FORMATS = ["text", "json", "sarif", "csv", "junit", "gitlab-code-quality", "github"] as const;
 
 export type ReportFormat = (typeof REPORT_FORMATS)[number];
 
@@ -57,8 +57,12 @@ export interface RenderContext {
     redact: boolean;
     root: string;
     ruleMetadata: RuleInfo[];
+    /** Findings come from the index (`--staged`), not the checked-out files. */
+    staged?: boolean;
     toolVersion: string;
     useColor: boolean;
+    /** The text scanned from standard input; the text view shows it as source context instead of reading the file. */
+    virtualSource?: string;
 }
 
 /** Render findings in one report format. */
@@ -68,6 +72,9 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
     switch (format) {
         case "csv": {
             return emitSecretsCsv(relativeFindings());
+        }
+        case "github": {
+            return emitSecretsGitHub(relativeFindings(), { staged: context.staged });
         }
         case "gitlab-code-quality": {
             return emitSecretsGitlabCodeQuality(relativeFindings());
@@ -84,7 +91,7 @@ export const renderReport = (format: ReportFormat, findings: Finding[], context:
         default: {
             const text = context.history
                 ? formatHistoryText(findings as GitFinding[], context.useColor, { redact: context.redact })
-                : formatText(findings, context.root, context.useColor, { redact: context.redact });
+                : formatText(findings, context.root, context.useColor, { redact: context.redact, virtualSource: context.virtualSource });
 
             return `${text}\n`;
         }

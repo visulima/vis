@@ -165,7 +165,9 @@ export const resolveBaselineSet = async (baseline: Finding[] | ReadonlySet<strin
  * than writing) keeps the helper IO-free for editor/library hosts; use
  * {@link writeBaseline} when you want it persisted.
  */
-export const createBaseline = (findings: ReadonlyArray<Finding>): string => `${JSON.stringify(findings, undefined, 2)}\n`;
+export const createBaseline = (findings: ReadonlyArray<Finding>): string =>
+    // `root` is an absolute scan-time path, no part of a finding's identity; keeping it would tie the file to one checkout.
+    `${JSON.stringify(findings, (key, value: unknown) => (key === "root" ? undefined : value), 2)}\n`;
 
 export interface WriteBaselineOptions {
     /**

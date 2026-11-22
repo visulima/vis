@@ -1,3 +1,36 @@
+## @visulima/secret-scanner [3.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/secret-scanner@3.0.1-next.1...@visulima/secret-scanner@3.1.0-next.1) (2026-11-22)
+
+### Features
+
+* **vis:** scan standard input with vis secrets --stdin <filename> ([#129](https://github.com/visulima/vis/issues/129)) ([09db062](https://github.com/visulima/vis/commit/09db06296bae7f51578c617e326a571e348eea2b))
+
+## @visulima/secret-scanner [3.0.1-next.1](https://github.com/visulima/vis/compare/@visulima/secret-scanner@3.0.0...@visulima/secret-scanner@3.0.1-next.1) (2026-11-22)
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+
+## @visulima/secret-scanner [3.0.0](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.1.0...@visulima/secret-scanner@3.0.0) (2026-11-21)
+
+### ⚠ BREAKING CHANGES
+
+* **secrets:** mask findings by default (#120)
+
+### Features
+
+* **secret-scanner:** add per-file rule overrides ([#122](https://github.com/visulima/vis/issues/122)) ([aaadd9b](https://github.com/visulima/vis/commit/aaadd9be5f23bd260d8dc5f0e0de9a275d7afa09))
+* **secret-scanner:** add typed rule authoring helpers and rule tester ([#127](https://github.com/visulima/vis/issues/127)) ([ab251b8](https://github.com/visulima/vis/commit/ab251b8199a281a106e28aef2e6a28e10da8fd99))
+* **secret-scanner:** auto-discover .secretlintignore files ([#121](https://github.com/visulima/vis/issues/121)) ([084b09e](https://github.com/visulima/vis/commit/084b09eeb7452af85d41918b747955de97af7654))
+* **secret-scanner:** scope allow markers to rule ids ([#124](https://github.com/visulima/vis/issues/124)) ([6c2df64](https://github.com/visulima/vis/commit/6c2df64f501592fe81c3ed4592a609a553bc265c))
+* **secrets:** add opt-in scan profiling ([#125](https://github.com/visulima/vis/issues/125)) ([e303a83](https://github.com/visulima/vis/commit/e303a83e8505746098673816850da75f17f43682))
+* **secrets:** mask findings by default ([#120](https://github.com/visulima/vis/issues/120)) ([13581c2](https://github.com/visulima/vis/commit/13581c292b6177604522a09599c627a1f42cdb83))
+* **vis:** add masked working-tree secret rewrites ([#131](https://github.com/visulima/vis/issues/131)) ([f4d4964](https://github.com/visulima/vis/commit/f4d4964105beb9d2a98aa3ae253b2c08444ced31))
+* **vis:** scan piped input with secrets --stdin ([#123](https://github.com/visulima/vis/issues/123)) ([a14c35f](https://github.com/visulima/vis/commit/a14c35fac1462955a7e05ef66b6ae2bbe82d03bf))
+
+### Code Refactoring
+
+* **native:** move task-runner, secret-scanner and package-manager logic into napi-free core crates ([#102](https://github.com/visulima/vis/issues/102)) ([8440280](https://github.com/visulima/vis/commit/84402805dc753dfd501ff92e6f6eff82bc008ae5))
+
 ## @visulima/secret-scanner [2.1.0](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.0.3...@visulima/secret-scanner@2.1.0) (2026-11-03)
 
 ### Features

@@ -1078,6 +1078,60 @@
                     "additionalProperties": false,
                     "description": "Where the ruleset comes from. Omit for the bundled gitleaks default."
                 },
+                "overrides": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "files": {
+                                "anyOf": [
+                                    {
+                                        "type": "string"
+                                    },
+                                    {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    }
+                                ],
+                                "description": "Gitignore-syntax globs relative to the workspace root, e.g. `*.env` or `packages/api/**`."
+                            },
+                            "rules": {
+                                "type": "object",
+                                "properties": {
+                                    "enable": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Enable opt-in rules for matching files only."
+                                    },
+                                    "exclude": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Drop these rules for matching files."
+                                    },
+                                    "include": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "Restrict matching files to these rules."
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "files"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "description": "File-specific rule filters, applied after the global `rules` filters."
+                },
                 "redact": {
                     "type": "boolean",
                     "description": "Redact secret values in findings."
@@ -1102,6 +1156,21 @@
                     },
                     "additionalProperties": false,
                     "description": "Rule-id filters applied after scanning."
+                },
+                "secretlintIgnore": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        {
+                            "type": "boolean",
+                            "const": false
+                        }
+                    ],
+                    "description": "`.secretlintignore` paths, or `false` to disable auto-discovery."
                 },
                 "walk": {
                     "type": "object",

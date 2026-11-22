@@ -20,6 +20,28 @@ const MINIMAL_CONFIG = {
     title: "test",
 };
 
+const TWO_RULE_CONFIG = {
+    rules: [
+        ...MINIMAL_CONFIG.rules,
+        {
+            description: "Second fake token for rule-scoping tests",
+            id: "other-token",
+            keywords: ["OTHERTOKEN"],
+            regex: String.raw`OTHERTOKEN_[A-Za-z0-9]{20}`,
+            tags: ["test"],
+        },
+    ],
+    title: "test",
+};
+
+const TEST_TOKEN_LINE = "let a = TESTTOKEN_abcdefghij0123456789";
+const OTHER_TOKEN_LINE = "let b = OTHERTOKEN_abcdefghij0123456789";
+
+const scanTwoRules = (content: string) =>
+    scanString(content, "file.ts", {
+        config: { extendBundled: false, inline: TWO_RULE_CONFIG },
+    });
+
 describe("pragma suppression (end-to-end)", () => {
     it("same-line `pragma: allowlist secret` suppresses the finding", async () => {
         expect.assertions(2);
@@ -59,6 +81,99 @@ describe("pragma suppression (end-to-end)", () => {
         });
 
         expect(findings).toHaveLength(1);
+    }, 30_000);
+});
+
+describe("rule-scoped allow markers (end-to-end)", () => {
+    it("same-line marker suppresses only the named rule", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow test-token\n${OTHER_TOKEN_LINE}\n`);
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.ruleId).toBe("other-token");
+    }, 30_000);
+
+    it("same-line marker naming another rule suppresses nothing", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} # secret-scanner:allow other-token\n${OTHER_TOKEN_LINE}\n`);
+
+        expect(findings).toHaveLength(2);
+        expect(findings.map((finding) => finding.ruleId)).toStrictEqual(expect.arrayContaining(["other-token", "test-token"]));
+    }, 30_000);
+
+    it("unknown rule id is read as prose and leaves the marker bare", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow no-such-rule\n${OTHER_TOKEN_LINE}\n`);
+
+        expect(findings.map((finding) => finding.ruleId)).toStrictEqual(["other-token"]);
+    }, 30_000);
+
+    it.each(["false-positive", "test-only", "@alice"])(
+        "hyphenated or handle prose `%s` after a bare marker still suppresses",
+        async (prose) => {
+            expect.assertions(1);
+
+            const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow ${prose}\n`);
+
+            expect(findings).toHaveLength(0);
+        },
+        30_000,
+    );
+
+    it("bare marker with prose still suppresses every rule on the line", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow safe in tests\n`);
+
+        expect(findings).toHaveLength(0);
+    }, 30_000);
+
+    it("scoped previous-line pragma suppresses only the named rule", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(["# pragma: allowlist nextline secret test-token", TEST_TOKEN_LINE, OTHER_TOKEN_LINE, ""].join("\n"));
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.ruleId).toBe("other-token");
+    }, 30_000);
+
+    it("scoped block region suppresses only the named rule", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(["# gitleaks:allow-start test-token", TEST_TOKEN_LINE, "# gitleaks:allow-end", OTHER_TOKEN_LINE, ""].join("\n"));
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.ruleId).toBe("other-token");
+    }, 30_000);
+});
+
+describe("allow markers sharing a line or a boundary line", () => {
+    it("lets a later bare marker suppress a rule an earlier scoped marker did not name", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow other-token // gitleaks:allow`);
+
+        expect(findings).toHaveLength(0);
+    }, 30_000);
+
+    it("treats a secret before an allow-start marker on the same line as allowed", async () => {
+        expect.assertions(1);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} // gitleaks:allow-start`);
+
+        expect(findings).toHaveLength(0);
+    }, 30_000);
+
+    it("scopes a boundary line by the rule ids after the marker", async () => {
+        expect.assertions(2);
+
+        const findings = await scanTwoRules(`${TEST_TOKEN_LINE} ${OTHER_TOKEN_LINE} // gitleaks:allow-start test-token`);
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.ruleId).toBe("other-token");
     }, 30_000);
 });
 

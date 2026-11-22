@@ -49,6 +49,12 @@ const CACHE_SCHEMA_VERSION = 3;
 export const buildDoctorCacheKey = (input: CacheKeyInput): string => {
     const payload = JSON.stringify({
         configMtime: safeMtime(input.configPath),
+        // The "launcher" diagnostic reports how this process was started, so a
+        // result cached under the Node launcher must not be replayed for the
+        // native executable (and vice versa). `null` rather than `undefined`: an
+        // unset launcher must still be part of the key, or entries written before
+        // this field existed would match it.
+        launcher: process.env["VIS_LAUNCHER"] ?? null,
         lockfileMtime: safeMtime(input.lockfilePath),
         schema: CACHE_SCHEMA_VERSION,
         sections: [...input.sections].toSorted(),

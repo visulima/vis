@@ -1,0 +1,135 @@
+# https://help.github.com/en/categories/automating-your-workflow-with-github-actions
+
+name: "Install smoke"
+
+# Packs @visulima/vis and its platform packages, publishes them (platform packages
+# first) to a throw-away local registry, installs the root with every package
+# manager on each OS, and runs `--version`, `--help`, `hook run` and a delegated
+# command. Checks that `bin/vis` is the native executable when install scripts run
+# and that the Node launcher still works when they are disabled.
+
+on: # yamllint disable-line rule:truthy
+    workflow_dispatch: # yamllint disable-line rule:empty-values
+    pull_request:
+        types: ["opened", "synchronize", "reopened"]
+        # Build Native only runs for PRs to these branches, so there is no native build to wait for elsewhere.
+        branches:
+            - "main"
+            - "next"
+        paths:
+            - "packages/tooling/vis/bin/**"
+            - "packages/tooling/vis/npm/**"
+            - "packages/tooling/vis/index.js"
+            - "packages/tooling/vis/package.json"
+            - "packages/tooling/vis/scripts/install-native.cjs"
+            - "packages/tooling/vis/scripts/install-smoke.mjs"
+            - "packages/tooling/vis/native/cli/**"
+            - "packages/tooling/vis/src/runtime/runtime-diagnostics.ts"
+            - "packages/tooling/vis/src/cache/doctor-cache.ts"
+            - "packages/tooling/vis-mcp/**"
+            - ".github/actions/wait-for-native-build/**"
+            - ".github/actions/native-release-artifacts/**"
+            - ".github/actions/native-test-artifacts/**"
+            - ".github/workflows/build-native.yml"
+            - ".github/workflows/install-smoke.yml"
+    push:
+        branches:
+            - "main"
+        paths:
+            - "packages/tooling/vis/bin/**"
+            - "packages/tooling/vis/npm/**"
+            - "packages/tooling/vis/index.js"
+            - "packages/tooling/vis/package.json"
+            - "packages/tooling/vis/scripts/install-native.cjs"
+            - "packages/tooling/vis/scripts/install-smoke.mjs"
+            - "packages/tooling/vis/native/cli/**"
+            - "packages/tooling/vis/src/runtime/runtime-diagnostics.ts"
+            - "packages/tooling/vis/src/cache/doctor-cache.ts"
+            - "packages/tooling/vis-mcp/**"
+            - ".github/actions/wait-for-native-build/**"
+            - ".github/actions/native-release-artifacts/**"
+            - ".github/actions/native-test-artifacts/**"
+            - ".github/workflows/build-native.yml"
+            - ".github/workflows/install-smoke.yml"
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    cancel-in-progress: true
+
+permissions:
+    actions: "read" # the native artifact download lists build-native.yml runs
+    checks: "read" # waiting for the Build Native check run
+    contents: "read"
+
+jobs:
+    smoke:
+        name: "Install smoke (${{ matrix.os }})"
+        # Fork PRs are skipped: the artifact download only accepts runs from this repository.
+        if: "github.repository == 'visulima/vis' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+        runs-on: "${{ matrix.os }}"
+        # Above the 80-minute native-build wait, plus artifact download, the build and the package-manager rows.
+        timeout-minutes: 120
+        strategy:
+            fail-fast: false
+            matrix:
+                # Windows installs through npm only: the generated `.cmd` shim runs the Node
+                # launcher there, and that is what the row proves.
+                os: ["ubuntu-24.04", "macos-latest", "windows-latest"]
+        steps:
+            - name: "Harden Runner"
+              if: "runner.os == 'Linux'"
+              uses: "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43" # v2.22.3
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "install-smoke"
+                  skip-playwright: "true"
+                  upgrade-npm-version: false
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            - name: "Wait for Build Native"
+              uses: "./.github/actions/wait-for-native-build"
+              with:
+                  ref: "${{ github.event.pull_request.head.sha || github.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            # Lays the binaries out exactly as a release publishes them and fails when a
+            # platform package is missing a file it lists.
+            - name: "Native release artifacts"
+              uses: "./.github/actions/native-release-artifacts"
+              with:
+                  ref: "${{ github.event.pull_request.head.sha || github.sha }}"
+                  github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+            - name: "Build vis"
+              run: "pnpm exec nx run vis:build:prod"
+
+            # bun is named by `--pm` below, and a requested package manager that is missing fails
+            # the smoke run, so bun must be installed here.
+            - name: "Install bun"
+              if: "runner.os != 'Windows'"
+              shell: "bash"
+              run: "npm install --global bun@1.4.4"
+
+            # What each package-manager row installs and checks is described in the header of scripts/install-smoke.mjs.
+            - name: "Install smoke"
+              working-directory: "packages/tooling/vis"
+              shell: "bash"
+              run: |
+                  set -euo pipefail
+                  if [ "$RUNNER_OS" = "Windows" ]; then
+                      node scripts/install-smoke.mjs --pm npm
+                  else
+                      node scripts/install-smoke.mjs --pm all
+                  fi

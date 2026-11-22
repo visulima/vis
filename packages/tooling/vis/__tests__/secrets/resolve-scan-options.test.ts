@@ -56,6 +56,16 @@ describe("resolveScanOptions presets shorthand", () => {
         expect(opts.rules?.enable).toStrictEqual(["from-flag", "tag:preset:exposed-files"]);
     });
 
+    it("passes per-file overrides through to the scanner, relative to the workspace root", () => {
+        expect.assertions(2);
+
+        const overrides = [{ files: "*.env", rules: { exclude: ["generic-api-key"] } }];
+        const opts = resolveScanOptions(NO_FLAGS, { overrides }, ROOT);
+
+        expect(opts.overrides).toStrictEqual(overrides);
+        expect(opts.overridesRoot).toBe(ROOT);
+    });
+
     it("returns `enable: undefined` when neither flags, `rules.enable`, nor presets are set", () => {
         expect.assertions(1);
 
@@ -121,6 +131,15 @@ describe("resolveScanOptions decode and archive depth", () => {
         expect(() => resolveScanOptions({ maxSize: 0 }, undefined, ROOT)).toThrow(
             expect.objectContaining({ isVisUserError: true, message: expect.stringMatching(/--max-size must be a positive number of bytes/) }),
         );
+    });
+});
+
+describe("resolveScanOptions profiling", () => {
+    it("passes --profile to the scanner and leaves it off by default", () => {
+        expect.assertions(2);
+
+        expect(resolveScanOptions({ profile: true }, undefined, ROOT).profile).toBe(true);
+        expect(resolveScanOptions(NO_FLAGS, undefined, ROOT).profile).toBe(false);
     });
 });
 

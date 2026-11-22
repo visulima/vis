@@ -1,74 +1,19 @@
 #![deny(clippy::all)]
-
-mod archive;
-mod composite;
-mod config;
-mod decode;
-mod detector;
-mod entropy;
-mod finalize;
-mod lines;
-mod rules;
-mod scanner;
-mod skip;
-mod suppression;
-mod walker;
-
-use std::collections::hash_map::DefaultHasher;
-use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+//! NAPI addon for `@visulima/secret-scanner`.
+//!
+//! The scanner itself lives in `secret-scanner-core` (plain Rust). This crate only
+//! declares the JS-visible option / report objects, converts them to and from the
+//! core types, and runs the blocking scans off the Node thread.
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use once_cell::sync::Lazy;
-use rayon::prelude::*;
+use secret_scanner_core as core;
 
-use crate::archive::ArchiveOptions;
-use crate::config::Config;
-use crate::decode::DecodeOptions;
-use crate::detector::{DetectOptions, RawFinding};
-use crate::finalize::build_report;
-use crate::rules::{CompiledRuleset, Confidence};
-use crate::scanner::{scan_file, scan_text_full, TextScanOptions};
-use crate::skip::{SkipReason, Skipped};
-use crate::suppression::SuppressionReason;
-use crate::walker::{walk_paths_reporting, WalkOptions};
-
-/// Capacity of the compiled-ruleset cache. Four is enough to cover the
-/// common matrix: `gitleaks` vs `kingfisher` vs `combined` × optional
-/// `min_confidence` / user preset layering.
-const RULESET_CACHE_CAPACITY: usize = 4;
-
-/// Cached rulesets, oldest first, keyed by [`hash_ruleset_key`].
-type RulesetCache = VecDeque<(u64, Arc<CompiledRuleset>)>;
-
-/// FIFO cache keyed by a content hash of `(config JSON, min_confidence)`.
-/// Eliminates the per-scan 5-9s compile cost when the same config is reused
-/// across `scan()` / `scanFiles()` / `listRules()` / repeat CLI invocations
-/// within the same process. FIFO is sufficient at cap 4; a true LRU would
-/// need an extra dep without measurable benefit at this size.
-static RULESET_CACHE: Lazy<Mutex<RulesetCache>> =
-    Lazy::new(|| Mutex::new(VecDeque::with_capacity(RULESET_CACHE_CAPACITY)));
-
-fn hash_ruleset_key(value: &serde_json::Value, min_confidence: Option<&str>) -> u64 {
-    let mut hasher = DefaultHasher::new();
-
-    // `serde_json::to_vec` preserves object-key insertion order — for a given
-    // source JSON (our `data/*.json` or a user-supplied file), the hash is
-    // stable across calls. A user who hand-builds the config object and
-    // shuffles keys between calls will miss the cache; that's the exact
-    // right behaviour (different inputs → different hash).
-    if let Ok(bytes) = serde_json::to_vec(value) {
-        bytes.hash(&mut hasher);
-    }
-
-    min_confidence.unwrap_or("").hash(&mut hasher);
-    hasher.finish()
+/// Core errors surface to JS as a plain `GenericFailure` with the same message the
+/// scanner has always used.
+fn to_napi_error(error: core::ScanError) -> Error {
+    Error::from_reason(error.to_string())
 }
-
-const DEFAULT_MAX_FILE_SIZE: u32 = 10 * 1024 * 1024; // 10 MiB
 
 #[napi(object)]
 #[derive(Default)]
@@ -116,6 +61,50 @@ pub struct ScanOptions {
     /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
     /// match; without it they never do.
     pub commit: Option<String>,
+    /// Collect opt-in timing data (phases, per-file, per-rule) and attach it to `ScanReport.profile`.
+    pub profile: Option<bool>,
+}
+
+impl From<ScanOptions> for core::ScanOptions {
+    fn from(v: ScanOptions) -> Self {
+        Self {
+            config: v.config,
+            respect_gitignore: v.respect_gitignore,
+            include_hidden: v.include_hidden,
+            extra_ignores: v.extra_ignores,
+            ignore_files: v.ignore_files,
+            max_file_size: v.max_file_size,
+            redact: v.redact,
+            concurrency: v.concurrency,
+            min_confidence: v.min_confidence,
+            max_decode_depth: v.max_decode_depth,
+            max_archive_depth: v.max_archive_depth,
+            inline_allow: v.inline_allow,
+            report_suppressed: v.report_suppressed,
+            commit: v.commit,
+            profile: v.profile,
+        }
+    }
+}
+
+/// Byte spans into the scanned content, for consumers that rewrite findings in place.
+#[napi(object)]
+pub struct SourceSpan {
+    pub match_start: u32,
+    pub match_end: u32,
+    pub secret_start: u32,
+    pub secret_end: u32,
+}
+
+impl From<core::SourceSpan> for SourceSpan {
+    fn from(v: core::SourceSpan) -> Self {
+        Self {
+            match_start: v.match_start,
+            match_end: v.match_end,
+            secret_start: v.secret_start,
+            secret_end: v.secret_end,
+        }
+    }
 }
 
 #[napi(object)]
@@ -147,6 +136,61 @@ pub struct Finding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
+}
+
+impl From<core::Finding> for Finding {
+    fn from(v: core::Finding) -> Self {
+        let core::Finding {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings,
+            root,
+            source_span,
+            span_unavailable_reason,
+        } = v;
+        Self {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
+        }
+    }
 }
 
 /// A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
@@ -181,30 +225,63 @@ pub struct SuppressedFinding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
 
-impl Finding {
-    fn suppressed(self, reason: SuppressionReason) -> SuppressedFinding {
-        SuppressedFinding {
-            rule_id: self.rule_id,
-            description: self.description,
-            file: self.file,
-            start_line: self.start_line,
-            end_line: self.end_line,
-            start_column: self.start_column,
-            end_column: self.end_column,
-            r#match: self.r#match,
-            secret: self.secret,
-            entropy: self.entropy,
-            tags: self.tags,
-            source: self.source,
-            confidence: self.confidence,
-            alternate_matches: self.alternate_matches,
-            decoded: self.decoded,
-            required_findings: self.required_findings,
-            suppressed_by: reason.as_str().to_string(),
+impl From<core::SuppressedFinding> for SuppressedFinding {
+    fn from(v: core::SuppressedFinding) -> Self {
+        let core::SuppressedFinding {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings,
+            root,
+            source_span,
+            span_unavailable_reason,
+            suppressed_by,
+        } = v;
+        Self {
+            rule_id,
+            description,
+            file,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            entropy,
+            tags,
+            source,
+            confidence,
+            alternate_matches,
+            decoded,
+            required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
+            suppressed_by,
         }
     }
 }
@@ -220,6 +297,39 @@ pub struct RequiredFinding {
     pub r#match: String,
     pub secret: String,
     pub decoded: Option<Vec<String>>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
+}
+
+impl From<core::RequiredFinding> for RequiredFinding {
+    fn from(v: core::RequiredFinding) -> Self {
+        let core::RequiredFinding {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span,
+            span_unavailable_reason,
+        } = v;
+        Self {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
+        }
+    }
 }
 
 /// A file the scan could not read. `reason` is `"permission-denied"`,
@@ -233,6 +343,35 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
+impl From<core::SkippedFile> for SkippedFile {
+    fn from(v: core::SkippedFile) -> Self {
+        let core::SkippedFile { path, reason } = v;
+        Self { path, reason }
+    }
+}
+
+/// An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+/// nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+/// suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+/// lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+/// or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+/// token that is neither a known rule id nor id-shaped.
+#[napi(object)]
+pub struct AllowWarning {
+    pub file: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub unknown_rule_ids: Vec<String>,
+}
+
+impl From<core::AllowWarning> for AllowWarning {
+    fn from(v: core::AllowWarning) -> Self {
+        let core::AllowWarning { file, line, unknown_rule_ids } = v;
+        Self { file, line, unknown_rule_ids }
+    }
+}
+
 /// Result of every scan entry point.
 #[napi(object)]
 #[derive(Default)]
@@ -243,12 +382,108 @@ pub struct ScanReport {
     pub suppressed: Vec<SuppressedFinding>,
     /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
+    /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
+    pub allow_warnings: Vec<AllowWarning>,
+    /// Timing data, present only when `profile` was requested.
+    pub profile: Option<ProfileReport>,
+}
+
+impl From<core::ScanReport> for ScanReport {
+    fn from(v: core::ScanReport) -> Self {
+        let core::ScanReport { findings, suppressed, skipped, allow_warnings, profile } = v;
+        Self {
+            findings: findings.into_iter().map(Into::into).collect(),
+            suppressed: suppressed.into_iter().map(Into::into).collect(),
+            skipped: skipped.into_iter().map(Into::into).collect(),
+            allow_warnings: allow_warnings.into_iter().map(Into::into).collect(),
+            profile: profile.map(Into::into),
+        }
+    }
+}
+
+/// A coarse scan phase (ruleset load, walk, detect, finalize, …).
+#[napi(object)]
+pub struct ProfilePhase {
+    /// How many times the phase ran.
+    pub count: u32,
+    /// Total milliseconds spent in the phase.
+    pub ms: f64,
+    pub name: String,
+}
+
+impl From<core::ProfilePhase> for ProfilePhase {
+    fn from(v: core::ProfilePhase) -> Self {
+        let core::ProfilePhase { count, ms, name } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, name }
+    }
+}
+
+/// Time spent in one rule's matcher, aggregated across every file and pass.
+#[napi(object)]
+pub struct ProfileRule {
+    /// How many times the rule's matcher ran.
+    pub count: u32,
+    /// Total milliseconds spent in the rule.
+    pub ms: f64,
+    /// The rule's main regex, when it has one.
+    pub pattern: Option<String>,
+    pub rule_id: String,
+}
+
+impl From<core::ProfileRule> for ProfileRule {
+    fn from(v: core::ProfileRule) -> Self {
+        let core::ProfileRule { count, ms, pattern, rule_id } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, pattern, rule_id }
+    }
+}
+
+/// Wall-clock cost of scanning one file, relative to the scan root like findings.
+#[napi(object)]
+pub struct ProfileFile {
+    pub file: String,
+    pub ms: f64,
+}
+
+impl From<core::ProfileFile> for ProfileFile {
+    fn from(v: core::ProfileFile) -> Self {
+        let core::ProfileFile { file, ms } = v;
+        Self { file, ms }
+    }
+}
+
+/// Opt-in timing breakdown of one native scan. Each list is sorted by descending `ms`.
+#[napi(object)]
+pub struct ProfileReport {
+    pub files: Vec<ProfileFile>,
+    pub phases: Vec<ProfilePhase>,
+    pub rules: Vec<ProfileRule>,
+    /// Total wall-clock of the native scan, in milliseconds.
+    pub total_ms: f64,
+}
+
+impl From<core::ProfileReport> for ProfileReport {
+    fn from(v: core::ProfileReport) -> Self {
+        let core::ProfileReport { files, phases, rules, total_ms } = v;
+        Self {
+            files: files.into_iter().map(Into::into).collect(),
+            phases: phases.into_iter().map(Into::into).collect(),
+            rules: rules.into_iter().map(Into::into).collect(),
+            total_ms,
+        }
+    }
 }
 
 #[napi(object)]
 pub struct SkippedRule {
     pub rule_id: String,
     pub reason: String,
+}
+
+impl From<core::SkippedRule> for SkippedRule {
+    fn from(v: core::SkippedRule) -> Self {
+        let core::SkippedRule { rule_id, reason } = v;
+        Self { rule_id, reason }
+    }
 }
 
 #[napi(object)]
@@ -268,134 +503,22 @@ pub struct RuleInfo {
     pub confidence: String,
 }
 
-fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
-    TextScanOptions {
-        decode: DecodeOptions {
-            max_depth: opts.max_decode_depth.unwrap_or(decode::DEFAULT_MAX_DECODE_DEPTH),
-            ..Default::default()
-        },
-        detect: DetectOptions {
-            inline_allow: opts.inline_allow.unwrap_or(true),
-            report_suppressed: opts.report_suppressed.unwrap_or(false),
-            commit: opts.commit.as_deref(),
-        },
+impl From<core::RuleInfo> for RuleInfo {
+    fn from(v: core::RuleInfo) -> Self {
+        let core::RuleInfo {
+            id,
+            description,
+            tags,
+            keywords,
+            entropy,
+            has_regex,
+            has_path_filter,
+            always_runs,
+            source,
+            confidence,
+        } = v;
+        Self { id, description, tags, keywords, entropy, has_regex, has_path_filter, always_runs, source, confidence }
     }
-}
-
-fn archive_options(opts: &ScanOptions, max_bytes: u64) -> ArchiveOptions {
-    ArchiveOptions {
-        max_depth: opts.max_archive_depth.unwrap_or(archive::DEFAULT_MAX_ARCHIVE_DEPTH),
-        max_entry_bytes: max_bytes,
-        ..Default::default()
-    }
-}
-
-fn load_ruleset(opts: &ScanOptions) -> Result<Arc<CompiledRuleset>> {
-    let Some(value) = opts.config.as_ref() else {
-        return Err(Error::from_reason("ScanOptions.config is required (pass a parsed gitleaks-shaped object)"));
-    };
-
-    let min_conf_str = opts.min_confidence.as_deref();
-    let cache_key = hash_ruleset_key(value, min_conf_str);
-
-    if let Ok(cache) = RULESET_CACHE.lock() {
-        if let Some((_, arc)) = cache.iter().find(|(k, _)| *k == cache_key) {
-            return Ok(Arc::clone(arc));
-        }
-    }
-
-    let mut cfg: Config =
-        serde_json::from_value(value.clone()).map_err(|e| Error::from_reason(format!("config shape: {e}")))?;
-
-    if let Some(floor) = min_conf_str {
-        let floor = Confidence::parse(floor).ok_or_else(|| {
-            Error::from_reason(format!("min_confidence must be one of 'low' | 'medium' | 'high', got {floor:?}"))
-        })?;
-
-        cfg.rules.retain(|raw| raw.confidence.as_deref().and_then(Confidence::parse).unwrap_or_default() >= floor);
-    }
-
-    let ruleset = CompiledRuleset::compile(&cfg).map_err(|e| Error::from_reason(format!("compile rules: {e}")))?;
-    let arc = Arc::new(ruleset);
-
-    if let Ok(mut cache) = RULESET_CACHE.lock() {
-        // Race-tolerant: another thread may have inserted the same key while we
-        // were compiling. Duplicate entries waste a slot but don't affect
-        // correctness — keep the first one and drop the newcomer.
-        if !cache.iter().any(|(k, _)| *k == cache_key) {
-            cache.push_back((cache_key, Arc::clone(&arc)));
-            while cache.len() > RULESET_CACHE_CAPACITY {
-                cache.pop_front();
-            }
-        }
-    }
-
-    Ok(arc)
-}
-
-/// Scan `files` on the configured pool, collecting findings and unreadable files.
-fn scan_paths(
-    files: &[PathBuf],
-    ruleset: &CompiledRuleset,
-    opts: &ScanOptions,
-) -> Result<(Vec<RawFinding>, Vec<Skipped>)> {
-    let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
-    let concurrency = opts.concurrency.unwrap_or(0) as usize;
-    let text_opts = text_scan_options(opts);
-    let archive_opts = archive_options(opts, max_bytes);
-
-    let do_scan = || -> (Vec<RawFinding>, Vec<Skipped>) {
-        let outcomes: Vec<(Vec<RawFinding>, Vec<Skipped>)> = files
-            .par_iter()
-            .map(|p| match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
-                Ok(Some(scanned)) => (scanned.findings, scanned.skipped),
-                Ok(None) => (Vec::new(), vec![Skipped::file(p.clone(), SkipReason::TooLarge)]),
-                Err(e) => (Vec::new(), vec![Skipped::file(p.clone(), (&e).into())]),
-            })
-            .collect();
-        let mut findings = Vec::new();
-        let mut skipped = Vec::new();
-        for (f, s) in outcomes {
-            findings.extend(f);
-            skipped.extend(s);
-        }
-        (findings, skipped)
-    };
-
-    if concurrency == 0 {
-        // Use rayon's global pool — no per-call pool construction.
-        Ok(do_scan())
-    } else {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| Error::from_reason(format!("thread pool: {e}")))?;
-        Ok(pool.install(do_scan))
-    }
-}
-
-fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
-    let roots: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    if roots.is_empty() {
-        return Ok(ScanReport::default());
-    }
-    let ruleset = load_ruleset(&opts)?;
-    let redact_secrets = opts.redact.unwrap_or(false);
-
-    let walk_opts = WalkOptions {
-        respect_gitignore: opts.respect_gitignore.unwrap_or(true),
-        respect_hidden: !opts.include_hidden.unwrap_or(false),
-        extra_ignores: opts.extra_ignores.clone().unwrap_or_default(),
-        ignore_files: opts.ignore_files.clone().unwrap_or_default().into_iter().map(PathBuf::from).collect(),
-        threads: opts.concurrency.unwrap_or(0) as usize,
-    };
-
-    let (files, walk_errors) = walk_paths_reporting(&roots, &walk_opts);
-    let (findings, mut skipped) = scan_paths(&files, &ruleset, &opts)?;
-
-    skipped.extend(walk_errors);
-
-    Ok(build_report(findings, skipped, &roots, redact_secrets))
 }
 
 /// Walk `paths` and scan every file on the rayon pool. `skipped` lists what could not
@@ -403,10 +526,12 @@ fn scan_impl(paths: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
 /// `maxFileSize`).
 #[napi]
 pub async fn scan_detailed(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
-    let opts = options.unwrap_or_default();
-    tokio::task::spawn_blocking(move || scan_impl(paths, opts))
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    tokio::task::spawn_blocking(move || core::scan_dirs(paths, &opts))
         .await
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
+        .map(Into::into)
+        .map_err(to_napi_error)
 }
 
 /// Same as `scanDetailed`. Kept as the plain name the native-binding smoke test loads.
@@ -418,75 +543,40 @@ pub async fn scan(paths: Vec<String>, options: Option<ScanOptions>) -> Result<Sc
 /// `scanDetailed` on the calling thread.
 #[napi]
 pub fn scan_sync(paths: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
-    scan_impl(paths, options.unwrap_or_default())
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    core::scan_dirs(paths, &opts).map(Into::into).map_err(to_napi_error)
 }
 
 /// Scan an in-memory string as if it lived at `file`. Paths are kept as given.
 #[napi]
 pub fn scan_text_sync(content: String, file: String, options: Option<ScanOptions>) -> Result<ScanReport> {
-    let opts = options.unwrap_or_default();
-    let redact_secrets = opts.redact.unwrap_or(false);
-    let ruleset = load_ruleset(&opts)?;
-    let path = PathBuf::from(&file);
-    let raw = scan_text_full(&ruleset, &path, &content, text_scan_options(&opts));
-    // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
-    Ok(build_report(raw, Vec::new(), &[], redact_secrets))
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    core::scan_text(&content, &file, &opts).map(Into::into).map_err(to_napi_error)
 }
 
 /// Compile a ruleset and return rules that failed to compile, with their reason.
 /// Useful for tooling that wants to validate a custom gitleaks.toml.
 #[napi]
 pub fn inspect_ruleset(options: Option<ScanOptions>) -> Result<Vec<SkippedRule>> {
-    let ruleset = load_ruleset(&options.unwrap_or_default())?;
-    Ok(ruleset
-        .skipped_rules
-        .iter()
-        .map(|(id, reason)| SkippedRule { rule_id: id.clone(), reason: reason.clone() })
-        .collect())
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    core::inspect_ruleset(&opts).map(|rules| rules.into_iter().map(Into::into).collect()).map_err(to_napi_error)
 }
 
 /// Return metadata for every rule compiled from the config.
 #[napi]
 pub fn list_rules(options: Option<ScanOptions>) -> Result<Vec<RuleInfo>> {
-    let ruleset = load_ruleset(&options.unwrap_or_default())?;
-    Ok(ruleset
-        .rules
-        .iter()
-        .map(|rule| RuleInfo {
-            id: rule.id.clone(),
-            description: rule.description.clone(),
-            tags: rule.tags.clone(),
-            keywords: rule.keywords_lower.clone(),
-            entropy: rule.entropy.map(|e| e as f64),
-            has_regex: rule.engine.is_some(),
-            has_path_filter: rule.path_regex.is_some(),
-            always_runs: rule.keywords_lower.is_empty(),
-            source: rule.source.clone(),
-            confidence: rule.confidence.as_str().to_string(),
-        })
-        .collect())
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    core::list_rules(&opts).map(|rules| rules.into_iter().map(Into::into).collect()).map_err(to_napi_error)
 }
 
 /// Scan a fixed list of files (e.g. from `git diff --name-only`), bypassing the walker.
 /// A listed file that can't be read lands in `skipped`.
 #[napi]
 pub async fn scan_files_detailed(files: Vec<String>, options: Option<ScanOptions>) -> Result<ScanReport> {
-    let opts = options.unwrap_or_default();
-    tokio::task::spawn_blocking(move || scan_files_impl(files, opts))
+    let opts: core::ScanOptions = options.unwrap_or_default().into();
+    tokio::task::spawn_blocking(move || core::scan_files(files, &opts))
         .await
         .map_err(|e| Error::from_reason(format!("join: {e}")))?
-}
-
-fn scan_files_impl(files: Vec<String>, opts: ScanOptions) -> Result<ScanReport> {
-    if files.is_empty() {
-        return Ok(ScanReport::default());
-    }
-    let ruleset = load_ruleset(&opts)?;
-    let redact_secrets = opts.redact.unwrap_or(false);
-    let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-    let (findings, skipped) = scan_paths(&paths, &ruleset, &opts)?;
-
-    // Walker is bypassed here — use cwd as the root so paths normalise relative to it.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    Ok(build_report(findings, skipped, &[cwd], redact_secrets))
+        .map(Into::into)
+        .map_err(to_napi_error)
 }

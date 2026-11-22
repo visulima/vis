@@ -2,7 +2,7 @@
 // Post-scan pipeline: runs after the native detector returns raw findings.
 //
 //   0. `dropShadowedGenericFindings` — generic-api-key yields to any overlapping finding.
-//   1. `applyRuleFilter`      — `rules.include` / `rules.exclude` (tag-expanded upstream).
+//   1. `applyRuleFilters`     — `rules.include` / `rules.exclude`, folded through per-file `overrides`.
 //   2. `applyChecksumFilter`  — drops findings whose CRC-style checksum fails.
 //   3. `applyValidation`      — populates `finding.validation` via HTTP / transport validators.
 //   4. `applyOnlyVerified`    — keeps only `"verified"` when `config.onlyVerified`.
@@ -20,8 +20,10 @@ import { checkChecksum } from "./checksum";
 import { baselineKeys } from "./fingerprint";
 import { GitleaksIgnore } from "./gitleaks-ignore";
 import { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
+import { overrideMatchPath } from "./ignore-matcher";
 import { maskFinding } from "./mask";
 import type { PreparedScan, RuleMeta } from "./prepare-scan";
+import type { ProfileAccumulator } from "./profile";
 import type { Finding, ScanOptions, SuppressedFinding, SuppressionReason } from "./types";
 import { PerHostLimiter, validateFinding } from "./validator";
 
@@ -40,16 +42,12 @@ const VALIDATOR_CONCURRENCY = 8;
  * - `notAlphanumericString` — skip `*****` / `------` / `//////`
  */
 const applyHeuristicFilters = <F extends Finding>(findings: F[], options: ScanOptions | undefined): F[] => {
-    const redact = options?.redact === true;
     const heuristics = options?.config?.heuristics;
     const skipLockFile = heuristics?.lockFile !== false;
-    // The content-shape heuristics judge `finding.secret`. They stay off under
-    // `redact: true` so redacted scans keep reporting the findings they did
-    // when the native layer masked before the pipeline ran. The file-based
-    // `lockFile` heuristic reads `finding.file` and is unaffected.
-    const skipSequential = !redact && heuristics?.sequentialString !== false;
-    const skipUuid = !redact && heuristics?.potentialUuid !== false;
-    const skipNonAlnum = !redact && heuristics?.notAlphanumericString !== false;
+    // The content-shape heuristics judge `finding.secret`.
+    const skipSequential = heuristics?.sequentialString !== false;
+    const skipUuid = heuristics?.potentialUuid !== false;
+    const skipNonAlnum = heuristics?.notAlphanumericString !== false;
 
     if (!skipLockFile && !skipSequential && !skipUuid && !skipNonAlnum) {
         return findings;
@@ -115,28 +113,90 @@ const dropShadowedBy = <F extends Finding>(findings: F[], shadowers: ReadonlyArr
     return findings.filter((finding) => finding.ruleId !== GENERIC_RULE_ID || !isShadowed(finding));
 };
 
-const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] | undefined, excludeIds: string[] | undefined): F[] => {
-    const hasInclude = includeIds && includeIds.length > 0;
-    const hasExclude = excludeIds && excludeIds.length > 0;
+type RulePredicate = (ruleId: string) => boolean;
 
-    // Short-circuit before allocating sets — the common case is "no filters".
-    if (!hasInclude && !hasExclude) {
-        return findings;
+/** Predicate for an include/exclude pair, or `undefined` when both are empty (nothing to filter). */
+const ruleFilter = (includeIds: string[] | undefined, excludeIds: string[] | undefined): RulePredicate | undefined => {
+    const include = includeIds && includeIds.length > 0 ? new Set(includeIds) : undefined;
+    const exclude = excludeIds && excludeIds.length > 0 ? new Set(excludeIds) : undefined;
+
+    if (!include && !exclude) {
+        return undefined;
     }
 
-    const include = hasInclude ? new Set(includeIds) : undefined;
-    const exclude = hasExclude ? new Set(excludeIds) : undefined;
+    return (ruleId) => (include === undefined || include.has(ruleId)) && !exclude?.has(ruleId);
+};
+
+/** What applies to one file: its rule predicate and the opt-in rules a matching override turned on. */
+interface FileRules {
+    enabled: Set<string>;
+    keep: RulePredicate | undefined;
+}
+
+/**
+ * Fold the global `rules` filter through every override matching `file`, in
+ * listed order. An override's `include` replaces the effective allowlist (and
+ * clears earlier exclusions, so it can re-enable a globally excluded rule);
+ * `exclude` adds to the denylist.
+ */
+const rulesForFile = (prepared: PreparedScan, finding: Finding, bases: ReadonlyArray<string>, root: string): FileRules => {
+    const path = overrideMatchPath(finding.file, bases, root, finding.root);
+    const enabled = new Set<string>();
+    let include = prepared.includeIds;
+    let exclude = prepared.excludeIds;
+
+    for (const override of prepared.overrides ?? []) {
+        if (!override.matcher.ignores(path)) {
+            continue;
+        }
+
+        for (const id of override.enables) {
+            enabled.add(id);
+        }
+
+        if (override.includeIds !== undefined) {
+            include = override.includeIds;
+            exclude = [];
+        }
+
+        if (override.excludeIds !== undefined) {
+            exclude = [...(exclude ?? []), ...override.excludeIds];
+        }
+    }
+
+    return { enabled, keep: ruleFilter(include, exclude) };
+};
+
+/**
+ * The single rule-filter stage: global `rules.include` / `rules.exclude`, then
+ * the per-file `overrides`. The native scan compiles opt-in rules once for the
+ * whole scan, so findings of a rule that only overrides enabled are dropped in
+ * files that no enabling override matches.
+ */
+const applyRuleFilters = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined, bases: ReadonlyArray<string>): F[] => {
+    if (prepared.overrides === undefined || prepared.overrides.length === 0) {
+        const keep = ruleFilter(prepared.includeIds, prepared.excludeIds);
+
+        return keep === undefined ? findings : findings.filter((finding) => keep(finding.ruleId));
+    }
+
+    const root = options?.overridesRoot ?? process.cwd();
+    const perFile = new Map<string, FileRules>();
 
     return findings.filter((finding) => {
-        if (include && !include.has(finding.ruleId)) {
+        const key = `${finding.root ?? ""}\0${finding.file}`;
+        let rules = perFile.get(key);
+
+        if (rules === undefined) {
+            rules = rulesForFile(prepared, finding, bases, root);
+            perFile.set(key, rules);
+        }
+
+        if (prepared.overrideOnlyOptIn.has(finding.ruleId) && !rules.enabled.has(finding.ruleId)) {
             return false;
         }
 
-        if (exclude?.has(finding.ruleId)) {
-            return false;
-        }
-
-        return true;
+        return rules.keep?.(finding.ruleId) ?? true;
     });
 };
 
@@ -147,10 +207,8 @@ const applyRuleFilter = <F extends Finding>(findings: F[], includeIds: string[] 
  * means we couldn't evaluate the template — those findings stay (conservative),
  * mirroring Kingfisher's `skip_if_missing: true` default.
  */
-const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>, redact: boolean): F[] => {
-    // Skipped under `redact: true`, for the same compatibility as the
-    // heuristics above.
-    if (redact || ruleMeta.size === 0) {
+const applyChecksumFilter = <F extends Finding>(findings: F[], ruleMeta: Map<string, RuleMeta>): F[] => {
+    if (ruleMeta.size === 0) {
         return findings;
     }
 
@@ -213,31 +271,12 @@ const resolveOneValidation = async (finding: Finding, context: ValidationContext
  * (or registered transport) validation block. Bounded concurrency keeps
  * well-intentioned scans from tripping rate limits on a single provider.
  *
- * Runs after `applyRuleFilter` (so excluded rules never hit the network) and
+ * Runs after `applyRuleFilters` (so excluded rules never hit the network) and
  * before `applySuppressions` (so suppressed findings are still validated —
  * baseline is a user-facing filter, not something the validator consults).
  */
-let warnedRedactWithValidate = false;
-
 const applyValidation = async (findings: Finding[], options: ScanOptions | undefined, ruleMeta: Map<string, RuleMeta>): Promise<Finding[]> => {
     if (options?.config?.validate !== true || findings.length === 0) {
-        return findings;
-    }
-
-    // `redact: true` promises the secret is not used beyond detection, and a
-    // validator sends it to a provider. Skip validation entirely and warn once;
-    // the caller can re-run with `redact: false` to verify, then mask at
-    // output time.
-    if (options.redact === true) {
-        if (!warnedRedactWithValidate) {
-            warnedRedactWithValidate = true;
-
-            // eslint-disable-next-line no-console -- Diagnostic output; stderr is the intended channel for library warnings.
-            console.error(
-                "secret-scanner: `config.validate: true` with `redact: true` cannot validate — secrets are masked before the validator runs. Skipping validation; re-run with `redact: false` to verify findings.",
-            );
-        }
-
         return findings;
     }
 
@@ -341,18 +380,17 @@ const applyOnlyVerified = (findings: Finding[], options: ScanOptions | undefined
     return findings.filter((finding) => finding.validation === "verified");
 };
 
-/** Test-only: reset the once-per-process warning gates. */
+/** Test-only: reset the once-per-process warning gate. */
 export const resetPipelineWarningsForTests = (): void => {
     warnedOnlyVerifiedWithoutValidate = false;
-    warnedRedactWithValidate = false;
 };
 
 /** The per-finding filters that run before validation: rule include/exclude, heuristics, checksum. */
-const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined): F[] => {
-    const filtered = applyRuleFilter(findings, prepared.includeIds, prepared.excludeIds);
+const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan, options: ScanOptions | undefined, bases: ReadonlyArray<string>): F[] => {
+    const filtered = applyRuleFilters(findings, prepared, options, bases);
     const heuristicsFiltered = applyHeuristicFilters(filtered, options);
 
-    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta, options?.redact === true);
+    return applyChecksumFilter(heuristicsFiltered, prepared.ruleMeta);
 };
 
 /**
@@ -368,12 +406,17 @@ const preValidation = <F extends Finding>(findings: F[], prepared: PreparedScan,
  * turning on `reportSuppressed` never changes `findings`; a suppressed generic
  * finding is dropped when any finding overlaps it.
  */
-export const dropShadowedGenericFindings = (report: ProcessedFindings, prepared: PreparedScan, options: ScanOptions | undefined): ProcessedFindings => {
-    const activeShadowers = preValidation(report.findings, prepared, options);
+export const dropShadowedGenericFindings = (
+    report: ProcessedFindings,
+    prepared: PreparedScan,
+    options: ScanOptions | undefined,
+    bases: ReadonlyArray<string>,
+): ProcessedFindings => {
+    const activeShadowers = preValidation(report.findings, prepared, options, bases);
 
     return {
         findings: dropShadowedBy(report.findings, activeShadowers),
-        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options)]),
+        suppressed: dropShadowedBy(report.suppressed, [...activeShadowers, ...preValidation(report.suppressed, prepared, options, bases)]),
     };
 };
 
@@ -393,7 +436,7 @@ export interface SuppressionContext {
      * any other suppression, and before validation.
      */
     isCommitAllowlisted?: (finding: Finding & { commit?: { sha: string } }) => boolean;
-    /** `redact` is on: reported findings are masked, and the baseline is matched against the masked form. */
+    /** Reported findings are masked unless `redact: false`; the baseline matches against the reported form. */
     redact: boolean;
 }
 
@@ -405,7 +448,7 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
         baseline: await resolveBaselineSet(options?.baseline),
         bases,
         ignore,
-        redact: options?.redact === true,
+        redact: options?.redact !== false,
     };
 };
 
@@ -414,13 +457,14 @@ export const createSuppressionContext = async (options: ScanOptions | undefined,
  * entry that matches is marked used, even when the baseline wins, so an
  * entry shadowed by the baseline isn't reported as stale.
  *
- * `.gitleaksignore` secret entries match the real secret; the baseline is
- * matched against `shown`, the finding as reported (masked under `redact`), so
- * a baseline written from redacted output keeps matching.
+ * `.gitleaksignore` secret entries match the real secret. Baselines are matched
+ * against both the real finding and its masked form, so real-value baselines
+ * and baselines captured from redacted output both suppress, whatever `redact`
+ * says about what is reported.
  */
 const suppressionFor = (
     finding: Finding,
-    shown: Finding,
+    masked: Finding,
     context: SuppressionContext,
 ): { entry?: SuppressedFinding["suppressedByEntry"]; reason: SuppressionReason } | undefined => {
     if (context.ignore?.isIgnoreFile(finding, context.bases)) {
@@ -429,7 +473,7 @@ const suppressionFor = (
 
     const entry = context.ignore?.match(finding, context.bases);
 
-    if (context.baseline.size > 0 && baselineKeys(shown).some((key) => context.baseline.has(key))) {
+    if (context.baseline.size > 0 && [...baselineKeys(finding), ...baselineKeys(masked)].some((key) => context.baseline.has(key))) {
         return { reason: "baseline" };
     }
 
@@ -453,6 +497,26 @@ export interface ProcessedFindings {
     suppressed: SuppressedFinding[];
 }
 
+/** Milliseconds since this call, or a constant 0 without a profiler so an unprofiled scan reads no clock. */
+const stopwatch = (profiler: ProfileAccumulator | undefined): (() => number) => {
+    if (profiler === undefined) {
+        return () => 0;
+    }
+
+    const started = performance.now();
+
+    return () => performance.now() - started;
+};
+
+/** Report the pipeline's wall clock, with validation (when it ran) as its own phase. */
+const recordPhases = (profiler: ProfileAccumulator | undefined, validated: boolean, totalMs: number, validationMs: number): void => {
+    profiler?.addPhase("postprocess", totalMs - validationMs);
+
+    if (validated) {
+        profiler?.addPhase("validate", validationMs);
+    }
+};
+
 /**
  * Shared post-processing pipeline for every scan variant. Takes the native
  * report (active findings, plus the allowlisted / inline-allowed ones under
@@ -464,8 +528,10 @@ export const postProcessDetailed = async (
     prepared: PreparedScan,
     options: ScanOptions | undefined,
     suppression: SuppressionContext,
+    profiler?: ProfileAccumulator,
 ): Promise<ProcessedFindings> => {
-    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options);
+    const elapsed = stopwatch(profiler);
+    const { findings: shadowFree, suppressed: suppressedShadowFree } = dropShadowedGenericFindings(report, prepared, options, suppression.bases);
     // Commit-allowlisted findings are suppressed first, like the native
     // allowlist: they skip validation and join the native suppressed ones.
     const active: Finding[] = [];
@@ -479,16 +545,19 @@ export const postProcessDetailed = async (
         }
     }
 
-    const validated = await applyValidation(preValidation(active, prepared, options), options, prepared.ruleMeta);
+    const checked = preValidation(active, prepared, options, suppression.bases);
+    const validationElapsed = stopwatch(profiler);
+    const validated = await applyValidation(checked, options, prepared.ruleMeta);
+    const validationMs = validationElapsed();
     const verifiedOnly = applyOnlyVerified(validated, options);
     // The single masking point for `redact`: the native scan returns real values.
-    const mask = suppression.redact ? maskFinding : <F extends Finding>(finding: F): F => finding;
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
 
     for (const finding of verifiedOnly) {
-        const shown = mask(finding);
-        const hit = suppressionFor(finding, shown, suppression);
+        const masked = maskFinding(finding);
+        const shown = suppression.redact ? masked : finding;
+        const hit = suppressionFor(finding, masked, suppression);
 
         if (hit === undefined) {
             findings.push(shown);
@@ -497,12 +566,14 @@ export const postProcessDetailed = async (
         }
     }
 
-    for (const finding of preValidation(preSuppressed, prepared, options)) {
+    for (const finding of preValidation(preSuppressed, prepared, options, suppression.bases)) {
         // Mark matching ignore entries used; the allowlist reason wins.
         suppression.ignore?.match(finding, suppression.bases);
 
-        suppressed.push(mask(finding));
+        suppressed.push(suppression.redact ? maskFinding(finding) : finding);
     }
+
+    recordPhases(profiler, options?.config?.validate === true, elapsed(), validationMs);
 
     return { findings, suppressed: options?.reportSuppressed === true ? suppressed : [] };
 };

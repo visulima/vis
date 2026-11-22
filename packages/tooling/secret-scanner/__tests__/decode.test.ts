@@ -24,7 +24,7 @@ describe("decode layer (maxDecodeDepth)", () => {
 
         const encoded = b64(OPENROUTER_KEY);
         const content = `# settings\nOPENROUTER_BLOB=${encoded}\n`;
-        const findings = await scanString(content, "settings.env");
+        const findings = await scanString(content, "settings.env", { redact: false });
         const hit = findings.find((finding) => finding.secret === OPENROUTER_KEY);
 
         expect(hit).toBeDefined();
@@ -48,7 +48,7 @@ describe("decode layer (maxDecodeDepth)", () => {
             `  GITHUB_TOKEN: ${b64(GITHUB_PAT)}`,
             "",
         ].join("\n");
-        const findings = await scanString(content, "secret.yaml");
+        const findings = await scanString(content, "secret.yaml", { redact: false });
         const hit = findings.find((finding) => finding.secret === GITHUB_PAT);
 
         expect(hit).toBeDefined();
@@ -63,12 +63,12 @@ describe("decode layer (maxDecodeDepth)", () => {
         const triple = `blob: ${b64(b64(b64(OPENROUTER_KEY)))}\n`;
         const hasKey = (findings: { secret: string }[]): boolean => findings.some((finding) => finding.secret === OPENROUTER_KEY);
 
-        const doubleFindings = await scanString(double, "a.txt");
+        const doubleFindings = await scanString(double, "a.txt", { redact: false });
 
         expect(doubleFindings.find((finding) => finding.secret === OPENROUTER_KEY)?.decoded).toStrictEqual(["base64", "base64"]);
-        expect(hasKey(await scanString(double, "a.txt", { maxDecodeDepth: 1 }))).toBe(false);
-        expect(hasKey(await scanString(triple, "a.txt"))).toBe(false);
-        expect(hasKey(await scanString(triple, "a.txt", { maxDecodeDepth: 3 }))).toBe(true);
+        expect(hasKey(await scanString(double, "a.txt", { maxDecodeDepth: 1, redact: false }))).toBe(false);
+        expect(hasKey(await scanString(triple, "a.txt", { redact: false }))).toBe(false);
+        expect(hasKey(await scanString(triple, "a.txt", { maxDecodeDepth: 3, redact: false }))).toBe(true);
     });
 
     it("decodes hex and percent-encoded values", async () => {
@@ -76,8 +76,8 @@ describe("decode layer (maxDecodeDepth)", () => {
 
         const hex = Buffer.from(OPENROUTER_KEY, "utf8").toString("hex");
         const percent = Array.from(Buffer.from(OPENROUTER_KEY, "utf8"), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`).join("");
-        const hexFindings = await scanString(`value=${hex}\n`, "a.txt");
-        const percentFindings = await scanString(`url=https://example.test/?k=${percent}\n`, "a.txt");
+        const hexFindings = await scanString(`value=${hex}\n`, "a.txt", { redact: false });
+        const percentFindings = await scanString(`url=https://example.test/?k=${percent}\n`, "a.txt", { redact: false });
 
         expect(hexFindings.find((finding) => finding.secret === OPENROUTER_KEY)?.decoded).toStrictEqual(["hex"]);
         expect(percentFindings.find((finding) => finding.secret === OPENROUTER_KEY)?.decoded).toStrictEqual(["percent"]);

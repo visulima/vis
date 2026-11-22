@@ -1,6 +1,12 @@
 /**
  * Registry of vis-bundled `pre-commit-hooks`-equivalent built-ins.
  *
+ * `vis hook run` has a native fast path (native/cli/src/hook/builtins.rs) that
+ * reimplements trailing-whitespace, end-of-file-fixer, mixed-line-ending and
+ * check-merge-conflict. Changing one of those here means changing it there too;
+ * `__tests__/native/hook-run-parity.test.ts` fails when they drift. A new builtin
+ * that is not ported simply makes the native path hand the run to this runner.
+ *
  * Adding a new builtin: drop a module beside this file that exports
  * `(files, args, logger) => number`, then add an entry below. The map
  * key is the public hook id (matches the upstream pre-commit id where

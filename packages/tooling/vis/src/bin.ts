@@ -12,7 +12,7 @@ import { injectVersion } from "./io/terminal";
 // work (version/help/completion, the pure dispatchers dlx/exec, and the lean
 // file runner x); heavy commands (run, cache, audit, sbom, graph, …) keep the
 // bump. Deny-list, so any unlisted/new command defaults to tuned — safe.
-const HEAP_TUNING_SKIP = new Set(["", "--help", "--version", "-h", "-v", "completion", "dlx", "exec", "x"]);
+const HEAP_TUNING_SKIP = new Set(["", "--help", "--version", "-h", "-v", "__emit-config", "completion", "dlx", "exec", "x"]);
 const firstArgument = process.argv[2] ?? "";
 
 if (!HEAP_TUNING_SKIP.has(firstArgument) && !process.argv.includes("--help") && !process.argv.includes("-h")) {
@@ -47,6 +47,15 @@ void (async () => {
         const { dispatchShim } = await import("./commands/shim/dispatch");
 
         dispatchShim(process.argv[3] ?? "", process.argv.slice(4));
+
+        return;
+    }
+
+    // Config emitter for the native CLI: evaluates a vis.config and writes it as JSON.
+    if (firstArgument === "__emit-config") {
+        const { runEmitConfig } = await import("./config/emit");
+
+        await runEmitConfig(process.argv.slice(3));
 
         return;
     }

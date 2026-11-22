@@ -3,8 +3,10 @@ import { pathToFileURL } from "node:url";
 import { cyan, dim, green, red, yellow } from "@visulima/colorize";
 import { readFileSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding, GitFinding, GitSkippedBlob, RuleInfo, SkippedFile } from "@visulima/secret-scanner";
+import type { AllowWarning, Finding, GitFinding, GitSkippedBlob, RuleInfo, SkippedFile } from "@visulima/secret-scanner";
 import { toSarifUri as toRelativeSarifUri } from "@visulima/secret-scanner";
+
+import { toRelative } from "./baseline";
 
 const CONTEXT_RADIUS = 1;
 
@@ -24,7 +26,11 @@ const groupByFile = (findings: Finding[]): Map<string, Finding[]> => {
     return byFile;
 };
 
-const loadLines = (file: string): string[] | undefined => {
+const loadLines = (file: string, virtualSource?: string): string[] | undefined => {
+    if (virtualSource !== undefined) {
+        return virtualSource.split(/\r?\n/);
+    }
+
     try {
         return readFileSync(file).split(/\r?\n/);
     } catch {
@@ -51,7 +57,7 @@ const palette = (useColor: boolean): Record<"cyan" | "dim" | "green" | "red" | "
 };
 
 /** Pretty grouped text output with file headers, context lines, and carets. */
-export const formatText = (findings: Finding[], root: string, useColor: boolean, options: { redact?: boolean } = {}): string => {
+export const formatText = (findings: Finding[], root: string, useColor: boolean, options: { redact?: boolean; virtualSource?: string } = {}): string => {
     if (findings.length === 0) {
         return useColor ? dim("No secrets detected.") : "No secrets detected.";
     }
@@ -67,7 +73,7 @@ export const formatText = (findings: Finding[], root: string, useColor: boolean,
 
         // When redacting, skip the source-context block entirely — printing the
         // surrounding lines would leak the same secret we're trying to hide.
-        const sourceLines = options.redact ? undefined : loadLines(file);
+        const sourceLines = options.redact ? undefined : loadLines(file, options.virtualSource);
 
         for (const f of items) {
             // Provenance + quality signal ride next to the rule id so every line of
@@ -217,6 +223,20 @@ export const formatSkipped = (
 
             lines.push(useColor ? dim(detail) : detail);
         }
+    }
+
+    return lines.join("\n");
+};
+
+/** Allow markers whose rule ids are not active: they still suppress every rule. */
+export const formatAllowWarnings = (warnings: ReadonlyArray<AllowWarning>, root: string, useColor: boolean): string => {
+    const summary = `${String(warnings.length)} allow marker(s) name unknown rule ids and still suppress every rule (rename or remove the ids):`;
+    const lines = [useColor ? yellow(summary) : summary];
+
+    for (const warning of warnings) {
+        const detail = `  - ${toRelative(warning.file, root)}:${String(warning.line)} unknown: ${warning.unknownRuleIds.join(", ")}`;
+
+        lines.push(useColor ? dim(detail) : detail);
     }
 
     return lines.join("\n");

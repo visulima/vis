@@ -1,2 +1,3 @@
-# benchmark JSON exports are not committed
+# benchmark exports are not committed
 *.json
+*.md

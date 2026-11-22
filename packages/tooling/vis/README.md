@@ -104,6 +104,35 @@ yarn add @visulima/vis
 pnpm add @visulima/vis
 ```
 
+**pnpm** does not run a dependency's install script until it is approved, and `@visulima/vis` uses one to link the native executable at `bin/vis`. Without the approval the files are still installed and `vis` still runs (through a Node launcher, which starts slower), but:
+
+- **pnpm 11 and 12:** every `pnpm install` / `pnpm add` that pulls in the package exits non-zero (`ERR_PNPM_IGNORED_BUILDS`), so a CI pipeline fails. Treat the approval as required. Run `pnpm approve-builds` once, or add it to `pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+    "@visulima/vis": true
+```
+
+- **pnpm 10:** the install exits 0 and only warns that the build script was ignored. From 10.26 on, the `allowBuilds` entry above works the same way. Before 10.26 it is ignored, so use the legacy `onlyBuiltDependencies` (in `pnpm-workspace.yaml`, or under `"pnpm"` in `package.json`), which every 10.x release still honors. Or run `pnpm approve-builds`:
+
+```json
+{
+    "pnpm": {
+        "onlyBuiltDependencies": ["@visulima/vis"]
+    }
+}
+```
+
+**bun** also skips dependency install scripts unless the package is in your `package.json` `trustedDependencies`:
+
+```json
+{
+    "trustedDependencies": ["@visulima/vis"]
+}
+```
+
+An explicit `trustedDependencies` list replaces bun's default list, so keep any other packages your project relies on in it.
+
 ### Binaries
 
 `@visulima/vis` installs four executables:
@@ -308,6 +337,8 @@ vis secrets --exclude-rule generic-api-key                       # drop a noisy 
 vis secrets --baseline .secrets-baseline.json   # suppress triaged findings; print diff
 vis secrets --update-baseline       # merge current findings into the baseline
 vis secrets --format sarif > report.sarif       # SARIF for GitHub code-scanning
+vis secrets --format github                     # inline GitHub Actions annotations
+vis secrets --profile                           # timing by phase, rule and file (stderr)
 ```
 
 **Suppression** — inline (`// gitleaks:allow`), block (`gitleaks:allow-start` … `gitleaks:allow-end`), or a baseline JSON (sole fingerprint store). See the [secret-scanner README](../secret-scanner/README.md#suppression) for details.

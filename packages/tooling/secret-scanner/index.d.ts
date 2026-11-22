@@ -39,6 +39,16 @@ export interface Finding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+     * was not rewritten against a root (in-memory scans, history scans, paths outside every
+     * root). Not part of a finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
+    /** Byte spans into the scanned content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
 }
 
 /**
@@ -50,6 +60,41 @@ export declare function inspectRuleset(options?: ScanOptions | undefined | null)
 /** Return metadata for every rule compiled from the config. */
 export declare function listRules(options?: ScanOptions | undefined | null): Array<RuleInfo>;
 
+/** Wall-clock cost of scanning one file, relative to the scan root like findings. */
+export interface ProfileFile {
+    file: string;
+    ms: number;
+}
+
+/** A coarse scan phase (ruleset load, walk, detect, finalize, …). */
+export interface ProfilePhase {
+    /** How many times the phase ran. */
+    count: number;
+    /** Total milliseconds spent in the phase. */
+    ms: number;
+    name: string;
+}
+
+/** Opt-in timing breakdown of one native scan. Each list is sorted by descending `ms`. */
+export interface ProfileReport {
+    files: Array<ProfileFile>;
+    phases: Array<ProfilePhase>;
+    rules: Array<ProfileRule>;
+    /** Total wall-clock of the native scan, in milliseconds. */
+    totalMs: number;
+}
+
+/** Time spent in one rule's matcher, aggregated across every file and pass. */
+export interface ProfileRule {
+    /** How many times the rule's matcher ran. */
+    count: number;
+    /** Total milliseconds spent in the rule. */
+    ms: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+    ruleId: string;
+}
+
 /** A dependency finding attached to a composite-rule finding. Same file as its primary. */
 export interface RequiredFinding {
     ruleId: string;
@@ -60,6 +105,10 @@ export interface RequiredFinding {
     match: string;
     secret: string;
     decoded?: Array<string>;
+    /** Byte spans into the source content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
 }
 
 export interface RuleInfo {
@@ -156,6 +205,24 @@ export interface ScanOptions {
      * match; without it they never do.
      */
     commit?: string;
+    /** Collect opt-in timing data (phases, per-file, per-rule) and attach it to `ScanReport.profile`. */
+    profile?: boolean;
+}
+
+/**
+ * An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+ * nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+ * suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+ * lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+ * or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+ * token that is neither a known rule id nor id-shaped.
+ */
+export interface AllowWarning {
+    file: string;
+    /** 1-based line of the marker. */
+    line: number;
+    /** Each unknown id once, in order of appearance. */
+    unknownRuleIds: Array<string>;
 }
 
 /** Result of every scan entry point. */
@@ -166,6 +233,10 @@ export interface ScanReport {
     suppressed: Array<SuppressedFinding>;
     /** Content that could not be read. Always empty for `scanTextSync`. */
     skipped: Array<SkippedFile>;
+    /** Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`. */
+    allowWarnings: Array<AllowWarning>;
+    /** Timing data, present only when `profile` was requested. */
+    profile?: ProfileReport;
 }
 
 /** `scanDetailed` on the calling thread. */
@@ -189,6 +260,14 @@ export interface SkippedFile {
 export interface SkippedRule {
     ruleId: string;
     reason: string;
+}
+
+/** Byte spans into the scanned content, for consumers that rewrite findings in place. */
+export interface SourceSpan {
+    matchStart: number;
+    matchEnd: number;
+    secretStart: number;
+    secretEnd: number;
 }
 
 /**
@@ -234,6 +313,16 @@ export interface SuppressedFinding {
      * satisfied it, one per required id (the nearest), in declaration order.
      */
     requiredFindings?: Array<RequiredFinding>;
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+     * was not rewritten against a root (in-memory scans, history scans, paths outside every
+     * root). Not part of a finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
+    /** Byte spans into the scanned content, when they can be trusted for rewriting. */
+    sourceSpan?: SourceSpan;
+    /** Fixed explanation when `sourceSpan` is withheld. Never contains a secret value. */
+    spanUnavailableReason?: string;
     /** `"allowlist"` or `"inline-allow"`. */
     suppressedBy: string;
 }

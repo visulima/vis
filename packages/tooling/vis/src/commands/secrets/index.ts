@@ -30,7 +30,7 @@ const secretsOptionDefinitions = {
     },
     "dry-run": {
         defaultValue: false,
-        description: "With --init, preview the baseline without writing files",
+        description: "With --fix or --init, preview changes without writing files",
         type: Boolean,
     },
     "enable-rule": {
@@ -54,6 +54,12 @@ const secretsOptionDefinitions = {
         multiple: true,
         type: String,
     },
+    fix: {
+        defaultValue: false,
+        description:
+            "Replace detected secret values in working-tree files with <REDACTED>. Prints only a masked summary; combine with --dry-run to preview.",
+        type: Boolean,
+    },
     ...negatable({
         defaultValue: false,
         description:
@@ -70,7 +76,7 @@ const secretsOptionDefinitions = {
     }),
     format: {
         defaultValue: "text",
-        description: "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality",
+        description: "Report format on stdout: text (default), json, sarif, csv, junit, gitlab-code-quality, github",
         type: String,
     },
     ...negatable({
@@ -162,9 +168,20 @@ const secretsOptionDefinitions = {
         description: "Do not respect .gitignore",
         type: Boolean,
     },
+    // No `defaultValue`: with one, the parser would overwrite `secretlintignore`.
+    "no-secretlintignore": {
+        description: "Disable .secretlintignore auto-discovery and explicit files.",
+        hidden: true,
+        type: Boolean,
+    },
     "only-verified": {
         defaultValue: false,
         description: "With --validate, drop every finding whose validation is not 'verified'. Useful for CI gating.",
+        type: Boolean,
+    },
+    profile: {
+        defaultValue: false,
+        description: "Print scan timing by phase, rule and file to stderr (slightly slows the scan)",
         type: Boolean,
     },
     quiet: {
@@ -172,11 +189,11 @@ const secretsOptionDefinitions = {
         description: "Suppress all progress output (only emit findings)",
         type: Boolean,
     },
-    redact: {
-        defaultValue: false,
-        description: "Mask secret values in output",
+    ...negatable({
+        description: "Mask secret values in output (default; use --no-redact to reveal them)",
+        name: "redact",
         type: Boolean,
-    },
+    }),
     "replace-baseline": {
         defaultValue: false,
         description: "With --update-baseline, replace rather than merge",
@@ -184,7 +201,13 @@ const secretsOptionDefinitions = {
     },
     report: {
         description:
-            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless --redact (--history reports always, as commit messages are not masked).",
+            "Also write a report file as <format>=<path> (repeatable), e.g. --report sarif=secrets.sarif --report csv=secrets.csv. Formats as --format. Files are created mode 0600 unless findings are masked (--no-redact reveals them); --history reports are always owner-only, as commit messages are not masked.",
+        multiple: true,
+        type: String,
+    },
+    secretlintignore: {
+        description:
+            "Additional .secretlintignore file to honour (repeatable). Auto-discovered .secretlintignore files are combined with these and with .gitignore, unless the config sets `secretlintIgnore: false`, in which case only these files apply; use --no-secretlintignore to disable all of them.",
         multiple: true,
         type: String,
     },
@@ -196,6 +219,10 @@ const secretsOptionDefinitions = {
         defaultValue: false,
         description: "Scan the content staged for commit (the git index), not the working-tree files",
         type: Boolean,
+    },
+    stdin: {
+        description: "Scan piped stdin as a virtual file named <filename> (e.g. --stdin config/.env). Not with paths or another scan target",
+        type: String,
     },
     "update-baseline": {
         defaultValue: false,
@@ -226,12 +253,16 @@ const secrets = defineCommand({
         ["vis secrets", "Scan the workspace with grouped, colourised output"],
         ["vis secrets --staged", "Scan only files staged for the current commit (pre-commit hooks)"],
         ["vis secrets --since main", "Scan only files changed since the `main` branch"],
+        ["cat .env | vis secrets --stdin .env", "Scan piped content as a virtual file"],
         ["vis secrets --affected", "Scan only projects affected by the current branch"],
         ["vis secrets --history", "Scan the full git history for secrets that were committed then removed"],
         ["vis secrets --history --history-range main..HEAD", "Scan only commits on the current branch since main"],
         ["vis secrets --history --all", "Scan every branch and tag, including unmerged ones"],
-        ["vis secrets --history --max-commits 100 --redact", "Scan the last 100 commits, masking any secret values"],
+        ["vis secrets --history --max-commits 100", "Scan the last 100 commits with secret values masked"],
+        ["vis secrets --no-redact", "Scan and show the full secret values (use with care)"],
         ["vis secrets --init", "Write an initial baseline from current findings"],
+        ["vis secrets --fix", "Replace secrets in working-tree files with <REDACTED>"],
+        ["vis secrets --fix --dry-run", "Preview which secrets --fix would replace, without writing files"],
         ["vis secrets --list-rules", "Print all bundled detection rules"],
         ["vis secrets --list-validators", "Print non-HTTP validator types in the ruleset + install hints for each"],
         ["vis secrets --exclude-rule generic-api-key --exclude-rule aws-access-token", "Drop noisy rules"],
@@ -241,13 +272,16 @@ const secrets = defineCommand({
         ["vis secrets --min-confidence high", "Drop rules without a high confidence label (CI-friendly precision filter)"],
         ["vis secrets --validate --only-verified", "Live-verify each finding against its provider (one HTTP call per finding)"],
         ["vis secrets --exclude 'dist/**' --exclude-from .secretsignore", "Extra gitignore-syntax exclusions for the walker"],
+        ["vis secrets --secretlintignore config/secrets.ignore", "Add a .secretlintignore file alongside the auto-discovered one"],
         ["vis secrets --config ./leaks.json --no-extend-bundled", "Use only the supplied config, skip the bundled ruleset"],
         ["vis secrets --concurrency 4", "Cap the rayon thread pool (0 / omit = auto)"],
         ["vis secrets --baseline .secrets-baseline.json", "Suppress known findings; print diff vs. baseline"],
         ["vis secrets --update-baseline", "Merge current findings into the baseline (use --replace-baseline to overwrite)"],
         ["vis secrets --format sarif > report.sarif", "SARIF output for GitHub code-scanning"],
+        ["vis secrets --format github", "GitHub Actions annotations on stdout"],
         ["vis secrets --report sarif=secrets.sarif --report gitlab-code-quality=gl-code-quality.json", "Write several report formats in one run"],
         ["vis secrets --no-inline-allow --log-ignored", "Audit suppressions: ignore inline markers and list everything still suppressed"],
+        ["vis secrets --profile", "Print scan timing by phase, rule and file to stderr"],
         ["vis secrets --fail-on-unreadable --fail-on-unused-ignores", "CI: fail on unreadable files and stale .gitleaksignore entries"],
     ],
     group: "Security",

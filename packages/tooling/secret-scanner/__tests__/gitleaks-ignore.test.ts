@@ -151,7 +151,11 @@ describe("gitleaksIgnore in scans", () => {
 
         writeFileSync(ignorePath, `src/nested/config.ts:test-token:1\nsrc/gone.ts:test-token:9\n`);
 
-        return { ignorePath, options: { config: { extendBundled: false, inline: CONFIG }, gitleaksIgnore: ignorePath, walk: { includeHidden: true } }, root };
+        return {
+            ignorePath,
+            options: { config: { extendBundled: false, inline: CONFIG }, gitleaksIgnore: ignorePath, redact: false, walk: { includeHidden: true } },
+            root,
+        };
     };
 
     it("matches relative to the ignore file whatever the scan root spelling", async () => {

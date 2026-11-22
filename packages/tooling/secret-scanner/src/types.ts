@@ -28,6 +28,23 @@ export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
  */
 export type ValidationStatus = "error" | "rejected" | "skipped" | "verified";
 
+/** Rule selectors (rule ids or `tag:&lt;name>`) that narrow or widen which rules report. */
+export interface RuleFilters {
+    /** Enable opt-in rules without restricting the output. Additive. */
+    enable?: string[];
+    /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
+    exclude?: string[];
+    /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
+    include?: string[];
+}
+
+/** Rule filters applied only to findings in files matching `files`. */
+export interface ScanOverride {
+    /** Gitignore-syntax globs (e.g. `*.env`, `src/**`), relative to {@link ScanOptions.overridesRoot}. */
+    files: string | string[];
+    rules?: RuleFilters;
+}
+
 /**
  * Grouped scan options. Keys are namespaced by concern — config source, walker,
  * rule filters, output, baseline — so autocomplete surfaces only related settings
@@ -153,10 +170,21 @@ export interface ScanOptions {
     gitleaksIgnore?: string | false;
 
     /**
+     * Directory `.secretlintignore` files are discovered from and ignore
+     * patterns (`walk.excludePatterns`, `walk.excludeFromFiles`) are anchored at
+     * when `scanFiles` filters a file list. Default: `process.cwd()`. Set it to
+     * the repository root when the listed files come from there and the process
+     * runs in a subdirectory. A listed file outside it is never filtered.
+     * Finding paths and baselines are unaffected.
+     */
+    ignoreRoot?: string;
+
+    /**
      * Honour inline suppressions — `gitleaks:allow`, `secret-scanner:allow`,
      * `pragma: allowlist secret`, `pragma: allowlist nextline secret` and
-     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Default `true`.
-     * Set `false` in CI to audit what developers suppressed in code.
+     * `gitleaks:allow-start` … `gitleaks:allow-end` blocks. Append rule ids to
+     * a marker to scope it to those rules. Default `true`. Set `false` in CI
+     * to audit what developers suppressed in code.
      */
     inlineAllow?: boolean;
 
@@ -188,7 +216,29 @@ export interface ScanOptions {
      */
     maxDecodeDepth?: number;
 
-    /** Mask `match` / `secret` strings in every finding. */
+    /** File-specific rule filters, applied in order on top of the global `rules` filters. */
+    overrides?: ScanOverride[];
+
+    /**
+     * Directory `overrides[].files` globs are relative to. Default: `process.cwd()`.
+     * A file outside it is matched by its basename.
+     */
+    overridesRoot?: string;
+
+    /**
+     * Collect timing data and expose it as `ScanResult.profile`. The native
+     * scan records phases, per-file and per-rule durations; the TypeScript
+     * pipeline adds its own phases (`postprocess`, `validate`, git plumbing). Off by default — opt in from the CLI with
+     * `vis secrets --profile`.
+     */
+    profile?: boolean;
+
+    /**
+     * Mask `match` / `secret` strings in every emitted finding. Default `true`;
+     * set `false` to reveal values. Detection, heuristics, checksum filtering,
+     * suppression and validation always use the real values; only the returned
+     * findings are masked.
+     */
     redact?: boolean;
 
     /**
@@ -213,14 +263,18 @@ export interface ScanOptions {
      * - `exclude` — **blacklist**. Drops findings matching this list. Doesn't
      * enable anything.
      */
-    rules?: {
-        /** Enable opt-in rules without restricting the output. Additive. */
-        enable?: string[];
-        /** Drop findings whose ruleId — or expanded tag membership — is in this list. */
-        exclude?: string[];
-        /** Only report findings whose ruleId — or expanded tag membership — is in this list. Implies enablement. */
-        include?: string[];
-    };
+    rules?: RuleFilters;
+
+    /**
+     * `.secretlintignore` files to honour alongside `.gitignore` and
+     * `walk.excludeFromFiles`. By default the file is auto-discovered in each
+     * scan root and its parents up to the repository root; an array adds
+     * explicit paths; `false` disables both. A `.secretlintignore` is anchored
+     * at its own directory, any other path at the scan root, and negation (`!`) only re-includes paths within
+     * the file that declared it. Applies to path walks, `scanFiles` and staged
+     * scans; git history scans read blobs and ignore it.
+     */
+    secretlintIgnore?: string[] | false;
 
     /**
      * Abort the scan's validation stage. When `config.validate: true` a scan can
@@ -246,6 +300,21 @@ export interface ScanOptions {
         /** Skip files larger than this (bytes). Default: 10 MiB. */
         maxFileSize?: number;
     };
+}
+
+/** Why a finding carries no `sourceSpan`. Never contains a secret value. */
+export type SpanUnavailableReason = "archive entry" | "decoded content" | "lossy UTF-8 decoding" | "path-only finding" | "pre-regex-replaced content";
+
+/**
+ * Byte spans into the scanned content, for consumers that rewrite findings in
+ * place. Omitted for path-only, decoded, archive-entry and pre-replaced text
+ * findings, where the offsets cannot be matched to the source file.
+ */
+export interface SourceSpan {
+    matchEnd: number;
+    matchStart: number;
+    secretEnd: number;
+    secretStart: number;
 }
 
 export interface Finding {
@@ -276,10 +345,21 @@ export interface Finding {
      * order the rule declares them. Redacted along with `secret` when `redact` is on.
      */
     requiredFindings?: RequiredFinding[];
+
+    /**
+     * The scan root `file` is relative to, as a canonical absolute path. Absent when
+     * `file` was not made relative to a root (stdin, `scanString`, git history).
+     * Not part of the finding's identity: fingerprints and baselines ignore it.
+     */
+    root?: string;
     ruleId: string;
     secret: string;
     /** Provenance of the rule — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or user-declared. */
     source?: string;
+    sourceSpan?: SourceSpan;
+
+    /** Fixed explanation when `sourceSpan` is withheld. */
+    spanUnavailableReason?: SpanUnavailableReason;
     startColumn: number;
     startLine: number;
     tags: string[];
@@ -301,6 +381,8 @@ export interface RequiredFinding {
     match: string;
     ruleId: string;
     secret: string;
+    sourceSpan?: SourceSpan;
+    spanUnavailableReason?: SpanUnavailableReason;
     startColumn: number;
     startLine: number;
 }
@@ -339,12 +421,72 @@ export interface SkippedFile {
     reason: SkipReason;
 }
 
+/** One coarse phase of a scan, with its total duration and invocation count. */
+export interface ScanProfilePhase {
+    count: number;
+    ms: number;
+    name: string;
+}
+
+/** Time spent in one rule's matcher across every file and pass. */
+export interface ScanProfileRule {
+    /** Matcher invocations, not findings. */
+    count: number;
+    /** Findings the rule produced in this scan. */
+    matches: number;
+    ms: number;
+    /** The rule's main regex, when it has one. */
+    pattern?: string;
+    ruleId: string;
+}
+
+/** Wall-clock cost of scanning one file. */
+export interface ScanProfileFile {
+    /** Relative to the scan root like findings; history scans append `@&lt;short commit>`. */
+    file: string;
+    ms: number;
+}
+
+/** Opt-in timing breakdown of a scan. Each list is sorted by descending `ms`. */
+export interface ScanProfile {
+    files: ScanProfileFile[];
+    phases: ScanProfilePhase[];
+    rules: ScanProfileRule[];
+    /** Accumulated scan time in milliseconds: native scan wall clocks plus non-overlapping phases. */
+    totalMs: number;
+}
+
+/**
+ * An inline allow marker (`gitleaks:allow`, `secret-scanner:allow`, an allow-start /
+ * allow-end boundary or a `pragma: allowlist nextline secret`) that lists rule ids
+ * naming no active rule. The marker still suppresses every rule, so a renamed or
+ * removed rule id widens the suppression instead of narrowing it.
+ *
+ * A token counts as an id when it is lowercase kebab-case with at least one hyphen
+ * (`github-pat`) or a dotted id with two or more dots (`kingfisher.stripe.1`), and the
+ * list ends at the first token that is neither a known id nor id-shaped. Plain prose
+ * (`gitleaks:allow safe in tests`) never warns; hyphenated prose (`test-only`) does.
+ * Each unknown id is reported once per line. Not produced with `inlineAllow: false`.
+ */
+export interface AllowWarning {
+    /** Path, like `Finding.file`; archive entries use their virtual path. */
+    file: string;
+    /** 1-based line of the marker. */
+    line: number;
+    /** Each unknown id once, in order of appearance. */
+    unknownRuleIds: string[];
+}
+
 /**
  * Result of `scanDetailed` / `scanFilesDetailed`: the findings plus everything
  * needed to tell a clean scan from one that didn't look at everything.
  */
 export interface ScanResult {
+    /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
+    allowWarnings: AllowWarning[];
     findings: Finding[];
+    /** Timing breakdown; present only when `ScanOptions.profile` was set. */
+    profile?: ScanProfile;
     /** Files that could not be read. A scan with entries here is not proof of "no secrets". */
     skipped: SkippedFile[];
     /** Suppressed findings; empty unless `reportSuppressed` is on. */

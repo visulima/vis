@@ -1,3 +1,193 @@
+## @visulima/vis [7.1.0-next.5](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.4...@visulima/vis@7.1.0-next.5) (2026-11-22)
+
+### Features
+
+* **vis:** answer `cache list` and `cache size` natively ([#158](https://github.com/visulima/vis/issues/158)) ([d39ba3a](https://github.com/visulima/vis/commit/d39ba3a62c8e93b798bf022c5509dc3b4ca928ea))
+
+## @visulima/vis [7.1.0-next.4](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.3...@visulima/vis@7.1.0-next.4) (2026-11-22)
+
+### Bug Fixes
+
+* **deps:** point vis at the released secret-scanner version ([#157](https://github.com/visulima/vis/issues/157)) ([dcfdf13](https://github.com/visulima/vis/commit/dcfdf13f8b4bc6e9718014f9e20950187b8b24c8))
+
+## @visulima/vis [7.1.0-next.3](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.2...@visulima/vis@7.1.0-next.3) (2026-11-22)
+
+### Features
+
+* **vis:** scan standard input with vis secrets --stdin <filename> ([#129](https://github.com/visulima/vis/issues/129)) ([09db062](https://github.com/visulima/vis/commit/09db06296bae7f51578c617e326a571e348eea2b))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 3.1.0-next.1
+
+## @visulima/vis [7.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.1...@visulima/vis@7.1.0-next.2) (2026-11-22)
+
+### Features
+
+* **vis:** list the cache subcommands for `vis cache`, `cache --help` and `cache -h` ([#149](https://github.com/visulima/vis/issues/149)) ([6b800ee](https://github.com/visulima/vis/commit/6b800eeea1c0aa3d8b16ee2299d8ee4dea91ce20))
+* **vis:** serve an evaluated vis.config from a revalidating cache in the native CLI ([#150](https://github.com/visulima/vis/issues/150)) ([0c4781f](https://github.com/visulima/vis/commit/0c4781fa90a2c21c06eeb375ebcfc8d5e113f513))
+
+### Tests
+
+* **vis:** share one routing fixture between the launcher and the native binary ([#148](https://github.com/visulima/vis/issues/148)) ([25de704](https://github.com/visulima/vis/commit/25de704151b3be74d62c26f9b54c287c3ec8d51e))
+
+## @visulima/vis [7.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/vis@7.0.0...@visulima/vis@7.1.0-next.1) (2026-11-22)
+
+### Features
+
+* **vis:** add a pnpm 10 row to the install smoke ([#144](https://github.com/visulima/vis/issues/144)) ([12f1ef9](https://github.com/visulima/vis/commit/12f1ef927a692bfcbc38e8820047f17282bfa0b6))
+* **vis:** enable ANSI virtual terminal processing on the Windows console ([#142](https://github.com/visulima/vis/issues/142)) ([84fc691](https://github.com/visulima/vis/commit/84fc691b76539f96e8deaf2195badf1c4a018d10))
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+* **task-runner:** separate the identity fields in the command hash ([#143](https://github.com/visulima/vis/issues/143)) ([e8b7404](https://github.com/visulima/vis/commit/e8b7404f1b75df67fed628f30318f27147e9a596))
+* **vis:** apply the filter when adding a package with Yarn Berry ([#140](https://github.com/visulima/vis/issues/140)) ([a2b16bd](https://github.com/visulima/vis/commit/a2b16bd65e7ab5cda6edd3a80e1dd9d472c81f40))
+* **vis:** run the unversioned bin when dlx pins an unscoped package on npm ([#141](https://github.com/visulima/vis/issues/141)) ([c175f84](https://github.com/visulima/vis/commit/c175f84801c96520599dffa05d614e05f48ace65))
+
+### Miscellaneous Chores
+
+* merge main back into next after the 6.8.0 release ([#137](https://github.com/visulima/vis/issues/137)) ([b30add6](https://github.com/visulima/vis/commit/b30add6ebc1086958aeb598e1b3ba73cac03fcf8))
+
+### Code Refactoring
+
+* **vis:** report native wrapper failures through one error type ([#147](https://github.com/visulima/vis/issues/147)) ([2955c43](https://github.com/visulima/vis/commit/2955c43984924b8401595fbdad351916ab9194b0))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 3.0.1-next.1
+* **@visulima/task-runner:** upgraded to 3.0.5-next.1
+* **@visulima/tui:** upgraded to 5.0.2-next.1
+
+## @visulima/vis [7.0.0](https://github.com/visulima/vis/compare/@visulima/vis@6.7.0...@visulima/vis@7.0.0) (2026-11-21)
+
+### ⚠ BREAKING CHANGES
+
+* **secrets:** mask findings by default (#120)
+
+### Features
+
+* **secret-scanner:** add per-file rule overrides ([#122](https://github.com/visulima/vis/issues/122)) ([aaadd9b](https://github.com/visulima/vis/commit/aaadd9be5f23bd260d8dc5f0e0de9a275d7afa09))
+* **secret-scanner:** auto-discover .secretlintignore files ([#121](https://github.com/visulima/vis/issues/121)) ([084b09e](https://github.com/visulima/vis/commit/084b09eeb7452af85d41918b747955de97af7654))
+* **secret-scanner:** scope allow markers to rule ids ([#124](https://github.com/visulima/vis/issues/124)) ([6c2df64](https://github.com/visulima/vis/commit/6c2df64f501592fe81c3ed4592a609a553bc265c))
+* **secrets:** add opt-in scan profiling ([#125](https://github.com/visulima/vis/issues/125)) ([e303a83](https://github.com/visulima/vis/commit/e303a83e8505746098673816850da75f17f43682))
+* **secrets:** emit GitHub Actions annotations ([#126](https://github.com/visulima/vis/issues/126)) ([04a6be9](https://github.com/visulima/vis/commit/04a6be9a63b2b6386a55296f2664d0cadf3d9d64))
+* **secrets:** mask findings by default ([#120](https://github.com/visulima/vis/issues/120)) ([13581c2](https://github.com/visulima/vis/commit/13581c292b6177604522a09599c627a1f42cdb83))
+* **vis:** add masked working-tree secret rewrites ([#131](https://github.com/visulima/vis/issues/131)) ([f4d4964](https://github.com/visulima/vis/commit/f4d4964105beb9d2a98aa3ae253b2c08444ced31))
+* **vis:** answer the plain vis list natively ([#117](https://github.com/visulima/vis/issues/117)) ([cfc7f1b](https://github.com/visulima/vis/commit/cfc7f1b7f98a91c5448e05cda4c8d57f13ab43db))
+* **vis:** answer vis clean natively for the plain and dry-run shapes ([15211e8](https://github.com/visulima/vis/commit/15211e8bc64f13c4215df3067b29031b082c9bda))
+* **vis:** link the native binary as the vis command on install ([#103](https://github.com/visulima/vis/issues/103)) ([afcf849](https://github.com/visulima/vis/commit/afcf84957980a19cb8ba35b34706512d73fc1082))
+* **vis:** native project names and graph for JS-only workspaces ([f8fb104](https://github.com/visulima/vis/commit/f8fb1040ab992eb1b5e60f9a38f3567b8c51be97))
+* **vis:** port vis ignore to the native front-end ([24ccd56](https://github.com/visulima/vis/commit/24ccd564ea9097a4988d16db45cf9b8c41710b97))
+* **vis:** read package.json script targets for JS-only projects natively ([f28a3b8](https://github.com/visulima/vis/commit/f28a3b834c47743ec58c6a503aff5ddda14bf1ea))
+* **vis:** read vis.config as data in the native pm commands ([c470623](https://github.com/visulima/vis/commit/c470623749bc37332070750b73fdabab6881f44e))
+* **vis:** run a plain npm, pnpm or bun install.backend pin natively ([#118](https://github.com/visulima/vis/issues/118)) ([b139087](https://github.com/visulima/vis/commit/b139087b08301bda03d95347a49aadb819dbfb3a))
+* **vis:** scan piped input with secrets --stdin ([#123](https://github.com/visulima/vis/issues/123)) ([a14c35f](https://github.com/visulima/vis/commit/a14c35fac1462955a7e05ef66b6ae2bbe82d03bf))
+
+### Bug Fixes
+
+* **release:** patch the native loader's version comparison, not only its error message ([#151](https://github.com/visulima/vis/issues/151)) ([be73924](https://github.com/visulima/vis/commit/be7392497284c448224b0a18a9a59179923b1908))
+* **vis:** address Qodo findings on the native list, clean and ignore paths ([#134](https://github.com/visulima/vis/issues/134)) ([1078fa9](https://github.com/visulima/vis/commit/1078fa9569e4a9a997578415c3ede405a7c981ed))
+* **vis:** address Qodo review findings from PR [#105](https://github.com/visulima/vis/issues/105) ([#132](https://github.com/visulima/vis/issues/132)) ([a02467e](https://github.com/visulima/vis/commit/a02467ecd20e468e52db93fa885d42807db30c17))
+* **vis:** address the CodeRabbit review on the native launcher ([#107](https://github.com/visulima/vis/issues/107)) ([9227cbb](https://github.com/visulima/vis/commit/9227cbbd285cab295a97330d8037bf9e2950d468))
+* **vis:** close the remaining native config gaps found in review ([a756c20](https://github.com/visulima/vis/commit/a756c20e02111369ec626852601e4eafc90a9d17))
+* **vis:** compute the native root gate instead of trusting VIS_MONOREPO_ROOT ([#119](https://github.com/visulima/vis/issues/119)) ([5a2d4b5](https://github.com/visulima/vis/commit/5a2d4b5e4e0dd7e1692cf24aafefeffe4f4f74a0))
+* **vis:** delegate native config handling for the cases Node resolves itself ([da75fdf](https://github.com/visulima/vis/commit/da75fdf007e4c017e949c589598c0b64fedc418c))
+* **vis:** detect the registry's listening line in a large output chunk ([8dce751](https://github.com/visulima/vis/commit/8dce751ad722d5686ff72ade0246666f178b48ab))
+* **vis:** end the whole registry process tree in the install smoke on Windows ([#138](https://github.com/visulima/vis/issues/138)) ([2203f60](https://github.com/visulima/vis/commit/2203f6047d2ccf9fe94bc57fade9e2d512f42c09))
+* **vis:** finish the native launcher hardening from PR [#105](https://github.com/visulima/vis/issues/105) review ([#106](https://github.com/visulima/vis/issues/106)) ([9432ceb](https://github.com/visulima/vis/commit/9432ceb309f3eedf0717f87e6b43c6d459a9372e))
+* **vis:** give the smoke registry long enough to start on a cold runner ([#110](https://github.com/visulima/vis/issues/110)) ([1f813e6](https://github.com/visulima/vis/commit/1f813e6561b69addf0068a9dfec3553c0d906a9a))
+* **vis:** keep native ignore fallbacks lossless, gate its launcher route, write atomically ([c4cf57f](https://github.com/visulima/vis/commit/c4cf57fe0b71a4ecbb53d90e792291c9c2959178))
+* **vis:** match Node for bare pnpm pins and workspace-root verbs ([#133](https://github.com/visulima/vis/issues/133)) ([d2911df](https://github.com/visulima/vis/commit/d2911df786287831e9b72b07705d6431b56dde8b))
+* **vis:** refuse to replace a read-only ignore file on native write ([c2f9d10](https://github.com/visulima/vis/commit/c2f9d10d1585cbfc6d3c79027d06a9c1e05015e0))
+* **vis:** stop npm add from treating the package as a workspace name ([#139](https://github.com/visulima/vis/issues/139)) ([4775a81](https://github.com/visulima/vis/commit/4775a8128f5533f0cdf9c1e996daf614a39b1bf3))
+
+### Styles
+
+* **vis:** fix lint in the ignore route test ([d76c879](https://github.com/visulima/vis/commit/d76c8799bbd2e026168abb1cc8abd31dc7f882ee))
+* **vis:** match the repo's TOML array spacing for serde_json features ([420f9bd](https://github.com/visulima/vis/commit/420f9bd0a4453d0f8b2f886afa85170e7708a218))
+* **vis:** use block bodies in the project-graph parity test ([0794c27](https://github.com/visulima/vis/commit/0794c271cb00eeb5c7049047b953d30676d40ccb))
+
+### Code Refactoring
+
+* **native:** move task-runner, secret-scanner and package-manager logic into napi-free core crates ([#102](https://github.com/visulima/vis/issues/102)) ([8440280](https://github.com/visulima/vis/commit/84402805dc753dfd501ff92e6f6eff82bc008ae5))
+* **vis:** drop a doc comment that restated its type ([733b677](https://github.com/visulima/vis/commit/733b6778def7cdb9786e60fe5ffe05db6b76ab7d))
+* **vis:** drop enum variant docs that restate their names ([f2b810c](https://github.com/visulima/vis/commit/f2b810cda3f01486bdf4d79b00e0759ea107271d))
+* **vis:** split the per-command launcher routing out of routesToNative ([#128](https://github.com/visulima/vis/issues/128)) ([4cc5313](https://github.com/visulima/vis/commit/4cc5313b9199a38a97ccf25aa0015414660fbf48))
+
+### Tests
+
+* **vis:** cover the graph's own name checks and pin the fixture count ([a0d5329](https://github.com/visulima/vis/commit/a0d53290dd117e7b8d98cac92981b1bfea0ac27d))
+* **vis:** fail the install smoke when a package manager named with --pm is missing ([#104](https://github.com/visulima/vis/issues/104)) ([120c2c6](https://github.com/visulima/vis/commit/120c2c6b6a1324454e1953b37005f5a1eaccf7e5))
+* **vis:** give the list parity test's binary the entry and version a launcher passes ([#130](https://github.com/visulima/vis/issues/130)) ([d891c38](https://github.com/visulima/vis/commit/d891c384c8145538e82daead123a66e0e161ca50))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 3.0.0
+* **@visulima/task-runner:** upgraded to 3.0.4
+
+## @visulima/vis [6.8.0](https://github.com/visulima/vis/compare/@visulima/vis@6.7.0...@visulima/vis@6.8.0) (2026-11-20)
+
+### Features
+
+* **vis:** answer the plain vis list natively ([#117](https://github.com/visulima/vis/issues/117)) ([cfc7f1b](https://github.com/visulima/vis/commit/cfc7f1b7f98a91c5448e05cda4c8d57f13ab43db))
+* **vis:** answer vis clean natively for the plain and dry-run shapes ([15211e8](https://github.com/visulima/vis/commit/15211e8bc64f13c4215df3067b29031b082c9bda))
+* **vis:** link the native binary as the vis command on install ([#103](https://github.com/visulima/vis/issues/103)) ([afcf849](https://github.com/visulima/vis/commit/afcf84957980a19cb8ba35b34706512d73fc1082))
+* **vis:** native project names and graph for JS-only workspaces ([f8fb104](https://github.com/visulima/vis/commit/f8fb1040ab992eb1b5e60f9a38f3567b8c51be97))
+* **vis:** port vis ignore to the native front-end ([24ccd56](https://github.com/visulima/vis/commit/24ccd564ea9097a4988d16db45cf9b8c41710b97))
+* **vis:** read package.json script targets for JS-only projects natively ([f28a3b8](https://github.com/visulima/vis/commit/f28a3b834c47743ec58c6a503aff5ddda14bf1ea))
+* **vis:** read vis.config as data in the native pm commands ([c470623](https://github.com/visulima/vis/commit/c470623749bc37332070750b73fdabab6881f44e))
+* **vis:** run a plain npm, pnpm or bun install.backend pin natively ([#118](https://github.com/visulima/vis/issues/118)) ([b139087](https://github.com/visulima/vis/commit/b139087b08301bda03d95347a49aadb819dbfb3a))
+
+### Bug Fixes
+
+* **vis:** address Qodo findings on the native list, clean and ignore paths ([#134](https://github.com/visulima/vis/issues/134)) ([1078fa9](https://github.com/visulima/vis/commit/1078fa9569e4a9a997578415c3ede405a7c981ed))
+* **vis:** address Qodo review findings from PR [#105](https://github.com/visulima/vis/issues/105) ([#132](https://github.com/visulima/vis/issues/132)) ([a02467e](https://github.com/visulima/vis/commit/a02467ecd20e468e52db93fa885d42807db30c17))
+* **vis:** address the CodeRabbit review on the native launcher ([#107](https://github.com/visulima/vis/issues/107)) ([9227cbb](https://github.com/visulima/vis/commit/9227cbbd285cab295a97330d8037bf9e2950d468))
+* **vis:** close the remaining native config gaps found in review ([a756c20](https://github.com/visulima/vis/commit/a756c20e02111369ec626852601e4eafc90a9d17))
+* **vis:** compute the native root gate instead of trusting VIS_MONOREPO_ROOT ([#119](https://github.com/visulima/vis/issues/119)) ([5a2d4b5](https://github.com/visulima/vis/commit/5a2d4b5e4e0dd7e1692cf24aafefeffe4f4f74a0))
+* **vis:** delegate native config handling for the cases Node resolves itself ([da75fdf](https://github.com/visulima/vis/commit/da75fdf007e4c017e949c589598c0b64fedc418c))
+* **vis:** detect the registry's listening line in a large output chunk ([8dce751](https://github.com/visulima/vis/commit/8dce751ad722d5686ff72ade0246666f178b48ab))
+* **vis:** finish the native launcher hardening from PR [#105](https://github.com/visulima/vis/issues/105) review ([#106](https://github.com/visulima/vis/issues/106)) ([9432ceb](https://github.com/visulima/vis/commit/9432ceb309f3eedf0717f87e6b43c6d459a9372e))
+* **vis:** give the smoke registry long enough to start on a cold runner ([#110](https://github.com/visulima/vis/issues/110)) ([1f813e6](https://github.com/visulima/vis/commit/1f813e6561b69addf0068a9dfec3553c0d906a9a))
+* **vis:** keep native ignore fallbacks lossless, gate its launcher route, write atomically ([c4cf57f](https://github.com/visulima/vis/commit/c4cf57fe0b71a4ecbb53d90e792291c9c2959178))
+* **vis:** match Node for bare pnpm pins and workspace-root verbs ([#133](https://github.com/visulima/vis/issues/133)) ([d2911df](https://github.com/visulima/vis/commit/d2911df786287831e9b72b07705d6431b56dde8b))
+* **vis:** refuse to replace a read-only ignore file on native write ([c2f9d10](https://github.com/visulima/vis/commit/c2f9d10d1585cbfc6d3c79027d06a9c1e05015e0))
+
+### Styles
+
+* **vis:** fix lint in the ignore route test ([d76c879](https://github.com/visulima/vis/commit/d76c8799bbd2e026168abb1cc8abd31dc7f882ee))
+* **vis:** match the repo's TOML array spacing for serde_json features ([420f9bd](https://github.com/visulima/vis/commit/420f9bd0a4453d0f8b2f886afa85170e7708a218))
+* **vis:** use block bodies in the project-graph parity test ([0794c27](https://github.com/visulima/vis/commit/0794c271cb00eeb5c7049047b953d30676d40ccb))
+
+### Code Refactoring
+
+* **native:** move task-runner, secret-scanner and package-manager logic into napi-free core crates ([#102](https://github.com/visulima/vis/issues/102)) ([8440280](https://github.com/visulima/vis/commit/84402805dc753dfd501ff92e6f6eff82bc008ae5))
+* **vis:** drop a doc comment that restated its type ([733b677](https://github.com/visulima/vis/commit/733b6778def7cdb9786e60fe5ffe05db6b76ab7d))
+* **vis:** drop enum variant docs that restate their names ([f2b810c](https://github.com/visulima/vis/commit/f2b810cda3f01486bdf4d79b00e0759ea107271d))
+* **vis:** split the per-command launcher routing out of routesToNative ([#128](https://github.com/visulima/vis/issues/128)) ([4cc5313](https://github.com/visulima/vis/commit/4cc5313b9199a38a97ccf25aa0015414660fbf48))
+
+### Tests
+
+* **vis:** cover the graph's own name checks and pin the fixture count ([a0d5329](https://github.com/visulima/vis/commit/a0d53290dd117e7b8d98cac92981b1bfea0ac27d))
+* **vis:** fail the install smoke when a package manager named with --pm is missing ([#104](https://github.com/visulima/vis/issues/104)) ([120c2c6](https://github.com/visulima/vis/commit/120c2c6b6a1324454e1953b37005f5a1eaccf7e5))
+* **vis:** give the list parity test's binary the entry and version a launcher passes ([#130](https://github.com/visulima/vis/issues/130)) ([d891c38](https://github.com/visulima/vis/commit/d891c384c8145538e82daead123a66e0e161ca50))
+
+## @visulima/vis [6.7.0](https://github.com/visulima/vis/compare/@visulima/vis@6.6.1...@visulima/vis@6.7.0) (2026-11-17)
+
+### Features
+
+* **vis-cli:** answer help, completion and unknown commands natively ([#101](https://github.com/visulima/vis/issues/101)) ([fa62ab8](https://github.com/visulima/vis/commit/fa62ab85a4b838ab6f6aa6bf72fde8949c708d4a))
+
+## @visulima/vis [6.6.1](https://github.com/visulima/vis/compare/@visulima/vis@6.6.0...@visulima/vis@6.6.1) (2026-11-17)
+
+### Performance Improvements
+
+* **vis:** run git hooks through the native binary ([#100](https://github.com/visulima/vis/issues/100)) ([9036a34](https://github.com/visulima/vis/commit/9036a343c8d5470217bc2fd76939cedb1da46807))
+
 ## @visulima/vis [6.6.0](https://github.com/visulima/vis/compare/@visulima/vis@6.5.4...@visulima/vis@6.6.0) (2026-11-04)
 
 ### Features
