@@ -280,6 +280,8 @@ name: "vis ci"
 
 on: # yamllint disable-line rule:truthy
     pull_request:
+    # Runs the checks for a merge queue too; an event no queue sends never fires.
+    merge_group:
     push:
         branches:
 ${plan.branches.map((branch) => `            - ${yamlString(branch)}`).join("\n")}
