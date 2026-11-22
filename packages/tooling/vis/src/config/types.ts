@@ -1,5 +1,6 @@
 import type { ConstraintsConfig, NamedInputs, TaskRunnerOptions } from "@visulima/task-runner";
 
+import type { FmtEngine, FmtOptions, FmtOverride } from "../fmt/options";
 import type { FmtAdapterId, LintAdapterId } from "../lint-fmt/config-types";
 import type { VisReleaseConfig } from "../release/types";
 import type { RuntimeId } from "../runtime/adapters/types";
@@ -8,7 +9,7 @@ import type { StagedConfig } from "../staged";
 import type { VisTargetConfiguration } from "../task/target-options";
 import type { VisPlugin } from "../util/hooks";
 import type { CodeownersConfig } from "./types/codeowners";
-import type { LintFmtAdapterOverride } from "./types/lint";
+import type { LintFmtAdapterOverride, OxfmtAdapterOverride } from "./types/lint";
 import type { VisPolicyConfig } from "./types/policies";
 import type { ProjectJson, ScopedTasksBlock } from "./types/project";
 import type { VisSecurityConfig } from "./types/security";
@@ -250,20 +251,24 @@ export interface VisConfig {
     fileGroups?: Record<string, string[]>;
 
     /**
-     * Configuration for `vis fmt` — the formatter orchestrator.
+     * Configuration for `vis fmt`.
      *
-     * Tunes adapter detection precedence, per-extension routing, and
-     * per-adapter overrides. Flags on the CLI always win over config.
+     * By default `vis fmt` formats with the oxfmt that ships with vis, so a workspace needs no setup.
+     * The formatting options come from the first of these sources that exists, used whole (never merged):
+     * `fmt.options` here, then an `.oxfmtrc.json(c)` / `oxfmt.config.ts` file, then a Prettier config
+     * (mapped to oxfmt options), then oxfmt's defaults. Note that oxfmt's default `printWidth` is 100;
+     * a Prettier config without one maps to Prettier's 80.
      *
-     * The default fmt precedence is `oxfmt → biome → dprint → prettier`.
-     * When multiple adapters claim the same extension,
-     * the first in this order owns it unless overridden here.
+     * A workspace that uses biome, dprint or ruff format keeps the adapter orchestration: vis runs every
+     * detected formatter, routed by extension. `fmt.engine` overrides that choice.
+     *
+     * Flags on the CLI always win over config.
      * @example
      * ```
      * fmt: {
-     *   order: ["biome", "prettier"],
-     *   extensionOverrides: { md: "dprint" },
-     *   adapters: { dprint: { enabled: false } },
+     *   options: { printWidth: 100, singleQuote: true },
+     *   overrides: [{ files: ["*.md"], options: { proseWrap: "always" } }],
+     *   ignorePatterns: ["generated/**"],
      * }
      * ```
      */
@@ -271,24 +276,51 @@ export interface VisConfig {
         /**
          * Per-adapter overrides. Keyed by `AdapterId`. Set
          * `enabled: false` to skip an adapter even when detected, or
-         * `extraArgs` to append flags verbatim.
+         * `extraArgs` to append flags verbatim. `enabled: false` on `oxfmt`
+         * also turns the bundled oxfmt off.
          */
-        adapters?: Partial<Record<FmtAdapterId, LintFmtAdapterOverride>>;
+        adapters?: { [Id in Exclude<FmtAdapterId, "oxfmt">]?: LintFmtAdapterOverride } & { oxfmt?: OxfmtAdapterOverride };
+
+        /**
+         * Which formatter runs.
+         * - `auto` (default): the bundled oxfmt, unless biome, dprint or ruff format is detected.
+         * - `oxfmt`: always the bundled oxfmt, and no other formatter.
+         * - `prettier`: the adapter orchestration, with Prettier staying in charge.
+         * @default "auto"
+         */
+        engine?: FmtEngine;
 
         /**
          * Pin a file extension (without the leading dot) to a specific
          * adapter, overriding the registry's "first detected adapter
          * wins" routing. Use to e.g. send `.md` to `dprint` even when
-         * both prettier and dprint are present.
+         * both prettier and dprint are present. Applies to the adapter
+         * orchestration only.
          */
         extensionOverrides?: Record<string, FmtAdapterId>;
+
+        /**
+         * Files the bundled oxfmt skips, relative to the workspace root. Same shape as
+         * oxfmt's `ignorePatterns`; patterns must not contain `..`.
+         */
+        ignorePatterns?: string[];
+
+        /**
+         * Formatting options for the bundled oxfmt, in oxfmt's own names (`printWidth`, `semi`,
+         * `singleQuote`, `sortImports`, ...). Used instead of any `.oxfmtrc` or Prettier config.
+         */
+        options?: FmtOptions;
 
         /**
          * Override the adapter precedence order. Adapters omitted from
          * this list still run (appended at the end in registry order),
          * but those listed earlier get priority for extension routing.
+         * Applies to the adapter orchestration only.
          */
         order?: FmtAdapterId[];
+
+        /** File-specific option overrides for the bundled oxfmt. Later entries win. */
+        overrides?: FmtOverride[];
     };
 
     /**
@@ -964,7 +996,7 @@ export interface VisConfig {
 }
 
 export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types/codeowners";
-export type { LintFmtAdapterOverride } from "./types/lint";
+export type { LintFmtAdapterOverride, OxfmtAdapterOverride } from "./types/lint";
 export type { NativeAuditExclusions, PolicyName } from "./types/policies";
 export { POLICY_NAMES } from "./types/policies";
 export type { ExtraCustomType, PackageJson, PackageJsonIndex, ProjectJson, ProjectOptionsIndex, ScopedTasksBlock, VisProjectConfiguration, VisTaskConfig, VisTaskConfigIndex } from "./types/project";
