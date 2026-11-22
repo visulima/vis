@@ -27,6 +27,7 @@ use std::process::{exit, Command, ExitStatus};
 
 mod advisories;
 mod cache;
+mod cache_hash;
 mod clean;
 mod complete;
 mod config_cache;
@@ -124,6 +125,11 @@ fn main() {
         // `vis list` — the plain project listing, native for a JS-only workspace in CI. Every
         // other shape, and every root the gates reject, is delegated inside `list::run`.
         "list" if !surface::asks_for_help(&args) => list::run(&args, &raw_args),
+        // `vis cache hash <task>` — prints a recorded hash from the run summary; the shapes and
+        // contexts it cannot reproduce exactly are delegated inside `cache_hash::run`.
+        "cache" if args.get(1).map(String::as_str) == Some("hash") && !surface::asks_for_help(&args) => {
+            cache_hash::run(&args, &raw_args)
+        }
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

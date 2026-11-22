@@ -161,7 +161,7 @@ fn flags(args: &[String]) -> Option<(bool, bool)> {
 }
 
 /// pail's width: `COLUMNS` when set (it must parse, and be wide enough), else 80.
-fn pail_width() -> Option<usize> {
+pub(crate) fn pail_width() -> Option<usize> {
     match env::var("COLUMNS") {
         Err(env::VarError::NotPresent) => Some(DEFAULT_WIDTH),
         Ok(text) => text.trim().parse::<usize>().ok().filter(|&width| width >= MIN_WIDTH),
@@ -277,7 +277,7 @@ fn pail(plan: &Plan, out: &mut Output, label: &str, message: &str) {
 /// spaces, a token that would overflow starts a new line without being consumed, and a space
 /// that does not fit therefore leads the next line. Widths are byte counts, which is exact for
 /// the ASCII the gate lets through.
-fn wrap(message: &str, limit: usize) -> Vec<String> {
+pub(crate) fn wrap(message: &str, limit: usize) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut start = 0;
 
@@ -324,7 +324,7 @@ fn wrap(message: &str, limit: usize) -> Vec<String> {
 
 /// Local wall-clock time as `HH:MM:SS`, the format pail's header uses.
 #[cfg(unix)]
-fn clock() -> String {
+pub(crate) fn clock() -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
 
     let Ok(seconds) = libc::time_t::try_from(now) else {
@@ -343,7 +343,7 @@ fn clock() -> String {
 
 /// Only reached on unix: `plan` delegates everywhere else.
 #[cfg(not(unix))]
-fn clock() -> String {
+pub(crate) fn clock() -> String {
     "00:00:00".to_owned()
 }
 

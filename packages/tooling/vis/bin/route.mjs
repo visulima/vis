@@ -161,10 +161,39 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
     return LIST_NATIVE_SHAPES.some((shape) => shape.length === flags.length && shape.every((flag, index) => flags[index] === flag));
 };
 
+// Whether `vis cache hash` can pass the binary's native gate (`native` in `cache_hash.rs`). The
+// binary re-checks the context and every shape (one task id, `--format json|table`, `--run <id>`),
+// so this only skips the extra process for a call that would be delegated anyway: no task id, a
+// flag the binary does not know, or a table in a context where Node may colour it (the binary does
+// not; the JSON is written raw, so colour does not matter there). It stays in Node on Windows
+// (pail's clock is unix-only there).
+const CACHE_HASH_FLAG = /^--(?:format|run)(?:=.*)?$/;
+
+const cacheHashAsksForJson = (flags) => flags.includes("--format=json") || flags.some((flag, index) => flag === "--format" && flags[index + 1] === "json");
+
+const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
+    const flags = args.slice(2);
+
+    if (platform === "win32" || interactive || !inCi(environment) || flags.length === 0 || !flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token))) {
+        return false;
+    }
+
+    return cacheHashAsksForJson(flags) || (!IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && plainTerm(environment));
+};
+
+const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size"]);
+
 // Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
 // re-checks everything, including the flags, the root and the config; this only skips the extra process
-// when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context.
-const cacheMayRunNatively = (platform, environment, interactive) => platform !== "win32" && !interactive && inCi(environment);
+// when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context. `hash` has
+// its own, stricter gate above.
+const cacheMayRunNatively = (subcommand, platform, environment, args, interactive) => {
+    if (subcommand === "hash") {
+        return cacheHashMayRunNatively(platform, environment, args, interactive);
+    }
+
+    return platform !== "win32" && !interactive && inCi(environment);
+};
 
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
@@ -206,10 +235,10 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive));
     }
 
-    // `cache list` and `cache size` are native for their plain shapes in a CI context
-    // (`native/cli/src/cache.rs`); the binary hands every other shape to Node itself.
-    if (command === "cache" && (subcommand === "list" || subcommand === "size")) {
-        return helpOrNative(args, () => cacheMayRunNatively(platform, environment, interactive));
+    // `cache list`, `cache size` (`native/cli/src/cache.rs`) and `cache hash` (`native/cli/src/cache_hash.rs`)
+    // are native for their plain shapes in a CI context; the binary hands every other shape to Node itself.
+    if (command === "cache" && CACHE_NATIVE_SUBCOMMANDS.has(subcommand)) {
+        return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
     }
 
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
