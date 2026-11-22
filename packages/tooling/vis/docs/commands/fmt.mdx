@@ -99,7 +99,7 @@ export default defineConfig({
 
 When the bundled oxfmt runs it is the only formatter that runs, so no file is formatted twice. That includes a project that declares `oxfmt` itself: its own config is discovered and used, but the oxfmt that formats is the bundled one.
 
-`fmt.adapters.oxfmt.builtin: false` keeps today's behaviour for a project's own `oxfmt` (the adapter orchestration, through the project's package manager). `fmt.adapters.oxfmt.enabled: false` turns oxfmt off, bundled or not; combining it with `fmt.engine: "oxfmt"` is an error.
+`fmt.adapters.oxfmt.builtin: false` keeps today's behaviour for a project's own `oxfmt` (the adapter orchestration, through the project's package manager). `fmt.adapters.oxfmt.enabled: false` turns oxfmt off, bundled or not; combining either `builtin: false` or `enabled: false` with `fmt.engine: "oxfmt"` is an error.
 
 `--check`, `--staged`, `--since`, `--watch`, `--format` and the exit codes behave the same with either engine. An error from oxfmt itself (a syntax error in a file, an invalid config) is printed as oxfmt reports it and fails the run, in write mode too.
 

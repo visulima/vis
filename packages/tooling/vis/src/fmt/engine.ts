@@ -22,9 +22,9 @@ const OTHER_FORMATTERS: ReadonlyArray<FmtAdapterId> = ["biome", "dprint", "ruff-
 /**
  * Decides what `vis fmt` runs. The bundled oxfmt is the only formatter that runs when it is chosen,
  * so no file is formatted twice.
+ * - `fmt.engine: "oxfmt"`: the bundled oxfmt.
  * - `fmt.engine: "prettier"` or `fmt.adapters.oxfmt.builtin: false`: the adapter orchestration.
  * - `fmt.adapters.oxfmt.enabled: false`: the adapter orchestration (oxfmt, bundled or not, is off).
- * - `fmt.engine: "oxfmt"`: the bundled oxfmt.
  * - `auto`: the bundled oxfmt, unless biome, dprint or ruff format is detected.
  * @param input The `fmt` settings and the detected formatters.
  * @param input.builtin `fmt.adapters.oxfmt.builtin`.
@@ -32,23 +32,23 @@ const OTHER_FORMATTERS: ReadonlyArray<FmtAdapterId> = ["biome", "dprint", "ruff-
  * @param input.engine `fmt.engine`; defaults to `auto`.
  * @param input.oxfmtEnabled False when `fmt.adapters.oxfmt.enabled` is `false`.
  * @returns `bundled` to run the bundled oxfmt, `adapters` to keep the adapter orchestration.
- * @throws {VisUserError} When `fmt.engine` is `"oxfmt"` while `fmt.adapters.oxfmt.enabled` is `false`.
+ * @throws {VisUserError} When `fmt.engine` is `"oxfmt"` while `fmt.adapters.oxfmt.enabled` or `builtin` is `false`.
  */
 export const selectFmtEngine = ({ builtin, detected, engine = "auto", oxfmtEnabled }: SelectFmtEngineInput): "adapters" | "bundled" => {
-    if (engine === "prettier" || builtin === false) {
-        return "adapters";
-    }
-
-    if (!oxfmtEnabled) {
-        if (engine === "oxfmt") {
+    if (engine === "oxfmt") {
+        if (!oxfmtEnabled) {
             throw new VisUserError('vis.config fmt: `engine: "oxfmt"` and `adapters.oxfmt.enabled: false` contradict each other.');
         }
 
-        return "adapters";
+        if (builtin === false) {
+            throw new VisUserError('vis.config fmt: `engine: "oxfmt"` and `adapters.oxfmt.builtin: false` contradict each other.');
+        }
+
+        return "bundled";
     }
 
-    if (engine === "oxfmt") {
-        return "bundled";
+    if (engine === "prettier" || builtin === false || !oxfmtEnabled) {
+        return "adapters";
     }
 
     return OTHER_FORMATTERS.some((id) => detected.includes(id)) ? "adapters" : "bundled";

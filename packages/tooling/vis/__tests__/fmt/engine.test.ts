@@ -33,11 +33,18 @@ describe(selectFmtEngine, () => {
         expect(select({ detected: ["oxfmt"], engine: "prettier" })).toBe("adapters");
     });
 
-    it("keeps the adapters when adapters.oxfmt.builtin is false, even with engine oxfmt", () => {
+    it("keeps the adapters when adapters.oxfmt.builtin is false", () => {
         expect.assertions(2);
 
         expect(select({ builtin: false, detected: ["oxfmt"] })).toBe("adapters");
-        expect(select({ builtin: false, engine: "oxfmt" })).toBe("adapters");
+        expect(select({ builtin: false, engine: "auto" })).toBe("adapters");
+    });
+
+    it("rejects engine oxfmt together with adapters.oxfmt.builtin: false instead of running the adapters", () => {
+        expect.assertions(2);
+
+        expect(() => select({ builtin: false, detected: ["biome"], engine: "oxfmt" })).toThrow(/builtin: false.*contradict/);
+        expect(() => select({ builtin: false, engine: "oxfmt", oxfmtEnabled: false })).toThrow(/contradict/);
     });
 
     it("always runs the bundled oxfmt for engine oxfmt, even when biome is detected", () => {
