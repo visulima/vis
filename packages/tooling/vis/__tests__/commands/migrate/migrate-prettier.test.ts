@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { join } from "@visulima/path";
@@ -306,8 +306,6 @@ describe("migrate-prettier", () => {
 
             write(".prettierrc.json", "{}");
             writeFileSync(join(root, "package.json"), "{}");
-
-            const { mkdirSync } = await import("node:fs");
 
             mkdirSync(join(root, "packages", "a"), { recursive: true });
             writeFileSync(join(root, "packages", "a", ".prettierrc.json"), "{}");
