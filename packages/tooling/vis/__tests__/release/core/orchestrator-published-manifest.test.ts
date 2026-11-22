@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { applyContext, buildContext, publishContext } from "../../../src/release/core/orchestrator";
 import type { PublishResult } from "../../../src/release/core/package-managers/interface";
+import { newState } from "../../../src/release/core/state";
 import type { PublishContext } from "../../../src/release/core/version-actions/interface";
 import { VersionActions } from "../../../src/release/core/version-actions/interface";
 
@@ -97,5 +98,27 @@ describe("orchestrator: the published manifest is the one the version step wrote
         expect(result.failed).toStrictEqual([expect.objectContaining({ name: "@scope/a", reason: expect.stringMatching(/package\.json/u) })]);
         expect(result.skipped).toStrictEqual([expect.objectContaining({ name: "@scope/b", reason: expect.stringContaining("dependency-failed") })]);
         expect([...actions.manifests.keys()]).toStrictEqual([]);
+    });
+
+    it("does not let an unreadable manifest of an already-published package block a resumed dependent", async () => {
+        expect.hasAssertions();
+
+        cwd = setupFixture();
+
+        const ctx = await buildContext({ cwd, firstRelease: true });
+
+        await applyContext(ctx, { dryRun: false });
+
+        // A prior wave published `a`; its manifest is gone from this runner's checkout.
+        const aRelease = ctx.plan.releases.find((release) => release.name === "@scope/a");
+
+        writeJson(join(cwd, ".vis", "release", ".state.json"), { ...newState(undefined, ctx.plan.releases), published: [`@scope/a@${aRelease?.newVersion}`] });
+        await rm(join(cwd, "packages", "a", "package.json"));
+
+        const actions = new CapturingVersionActions();
+        const result = await publishContext(ctx, { noPush: true, noTag: true, publishActionsOverride: actions, resume: true });
+
+        expect(result.failed).toStrictEqual([]);
+        expect([...actions.manifests.keys()]).toStrictEqual(["@scope/b"]);
     });
 });

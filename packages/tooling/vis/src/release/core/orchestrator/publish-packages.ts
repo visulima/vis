@@ -64,11 +64,21 @@ export const publishPackages = async (context: OrchestratorContext, wave: Publis
             continue;
         }
 
+        // Only a release this wave publishes has to be readable. The others
+        // (already published before a resume) only supply their version to
+        // protocol resolution, so an unreadable one must not block dependents.
+        const publishing = releaseByName.has(release.name);
+
         try {
             const versioned = pkg.ecosystem === undefined ? await readWrittenManifest(pkg.name, pkg.manifestPath) : pkg.manifest;
 
             versionedManifestByName.set(release.name, { ...versioned, version: release.newVersion });
         } catch (error) {
+            if (!publishing) {
+                versionedManifestByName.set(release.name, { ...pkg.manifest, version: release.newVersion });
+                continue;
+            }
+
             // Not publishable: the action would fall back to the stale graph
             // manifest. Fail this package and let the cascade guard skip its
             // dependents.
