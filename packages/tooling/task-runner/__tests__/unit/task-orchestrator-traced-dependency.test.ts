@@ -35,8 +35,8 @@ describe("a declared task that depends on a traced task", () => {
     let executed: string[];
 
     // A fresh orchestrator per run, as every `vis run` invocation is: only the on-disk cache carries over.
-    const run = async (): Promise<Map<string, TaskResult>> => {
-        const tasks = [{ ...generate }, { ...consume }];
+    const run = async (satisfied = false): Promise<Map<string, TaskResult>> => {
+        const tasks = [{ ...generate, ...(satisfied ? { satisfied: true } : {}) }, { ...consume }];
         const taskGraph: TaskGraph = {
             dependencies: { "app:consume": ["lib:generate"], "lib:generate": [] },
             roots: ["lib:generate"],
@@ -124,5 +124,24 @@ describe("a declared task that depends on a traced task", () => {
         const results = await run();
 
         expect(results.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
+    });
+
+    it("neither serves nor stores a dependent whose satisfied traced dependency has no valid entry", async () => {
+        expect.assertions(3);
+
+        await run();
+        // The dependency's input changed after the run that was meant to key it, so its entry no longer matches.
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 2;");
+
+        const second = await run(true);
+
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 3;");
+
+        const third = await run(true);
+
+        expect(second.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
+        // Without a key for the dependency, the second run's result must not be served for `a = 3`.
+        expect(third.get("app:consume")?.terminalOutput).toBe("export const a = 3;");
+        expect(third.get("app:consume")?.status).toBe("success");
     });
 });

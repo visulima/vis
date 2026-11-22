@@ -638,7 +638,10 @@ class TaskOrchestrator {
             return this.#dryRunResult(task, startTime);
         }
 
-        if (!this.#skipCache && task.cache !== false) {
+        // The hash above leaves out a dependency that has no key, so it cannot vouch for this run.
+        const keyed = !this.#hasUnkeyedSatisfiedDependency(task);
+
+        if (!this.#skipCache && task.cache !== false && keyed) {
             const cachedResult = await this.#cache.get(hash);
 
             if (cachedResult) {
@@ -671,9 +674,9 @@ class TaskOrchestrator {
             return this.#satisfiedResult(task, startTime);
         }
 
-        const result = await this.#executeTask(task, startTime);
+        const result = await this.#executeTask(task, startTime, keyed);
 
-        if (result.code === 0 && task.cache !== false && task.hash && this.#remoteCache) {
+        if (keyed && result.code === 0 && task.cache !== false && task.hash && this.#remoteCache) {
             storeByTaskHash(this.#remoteCache, task.hash, this.#cache.cacheDirectory, this.#onRemoteUploadError).catch(() => {});
         }
 
@@ -829,7 +832,7 @@ class TaskOrchestrator {
         return result;
     }
 
-    async #executeTask(task: Task, startTime: number): Promise<TaskResult> {
+    async #executeTask(task: Task, startTime: number, store = true): Promise<TaskResult> {
         try {
             const { code, retryAttempts, terminalOutput } = await this.#taskExecutor(task, {
                 captureOutput: this.#captureOutput,
@@ -858,7 +861,7 @@ class TaskOrchestrator {
             // exited 0 but its output is treated as incomplete-by-policy
             // so the next run starts fresh. Matches vite-task's
             // documented cancellation contract.
-            if (code === 0 && task.cache !== false && task.hash && !skipCacheOnWarning && !this.#aborted) {
+            if (store && code === 0 && task.cache !== false && task.hash && !skipCacheOnWarning && !this.#aborted) {
                 const modified = await this.#detectSelfModifiedInputs(task);
 
                 if (modified.length > 0) {
@@ -1188,6 +1191,21 @@ class TaskOrchestrator {
         return zeroAccesses
             ? "Tracker observed no workspace file accesses — likely a static binary on a platform without strace. Caching skipped."
             : "Tracker returned accesses but none fell inside the workspace. Caching skipped to avoid false cache hits.";
+    }
+
+    /**
+     * Whether a dependency of `task` was left to an earlier run (see {@link Task.satisfied}),
+     * should have a key, and has none: its trace entry is missing or no longer matches. That
+     * dependency would have re-run and been keyed in a single run, so the dependent's key
+     * cannot be trusted to cover it. A dependency with caching disabled never has a key, which
+     * is the documented case in {@link TaskOrchestrator.#foldDependencyHashes}.
+     */
+    #hasUnkeyedSatisfiedDependency(task: Task): boolean {
+        return (this.#taskGraph?.dependencies[task.id] ?? []).some((id) => {
+            const dependency = this.#taskGraph?.tasks[id];
+
+            return dependency?.satisfied === true && dependency.cache !== false && !dependency.hash;
+        });
     }
 
     /**
