@@ -1,3 +1,9 @@
+## @visulima/secret-scanner [3.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/secret-scanner@3.0.1-next.1...@visulima/secret-scanner@3.1.0-next.1) (2026-11-22)
+
+### Features
+
+* **vis:** scan standard input with vis secrets --stdin <filename> ([#129](https://github.com/visulima/vis/issues/129)) ([09db062](https://github.com/visulima/vis/commit/09db06296bae7f51578c617e326a571e348eea2b))
+
 ## @visulima/secret-scanner [3.0.1-next.1](https://github.com/visulima/vis/compare/@visulima/secret-scanner@3.0.0...@visulima/secret-scanner@3.0.1-next.1) (2026-11-22)
 
 ### Bug Fixes
