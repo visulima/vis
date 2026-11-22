@@ -11,8 +11,9 @@ permissions:
     contents: "read"
 
 concurrency:
-    group: "vis-ci-${{ github.ref }}"
-    # Supersede outdated pull request runs, but let every push to a branch finish.
+    group: "vis-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}"
+    # Supersede outdated pull request runs. Every other event gets a group per commit, because a
+    # shared group keeps only one pending run and would drop the middle one of three quick pushes.
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
