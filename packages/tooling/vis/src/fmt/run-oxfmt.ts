@@ -80,6 +80,16 @@ const SIGNALS: ReadonlyArray<NodeJS.Signals> = ["SIGINT", "SIGTERM"];
 /** Whether the config carries a glob that oxfmt reads relative to the config's own directory, so the file has to sit in the workspace root. */
 export const hasGlobs = (config: OxfmtConfig): boolean => (config.ignorePatterns?.length ?? 0) > 0 || (config.overrides?.length ?? 0) > 0;
 
+const cachedConfigContent = (config: OxfmtConfig): string => `${JSON.stringify(config, null, 2)}\n`;
+
+/**
+ * Where a config without globs is kept: a file named by a hash of its content in `node_modules/.cache/vis/fmt`.
+ * @param config Config without `ignorePatterns` or `overrides`.
+ * @returns Path of the file, relative to the workspace root.
+ */
+export const cachedConfigPath = (config: OxfmtConfig): string =>
+    join(CACHED_CONFIG_DIRECTORY, `${createHash("sha256").update(cachedConfigContent(config)).digest("hex").slice(0, 16)}.json`);
+
 /**
  * Keeps a config without globs in the vis cache, named by a hash of its content: a run with the same
  * config reuses the file, concurrent runs write identical content, and nothing is removed afterwards.
@@ -88,8 +98,8 @@ export const hasGlobs = (config: OxfmtConfig): boolean => (config.ignorePatterns
  * @returns Path of the file, relative to `root`.
  */
 const writeCachedConfig = (root: string, config: OxfmtConfig): string => {
-    const content = `${JSON.stringify(config, null, 2)}\n`;
-    const relativePath = join(CACHED_CONFIG_DIRECTORY, `${createHash("sha256").update(content).digest("hex").slice(0, 16)}.json`);
+    const content = cachedConfigContent(config);
+    const relativePath = cachedConfigPath(config);
     const path = join(root, relativePath);
 
     if (!existsSync(path)) {
