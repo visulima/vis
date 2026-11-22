@@ -125,6 +125,50 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis sync ci-workflow` flag shapes (parse in ci_workflow/mod.rs)", () => {
+        const ci = { CI: "1" };
+        const root = "/work/app";
+        const route = (args: string[], environment: Record<string, string> = ci, cwd = root) =>
+            routesToNative(["sync", "ci-workflow", ...args], "linux", environment, cwd, false, (directory: string) => directory === root);
+
+        it.each([[[]], [["--check"]], [["--provider=github"]], [["--provider", "github,gitlab"]], [["--provider=github", "--provider=gitlab", "--check"]], [["--check", "--provider", "gitlab"]]])(
+            "routes `vis sync ci-workflow %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(route(args)).toBe(true);
+            },
+        );
+
+        it.each([[["--check", "--check"]], [["--provider"]], [["--provider="]], [["--provider", "--check"]], [["--format=json"]], [["extra"]], [["--check=false"]]])(
+            "delegates `vis sync ci-workflow %j`",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(route(args)).toBe(false);
+            },
+        );
+
+        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1" }], [{ CI: "1", TERM: "xterm" }]])(
+            "delegates in the environment %j",
+            (environment: Record<string, string>) => {
+                expect.assertions(1);
+
+                expect(route(["--check"], environment)).toBe(false);
+            },
+        );
+
+        it("delegates from a directory below the workspace root, on a terminal and on Windows, and leaves the other kinds to Node", () => {
+            expect.assertions(5);
+
+            expect(route([], ci, `${root}/packages/a`)).toBe(false);
+            expect(routesToNative(["sync", "ci-workflow"], "linux", ci, root, true, (directory: string) => directory === root)).toBe(false);
+            expect(routesToNative(["sync", "ci-workflow"], "win32", ci, root, false, (directory: string) => directory === root)).toBe(false);
+            expect(routesToNative(["sync", "codeowners"], "linux", ci, root, false, (directory: string) => directory === root)).toBe(false);
+            expect(routesToNative(["sync", "ci-workflow", "--help"], "win32")).toBe(true);
+        });
+    });
+
     describe("`vis ignore` gate (native_context in ignore.rs)", () => {
         const cwd = "/work/app";
         const ciEnvironment = { CI: "1", PATH: "/usr/bin", VIS_MONOREPO_ROOT: cwd };

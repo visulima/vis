@@ -290,6 +290,55 @@ fn configs(cwd: &Path) -> Vec<PathBuf> {
 /// may have effects, so either makes the file dynamic. The one exception is the
 /// `defineConfig` helper from `VIS_CONFIG_MODULE`.
 fn static_default_export(path: &Path, source: &str) -> Option<Value> {
+    default_export_with(path, source, static_value)
+}
+
+/// The config file `read` would use in `directory` itself (no walk up), by Node's name order.
+pub fn config_file_in(directory: &Path) -> Option<PathBuf> {
+    NAMES.iter().map(|name| directory.join(name)).find(|path| path.exists())
+}
+
+/// The default export of the script config at `path`, converted by `convert` instead of into a
+/// [`Value`]. Same acceptance rules as [`read`]: a file that is not a literal gives `None`. A caller
+/// that needs what `Value` loses (the order of an object's keys) converts the expression itself.
+pub fn convert_default_export<T>(path: &Path, convert: impl Fn(&Expression<'_>) -> Option<T>) -> Option<T> {
+    if path.extension().is_some_and(|extension| extension == "json") {
+        return None;
+    }
+
+    default_export_with(path, &fs::read_to_string(path).ok()?, convert)
+}
+
+/// What a literal object expression holds, key by key in source order, or `None` for anything
+/// that is not a plain `key: value` property (spread, computed key, method, getter).
+pub fn object_properties<'a, 'b>(
+    object: &'b oxc_ast::ast::ObjectExpression<'a>,
+) -> Option<Vec<(String, &'b Expression<'a>)>> {
+    let mut properties = Vec::new();
+
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return None;
+        };
+
+        if property.computed || property.method || property.kind != PropertyKind::Init {
+            return None;
+        }
+
+        let key = match &property.key {
+            PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
+            // A lone surrogate has no UTF-8 form; the parser encodes it in the value, which `JSON.stringify` would print as an escape.
+            PropertyKey::StringLiteral(literal) if !literal.lone_surrogates => literal.value.to_string(),
+            _ => return None,
+        };
+
+        properties.push((key, &property.value));
+    }
+
+    Some(properties)
+}
+
+fn default_export_with<T>(path: &Path, source: &str, convert: impl Fn(&Expression<'_>) -> Option<T>) -> Option<T> {
     let allocator = Allocator::default();
     let source_type = SourceType::from_path(path).ok()?;
     let parsed = Parser::new(&allocator, source, source_type).parse();
@@ -335,10 +384,8 @@ fn static_default_export(path: &Path, source: &str) -> Option<Value> {
                     return None;
                 }
 
-                default = Some(static_value(unwrap_define_config(
-                    export.declaration.as_expression()?,
-                    &define_config_names,
-                ))?);
+                default =
+                    Some(convert(unwrap_define_config(export.declaration.as_expression()?, &define_config_names))?);
             }
             _ => return None,
         }

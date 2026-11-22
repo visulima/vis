@@ -1,0 +1,120 @@
+{
+    "actions": {
+        "cache": {
+            "name": "actions/cache",
+            "sha": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+            "version": "v6.1.0"
+        },
+        "checkout": {
+            "name": "actions/checkout",
+            "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "version": "v7.0.1"
+        },
+        "setupBeam": {
+            "name": "erlef/setup-beam",
+            "sha": "54075bcc5e249e4758d363f27d099f55d843f124",
+            "version": "v1.24.1"
+        },
+        "setupBun": {
+            "name": "oven-sh/setup-bun",
+            "sha": "0c5077e51419868618aeaa5fe8019c62421857d6",
+            "version": "v2.2.0"
+        },
+        "setupDart": {
+            "name": "dart-lang/setup-dart",
+            "sha": "6afc89df92d6eb3834022f73cd65adc8cdfcb92d",
+            "version": "v1.8.1"
+        },
+        "setupDotnet": {
+            "name": "actions/setup-dotnet",
+            "sha": "0f4a354dd5547a28c70b7853dbd95d5b67886e73",
+            "version": "v6.1.0"
+        },
+        "setupGo": {
+            "name": "actions/setup-go",
+            "sha": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+            "version": "v7.0.0"
+        },
+        "setupJava": {
+            "name": "actions/setup-java",
+            "sha": "77dd5b2ce225ea11469928ac317850245a74ae78",
+            "version": "v6.2.0"
+        },
+        "setupNode": {
+            "name": "actions/setup-node",
+            "sha": "949feb2413d6458794dcd2491c4babbbce0c15c1",
+            "version": "v7.1.0"
+        },
+        "setupPhp": {
+            "name": "shivammathur/setup-php",
+            "sha": "eb7c497e18156a6bbabfef1d3a82760b9eda3962",
+            "version": "2.40.0"
+        },
+        "setupPnpm": {
+            "name": "pnpm/action-setup",
+            "sha": "73e46992e05b19abd31f2f3c20e0e7370d762115",
+            "version": "v6.1.1"
+        },
+        "setupPython": {
+            "name": "actions/setup-python",
+            "sha": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+            "version": "v7.1.0"
+        },
+        "setupRuby": {
+            "name": "ruby/setup-ruby",
+            "sha": "de492cf36cbab201753d720ce4f4e336cd688c94",
+            "version": "v1.336.0"
+        },
+        "setupRust": {
+            "name": "actions-rust-lang/setup-rust-toolchain",
+            "sha": "a188e68d0fd2bd36ad51dccb2b07ba6e75105f30",
+            "version": "v2.0.1"
+        },
+        "setupZig": {
+            "name": "mlugg/setup-zig",
+            "sha": "d1434d08867e3ee9daa34448df10607b98908d29",
+            "version": "v2.2.1"
+        }
+    },
+    "packageManagers": {
+        "aube": {
+            "exec": "npx",
+            "install": "aube install --frozen-lockfile",
+            "setup": [
+                "npm install -g @endevco/aube"
+            ]
+        },
+        "bun": {
+            "exec": "bunx",
+            "githubAction": "setupBun",
+            "install": "bun install --frozen-lockfile",
+            "setup": [
+                "npm install -g bun"
+            ]
+        },
+        "npm": {
+            "exec": "npx",
+            "githubNodeCache": "npm",
+            "install": "npm ci",
+            "setup": []
+        },
+        "pnpm": {
+            "exec": "pnpm exec",
+            "githubAction": "setupPnpm",
+            "githubNodeCache": "pnpm",
+            "install": "pnpm install --frozen-lockfile",
+            "setup": [
+                "npm install -g corepack",
+                "corepack enable"
+            ]
+        },
+        "yarn": {
+            "exec": "yarn",
+            "install": "yarn install --immutable",
+            "setup": [
+                "npm install -g corepack",
+                "corepack enable"
+            ]
+        }
+    }
+}
