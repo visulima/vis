@@ -93,10 +93,18 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 
     drop(stderr);
 
-    // Node reports a child without an exit code (a signal) as 1.
-    let code = command.status().ok().and_then(|status| status.code()).unwrap_or(1);
+    match command.status() {
+        // Node reports a child without an exit code (a signal) as 1.
+        Ok(status) => exit(status.code().unwrap_or(1)),
+        // The manager was found on `PATH` but could not start. With nothing printed yet, Node reports it;
+        // after a notice, a second run in Node would print the notice twice.
+        Err(_) if plan.notices.is_empty() => crate::delegate(raw),
+        Err(error) => {
+            eprintln!("Error: Failed to execute '{}': {error}", plan.bin);
 
-    exit(code)
+            exit(1)
+        }
+    }
 }
 
 /// The plan for this invocation, or `None` to delegate.

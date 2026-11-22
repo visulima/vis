@@ -18,10 +18,11 @@ import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
  * fails, so a run that quietly delegated is caught: the marker must be absent exactly when the native path is
  * expected to answer, and present, with no package manager run, for every shape it must leave to Node.
  *
- * The stubs print nothing on their own. The Node handler runs the manager through a binding whose child can
- * lose the terminal's stdio on some hosts (the manager then writes to `/dev/null`), so what a manager prints
- * is no part of the comparison; a separate case checks that the native path hands it the real stdout, stderr
- * and exit code.
+ * The stubs print nothing unless a case asks them to. The Node handler runs the manager through the NAPI
+ * binding `execPmCommandInteractive`, and on some hosts the child it starts gets `/dev/null` for stdin, stdout and
+ * stderr, so what a manager prints can only be compared where the binding forwards a child's stdout (`forwards`
+ * below). Everywhere else those cases are skipped, and a native-only case checks that the native path hands the
+ * manager the real stdout, stderr, stdin and exit code.
  *
  * The environment is built from scratch, not filtered from the parent's: the runner's colour, CI and
  * package-manager variables (`GITHUB_ACTIONS`, `FORCE_COLOR`, `TERM`, `npm_config_user_agent`, ...) change
@@ -39,6 +40,16 @@ const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "
 
 const addonLoads = (): boolean =>
     existsSync(addonPath) && spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(addonPath).href)});`], { cwd: packageRoot }).status === 0;
+
+/** Whether the binding that runs Node's package manager forwards the child's stdout, as it is meant to. */
+const forwards = (): boolean => {
+    const { stdout } = spawnSync(process.execPath, ["--input-type=module", "-e", `const binding = await import(${JSON.stringify(pathToFileURL(addonPath).href)}); binding.execPmCommandInteractive("echo", ["forwarded"], ".");`], {
+        cwd: packageRoot,
+        encoding: "utf8",
+    });
+
+    return stdout.includes("forwarded");
+};
 
 const ready = Boolean(binary) && process.platform !== "win32" && existsSync(nodeEntry) && addonLoads();
 
@@ -218,6 +229,8 @@ const SHAPES: string[][] = [
     ["add", "react", FLAG],
     ["add", FLAG, "react", "lodash@4.17.21"],
     ["add", "-D", "react", FLAG],
+    ["add", "react", "-D", "lodash", FLAG],
+    ["add", "-D", "react", "-E", "lodash", "--save-optional", "@scope/pkg", FLAG],
     ["add", "react", "-E", "-O", FLAG],
     ["add", "react", "-P", FLAG],
     ["add", "react", "--save-dev", "--exact", "--save-optional", FLAG],
@@ -427,6 +440,20 @@ describe.skipIf(!ready)("vis add: native vs Node", () => {
         expect(logs("bun-single", ["react", "--run-scripts"])).toMatch(/^bun:add react$/m);
         expect(logs("yarn-single", ["react", "-E"])).toMatch(/^yarn:add --exact react --ignore-scripts$/m);
         expect(logs("pnpm-single", ["react", "-g"])).toMatch(/^npm:install --global react --ignore-scripts$/m);
+    });
+
+    it.skipIf(!forwards())("prints what the manager prints, and no peer-dependency hint, as Node does", () => {
+        expect.assertions(4);
+
+        const setup = project("pnpm-single");
+
+        for (const env of [{ STUB_STDERR: "WARN  unmet peer react@18.0.0" }, { STUB_STDOUT: "Issues with peer dependencies found" }, { STUB_EXIT: "3", STUB_STDERR: "to-stderr", STUB_STDOUT: "to-stdout" }]) {
+            const { native, node } = both(setup, ["add", "react", FLAG], env);
+
+            expect(native).toStrictEqual(node);
+        }
+
+        expect(runNative(setup, ["add", "react", FLAG], { STUB_STDERR: "WARN  unmet peer react@18.0.0" }).stdout).not.toContain("Peer dependency");
     });
 
     it("hands the manager the real stdout, stderr, stdin and exit code", () => {

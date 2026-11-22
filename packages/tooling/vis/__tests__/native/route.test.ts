@@ -82,6 +82,60 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis add` flag shapes (plan in add.rs)", () => {
+        const ci = { CI: "1" };
+        const flag = "--no-marshall-check";
+
+        it.each([
+            [["add", "react", flag]],
+            [["add", flag, "react", "@scope/pkg@^1.2.0", "alias@npm:real@1"]],
+            [["add", "react", "-D", "lodash", "-E", flag]],
+            [["add", "react", flag, "-F", "app", "--filter=lib"]],
+            [["add", "react", "-g", "-w", "-O", "-P", "--workspace", "--run-scripts", "--no-socket-check", "--no-typosquat-check", flag]],
+        ])("routes `vis %j` in CI", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+        });
+
+        it.each([
+            [["add", "react"]],
+            [["add", flag]],
+            [["add", "-D", flag]],
+            [["add", "-F", "app", "react", flag]],
+            [["add", "--filter=app", "react", flag]],
+            [["add", "react", flag, "-F", "app", "lodash"]],
+            [["add", "react", flag, "-F"]],
+            [["add", "react", flag, "-D", "-D"]],
+            [["add", "react", flag, flag]],
+            [["add", "react", flag, "-r"]],
+            [["add", "react", flag, "--to", "web"]],
+            [["add", "react", flag, "--auto-install-peers"]],
+            [["add", "react", flag, "--exact=true"]],
+            [["add", "react", flag, "--"]],
+            [["add", "./local", flag]],
+            [["add", "react@", flag]],
+            [["add", "git+https://example.test/a.git", flag]],
+        ])("keeps `vis %j` in Node", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps the add in Node outside CI, on a terminal, on Windows and where output settings could change", () => {
+            expect.assertions(6);
+
+            const add = ["add", "react", flag];
+
+            expect(routesToNative(add, "linux", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(add, "linux", ci, "/work/app", true)).toBe(false);
+            expect(routesToNative(add, "win32", ci, "/work/app", false)).toBe(false);
+            expect(routesToNative(add, "linux", { ...ci, GITHUB_ACTIONS: "true" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(add, "linux", { ...ci, MARSHALL_DISABLE_ALL: "1" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(add, "linux", { ...ci, VIS_INSTALLER: "npm" }, "/work/app", false)).toBe(false);
+        });
+    });
+
     describe("`vis clean` flag shapes (plan in clean.rs)", () => {
         const ci = { CI: "1" };
 
