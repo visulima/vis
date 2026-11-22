@@ -137,6 +137,45 @@ describe("bundled oxfmt runner", () => {
             expect(leftovers()).toStrictEqual([]);
         });
 
+        it("keeps a config without globs in the vis cache, named by its content, and reuses it", async () => {
+            expect.assertions(7);
+
+            const config = { semi: false };
+
+            await runOxfmt({ binPath: stub, config, files: ["."], mode: "check", root });
+
+            const first = recorded();
+            const configPath = first.args[first.args.indexOf("-c") + 1]!;
+
+            expect(configPath.startsWith("node_modules/.cache/vis/fmt/")).toBe(true);
+            expect(first.configContent).toStrictEqual(config);
+            expect(leftovers()).toStrictEqual([]);
+
+            await runOxfmt({ binPath: stub, config, files: ["."], mode: "fix", root });
+
+            const second = recorded();
+
+            expect(second.args[second.args.indexOf("-c") + 1]).toBe(configPath);
+            expect(readdirSync(join(root, "node_modules/.cache/vis/fmt"))).toHaveLength(1);
+
+            await runOxfmt({ binPath: stub, config: { semi: true }, files: ["."], mode: "check", root });
+
+            expect(readdirSync(join(root, "node_modules/.cache/vis/fmt"))).toHaveLength(2);
+            expect(existsSync(join(root, configPath))).toBe(true);
+        });
+
+        it("uses the root file when the config has overrides alone, since oxfmt reads their globs relative to the config", async () => {
+            expect.assertions(3);
+
+            await runOxfmt({ binPath: stub, config: { overrides: [{ files: ["src/**"], options: { semi: true } }] }, files: ["."], mode: "check", root });
+
+            const call = recorded();
+
+            expect(call.args[call.args.indexOf("-c") + 1]!.startsWith(TRANSIENT_CONFIG_PREFIX)).toBe(true);
+            expect(existsSync(join(root, "node_modules"))).toBe(false);
+            expect(leftovers()).toStrictEqual([]);
+        });
+
         it("removes transient configs of dead processes before a run, with or without a config of its own, and keeps live ones", async () => {
             expect.assertions(5);
 
@@ -163,14 +202,14 @@ describe("bundled oxfmt runner", () => {
 
             process.env.STUB_MODE = "diff";
 
-            const diff = await runOxfmt({ binPath: stub, config: {}, files: ["."], mode: "check", root });
+            const diff = await runOxfmt({ binPath: stub, config: { ignorePatterns: ["dist"] }, files: ["."], mode: "check", root });
 
             expect(diff.exitCode).toBe(1);
             expect(diff.stdout).toBe("src/a.ts\nsrc/b.md\n");
 
             process.env.STUB_MODE = "fail";
 
-            const failed = await runOxfmt({ binPath: stub, config: {}, files: ["."], mode: "check", root });
+            const failed = await runOxfmt({ binPath: stub, config: { ignorePatterns: ["dist"] }, files: ["."], mode: "check", root });
 
             expect(failed.exitCode).toBe(2);
             expect(failed.stderr).toBe("boom\n");
@@ -180,7 +219,7 @@ describe("bundled oxfmt runner", () => {
         it("surfaces a binary that fails to load as a non-zero exit and removes the config", async () => {
             expect.assertions(3);
 
-            const result = await runOxfmt({ binPath: join(root, "does-not-exist.mjs"), config: {}, files: ["."], mode: "check", root });
+            const result = await runOxfmt({ binPath: join(root, "does-not-exist.mjs"), config: { ignorePatterns: ["dist"] }, files: ["."], mode: "check", root });
 
             expect(result.exitCode).not.toBe(0);
             expect(result.stderr).not.toBe("");
@@ -195,7 +234,7 @@ describe("bundled oxfmt runner", () => {
             for (const signal of ["SIGTERM", "SIGINT"] as const) {
                 process.env.STUB_MODE = "hang";
 
-                const running = runOxfmt({ binPath: stub, config: {}, files: ["."], mode: "fix", reRaiseSignal: reRaise, root });
+                const running = runOxfmt({ binPath: stub, config: { ignorePatterns: ["dist"] }, files: ["."], mode: "fix", reRaiseSignal: reRaise, root });
 
                 await vi.waitFor(() => {
                     expect(existsSync(out) && leftovers().length === 1).toBe(true);
@@ -224,7 +263,7 @@ describe("bundled oxfmt runner", () => {
             process.on("SIGTERM", other);
 
             try {
-                const running = runOxfmt({ binPath: stub, config: {}, files: ["."], mode: "fix", reRaiseSignal: reRaise, root });
+                const running = runOxfmt({ binPath: stub, config: { ignorePatterns: ["dist"] }, files: ["."], mode: "fix", reRaiseSignal: reRaise, root });
 
                 await vi.waitFor(() => {
                     expect(existsSync(out)).toBe(true);

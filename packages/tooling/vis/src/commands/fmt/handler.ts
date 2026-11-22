@@ -8,7 +8,7 @@ import { resolveSharedCacheDirectory } from "../../cache/cache-directory";
 import { selectFmtEngine } from "../../fmt/engine";
 import type { FmtResolution } from "../../fmt/resolve-options";
 import { describeFmtSource, resolveFmtOptions } from "../../fmt/resolve-options";
-import { runOxfmt, TRANSIENT_CONFIG_PATTERN, TRANSIENT_CONFIG_PREFIX } from "../../fmt/run-oxfmt";
+import { hasGlobs, runOxfmt, TRANSIENT_CONFIG_PATTERN, TRANSIENT_CONFIG_PREFIX } from "../../fmt/run-oxfmt";
 import { biomeAdapter } from "../../lint-fmt/adapters/biome";
 import { dprintAdapter } from "../../lint-fmt/adapters/dprint";
 import { BUNDLED_OXFMT_EXTENSIONS, oxfmtAdapter } from "../../lint-fmt/adapters/oxfmt";
@@ -72,7 +72,8 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
                 resolution.source === "defaults" ? "vis fmt: no config found, using oxfmt defaults" : `vis fmt: formatting with ${describeFmtSource(resolution, root)}`,
             );
 
-            if (resolution.config !== undefined) {
+            // Only a config with globs is written to the workspace root; any other lives in the vis cache.
+            if (resolution.config !== undefined && hasGlobs(resolution.config)) {
                 hintGitignore(root, logger);
             }
         }
