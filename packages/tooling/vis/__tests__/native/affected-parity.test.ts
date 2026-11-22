@@ -49,7 +49,10 @@ const baseEnvironment = (): Record<string, string | undefined> => {
 
 // A delegated error path prints a Node stack, whose async frames differ from one run to the next. Only V8 frames
 // (`at fn (file:1:2)`, `at file:1:2`, `at async fn (file:1:2)`, optionally followed by the `{` that opens the error's properties) are dropped, so any other indented line still has to match.
-const withoutStackFrames = (stderr: string): string => stderr.replaceAll(/^\s+at (?:.+ \(.*:\d+:\d+\)|(?:async )?[^\s()]+:\d+:\d+)(?: \{)?\n/gmu, "");
+// With `FORCE_COLOR` (CI sets it) Node greys each frame with an SGR pair around the line, which the pattern allows for; every other colour code is still compared.
+const SGR = String.raw`(?:${String.fromCodePoint(27)}\[[\d;]*m)*`;
+const stackFrame = new RegExp(String.raw`^${SGR}\s+at (?:.+ \(.*:\d+:\d+\)|(?:async )?[^\s()]+:\d+:\d+)${SGR}(?: \{)?\n`, "gmu");
+const withoutStackFrames = (stderr: string): string => stderr.replaceAll(stackFrame, "");
 
 /** Repositories whose `project.json` carries config the native selection does not reproduce. */
 type Fixture = "external-input" | "implicit-dependency";
