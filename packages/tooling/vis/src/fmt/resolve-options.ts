@@ -3,9 +3,10 @@ import { join, relative } from "@visulima/path";
 
 import type { VisConfig } from "../config/types";
 import { VisUserError } from "../errors/vis-user-error";
-import type { FmtConfigSourceKind, ModuleLoader, OxfmtConfig } from "./options";
+import type { FmtConfigSourceKind, FmtIgnoredSource, ModuleLoader, OxfmtConfig } from "./options";
 import { OXFMT_DISCOVERED_CONFIG_FILES } from "./options";
 import { findNestedPrettierConfigs, findPrettierConfigFile, mapPrettierConfig, readEditorconfigPrintWidth, readPrettierConfig, readPrettierIgnore } from "./prettier-config";
+import { findViteConfigFile, readViteFmtConfig } from "./vite-config";
 
 export interface ResolveFmtOptionsInput {
     /** `vis.config` `fmt` section. */
@@ -25,6 +26,8 @@ export interface FmtResolution {
     config?: OxfmtConfig;
     /** The config file the source is, when it is a file. */
     file?: string;
+    /** Sources that exist but lose to the winner, highest first. Detected, never read. */
+    ignored: FmtIgnoredSource[];
     source: FmtConfigSourceKind;
     warnings: string[];
 }
@@ -33,20 +36,20 @@ const hasVisConfigOptions = (fmtConfig: ResolveFmtOptionsInput["fmtConfig"]): fm
     fmtConfig !== undefined && (fmtConfig.options !== undefined || fmtConfig.overrides !== undefined || fmtConfig.ignorePatterns !== undefined);
 
 /** Globs are resolved against the workspace root, and oxfmt rejects one that climbs out of it. */
-const assertInsideRoot = (location: string, patterns: ReadonlyArray<string>): void => {
+const assertInsideRoot = (origin: string, location: string, patterns: ReadonlyArray<string>): void => {
     for (const pattern of patterns) {
         if (pattern.replace(/^!/, "").split(/[/\\]/).includes("..")) {
-            throw new VisUserError(`vis.config ${location}: "${pattern}" must not contain "..". Patterns are relative to the workspace root.`);
+            throw new VisUserError(`${origin} ${location}: "${pattern}" must not contain "..". Patterns are relative to the workspace root.`);
         }
     }
 };
 
-const validateFmtGlobs = (fmtConfig: NonNullable<ResolveFmtOptionsInput["fmtConfig"]>): void => {
-    assertInsideRoot("fmt.ignorePatterns", fmtConfig.ignorePatterns ?? []);
+const validateGlobs = (origin: string, config: { ignorePatterns?: ReadonlyArray<string>; overrides?: ReadonlyArray<{ excludeFiles?: string | string[]; files: string | string[] }> }): void => {
+    assertInsideRoot(origin, "fmt.ignorePatterns", config.ignorePatterns ?? []);
 
-    for (const [index, override] of (fmtConfig.overrides ?? []).entries()) {
-        assertInsideRoot(`fmt.overrides[${String(index)}].files`, [override.files].flat());
-        assertInsideRoot(`fmt.overrides[${String(index)}].excludeFiles`, [override.excludeFiles ?? []].flat());
+    for (const [index, override] of (config.overrides ?? []).entries()) {
+        assertInsideRoot(origin, `fmt.overrides[${String(index)}].files`, [override.files].flat());
+        assertInsideRoot(origin, `fmt.overrides[${String(index)}].excludeFiles`, [override.excludeFiles ?? []].flat());
     }
 };
 
@@ -59,7 +62,8 @@ const findOxfmtConfigFile = (root: string): string | undefined => {
 /**
  * Picks where the bundled oxfmt gets its options. The first source that exists is used whole, in this
  * order: `vis.config` `fmt.options` (with `fmt.overrides` and `fmt.ignorePatterns`), an oxfmt config
- * file, a Prettier config, oxfmt's defaults (Prettier's, when Prettier is declared but has no config,
+ * file or the `fmt` key of a Vite config (oxfmt does not read the latter outside the Vite+ toolchain, so
+ * vis evaluates it; an oxfmt file wins over it), a Prettier config, oxfmt's defaults (Prettier's, when Prettier is declared but has no config,
  * so its 80-column width is kept). Sources are never merged. An `.oxfmtrc` or `oxfmt.config.*`
  * is only detected: oxfmt reads it itself.
  * @param input The `fmt` config, the workspace root and the JS/TS config loader.
@@ -68,17 +72,22 @@ const findOxfmtConfigFile = (root: string): string | undefined => {
  * @param input.prettierDeclared Whether Prettier is declared or detected, config file or not.
  * @param input.root Workspace root.
  * @returns The chosen source with the config to hand to oxfmt (if vis has to), and the warnings to print.
- * @throws When the Prettier config is the chosen source but cannot be read, or a `vis.config` glob contains `..`.
+ * @throws When the Prettier config or the Vite `fmt` key is the chosen source but cannot be read, or a glob of `vis.config` or the Vite `fmt` key contains `..`.
  */
 export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclared = false, root }: ResolveFmtOptionsInput): Promise<FmtResolution> => {
     const oxfmtFile = findOxfmtConfigFile(root);
+    const viteFile = findViteConfigFile(root);
     const prettierFile = findPrettierConfigFile(root);
     const display = (file: string): string => relative(root, file);
+    const lower = (...candidates: (FmtIgnoredSource | undefined)[]): FmtIgnoredSource[] => candidates.filter((candidate): candidate is FmtIgnoredSource => candidate !== undefined);
+    const oxfmtSource = oxfmtFile === undefined ? undefined : { file: oxfmtFile, source: "oxfmtrc" as const };
+    const viteSource = viteFile === undefined ? undefined : { file: viteFile, source: "vite-config" as const };
+    const prettierSource = prettierFile === undefined ? undefined : { file: prettierFile, source: "prettier" as const };
 
     if (hasVisConfigOptions(fmtConfig)) {
-        validateFmtGlobs(fmtConfig);
+        validateGlobs("vis.config", fmtConfig);
 
-        const ignored = [oxfmtFile, prettierFile].filter((file): file is string => file !== undefined).map((file) => display(file));
+        const ignored = lower(oxfmtSource, viteSource, prettierSource);
         const config: Record<string, unknown> = { ...fmtConfig.options };
 
         if (fmtConfig.overrides !== undefined) {
@@ -91,19 +100,62 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
 
         return {
             config,
+            ignored,
             source: "vis.config",
-            warnings: ignored.length > 0 ? [ignoredWarning("vis.config fmt.options", ignored)] : [],
+            warnings: ignored.length > 0 ? [ignoredWarning("vis.config fmt.options", ignored.map(({ file }) => display(file)))] : [],
         };
     }
 
+    // An oxfmt config file and the fmt key of a Vite config are one source: the oxfmt file wins, being oxfmt's own.
     if (oxfmtFile !== undefined) {
+        const ignored = lower(viteSource, prettierSource);
+
         return {
             file: oxfmtFile,
+            ignored,
             source: "oxfmtrc",
-            warnings: prettierFile === undefined ? [] : [ignoredWarning(display(oxfmtFile), [display(prettierFile)])],
+            warnings: ignored.length === 0 ? [] : [ignoredWarning(display(oxfmtFile), ignored.map(({ file }) => display(file)))],
         };
     }
 
+    if (viteFile !== undefined) {
+        const { config, warnings } = await readViteFmtConfig(viteFile, root, loadModule);
+
+        if (config !== undefined) {
+            validateGlobs(display(viteFile), config);
+
+            const ignored = lower(prettierSource);
+
+            return {
+                config,
+                file: viteFile,
+                ignored,
+                source: "vite-config",
+                warnings: [...warnings, ...(ignored.length === 0 ? [] : [ignoredWarning(`the fmt key of ${display(viteFile)}`, ignored.map(({ file }) => display(file)))])],
+            };
+        }
+
+        // The file only mentioned "fmt" (or exports a function): carry on with the next source, keeping what was said about it.
+        const rest = await resolveFromPrettier({ display, loadModule, prettierDeclared, prettierFile, root });
+
+        return { ...rest, warnings: [...warnings, ...rest.warnings] };
+    }
+
+    return resolveFromPrettier({ display, loadModule, prettierDeclared, prettierFile, root });
+};
+
+const resolveFromPrettier = async ({
+    loadModule,
+    prettierDeclared,
+    prettierFile,
+    root,
+}: {
+    display: (file: string) => string;
+    loadModule: ModuleLoader;
+    prettierDeclared: boolean;
+    prettierFile: string | undefined;
+    root: string;
+}): Promise<FmtResolution> => {
     if (prettierFile !== undefined) {
         const found = await readPrettierConfig(root, loadModule);
         const { scoped, universal } = readEditorconfigPrintWidth(root);
@@ -117,7 +169,7 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
 
         warnings.push(...scopedWidthWarnings(scoped));
 
-        return { config, file: found!.file, source: "prettier", warnings };
+        return { config, file: found!.file, ignored: [], source: "prettier", warnings };
     }
 
     if (prettierDeclared) {
@@ -125,10 +177,10 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
         const { scoped, universal } = readEditorconfigPrintWidth(root);
         const { config } = mapPrettierConfig({}, { editorconfigPrintWidth: universal });
 
-        return { config, source: "prettier-defaults", warnings: [...scopedWidthWarnings(scoped), ...nestedConfigWarnings(root)] };
+        return { config, ignored: [], source: "prettier-defaults", warnings: [...scopedWidthWarnings(scoped), ...nestedConfigWarnings(root)] };
     }
 
-    return { source: "defaults", warnings: nestedConfigWarnings(root) };
+    return { ignored: [], source: "defaults", warnings: nestedConfigWarnings(root) };
 };
 
 const scopedWidthWarnings = (scoped: ReadonlyArray<string>): string[] =>
@@ -148,7 +200,7 @@ const nestedConfigWarnings = (root: string): string[] => {
 };
 
 const ignoredWarning = (used: string, ignored: ReadonlyArray<string>): string =>
-    `Formatting options come from ${used}; ${ignored.join(" and ")} found but not used (the first source that exists is used whole: vis.config fmt.options, then .oxfmtrc.json / oxfmt.config.ts, then the Prettier config).`;
+    `Formatting options come from ${used}; ${ignored.join(" and ")} found but not used (the first source that exists is used whole: vis.config fmt.options, then .oxfmtrc.json / oxfmt.config.ts or the fmt key of vite.config.*, then the Prettier config).`;
 
 /**
  * Names the winning source for the "formatting with …" notice.
@@ -169,6 +221,9 @@ export const describeFmtSource = (resolution: FmtResolution, root: string): stri
         }
         case "prettier-defaults": {
             return "Prettier's defaults (Prettier is declared but has no config)";
+        }
+        case "vite-config": {
+            return `the fmt key of ${relative(root, resolution.file!)}`;
         }
         default: {
             return "vis.config fmt.options";

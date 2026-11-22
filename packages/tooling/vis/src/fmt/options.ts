@@ -18,7 +18,14 @@ export type OxfmtConfig = Oxfmtrc;
 export type FmtEngine = "auto" | "oxfmt" | "prettier";
 
 /** Where the options of a bundled-oxfmt run came from. */
-export type FmtConfigSourceKind = "defaults" | "oxfmtrc" | "prettier" | "prettier-defaults" | "vis.config";
+export type FmtConfigSourceKind = "defaults" | "oxfmtrc" | "prettier" | "prettier-defaults" | "vis.config" | "vite-config";
+
+/** A config source that exists but is not used because a higher one won. */
+export interface FmtIgnoredSource {
+    /** Absolute path of the file. */
+    file: string;
+    source: FmtConfigSourceKind;
+}
 
 /**
  * Config files oxfmt discovers on its own in a directory (checked against oxfmt 0.79).

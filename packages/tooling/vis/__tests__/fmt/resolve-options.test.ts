@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { join } from "@visulima/path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ModuleLoader } from "../../src/fmt/options";
 import { describeFmtSource, resolveFmtOptions } from "../../src/fmt/resolve-options";
@@ -307,15 +307,141 @@ describe("fmt option resolution", () => {
         });
     });
 
-    describe(describeFmtSource, () => {
-        it("names each source for the run notice", () => {
+    describe("the fmt key of a Vite config", () => {
+        const viteConfig = "export default { fmt: { semi: false, ignorePatterns: ['gen/**'] }, plugins: [] };\n";
+
+        it("is a config source of its own, evaluated through the loader", async () => {
             expect.assertions(5);
 
-            expect(describeFmtSource({ source: "vis.config", warnings: [] }, root)).toBe("vis.config fmt.options");
-            expect(describeFmtSource({ file: join(root, ".oxfmtrc.json"), source: "oxfmtrc", warnings: [] }, root)).toBe(".oxfmtrc.json");
-            expect(describeFmtSource({ file: join(root, ".prettierrc.json"), source: "prettier", warnings: [] }, root)).toBe(".prettierrc.json (mapped to oxfmt options)");
-            expect(describeFmtSource({ source: "defaults", warnings: [] }, root)).toBe("oxfmt defaults");
-            expect(describeFmtSource({ source: "prettier-defaults", warnings: [] }, root)).toContain("Prettier's defaults");
+            write("vite.config.mjs", viteConfig);
+
+            const resolution = await resolveFmtOptions({ loadModule, root });
+
+            expect(resolution.source).toBe("vite-config");
+            expect(resolution.config).toStrictEqual({ ignorePatterns: ["gen/**"], semi: false });
+            expect(resolution.file).toBe(join(root, "vite.config.mjs"));
+            expect(resolution.ignored).toStrictEqual([]);
+            expect(resolution.warnings).toStrictEqual([]);
+        });
+
+        it("is never evaluated for a Vite config that has no fmt key", async () => {
+            expect.assertions(3);
+
+            write("vite.config.mjs", "// the fmt step runs elsewhere\nexport default { plugins: [] };\n");
+
+            const spy = vi.fn(loadModule);
+            const resolution = await resolveFmtOptions({ loadModule: spy, root });
+
+            expect(resolution.source).toBe("defaults");
+            expect(resolution.warnings).toStrictEqual([]);
+            expect(spy).not.toHaveBeenCalled();
+        });
+
+        it("carries on to the next source when the config only mentions fmt without exporting the key", async () => {
+            expect.assertions(2);
+
+            write("vite.config.mjs", "const fmt = 1;\nexport default { plugins: [fmt] };\n");
+            write(".prettierrc.json", JSON.stringify({ printWidth: 80, semi: false }));
+
+            const resolution = await resolveFmtOptions({ loadModule, root });
+
+            expect(resolution.source).toBe("prettier");
+            expect(resolution.warnings).toStrictEqual([]);
+        });
+
+        it("warns and carries on when the config exports a function", async () => {
+            expect.assertions(3);
+
+            write("vite.config.mjs", "export default () => ({ fmt: { semi: false } });\n");
+
+            const resolution = await resolveFmtOptions({ loadModule, root });
+
+            expect(resolution.source).toBe("defaults");
+            expect(resolution.warnings).toHaveLength(1);
+            expect(resolution.warnings[0]).toMatch(/vite\.config\.mjs exports a function/);
+        });
+
+        it("sits with an oxfmt config file as one source: the oxfmt file wins, with one warning naming both, and the Vite config is not evaluated", async () => {
+            expect.assertions(5);
+
+            write(".oxfmtrc.json", "{}");
+            write("vite.config.mjs", viteConfig);
+
+            const spy = vi.fn(loadModule);
+            const resolution = await resolveFmtOptions({ loadModule: spy, root });
+
+            expect(resolution.source).toBe("oxfmtrc");
+            expect(resolution.ignored).toStrictEqual([{ file: join(root, "vite.config.mjs"), source: "vite-config" }]);
+            expect(resolution.warnings).toHaveLength(1);
+            expect(resolution.warnings[0]).toMatch(/\.oxfmtrc\.json.*vite\.config\.mjs/);
+            expect(spy).not.toHaveBeenCalled();
+        });
+
+        it("wins over a Prettier config, which is then not read", async () => {
+            expect.assertions(4);
+
+            write("vite.config.mjs", viteConfig);
+            write(".prettierrc.json", "{ nope");
+
+            const resolution = await resolveFmtOptions({ loadModule, root });
+
+            expect(resolution.source).toBe("vite-config");
+            expect(resolution.ignored).toStrictEqual([{ file: join(root, ".prettierrc.json"), source: "prettier" }]);
+            expect(resolution.warnings).toHaveLength(1);
+            expect(resolution.warnings[0]).toMatch(/vite\.config\.mjs.*\.prettierrc\.json/);
+        });
+
+        it("loses to vis.config, which names every ignored source in its warning", async () => {
+            expect.assertions(5);
+
+            write(".oxfmtrc.json", "{}");
+            write("vite.config.mjs", viteConfig);
+            write(".prettierrc.json", "{}");
+
+            const resolution = await resolveFmtOptions({ fmtConfig: { options: { semi: true } }, loadModule, root });
+
+            expect(resolution.source).toBe("vis.config");
+            expect(resolution.ignored.map(({ source }) => source)).toStrictEqual(["oxfmtrc", "vite-config", "prettier"]);
+            expect(resolution.warnings).toHaveLength(1);
+            expect(resolution.warnings[0]).toContain("vite.config.mjs");
+            expect(resolution.warnings[0]).toContain(".oxfmtrc.json");
+        });
+
+        it("rejects a glob that climbs out of the root, naming the Vite config", async () => {
+            expect.assertions(1);
+
+            write("vite.config.mjs", "export default { fmt: { ignorePatterns: ['../x'] } };\n");
+
+            await expect(resolveFmtOptions({ loadModule, root })).rejects.toThrow(/vite\.config\.mjs fmt\.ignorePatterns: "\.\.\/x" must not contain "\.\."/);
+        });
+
+        it("fails when the fmt key is not an object", async () => {
+            expect.assertions(1);
+
+            write("vite.config.mjs", "export default { fmt: 3 };\n");
+
+            await expect(resolveFmtOptions({ loadModule, root })).rejects.toThrow(/vite\.config\.mjs: the "fmt" key must be an object/);
+        });
+
+        it("fails with the reason when the config cannot be loaded", async () => {
+            expect.assertions(1);
+
+            write("vite.config.mjs", "export default { fmt: {} }; throw new Error('boom');\n");
+
+            await expect(resolveFmtOptions({ loadModule, root })).rejects.toThrow(/Could not load vite\.config\.mjs to read its fmt key: boom/);
+        });
+    });
+
+    describe(describeFmtSource, () => {
+        it("names each source for the run notice", () => {
+            expect.assertions(6);
+
+            expect(describeFmtSource({ file: join(root, "vite.config.ts"), ignored: [], source: "vite-config", warnings: [] }, root)).toBe("the fmt key of vite.config.ts");
+            expect(describeFmtSource({ ignored: [], source: "vis.config", warnings: [] }, root)).toBe("vis.config fmt.options");
+            expect(describeFmtSource({ file: join(root, ".oxfmtrc.json"), ignored: [], source: "oxfmtrc", warnings: [] }, root)).toBe(".oxfmtrc.json");
+            expect(describeFmtSource({ file: join(root, ".prettierrc.json"), ignored: [], source: "prettier", warnings: [] }, root)).toBe(".prettierrc.json (mapped to oxfmt options)");
+            expect(describeFmtSource({ ignored: [], source: "defaults", warnings: [] }, root)).toBe("oxfmt defaults");
+            expect(describeFmtSource({ ignored: [], source: "prettier-defaults", warnings: [] }, root)).toContain("Prettier's defaults");
         });
     });
 });
