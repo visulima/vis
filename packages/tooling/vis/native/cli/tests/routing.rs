@@ -43,6 +43,8 @@ enum Outcome {
 struct Case {
     args: Vec<String>,
     binary: Option<Route>,
+    /// A directory below the project root to run in.
+    directory: Option<String>,
     #[serde(default)]
     env: BTreeMap<String, String>,
     #[serde(default)]
@@ -80,9 +82,14 @@ fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
         write_file(directory, name, content);
     }
 
+    let working_directory =
+        case.directory.as_ref().map_or_else(|| directory.to_path_buf(), |below| directory.join(below));
+
+    fs::create_dir_all(&working_directory).expect("create working directory");
+
     let output = Command::new(env!("CARGO_BIN_EXE_vis"))
         .args(&case.args)
-        .current_dir(directory)
+        .current_dir(&working_directory)
         .env_clear()
         // No package manager on PATH: a native pm command fails to spawn instead of running one.
         .env("PATH", empty_path)

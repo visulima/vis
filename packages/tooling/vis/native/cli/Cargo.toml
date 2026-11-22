@@ -34,8 +34,9 @@ vis-core = { path = "../core" }
 # the shared cache directory resolves exactly like the Node path, which calls the same function.
 task-runner-core = { path = "../../../task-runner/native/core" }
 # `hook run` fast path. `prek-identify` is pinned to the addon's version so both
-# classify files identically; `regex` is built without Unicode tables because the
-# fast path only accepts patterns whose ASCII semantics match JS `RegExp`.
+# classify files identically. The fast path compiles every pattern with `unicode(false)`
+# (see src/hook/filter.rs), so ASCII semantics match JS `RegExp` whichever regex features
+# the scanner engine below unifies in (it needs the Unicode tables).
 prek-identify = "0.5"
 regex = { version = "1", default-features = false, features = [
   "std",
@@ -43,6 +44,10 @@ regex = { version = "1", default-features = false, features = [
 ] }
 # Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
 blake3 = { version = "1", default-features = false }
+# `vis secrets`: the scanner engine itself, linked as a plain crate (no napi, no addon), and the
+# SHA-256 of its baseline fingerprints. Everything in the engine's tree is pure Rust.
+secret-scanner-core = { path = "../../../secret-scanner/native/core" }
+sha2 = "0.10"
 serde = { version = "1", features = [ "derive" ] }
 serde_json = { version = "1", features = [
   "float_roundtrip",
