@@ -126,8 +126,6 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
     parsed.values.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
 }
 
-/// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
-/// lockfiles, so a native choice from the lockfile would differ.
 /// Whether `verb` runs Node's handler at the workspace root, which is not `cwd` when the root is above it:
 /// `link`, `dedupe`, `unlink` and `why`, below a monorepo root or a turbo.json. Applies to any config at all.
 fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
@@ -136,6 +134,8 @@ fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
             || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()))
 }
 
+/// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
+/// lockfiles, so a native choice from the lockfile would differ.
 fn installer_selected_by_environment() -> bool {
     const AUBE_NAMES: [&str; 4] = ["aube", "aube.exe", "aube.cmd", "aube.bat"];
 

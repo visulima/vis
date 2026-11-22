@@ -10,6 +10,7 @@
 // Lean entry (see `bin.ts`): it loads no command module.
 
 import childProcess from "node:child_process";
+import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -51,6 +52,7 @@ const original = {
     environment: process.env,
     existsSync: fs.existsSync,
     realpathSync: fs.realpathSync,
+    statSync: fs.statSync,
     writeFileSync: fs.writeFileSync,
 };
 
@@ -106,14 +108,15 @@ interface Tracker {
     uncacheable: Set<string>;
 }
 
-const FS_PATH_FIRST: Record<string, TrackedKind> = {
+/** `stat` results carry the size and times of a file, so a file's contents are tracked and anything else only its existence. */
+const FS_PATH_FIRST: Record<string, TrackedKind | "stat"> = {
     access: "exists",
     accessSync: "exists",
     createReadStream: "file",
     exists: "exists",
     existsSync: "exists",
-    lstat: "exists",
-    lstatSync: "exists",
+    lstat: "stat",
+    lstatSync: "stat",
     open: "file",
     opendir: "dir",
     opendirSync: "dir",
@@ -122,12 +125,46 @@ const FS_PATH_FIRST: Record<string, TrackedKind> = {
     readdirSync: "dir",
     readFile: "file",
     readFileSync: "file",
-    stat: "exists",
-    statSync: "exists",
+    stat: "stat",
+    statSync: "stat",
 };
 
 /** File APIs whose results cannot be attributed to a path, so a config using them is not reusable. */
 const UNTRACKED_READS = ["glob", "globSync"];
+
+/** File APIs that change the disk: a cached run would skip them, so a config using them stays with Node. */
+const FILE_WRITES = [
+    "appendFile",
+    "appendFileSync",
+    "copyFile",
+    "copyFileSync",
+    "cp",
+    "cpSync",
+    "createWriteStream",
+    "mkdir",
+    "mkdirSync",
+    "mkdtemp",
+    "mkdtempSync",
+    "rename",
+    "renameSync",
+    "rm",
+    "rmSync",
+    "rmdir",
+    "rmdirSync",
+    "symlink",
+    "symlinkSync",
+    "truncate",
+    "truncateSync",
+    "unlink",
+    "unlinkSync",
+    "writeFile",
+    "writeFileSync",
+];
+
+/** Directory listings whose `recursive` option reaches below the entries the digest of a directory covers. */
+const DIRECTORY_LISTINGS = new Set(["opendir", "opendirSync", "readdir", "readdirSync"]);
+
+const DNS_LOOKUPS = ["lookup", "lookupService", "resolve", "resolve4", "resolve6", "resolveAny", "reverse"];
 
 const FLAGGED: [object, string, string][] = [
     [childProcess, "spawn", "starts a process"],
@@ -188,7 +225,33 @@ const startTracking = (): Tracker => {
     for (const [name, kind] of Object.entries(FS_PATH_FIRST)) {
         for (const target of [fs, fs.promises] as Record<string, unknown>[]) {
             patch(target, name, (inner) => function wrapped(this: unknown, ...arguments_: unknown[]) {
-                record(toPath(arguments_[0]), kind);
+                const path = toPath(arguments_[0]);
+
+                record(path, kind === "stat" ? (path !== undefined && original.statSync(path, { throwIfNoEntry: false })?.isFile() ? "file" : "exists") : kind);
+
+                if (DIRECTORY_LISTINGS.has(name) && (arguments_[1] as { recursive?: boolean } | undefined)?.recursive === true) {
+                    uncacheable.add("lists a directory recursively");
+                }
+
+                return inner.apply(this, arguments_);
+            });
+        }
+    }
+
+    for (const name of FILE_WRITES) {
+        for (const target of [fs, fs.promises] as Record<string, unknown>[]) {
+            patch(target, name, (inner) => function wrapped(this: unknown, ...arguments_: unknown[]) {
+                uncacheable.add("writes files");
+
+                return inner.apply(this, arguments_);
+            });
+        }
+    }
+
+    for (const name of DNS_LOOKUPS) {
+        for (const target of [dns, dns.promises] as unknown as Record<string, unknown>[]) {
+            patch(target, name, (inner) => function wrapped(this: unknown, ...arguments_: unknown[]) {
+                uncacheable.add("uses the network");
 
                 return inner.apply(this, arguments_);
             });

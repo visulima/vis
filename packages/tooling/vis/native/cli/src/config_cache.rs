@@ -7,9 +7,10 @@
 //! directories it listed and the environment variables it read. The emitter lists those
 //! dependencies, and this module hashes them, so revalidation needs no Node at all.
 //!
-//! A result is only stored when the emitter could track everything the config touched. A config
-//! that started a process, used the network, printed output or listed the whole environment is
-//! evaluated again on every run instead. `VIS_NO_CONFIG_CACHE=1` turns this module off, and the
+//! A result is only stored as data when the emitter could track everything the config touched. A
+//! config that started a process, used the network, wrote files, printed output or listed the whole
+//! environment is stored as "Node's to run": it goes to Node on every run until something it did
+//! track changes. `VIS_NO_CONFIG_CACHE=1` turns this module off, and the
 //! config is then handed to Node like any other dynamic config. Deleting the cache directory
 //! (`<cache dir>/config`) forgets every stored result.
 
@@ -123,7 +124,11 @@ pub fn resolve(config_path: &Path) -> Option<Resolved> {
         _ => return None,
     };
 
-    store(&entry, config_path, &version, &emitted, data, started);
+    // A tracked file changed while the emitter ran, so what it read may already be out of date: the
+    // config is left to Node this once rather than used natively.
+    if store(&entry, config_path, &version, &emitted, data, started) == StoreOutcome::Raced {
+        return None;
+    }
 
     Some(data.map_or(Resolved::NodeOnly, |config| Resolved::Data(config.clone())))
 }
@@ -239,6 +244,15 @@ fn emit(config_path: &Path) -> Option<Emitted> {
     Some(emitted)
 }
 
+/// What `store` did with an evaluation.
+#[derive(Debug, PartialEq)]
+enum StoreOutcome {
+    /// A tracked file changed while the emitter ran, so nothing was stored.
+    Raced,
+    /// The entry was written, or could not be (an unwritable cache directory is not an error).
+    Done,
+}
+
 /// Write the entry, unless a tracked file changed while the emitter ran (the hashes would then
 /// describe a different config than the one that was evaluated). The write is a rename, so a
 /// concurrent run sees the old entry or the new one, never half of one.
@@ -249,7 +263,7 @@ fn store(
     emitted: &Emitted,
     data: Option<&Value>,
     started: SystemTime,
-) {
+) -> StoreOutcome {
     let mut files = vec![StoredFile {
         path: config_path.to_string_lossy().into_owned(),
         kind: Kind::File,
@@ -269,7 +283,7 @@ fn store(
     }
 
     if files.iter().any(|file| modified_since(Path::new(&file.path), started)) {
-        return;
+        return StoreOutcome::Raced;
     }
 
     let stored = Stored {
@@ -283,12 +297,15 @@ fn store(
     };
 
     let Some(directory) = entry.parent() else {
-        return;
+        return StoreOutcome::Done;
     };
     let Ok(bytes) = serde_json::to_vec(&stored) else {
-        return;
+        return StoreOutcome::Done;
     };
-    let temporary = directory.join(format!(".{}.tmp", std::process::id()));
+    // Created exclusively under a name no other process can predict, so a path planted in a shared cache
+    // directory is refused instead of followed.
+    let nonce = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_nanos());
+    let temporary = directory.join(format!(".{}.{nonce}.tmp", std::process::id()));
 
     if fs::create_dir_all(directory).is_err()
         || write_private(&temporary, &bytes).is_err()
@@ -296,13 +313,15 @@ fn store(
     {
         let _ = fs::remove_file(&temporary);
     }
+
+    StoreOutcome::Done
 }
 
 /// The entry may hold values the config computed, so it is readable by its owner only.
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut options = fs::OpenOptions::new();
 
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
 
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
@@ -441,8 +460,9 @@ mod tests {
         };
         let entry = dir.join("cache").join("entry.json");
 
-        store(&entry, &config, "1.0.0", &emitted, emitted.config.as_ref(), SystemTime::UNIX_EPOCH);
+        let outcome = store(&entry, &config, "1.0.0", &emitted, emitted.config.as_ref(), SystemTime::UNIX_EPOCH);
 
+        assert_eq!(outcome, StoreOutcome::Raced);
         assert!(!entry.exists());
     }
 
