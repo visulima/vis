@@ -278,6 +278,21 @@ interface RegisterHooksModule {
 }
 
 let hookRegistered = false;
+
+const loadObservers = new Set<(path: string) => void>();
+
+/**
+ * Call `listener` with the file path of every module the load hook sees (the entry
+ * and its whole import graph, ESM and `require`), until the returned function is
+ * called. Only meaningful once {@link registerTsHooks} returned `true`.
+ */
+export const observeModuleLoads = (listener: (path: string) => void): (() => void) => {
+    loadObservers.add(listener);
+
+    return () => {
+        loadObservers.delete(listener);
+    };
+};
 let freshCounter = 0;
 let warnedNoRegisterHooks = false;
 let sourceMapsEnabled = false;
@@ -417,6 +432,14 @@ const ensureRegisterHooks = (): boolean => {
     registerHooks({
         load(url, context, nextLoad) {
             const clean = stripQuery(url);
+
+            if (loadObservers.size > 0 && clean.startsWith("file:")) {
+                const observed = fileURLToPath(clean);
+
+                for (const listener of loadObservers) {
+                    listener(observed);
+                }
+            }
 
             if (clean.startsWith("file:") && TS_RE.test(clean)) {
                 const filename = fileURLToPath(clean);

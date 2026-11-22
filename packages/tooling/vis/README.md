@@ -337,6 +337,8 @@ vis secrets --exclude-rule generic-api-key                       # drop a noisy 
 vis secrets --baseline .secrets-baseline.json   # suppress triaged findings; print diff
 vis secrets --update-baseline       # merge current findings into the baseline
 vis secrets --format sarif > report.sarif       # SARIF for GitHub code-scanning
+vis secrets --format github                     # inline GitHub Actions annotations
+vis secrets --profile                           # timing by phase, rule and file (stderr)
 ```
 
 **Suppression** — inline (`// gitleaks:allow`), block (`gitleaks:allow-start` … `gitleaks:allow-end`), or a baseline JSON (sole fingerprint store). See the [secret-scanner README](../secret-scanner/README.md#suppression) for details.

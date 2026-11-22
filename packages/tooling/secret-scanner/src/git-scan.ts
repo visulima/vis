@@ -30,12 +30,16 @@ import { DEFAULT_MAX_FILE_SIZE } from "./constants";
 import type { RawDiffEntry } from "./git-command";
 import { assertNotFlag, DIFF_HARDENING_FLAGS, GitBlobReader, gitEnvironment, GITLINK_MODE, isBinaryBlob, NULL_OID, parseRawDiff, runGit } from "./git-command";
 import { buildCommitAllowlist } from "./git-commit-allowlist";
-import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
+import { buildIgnoreMatcher, canonicalize, isWithin } from "./ignore-matcher";
 import type { ProcessedFindings, SuppressionContext } from "./pipeline";
 import { dropShadowedGenericFindings, postProcessDetailed } from "./pipeline";
 import type { PreparedScan } from "./prepare-scan";
+import { ProfileAccumulator } from "./profile";
 import { beginScan, finishResult } from "./scan-session";
-import type { Finding, GitleaksIgnoreEntry, ScanOptions, SuppressedFinding } from "./types";
+import type { AllowWarning, Finding, GitleaksIgnoreEntry, ScanOptions, ScanProfile, SuppressedFinding } from "./types";
+
+/** Length of the commit id shown next to a path in profile rows. */
+const SHORT_SHA_LENGTH = 7;
 
 /** Raw detection results kept for parent-blob lookups across commits. */
 const PARENT_CACHE_LIMIT = 256;
@@ -78,7 +82,11 @@ export interface GitSkippedBlob {
 
 /** Findings plus the blobs that were skipped, so a caller can tell "clean" from "not looked at". */
 export interface GitScanResult<F extends Finding = Finding> {
+    /** Allow markers naming rule ids that are not active; see {@link AllowWarning}. */
+    allowWarnings: AllowWarning[];
     findings: F[];
+    /** Timing breakdown; present only when `ScanOptions.profile` was set. */
+    profile?: ScanProfile;
     skipped: GitSkippedBlob[];
     /** Suppressed findings; empty unless `reportSuppressed` is on. */
     suppressed: SuppressedFinding<F>[];
@@ -317,7 +325,13 @@ const realOrSelf = (path: string): string => {
 
 /** Shared per-scan state: prepared options, the blob reader and the skip log. */
 class BlobScanner {
+    /** Each marker once, however many commits touch its blob. */
+    readonly #allowWarnings = new Map<string, AllowWarning>();
+
     public readonly skipped: GitSkippedBlob[] = [];
+
+    /** Present only when `ScanOptions.profile` is set; every blob's timings are folded into it as the blob finishes. */
+    public readonly profiler: ProfileAccumulator | undefined;
 
     readonly #context: SuppressionContext;
 
@@ -333,7 +347,12 @@ class BlobScanner {
         this.#context = context;
         this.#options = options;
         this.#prepared = prepared;
+        this.profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
         this.#reader = new GitBlobReader(cwd, options?.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
+    }
+
+    public get allowWarnings(): AllowWarning[] {
+        return [...this.#allowWarnings.values()];
     }
 
     public close(): void {
@@ -369,12 +388,22 @@ class BlobScanner {
      * matched by generic-api-key is not reported again. Secrets are real even
      * under `redact` (the pipeline masks), so parent comparisons never
      * confuse two secrets that mask alike (`ghp***xY4`). `commit` lets AND
-     * allowlists that list `commits` match.
+     * allowlists that list `commits` match. `label` names the blob in the
+     * profile: the commit-qualified path in history scans, the reported path
+     * when staged.
      */
-    public detect(content: string, path: string, commit?: string): ProcessedFindings {
+    public detect(content: string, path: string, commit?: string, reportedAs?: string, label?: string): ProcessedFindings {
         const report = binding.scanTextSync(content, path, { ...this.#prepared.nativeOptions, commit });
 
-        return dropShadowedGenericFindings(report, this.#prepared, this.#options);
+        this.profiler?.addNative(report.profile, label ?? (commit === undefined ? path : `${path}@${commit.slice(0, SHORT_SHA_LENGTH)}`));
+
+        if (reportedAs !== undefined) {
+            for (const warning of report.allowWarnings) {
+                this.#allowWarnings.set(`${warning.line}\0${warning.unknownRuleIds.join("\0")}\0${reportedAs}`, { ...warning, file: reportedAs });
+            }
+        }
+
+        return dropShadowedGenericFindings(report, this.#prepared, this.#options, this.#context.bases);
     }
 
     /** Rule and secret pairs present in an earlier version of a blob. */
@@ -387,7 +416,7 @@ class BlobScanner {
         }
 
         const content = await this.readText(oid, path, undefined, false);
-        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detect(content, path));
+        const keys = content === undefined || content === "" ? new Set<string>() : parentKeys(this.detect(content, path, undefined, undefined, `${path}@${oid.slice(0, SHORT_SHA_LENGTH)} (parent)`));
 
         this.#remember(cacheKey, keys);
 
@@ -402,7 +431,7 @@ class BlobScanner {
     public async finish(selected: ProcessedFindings, commit?: GitCommitInfo): Promise<ProcessedFindings> {
         const report = commit === undefined ? selected : withFields(selected, { commit });
 
-        return postProcessDetailed(report, this.#prepared, this.#options, this.#context);
+        return postProcessDetailed(report, this.#prepared, this.#options, this.#context, this.profiler);
     }
 
     #remember(cacheKey: string, keys: Set<string>): void {
@@ -433,7 +462,7 @@ const scanChangedBlob = async (
         return none;
     }
 
-    let fresh = scanner.detect(content, path, commit.info.sha);
+    let fresh = scanner.detect(content, path, commit.info.sha, path);
 
     if (isEmpty(fresh)) {
         return none;
@@ -488,13 +517,17 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
     // History paths are repository-relative, whatever subdirectory `cwd` is.
     const { context, prepared } = await beginScan(options, [await repositoryRoot(cwd)]);
     const allowlist = buildCommitAllowlist(prepared.config);
+    const commitsStarted = performance.now();
     const commits = await listCommits(options, cwd);
+    const commitsMs = performance.now() - commitsStarted;
     const scanner = new BlobScanner(cwd, options, prepared, {
         ...context,
         isCommitAllowlisted: (finding) => finding.commit !== undefined && allowlist.isFindingAllowed(finding.ruleId, finding.commit.sha),
     });
     const findings: GitFinding[] = [];
     const suppressed: SuppressedFinding<GitFinding>[] = [];
+    const blobsStarted = performance.now();
+    const totalAtBlobsStart = scanner.profiler?.totalMs ?? 0;
 
     try {
         for (const commit of commits) {
@@ -527,7 +560,12 @@ export const scanGitHistoryDetailed = async (options?: GitScanOptions): Promise<
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context, { includeCommitEntries: true });
+    // The residual first: `git.listCommits` ran before the blob loop and must not be
+    // subtracted from its interval.
+    scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+    scanner.profiler?.addPhase("git.listCommits", commitsMs);
+
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, includeCommitEntries: true, profile: scanner.profiler });
 };
 
 /**
@@ -571,9 +609,12 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
     const cwd = options?.cwd ?? process.cwd();
     const environment = gitEnvironment(true);
     const toplevel = await repositoryRoot(cwd, environment);
-    // Findings are reported relative to the process cwd, like native `scanFiles`.
-    const { context, prepared } = await beginScan(options, [process.cwd()]);
+    // Findings are reported relative to the process cwd, like native `scanFiles`;
+    // ignore files are discovered from, and inline patterns anchored at, `cwd`.
+    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [cwd]);
+    const diffStarted = performance.now();
     const diff = await runGit(["diff", "--cached", "-z", "--raw", "--no-renames", "--diff-filter=ACMT", ...DIFF_HARDENING_FLAGS], toplevel, environment);
+    const diffMs = performance.now() - diffStarted;
     const entries = parseRawDiff(diff).filter((entry) => entry.newMode !== GITLINK_MODE && !NULL_OID.test(entry.newOid));
     const absolute = (path: string): string => resolve(toplevel, path);
     // Realpaths on both sides, as native `scanFiles` relativises: on macOS the
@@ -589,16 +630,28 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
         return relativePath.replaceAll("\\", "/");
     };
+    // Test the index pathname under the canonical repository root rather than the
+    // working-tree path's realpath: a working-tree directory swapped for a symlink
+    // must not move a staged blob out from under its ignore pattern. Both sides use
+    // the matcher's own canonical form, so Windows short names and drive-letter case
+    // compare equal.
+    const matcher = buildIgnoreMatcher(effective, cwd);
+    const ignoreToplevel = canonicalize(toplevel);
+    const realIgnoreBase = canonicalize(cwd);
     const kept = new Set(
-        filterIgnoredFiles(
-            entries.map((entry) => absolute(entry.newPath)),
-            buildIgnoreMatcher(options),
-            cwd,
-        ),
+        entries
+            .filter((entry) => {
+                const indexed = resolve(ignoreToplevel, entry.newPath);
+
+                return matcher === undefined || !isWithin(realIgnoreBase, indexed) || !matcher.ignores(indexed);
+            })
+            .map((entry) => absolute(entry.newPath)),
     );
-    const scanner = new BlobScanner(toplevel, options, prepared, context);
+    const scanner = new BlobScanner(toplevel, effective, prepared, context);
     const findings: Finding[] = [];
     const suppressed: SuppressedFinding[] = [];
+    const blobsStarted = performance.now();
+    const totalAtBlobsStart = scanner.profiler?.totalMs ?? 0;
 
     try {
         for (const entry of entries) {
@@ -617,7 +670,8 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
 
             // Detection sees the absolute path, as native `scanFiles` does; the
             // reported path is rewritten afterwards.
-            const raw = scanner.detect(content, file);
+            const reported = reportedPath(entry.newPath);
+            const raw = scanner.detect(content, file, undefined, reported, reported);
 
             if (!isEmpty(raw)) {
                 // eslint-disable-next-line no-await-in-loop -- The pipeline may await validators; blobs are processed serially.
@@ -631,5 +685,10 @@ export const scanGitStaged = async (options?: GitStagedScanOptions): Promise<Git
         scanner.close();
     }
 
-    return finishResult({ findings, suppressed }, scanner.skipped, context);
+    // The residual first: `git.diff` ran before the blob loop and must not be
+    // subtracted from its interval.
+    scanner.profiler?.addResidual("git.blobs", blobsStarted, totalAtBlobsStart);
+    scanner.profiler?.addPhase("git.diff", diffMs);
+
+    return finishResult({ findings, suppressed }, scanner.skipped, context, { allowWarnings: scanner.allowWarnings, profile: scanner.profiler });
 };

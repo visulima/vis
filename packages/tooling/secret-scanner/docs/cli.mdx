@@ -121,7 +121,8 @@ vis secrets --format sarif > report.sarif
 | Flag                | Type    | Default | Description                                            |
 | ------------------- | ------- | ------- | ------------------------------------------------------ |
 | `--format <fmt>`    | string  | `text`  | Output format: `text`, `json`, `sarif`.                |
-| `--redact`          | boolean | `false` | Mask secret values in output.                          |
+| `--redact`          | boolean | `true`  | Mask secret values in output (default).                |
+| `--no-redact`       | boolean | —       | Reveal secret values in output.                        |
 | `--quiet`           | boolean | `false` | Suppress all progress output (only emit findings).     |
 | `--verbose`         | boolean | `false` | Print diagnostic info to stderr (skipped rules, etc.). |
 | `--concurrency <n>` | number  | auto    | Rayon worker threads (`0` / omit = auto).              |

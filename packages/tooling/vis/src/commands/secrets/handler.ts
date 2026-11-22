@@ -1,11 +1,12 @@
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { dim, yellow } from "@visulima/colorize";
 import { isAccessibleSync } from "@visulima/fs";
-import { join, relative, resolve } from "@visulima/path";
+import { isAbsolute, join, relative, resolve } from "@visulima/path";
 import type { Finding, RuleInfo, ScanOptions } from "@visulima/secret-scanner";
 import {
     DEFAULT_MAX_FILE_SIZE,
     inspectRuleset,
+    isPathExcluded,
     listRequiredValidators,
     listRules,
     scan,
@@ -19,26 +20,27 @@ import {
 import { VisUserError } from "../../errors/vis-user-error";
 import { pail } from "../../io/logger";
 import { createSpinner } from "../../io/spinner";
-import { diffBaseline, rebaseBaseline, rebaseFinding, writeBaseline } from "../../secrets/baseline";
+import { diffBaseline, rebaseBaseline, rebaseFile, rebaseFinding, rebaseProfile, writeBaseline } from "../../secrets/baseline";
+import { fixSecrets } from "../../secrets/fix";
 import { filesSince, hasGit } from "../../secrets/git";
 import { parseReportTargets } from "../../secrets/report";
-import type { StdinContent } from "../../secrets/stdin";
-import { readStdinText } from "../../secrets/stdin";
 import { pathExists } from "../../util/toolbox-fs";
 import type { SecretsFlags, VisSecretsConfig } from "./flags";
 import {
     assertArchiveFlags,
+    assertDryRunFlags,
+    assertFixFlags,
     assertHistoryFlags,
     assertReportingFlags,
     partialScanReasons,
     resolveScanOptions,
-    stdinUsageError,
+    stdinFilename,
     toArray,
     validateFormat,
 } from "./flags";
 import type { SecretsOptions } from "./index";
 import type { ScanOutcome } from "./report";
-import { applyDiagnosticGates, emitReports, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, status } from "./report";
+import { applyDiagnosticGates, emitReports, emptyProfile, GITLEAKS_IGNORE, printBaselineDiff, printDiagnostics, printFixResult, printProfile, status } from "./report";
 
 const DEFAULT_BASELINE = ".secrets-baseline.json";
 
@@ -120,21 +122,73 @@ const runInit = async (root: string, scanOptions: ScanOptions, dryRun: boolean):
         return;
     }
 
-    const count = writeBaseline(findings, baselinePath, root, { replace: true, sensitive: scanOptions.redact !== true });
+    const count = writeBaseline(findings, baselinePath, root, { replace: true });
 
     pail.success(`Wrote ${DEFAULT_BASELINE} (${String(count)} findings).`);
     pail.notice("Commit it. Use `vis secrets --baseline .secrets-baseline.json` in CI. Add path patterns to .gitignore to exclude directories from scanning.");
 };
 
 /** What a scan reads, resolved once from the validated flags. */
-type ScanMode
-    = | { files: string[]; kind: "files" }
-        | { kind: "history" }
-        | { kind: "paths"; paths: string[] }
-        | { kind: "staged" }
-        | { file: string; input: StdinContent; kind: "stdin" };
+type ScanMode = { files: string[]; kind: "files" } | { kind: "history" } | { kind: "paths"; paths: string[] } | { content: string; filename: string; kind: "stdin" } | { kind: "staged" };
 
-const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): ScanMode => {
+/** Spinner text and failure prefix per scan mode. */
+const SCAN_LABELS: Record<ScanMode["kind"], { failure: string; spinner: string }> = {
+    files: { failure: "secret scan", spinner: "scanning for secrets" },
+    history: { failure: "git-history secret scan", spinner: "scanning git history for secrets" },
+    paths: { failure: "secret scan", spinner: "scanning for secrets" },
+    staged: { failure: "secret scan", spinner: "scanning for secrets" },
+    stdin: { failure: "piped-input secret scan", spinner: "scanning piped input" },
+};
+
+/** Root-relative with posix separators like every other mode; the absolute path when the file lies outside `root`. */
+const stdinScanFile = (filename: string, root: string, cwd: string): string => {
+    const absolute = resolve(cwd, filename);
+    const relativePath = relative(root, absolute);
+
+    return relativePath === "" || relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath) ? absolute : relativePath;
+};
+
+/** Buffers piped input, refusing more than the size the scanner reads from a file so an endless pipe can't exhaust memory. */
+const readStdin = async (): Promise<string> => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+
+    for await (const chunk of process.stdin as AsyncIterable<Buffer>) {
+        size += chunk.length;
+
+        if (size > DEFAULT_MAX_FILE_SIZE) {
+            throw new VisUserError(`--stdin input exceeds ${String(DEFAULT_MAX_FILE_SIZE)} bytes, the largest file the scanner reads. Scan it as a file instead.`);
+        }
+
+        chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks).toString("utf8");
+};
+
+/**
+ * `injectedStdin` is the buffered input a cerebro caller passed as `CliOptions.stdin`
+ * (`toolbox.process.stdin`); when it is empty the real stdin pipe is read.
+ */
+const resolveScanMode = async (flags: SecretsFlags, args: string[], root: string, cwd: string, injectedStdin: string): Promise<ScanMode> => {
+    const stdinName = stdinFilename(flags);
+
+    if (stdinName !== undefined) {
+        if (injectedStdin !== "") {
+            if (Buffer.byteLength(injectedStdin) > DEFAULT_MAX_FILE_SIZE) {
+                throw new VisUserError(`--stdin input exceeds ${String(DEFAULT_MAX_FILE_SIZE)} bytes, the largest file the scanner reads. Scan it as a file instead.`);
+            }
+
+            return { content: injectedStdin, filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
+        }
+
+        if (process.stdin.isTTY) {
+            throw new VisUserError("--stdin expects piped input, but stdin is a terminal. Pipe content in, e.g. `cat .env | vis secrets --stdin .env`.");
+        }
+
+        return { content: await readStdin(), filename: stdinScanFile(stdinName, root, cwd), kind: "stdin" };
+    }
+
     const paths = args.length > 0 ? args.map((p) => resolve(root, p)) : [root];
     const gitFlag = flags.history ? "--history" : flags.staged ? "--staged" : flags.since === undefined ? undefined : "--since";
 
@@ -169,16 +223,15 @@ const resolveScanMode = (flags: SecretsFlags, args: string[], root: string): Sca
     return { kind: "paths", paths };
 };
 
-/** Read standard input for `--stdin`; the virtual file sits at `name` under the workspace root, like a path argument. */
-const resolveStdinMode = async (name: string, root: string, scanOptions: ScanOptions): Promise<ScanMode> => {
-    return {
-        file: resolve(root, name),
-        input: await readStdinText(process.stdin, scanOptions.walk?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE),
-        kind: "stdin",
-    };
-};
-
 const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOptions, root: string): Promise<ScanOutcome> => {
+    if (mode.kind === "stdin") {
+        const { allowWarnings, findings } = isPathExcluded(mode.filename, scanOptions, root)
+            ? { allowWarnings: [], findings: [] }
+            : await scanStringDetailed(mode.content, mode.filename, scanOptions);
+
+        return { allowWarnings, findings, skipped: [], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
+    }
+
     if (mode.kind === "history") {
         const result = await scanGitHistoryDetailed({ ...scanOptions, all: flags.all, cwd: root, maxCommits: flags.maxCommits, range: flags.historyRange });
 
@@ -191,12 +244,7 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         return { ...result, skippedUnit: "file" };
     }
 
-    if (mode.kind === "stdin" && mode.input.kind === "too-large") {
-        // Over --max-size, like a file: skipped and reported, not scanned.
-        return { findings: [], skipped: [{ path: relative(root, mode.file) || mode.file, reason: "too-large" }], skippedUnit: "file", suppressed: [], unusedIgnores: [] };
-    }
-
-    // The scanner reports staged, file-list and stdin findings relative to the real
+    // The scanner reports staged and file-list findings relative to the real
     // process cwd (not `toolbox.process.cwd`), which differs from `root` when vis
     // runs from a subdirectory. Hand it the baseline under those paths too, then
     // report root-relative paths like every other mode.
@@ -205,15 +253,14 @@ const runScan = async (mode: ScanMode, flags: SecretsFlags, scanOptions: ScanOpt
         ...scanOptions,
         baseline: typeof scanOptions.baseline === "string" ? rebaseBaseline(scanOptions.baseline, root, base) : scanOptions.baseline,
     };
-    const result
-        = mode.kind === "stdin"
-            ? await scanStringDetailed(mode.input.kind === "ok" ? mode.input.text : "", mode.file, options)
-            : mode.kind === "staged"
-                ? await scanGitStaged({ ...options, cwd: root })
-                : await scanFilesDetailed(mode.files, options);
+    const result = mode.kind === "staged" ? await scanGitStaged({ ...options, cwd: root }) : await scanFilesDetailed(mode.files, { ...options, ignoreRoot: root });
 
     return {
+        allowWarnings: result.allowWarnings.map((warning) => {
+            return { ...warning, file: rebaseFile(warning.file, base, root) };
+        }),
         findings: result.findings.map((finding) => rebaseFinding(finding, base, root)),
+        profile: result.profile && rebaseProfile(result.profile, base, root),
         skipped: result.skipped,
         skippedUnit: mode.kind === "staged" ? "blob" : "file",
         suppressed: result.suppressed.map((finding) => rebaseFinding(finding, base, root)),
@@ -243,19 +290,17 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const scanOptions = resolveScanOptions(flags, visSecrets, root);
     const toolVersion = "0.0.0-alpha"; // vis injects its own version via cerebro; this just tags SARIF.
 
-    const stdinError = stdinUsageError(flags, args.length > 0);
-
-    if (stdinError !== undefined) {
-        status.error(stdinError);
-        process.exitCode = 2;
-
-        return;
-    }
-
     // Before the --list-*/--init early returns, so no mode silently drops a flag.
     assertHistoryFlags(flags);
     assertArchiveFlags(flags);
     assertReportingFlags(flags, args.length > 0);
+    assertDryRunFlags(flags);
+    assertFixFlags(flags, scanOptions, args.length);
+
+    // Fix mode needs the real secret to find its span; its output never prints one.
+    if (flags.fix) {
+        scanOptions.redact = false;
+    }
 
     const format = validateFormat(flags.format);
     const reports = parseReportTargets(toArray(flags.report));
@@ -284,7 +329,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         return;
     }
 
-    const mode = flags.stdin === undefined ? resolveScanMode(flags, args, root) : await resolveStdinMode(flags.stdin, root, scanOptions);
+    const mode = await resolveScanMode(flags, args, root, toolbox.process.cwd, toolbox.process.stdin);
     const history = mode.kind === "history";
 
     if (mode.kind === "files" && mode.files.length === 0) {
@@ -292,12 +337,18 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
             status.success("No files to scan.");
         }
 
+        // An explicit profile must never silently disappear just because the
+        // selection was empty.
+        if (flags.profile) {
+            printProfile(emptyProfile(), useColor);
+        }
+
         return;
     }
 
-    const spinner = createSpinner({ verbose: !flags.quiet && format === "text" });
+    const spinner = createSpinner({ verbose: !flags.quiet && format === "text" && !flags.fix });
 
-    spinner.start(history ? "scanning git history for secrets" : "scanning for secrets");
+    spinner.start(SCAN_LABELS[mode.kind].spinner);
 
     let outcome: ScanOutcome;
 
@@ -307,9 +358,23 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     } catch (error) {
         spinner.failed();
 
-        throw new VisUserError(`${history ? "git-history secret scan" : "secret scan"} failed: ${error instanceof Error ? error.message : String(error)}`, {
+        throw new VisUserError(`${SCAN_LABELS[mode.kind].failure} failed: ${error instanceof Error ? error.message : String(error)}`, {
             cause: error,
         });
+    }
+
+    if (flags.fix) {
+        // A path scan reports findings relative to its one positional path, so the
+        // rewriter needs that path to find the actual working-tree file.
+        const result = fixSecrets(outcome.findings, root, flags.dryRun === true, mode.kind === "paths" ? mode.paths[0] : root);
+
+        printFixResult(result, outcome.skipped.length, flags.dryRun === true, flags.quiet === true);
+
+        if (result.skipped.length > 0) {
+            process.exitCode = 1;
+        }
+
+        return;
     }
 
     const context = {
@@ -320,13 +385,14 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
         reports,
         root,
         scanOptions,
-        stdin: mode.kind === "stdin" && mode.input.kind === "ok" ? mode.input.text : undefined,
+        stdin: mode.kind === "stdin" ? mode.content : undefined,
         toolbox,
         toolVersion,
         useColor,
     };
 
     printDiagnostics(outcome, context);
+    printProfile(outcome.profile, useColor);
 
     if (flags.verbose) {
         await printRulesetDiagnostics(scanOptions);
@@ -340,7 +406,7 @@ const execute = async (toolbox: Toolbox<Console, SecretsOptions>): Promise<void>
     const baselineFullPath = typeof scanOptions.baseline === "string" ? scanOptions.baseline : join(root, DEFAULT_BASELINE);
 
     if (flags.updateBaseline) {
-        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline, sensitive: scanOptions.redact !== true });
+        const count = writeBaseline(findings, baselineFullPath, root, { replace: flags.replaceBaseline });
 
         status.success(`Baseline updated: ${relative(root, baselineFullPath) || baselineFullPath} now contains ${String(count)} entries.`);
 

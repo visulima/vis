@@ -10,6 +10,7 @@ mod detector;
 mod entropy;
 mod finalize;
 mod lines;
+mod profile;
 mod rules;
 mod scan;
 mod scanner;
@@ -18,7 +19,9 @@ mod suppression;
 mod types;
 mod walker;
 
+pub use profile::{ProfileFile, ProfilePhase, ProfileReport, ProfileRule};
 pub use scan::{inspect_ruleset, list_rules, scan_dirs, scan_files, scan_text, ScanError};
 pub use types::{
-    Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule, SuppressedFinding,
+    AllowWarning, Finding, RequiredFinding, RuleInfo, ScanOptions, ScanReport, SkippedFile, SkippedRule, SourceSpan,
+    SuppressedFinding,
 };

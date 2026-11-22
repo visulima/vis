@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ const fixtureRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "lis
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const marker = "NATIVE-DELEGATED";
+const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 /** The native path answers the plain listing only. Help is rendered by the binary for every fixture. */
 const nativeArguments = (args: string[]): boolean =>
@@ -59,6 +60,7 @@ const contextEnvironment = (fixture: string, ci: boolean): Record<string, string
     delete env["CONTINUOUS_INTEGRATION"];
     delete env["VIS_FALLBACK_ENTRY"];
     delete env["VIS_FALLBACK_ENTRY_OVERRIDE"];
+    delete env["VIS_VERSION"];
 
     if (ci) {
         env["CI"] = "1";
@@ -74,23 +76,37 @@ const runNode = (fixture: string, args: string[], ci: boolean) =>
         env: contextEnvironment(fixture, ci),
     });
 
-const runNative = (fixture: string, args: string[], ci: boolean, entry: string) =>
+// `vis list` computes its root from the working directory and never reads `VIS_MONOREPO_ROOT`. The
+// native runs get a stale value on purpose, so a regression that trusted it would show up as a mismatch.
+// `root` is the inherited VIS_MONOREPO_ROOT. A delegated run gets the same value as its Node reference
+// (Node's `list --deps` reads it), while a native answer keeps the stale parent so it is never trusted.
+const runNative = (fixture: string, args: string[], ci: boolean, entry: string, root = dirname(fixture)) =>
     spawnSync(binary as string, ["list", ...args], {
         cwd: fixture,
         encoding: "utf8",
+        // A binary in a platform package (what CI runs) keeps the entry and version the launcher
+        // passes; one inside the vis package (a dev copy) takes the override instead. Set both.
         env: {
             ...contextEnvironment(fixture, ci),
+            VIS_FALLBACK_ENTRY: entry,
             VIS_FALLBACK_ENTRY_OVERRIDE: entry,
+            VIS_MONOREPO_ROOT: root,
             VIS_NODE: process.execPath,
+            VIS_VERSION: version,
         },
     });
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis list: native vs Node", () => {
-    const paths = { scratch: "", stub: "" };
+    const paths = { fixtures: "", scratch: "", stub: "" };
 
     beforeAll(() => {
         paths.scratch = mkdtempSync(join(tmpdir(), "vis-list-parity-"));
         paths.stub = join(paths.scratch, "stub.mjs");
+        // A fixture without a lockfile would otherwise resolve the repository's own workspace, which
+        // other test files change while this one runs, so the Node and native runs would see different trees.
+        paths.fixtures = join(paths.scratch, "fixtures");
+
+        cpSync(fixtureRoot, paths.fixtures, { recursive: true });
 
         writeFileSync(paths.stub, `console.log("${marker}");\nprocess.exit(99);\n`);
     });
@@ -104,7 +120,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         (fixture, args) => {
             expect.assertions(4);
 
-            const directory = join(fixtureRoot, fixture);
+            const directory = join(paths.fixtures, fixture);
             const expectDelegated = !args.includes("--help") && !(nativeFixtures.has(fixture) && nativeArguments(args));
             const node = runNode(directory, args, true);
 
@@ -113,7 +129,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(probe.stdout.includes(marker)).toBe(expectDelegated);
 
-            const native = runNative(directory, args, true, nodeEntry);
+            const native = runNative(directory, args, true, nodeEntry, expectDelegated ? directory : dirname(directory));
 
             expect(native.stdout).toBe(node.stdout);
             expect(native.stderr).toBe(node.stderr);
@@ -124,9 +140,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     it.each(fixtures)("%s delegates outside CI and matches Node", (fixture) => {
         expect.assertions(3);
 
-        const directory = join(fixtureRoot, fixture);
+        const directory = join(paths.fixtures, fixture);
         const node = runNode(directory, [], false);
-        const native = runNative(directory, [], false, nodeEntry);
+        const native = runNative(directory, [], false, nodeEntry, directory);
 
         expect(native.stdout).toBe(node.stdout);
         expect(native.stderr).toBe(node.stderr);
@@ -136,7 +152,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     it.each(["basic", "bin-null", "empty"])("%s answers the plain listing natively", (fixture) => {
         expect.assertions(1);
 
-        const native = runNative(join(fixtureRoot, fixture), [], true, paths.stub);
+        const native = runNative(join(paths.fixtures, fixture), [], true, paths.stub);
 
         expect(native.stdout).not.toContain(marker);
     });

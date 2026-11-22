@@ -17,17 +17,11 @@ import { resolveConfig } from "./config-loader";
 import { buildIgnoreMatcher, filterIgnoredFiles } from "./ignore-matcher";
 import { postProcessDetailed } from "./pipeline";
 import { prepareScan } from "./prepare-scan";
+import { ProfileAccumulator } from "./profile";
 import { beginScan, finishResult } from "./scan-session";
 import type { ValidatorReport } from "./transports";
 import { reportValidators } from "./transports";
-import type { Finding, RuleInfo, ScanOptions, ScanResult, SkippedRule } from "./types";
-
-/** Return any rules from the given config that failed to compile, with the reason. */
-export const inspectRuleset = async (options?: ScanOptions): Promise<SkippedRule[]> => {
-    const prepared = prepareScan(options);
-
-    return binding.inspectRuleset(prepared.nativeOptions);
-};
+import type { Finding, RuleInfo, ScanOptions, ScanResult } from "./types";
 
 /** Return metadata for every compiled rule in the effective config. */
 export const listRules = async (options?: ScanOptions): Promise<RuleInfo[]> => {
@@ -105,17 +99,19 @@ export const listRequiredValidators = async (options?: ScanOptions): Promise<Val
  * tell a clean scan from an incomplete one: `skipped` lists files and
  * directories that could not be read (permission denied, I/O error, larger
  * than `walk.maxFileSize`), `suppressed` the findings a baseline, allowlist,
- * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`), and
- * `unusedIgnores` the `.gitleaksignore` entries nothing matched.
+ * inline pragma or `.gitleaksignore` hid (with `reportSuppressed`),
+ * `unusedIgnores` the `.gitleaksignore` entries nothing matched, and
+ * `allowWarnings` the allow markers that name rule ids which are not active.
  */
 export const scanDetailed = async (paths: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const { context, prepared } = await beginScan(
-        options,
-        paths.map((path) => resolve(path)),
-    );
+    const bases = paths.map((path) => resolve(path));
+    const { context, options: effective, prepared } = await beginScan(options, bases, bases);
     const report = await binding.scanDetailed(paths, prepared.nativeOptions);
+    const profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
+    profiler?.addNative(report.profile);
+
+    return finishResult(await postProcessDetailed(report, prepared, effective, context, profiler), report.skipped, context, { allowWarnings: report.allowWarnings, profile: profiler });
 };
 
 /** Scan the given paths for secrets. Runs the detector on a Rust thread pool. */
@@ -130,12 +126,19 @@ export const scan = async (paths: string[], options?: ScanOptions): Promise<Find
  * file that doesn't exist, is a broken symlink or can't be read lands in `skipped`.
  */
 export const scanFilesDetailed = async (files: string[], options?: ScanOptions): Promise<ScanResult> => {
-    const { context, prepared } = await beginScan(options, [process.cwd()]);
-    const matcher = buildIgnoreMatcher(options);
-    const filteredFiles = filterIgnoredFiles(files, matcher, process.cwd());
+    const ignoreRoot = options?.ignoreRoot === undefined ? process.cwd() : resolve(options.ignoreRoot);
+    const { context, options: effective, prepared } = await beginScan(options, [process.cwd()], [ignoreRoot]);
+    const matcher = buildIgnoreMatcher(effective, ignoreRoot);
+    // The native scan reads relative entries from the process cwd, so resolve them
+    // there before matching against `ignoreRoot`, and hand on the entries as given.
+    const kept = new Set(filterIgnoredFiles(files.map((file) => resolve(file)), matcher, ignoreRoot));
+    const filteredFiles = files.filter((file) => kept.has(resolve(file)));
     const report = await binding.scanFilesDetailed(filteredFiles, prepared.nativeOptions);
+    const profiler = options?.profile === true ? new ProfileAccumulator() : undefined;
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), report.skipped, context);
+    profiler?.addNative(report.profile);
+
+    return finishResult(await postProcessDetailed(report, prepared, effective, context, profiler), report.skipped, context, { allowWarnings: report.allowWarnings, profile: profiler });
 };
 
 /**
@@ -167,21 +170,44 @@ export {
     scanGitStaged,
 } from "./git-scan";
 export { isLockFile, isNotAlphanumericString, isPotentialUuid, isSequentialString } from "./heuristics";
+export { isPathExcluded } from "./ignore-matcher";
+export { inspectRuleset } from "./inspect-ruleset";
+export { maskFinding } from "./mask";
+export { DEFAULT_KEYWORD_MIN_LENGTH, type DefinedRule, defineRule, defineRuleset, inferKeywords, type KeywordHint, type RuleInput } from "./rule";
 export { type SarifLog, toSarif, type ToSarifOptions, toSarifUri } from "./sarif";
 export { scanString, scanStringDetailed } from "./scan-string";
+export {
+    createRuleTester,
+    type RuleCase,
+    type RuleSnapshotCase,
+    type RuleSnapshotFinding,
+    type RuleTestCases,
+    type RuleTester,
+    RuleTesterError,
+    type RuleTestResult,
+} from "./testing";
 export { transformYamlBlockScalars } from "./transformers/yaml";
 export type { ValidatorReport } from "./transports";
 export type {
+    AllowWarning,
     Confidence,
     Finding,
     GitleaksIgnoreEntry,
     RequiredFinding,
+    RuleFilters,
     RuleInfo,
     ScanOptions,
+    ScanOverride,
+    ScanProfile,
+    ScanProfileFile,
+    ScanProfilePhase,
+    ScanProfileRule,
     ScanResult,
     SkippedFile,
     SkippedRule,
     SkipReason,
+    SourceSpan,
+    SpanUnavailableReason,
     SuppressedFinding,
     SuppressionReason,
     ValidationStatus,

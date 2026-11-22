@@ -37,6 +37,7 @@ interface TaskSummaryLike {
     hashDetails?: {
         command?: string;
         implicitDeps?: Record<string, string>;
+        layout?: number;
         nodes?: Record<string, string>;
         runtime?: Record<string, string>;
     };
@@ -188,7 +189,11 @@ export const analyzeCacheMiss = (summaries: LoadedRunSummary[], currentRunId: st
     const previousCommand = reference.task.hashDetails?.command;
     const currentCommand = task.hashDetails?.command;
 
-    if (previousCommand !== currentCommand) {
+    // Command hashes from different hash layouts are not comparable: the first run
+    // after a layout change would otherwise blame every task's command.
+    const sameLayout = (reference.task.hashDetails?.layout ?? 1) === (task.hashDetails?.layout ?? 1);
+
+    if (sameLayout && previousCommand !== currentCommand) {
         entries.push({
             change: previousCommand === undefined ? "added" : currentCommand === undefined ? "removed" : "modified",
             current: currentCommand,

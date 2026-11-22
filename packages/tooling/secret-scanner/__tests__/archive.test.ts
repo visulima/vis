@@ -125,10 +125,19 @@ describe("archive scanning (maxArchiveDepth)", () => {
 
         await writeFile(resolve(tmp, "bundle.zip"), zipOf([["config/app.env", LEAK]]));
 
-        const findings = await scan([tmp], { config, maxArchiveDepth: 1 });
+        const findings = await scan([tmp], { config, maxArchiveDepth: 1, redact: false });
 
         expect(files(findings)).toStrictEqual(["bundle.zip!config/app.env"]);
         expect(findings[0]?.secret).toBe(TOKEN);
+    });
+
+    it("matches ignore files against the archive's on-disk path, not its entries", async () => {
+        expect.assertions(1);
+
+        await writeFile(resolve(tmp, "bundle.zip"), zipOf([["config/app.env", LEAK]]));
+        await writeFile(resolve(tmp, ".secretlintignore"), "*.env\nconfig/\n");
+
+        await expect(scan([tmp], { config, maxArchiveDepth: 1 }).then(files)).resolves.toStrictEqual(["bundle.zip!config/app.env"]);
     });
 
     it("finds a nested zip inside a tar.gz only within the depth limit", async () => {

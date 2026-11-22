@@ -14,10 +14,11 @@ use rayon::prelude::*;
 use crate::archive::{self, ArchiveOptions};
 use crate::config::Config;
 use crate::decode::{self, DecodeOptions};
-use crate::detector::{DetectOptions, RawFinding};
+use crate::detector::DetectOptions;
 use crate::finalize::build_report;
+use crate::profile::{self, ProfileReport, Profiler};
 use crate::rules::{CompiledRuleset, Confidence};
-use crate::scanner::{scan_file, scan_text_full, TextScanOptions};
+use crate::scanner::{scan_file, scan_unit, FileScan, TextScanOptions};
 use crate::skip::{SkipReason, Skipped};
 use crate::types::{RuleInfo, ScanOptions, ScanReport, SkippedRule};
 use crate::walker::{walk_paths_reporting, WalkOptions};
@@ -82,6 +83,7 @@ fn text_scan_options(opts: &ScanOptions) -> TextScanOptions<'_> {
             inline_allow: opts.inline_allow.unwrap_or(true),
             report_suppressed: opts.report_suppressed.unwrap_or(false),
             commit: opts.commit.as_deref(),
+            ..Default::default()
         },
     }
 }
@@ -139,28 +141,34 @@ fn scan_paths(
     files: &[PathBuf],
     ruleset: &CompiledRuleset,
     opts: &ScanOptions,
-) -> Result<(Vec<RawFinding>, Vec<Skipped>), ScanError> {
+    profiler: Option<&Profiler>,
+) -> Result<FileScan, ScanError> {
     let max_bytes = opts.max_file_size.unwrap_or(DEFAULT_MAX_FILE_SIZE) as u64;
     let concurrency = opts.concurrency.unwrap_or(0) as usize;
     let text_opts = text_scan_options(opts);
     let archive_opts = archive_options(opts, max_bytes);
 
-    let do_scan = || -> (Vec<RawFinding>, Vec<Skipped>) {
-        let outcomes: Vec<(Vec<RawFinding>, Vec<Skipped>)> = files
+    let do_scan = || -> FileScan {
+        let outcomes: Vec<FileScan> = files
             .par_iter()
-            .map(|p| match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
-                Ok(Some(scanned)) => (scanned.findings, scanned.skipped),
-                Ok(None) => (Vec::new(), vec![Skipped::file(p.clone(), SkipReason::TooLarge)]),
-                Err(e) => (Vec::new(), vec![Skipped::file(p.clone(), (&e).into())]),
+            .map(|p| {
+                profile::file(profiler, p, || match scan_file(ruleset, p, max_bytes, text_opts, archive_opts) {
+                    Ok(Some(scanned)) => scanned,
+                    Ok(None) => FileScan {
+                        skipped: vec![Skipped::file(p.clone(), SkipReason::TooLarge)],
+                        ..FileScan::default()
+                    },
+                    Err(e) => FileScan { skipped: vec![Skipped::file(p.clone(), (&e).into())], ..FileScan::default() },
+                })
             })
             .collect();
-        let mut findings = Vec::new();
-        let mut skipped = Vec::new();
-        for (f, s) in outcomes {
-            findings.extend(f);
-            skipped.extend(s);
+        let mut merged = FileScan::default();
+        for outcome in outcomes {
+            merged.findings.extend(outcome.findings);
+            merged.skipped.extend(outcome.skipped);
+            merged.allow_warnings.extend(outcome.allow_warnings);
         }
-        (findings, skipped)
+        merged
     };
 
     if concurrency == 0 {
@@ -178,9 +186,11 @@ fn scan_paths(
 pub fn scan_dirs(paths: Vec<String>, opts: &ScanOptions) -> Result<ScanReport, ScanError> {
     let roots: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     if roots.is_empty() {
-        return Ok(ScanReport::default());
+        return Ok(empty_report(opts));
     }
-    let ruleset = load_ruleset(opts)?;
+    let profiler = Profiler::new(opts.profile);
+    let p = profiler.as_ref();
+    let ruleset = profile::phase(p, "ruleset", || load_ruleset(opts))?;
     let redact_secrets = opts.redact.unwrap_or(false);
 
     let walk_opts = WalkOptions {
@@ -191,22 +201,29 @@ pub fn scan_dirs(paths: Vec<String>, opts: &ScanOptions) -> Result<ScanReport, S
         threads: opts.concurrency.unwrap_or(0) as usize,
     };
 
-    let (files, walk_errors) = walk_paths_reporting(&roots, &walk_opts);
-    let (findings, mut skipped) = scan_paths(&files, &ruleset, opts)?;
+    let (files, walk_errors) = profile::phase(p, "walk", || walk_paths_reporting(&roots, &walk_opts));
+    let mut scanned = profile::phase(p, "detect", || scan_paths(&files, &ruleset, opts, p))?;
 
-    skipped.extend(walk_errors);
+    scanned.skipped.extend(walk_errors);
 
-    Ok(build_report(findings, skipped, &roots, redact_secrets))
+    let report = profile::phase(p, "finalize", || build_report(scanned, &roots, redact_secrets));
+    Ok(attach_profile(report, profiler, &ruleset, &roots))
 }
 
 /// Scan an in-memory string as if it lived at `file`. Paths are kept as given.
 pub fn scan_text(content: &str, file: &str, opts: &ScanOptions) -> Result<ScanReport, ScanError> {
+    let profiler = Profiler::new(opts.profile);
+    let p = profiler.as_ref();
+    let ruleset = profile::phase(p, "ruleset", || load_ruleset(opts))?;
     let redact_secrets = opts.redact.unwrap_or(false);
-    let ruleset = load_ruleset(opts)?;
     let path = PathBuf::from(file);
-    let raw = scan_text_full(&ruleset, &path, content, text_scan_options(opts));
+
+    let scanned = profile::phase(p, "detect", || {
+        profile::file(p, &path, || scan_unit(&ruleset, &path, content, text_scan_options(opts)))
+    });
     // In-memory scan — no filesystem root, so just dedup + priority (no path rewriting).
-    Ok(build_report(raw, Vec::new(), &[], redact_secrets))
+    let report = profile::phase(p, "finalize", || build_report(scanned, &[], redact_secrets));
+    Ok(attach_profile(report, profiler, &ruleset, &[]))
 }
 
 /// Compile a ruleset and return rules that failed to compile, with their reason.
@@ -245,14 +262,34 @@ pub fn list_rules(opts: &ScanOptions) -> Result<Vec<RuleInfo>, ScanError> {
 /// A listed file that can't be read lands in `skipped`.
 pub fn scan_files(files: Vec<String>, opts: &ScanOptions) -> Result<ScanReport, ScanError> {
     if files.is_empty() {
-        return Ok(ScanReport::default());
+        return Ok(empty_report(opts));
     }
-    let ruleset = load_ruleset(opts)?;
+    let profiler = Profiler::new(opts.profile);
+    let p = profiler.as_ref();
+    let ruleset = profile::phase(p, "ruleset", || load_ruleset(opts))?;
     let redact_secrets = opts.redact.unwrap_or(false);
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-    let (findings, skipped) = scan_paths(&paths, &ruleset, opts)?;
+
+    let scanned = profile::phase(p, "detect", || scan_paths(&paths, &ruleset, opts, p))?;
 
     // Walker is bypassed here — use cwd as the root so paths normalise relative to it.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    Ok(build_report(findings, skipped, &[cwd], redact_secrets))
+    let roots = [std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+    let report = profile::phase(p, "finalize", || build_report(scanned, &roots, redact_secrets));
+    Ok(attach_profile(report, profiler, &ruleset, &roots))
+}
+
+/// The report of a scan with nothing to scan: no findings, and an empty profile when one was requested.
+fn empty_report(opts: &ScanOptions) -> ScanReport {
+    ScanReport { profile: opts.profile.unwrap_or(false).then(ProfileReport::default), ..ScanReport::default() }
+}
+
+/// Attach the finished profile to the report when profiling was on.
+fn attach_profile(
+    mut report: ScanReport,
+    profiler: Option<Profiler>,
+    ruleset: &CompiledRuleset,
+    roots: &[PathBuf],
+) -> ScanReport {
+    report.profile = profiler.map(|profiler| profiler.finish(&ruleset.rules, roots));
+    report
 }

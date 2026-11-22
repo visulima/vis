@@ -53,6 +53,7 @@ impl From<DetectPackageManagerOptions> for core::DetectPackageManagerOptions {
             ignore_package_json: options.ignore_package_json,
             ignore_lock_file: options.ignore_lock_file,
             ignore_argv: options.ignore_argv,
+            backend: None,
         }
     }
 }

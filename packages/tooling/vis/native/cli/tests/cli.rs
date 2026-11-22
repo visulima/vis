@@ -430,81 +430,6 @@ fn pm_family_delegates_when_vis_config_is_present() {
     assert!(stdout.contains("remove lodash"), "stdout: {stdout}");
 }
 
-/// A vis.config that is plain data and pins no package-manager choice keeps the pm
-/// command native: the Node stub must not run.
-#[cfg(unix)]
-#[test]
-fn pm_family_stays_native_for_a_plain_vis_config() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let base = std::env::temp_dir().join(format!("vis-cfg-plain-{}", std::process::id()));
-    let project = base.join("project");
-    let bindir = base.join("bin");
-    std::fs::create_dir_all(&project).unwrap();
-    std::fs::create_dir_all(&bindir).unwrap();
-    std::fs::write(project.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
-    std::fs::write(project.join("vis.config.ts"), "export default { lint: { enabled: true } };\n").unwrap();
-
-    let stub_node = bindir.join("node");
-    std::fs::write(&stub_node, "#!/bin/sh\necho \"NODE:$*\"\n").unwrap();
-    std::fs::set_permissions(&stub_node, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let output = binary()
-        .args(["remove", "lodash"])
-        .current_dir(&project)
-        .env("VIS_NODE", &stub_node)
-        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
-        // Only the stub directory on PATH: an `aube` installed on the machine would select the installer.
-        .env("PATH", &bindir)
-        .env_remove("VIS_INSTALLER")
-        .env_remove("npm_config_user_agent")
-        .output()
-        .expect("run binary");
-
-    let _ = std::fs::remove_dir_all(&base);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(!stdout.contains("NODE:"), "delegated to Node: {stdout}");
-}
-
-/// A global option that changes which config or workspace Node uses must reach Node, even
-/// when the config is plain data.
-#[cfg(unix)]
-#[test]
-fn pm_family_delegates_for_a_global_option_with_a_plain_vis_config() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let base = std::env::temp_dir().join(format!("vis-cfg-global-{}", std::process::id()));
-    let project = base.join("project");
-    let bindir = base.join("bin");
-    std::fs::create_dir_all(&project).unwrap();
-    std::fs::create_dir_all(&bindir).unwrap();
-    std::fs::write(project.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
-    std::fs::write(project.join("vis.config.ts"), "export default { lint: { enabled: true } };\n").unwrap();
-
-    let stub_node = bindir.join("node");
-    std::fs::write(&stub_node, "#!/bin/sh\necho \"NODE:$*\"\n").unwrap();
-    std::fs::set_permissions(&stub_node, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let output = binary()
-        .args(["remove", "--config=./alternate.ts", "lodash"])
-        .current_dir(&project)
-        .env("VIS_NODE", &stub_node)
-        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
-        .env("PATH", &bindir)
-        .env_remove("VIS_INSTALLER")
-        .env_remove("npm_config_user_agent")
-        .output()
-        .expect("run binary");
-
-    let _ = std::fs::remove_dir_all(&base);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(stdout.contains("NODE:"), "stayed native: {stdout}");
-}
-
 /// An ancestor `packageManager` pin makes Node run through Corepack, so a plain config stays with Node.
 #[cfg(unix)]
 #[test]
@@ -682,8 +607,8 @@ fn unknown_command_with_no_close_match_still_errors() {
 #[test]
 fn command_groups_and_bare_migrate_still_reach_node() {
     // `vis migrate` (bare) opens an interactive flow in the Node CLI, and a parent such
-    // as `cache` is a Node matter too: none of them may be turned into an error here.
-    for args in [&["migrate"][..], &["cache"], &["cache", "--help"], &["docker"]] {
+    // as `docker` is a Node matter too: none of them may be turned into an error here.
+    for args in [&["migrate"][..], &["docker"]] {
         let output = binary().args(args).env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
 
         assert_eq!(
@@ -835,4 +760,603 @@ fn delegated_clean_forwards_a_non_utf8_argument_unchanged() {
     std::fs::remove_dir_all(&dir).ok();
 
     assert_eq!(recorded, b"clean\0caf\xe9\0", "argv reached the stub as {recorded:?}");
+}
+
+/// Writes a monorepo root with a `vis.config.ts` pinning `install.backend`, a yarn lockfile the pin
+/// must override, a stub Node that must not run, and a stub for the pinned package manager on PATH. Returns the scratch base, the project and the bin dir.
+#[cfg(unix)]
+fn backend_pin_fixture(
+    name: &str,
+    backend: &str,
+    stub: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-pin-{name}-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(
+        project.join("vis.config.ts"),
+        format!("export default {{ install: {{ backend: \"{backend}\" }} }};\n"),
+    )
+    .unwrap();
+    // Node reads vis.config only from a monorepo root, so the fixture is one.
+    std::fs::write(project.join("lerna.json"), "{\"packages\":[]}\n").unwrap();
+    std::fs::write(project.join("yarn.lock"), "# yarn\n").unwrap();
+
+    for (binary, body) in [("node", "echo \"NODE:$*\""), (stub, "echo \"PM:$*\"")] {
+        let path = bindir.join(binary);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    (base.clone(), project, bindir)
+}
+
+/// A plain `install.backend: "npm"` pin is run natively with npm, not handed to Node.
+#[cfg(unix)]
+#[test]
+fn pm_family_runs_a_plain_npm_backend_pin_natively() {
+    let (base, project, bindir) = backend_pin_fixture("npm", "npm", "npm");
+    let fallback = base.join("dist").join("bin.js");
+
+    let output = binary()
+        .args(["why", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", &fallback)
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "native npm remove failed: {:?}", output);
+    assert!(stdout.starts_with("PM:"), "npm pin did not run natively: {stdout}");
+    assert!(!stdout.contains("NODE:"), "npm pin was delegated: {stdout}");
+}
+
+/// `remove` and `dedupe` under a pin stay with Node, whose security-enforcement plugin reports the
+/// configuration warnings and errors the native path does not.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_remove_and_dedupe_under_a_backend_pin() {
+    for (name, args) in [("npm-remove", vec!["remove", "lodash"]), ("npm-dedupe", vec!["dedupe"])] {
+        let (base, project, bindir) = backend_pin_fixture(name, "npm", "npm");
+        let fallback = base.join("dist").join("bin.js");
+
+        let output = binary()
+            .args(&args)
+            .current_dir(&project)
+            .env("VIS_NODE", bindir.join("node"))
+            .env("VIS_FALLBACK_ENTRY", &fallback)
+            .env("PATH", &bindir)
+            .env_remove("VIS_INSTALLER")
+            .env_remove("npm_config_user_agent")
+            .output()
+            .expect("run binary");
+
+        let _ = std::fs::remove_dir_all(&base);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(stdout.starts_with("NODE:"), "{args:?} under a pin was not delegated: {stdout}");
+    }
+}
+
+/// A turbo.json above the working directory is Node's workspace root even with no lockfile or
+/// `packageManager` field, so `link` and the other workspace-root verbs reach Node from a child package.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_workspace_root_verbs_below_a_turbo_root() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-turbo-root-{}", std::process::id()));
+    let child = base.join("project").join("packages").join("app");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(base.join("project").join("turbo.json"), "{}\n").unwrap();
+    std::fs::write(child.join("vis.config.ts"), "export default {};\n").unwrap();
+
+    for (name, body) in [("node", "echo \"NODE:$*\""), ("npm", "echo \"PM:$*\"")] {
+        let path = bindir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = binary()
+        .args(["link", "../shared"])
+        .current_dir(&child)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.starts_with("NODE:"), "link below a turbo root was not delegated: {stdout}");
+}
+
+/// An `install.backend: "aube"` pin still delegates to Node, as does `outdated` under any pin.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_an_aube_backend_pin_and_outdated() {
+    // The stub is named for the pinned manager, not `aube`, so the delegation comes from the pin rule
+    // rather than from an `aube` binary on PATH.
+    let (base, project, bindir) = backend_pin_fixture("aube", "aube", "npm");
+    let fallback = base.join("dist").join("bin.js");
+
+    let remove = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", &fallback)
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&remove.stdout);
+
+    assert!(stdout.contains("NODE:"), "aube pin was not delegated: {stdout}");
+    assert!(!stdout.contains("PM:"), "aube pin ran natively: {stdout}");
+
+    let (base, project, bindir) = backend_pin_fixture("npm-outdated", "npm", "npm");
+    let outdated = binary()
+        .args(["outdated"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&outdated.stdout);
+
+    assert!(stdout.contains("NODE:"), "outdated under a pin was not delegated: {stdout}");
+}
+
+/// Node ignores `vis.config` outside a monorepo root, so a plain npm pin in a single-package project
+/// stays with Node rather than running the pinned manager natively.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_a_backend_pin_outside_a_monorepo_root() {
+    let (base, project, bindir) = backend_pin_fixture("single", "npm", "npm");
+    std::fs::remove_file(project.join("lerna.json")).unwrap();
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("NODE:"), "single-package pin was not delegated: {stdout}");
+    assert!(!stdout.contains("PM:"), "single-package pin ran natively: {stdout}");
+}
+
+/// Writes `files` under a fresh scratch directory and a stub bin dir in which each named binary prints
+/// its own name, so the test can tell which manager ran. `node` prints `NODE:` as the delegation marker.
+#[cfg(unix)]
+fn named_stub_fixture(
+    name: &str,
+    files: &[(&str, &str)],
+    binaries: &[&str],
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-stub-{name}-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+
+    for (path, body) in files {
+        let target = project.join(path);
+
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, body).unwrap();
+    }
+
+    for binary in std::iter::once(&"node").chain(binaries.iter()) {
+        let path = bindir.join(binary);
+        std::fs::write(&path, format!("#!/bin/sh\necho \"{binary}:$*\"\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    (base.clone(), project, bindir)
+}
+
+/// A bare pnpm workspace (`pnpm-workspace.yaml` and a root `vis.config.ts` pin, no lockfile and no
+/// `packageManager`) has no monorepo root for Node, so Node drops the config and installs with the
+/// detected manager. The native path must answer it the same way instead of delegating, and must not run
+/// the pinned npm.
+#[cfg(unix)]
+#[test]
+fn pm_family_answers_a_bare_pnpm_workspace_pin_the_way_node_does() {
+    let (base, project, bindir) = named_stub_fixture(
+        "bare-pnpm",
+        &[
+            ("pnpm-workspace.yaml", "packages: []\n"),
+            ("vis.config.ts", "export default { install: { backend: \"npm\" } };\n"),
+        ],
+        &["pnpm", "npm"],
+    );
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!stdout.contains("node:"), "bare pnpm workspace was delegated to Node: {stdout}");
+    assert!(stdout.contains("pnpm:remove lodash"), "detected pnpm did not run natively: {stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("npm:")),
+        "the pinned npm ran instead of the detected manager: {stdout}"
+    );
+}
+
+/// `dedupe` from a workspace package with a literal config runs Node's handler at the workspace root, so
+/// the native path must delegate rather than deduplicate the package directory.
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_dedupe_from_a_workspace_package_with_a_literal_config() {
+    let (base, project, bindir) = named_stub_fixture(
+        "workspace-package",
+        &[
+            ("pnpm-workspace.yaml", "packages:\n  - packages/*\n"),
+            ("pnpm-lock.yaml", "lockfileVersion: 9\n"),
+            ("packages/app/vis.config.ts", "export default {};\n"),
+        ],
+        &["pnpm"],
+    );
+
+    let output = binary()
+        .args(["dedupe"])
+        .current_dir(project.join("packages").join("app"))
+        .env("VIS_NODE", bindir.join("node"))
+        .env("VIS_FALLBACK_ENTRY", base.join("dist").join("bin.js"))
+        .env("PATH", &bindir)
+        .env_remove("VIS_INSTALLER")
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("node:"), "workspace-package dedupe was not delegated: {stdout}");
+    assert!(!stdout.contains("pnpm:"), "workspace-package dedupe ran natively: {stdout}");
+}
+
+/// A project whose config imports a helper (so it cannot be read as a literal), a `node` stub that
+/// plays the config emitter and counts its runs, and the JSON the emitter answers with.
+#[cfg(unix)]
+struct EmitFixture {
+    base: std::path::PathBuf,
+    project: std::path::PathBuf,
+    bindir: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl EmitFixture {
+    fn new(name: &str, emitted: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("vis-emit-{name}-{}", std::process::id()));
+        let project = base.join("project");
+        let bindir = base.join("bin");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&bindir).unwrap();
+        std::fs::write(project.join("helper.ts"), "export const backend = \"npm\";\n").unwrap();
+        std::fs::write(
+            project.join("vis.config.ts"),
+            "import { backend } from \"./helper\";\nexport default { install: { backend } };\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("lerna.json"), "{\"packages\":[]}\n").unwrap();
+        std::fs::write(project.join("yarn.lock"), "# yarn\n").unwrap();
+
+        let helper = project.join("helper.ts");
+        std::fs::write(
+            base.join("emitted.json"),
+            emitted.replace("{helper}", &helper.to_string_lossy().replace('\\', "\\\\")),
+        )
+        .unwrap();
+
+        let node = "#!/bin/sh\n\
+            case \"$*\" in\n\
+            *__emit-config*)\n\
+              echo run >> \"$VIS_TEST_COUNT\"\n\
+              while [ $# -gt 0 ]; do if [ \"$1\" = \"--out\" ]; then out=\"$2\"; fi; shift; done\n\
+              /bin/cp \"$VIS_TEST_EMITTED\" \"$out\" ;;\n\
+            *) echo \"NODE:$*\" ;;\n\
+            esac\n";
+
+        for (binary, body) in [("node", node), ("npm", "#!/bin/sh\necho \"PM:$*\"\n")] {
+            let path = bindir.join(binary);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        Self { base, project, bindir }
+    }
+
+    fn run(&self, extra_env: &[(&str, &str)]) -> String {
+        self.run_args(&["why", "lodash"], extra_env)
+    }
+
+    fn run_args(&self, args: &[&str], extra_env: &[(&str, &str)]) -> String {
+        let mut command = binary();
+
+        command
+            .args(args)
+            .current_dir(&self.project)
+            .env("VIS_NODE", self.bindir.join("node"))
+            .env("VIS_FALLBACK_ENTRY", self.base.join("dist").join("bin.js"))
+            .env("VIS_TEST_COUNT", self.base.join("count"))
+            .env("VIS_TEST_EMITTED", self.base.join("emitted.json"))
+            .env("PATH", &self.bindir)
+            .env_remove("VIS_INSTALLER")
+            .env_remove("VIS_NO_CONFIG_CACHE")
+            .env_remove("VIS_CACHE_DIRECTORY")
+            .env_remove("npm_config_user_agent");
+
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+
+        let output = command.output().expect("run binary");
+
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn emitter_runs(&self) -> usize {
+        std::fs::read_to_string(self.base.join("count")).map(|text| text.lines().count()).unwrap_or(0)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for EmitFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
+}
+
+#[cfg(unix)]
+const EMITTED_NPM: &str = "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
+    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\"}],\"env\":[],\"uncacheable\":[]}";
+
+/// A config that needs evaluation is evaluated once; the next runs read the stored result without Node,
+/// and editing a module the config imports evaluates it again.
+#[cfg(unix)]
+#[test]
+fn a_dynamic_config_is_evaluated_once_and_then_served_from_the_cache() {
+    let fixture = EmitFixture::new("cache", EMITTED_NPM);
+
+    let first = fixture.run(&[]);
+
+    assert!(first.starts_with("PM:"), "the evaluated config was not used natively: {first}");
+    assert_eq!(fixture.emitter_runs(), 1);
+
+    let second = fixture.run(&[]);
+
+    assert!(second.starts_with("PM:"), "the cached config was not used natively: {second}");
+    assert_eq!(fixture.emitter_runs(), 1, "a valid cache entry must not start Node");
+
+    std::fs::write(fixture.project.join("helper.ts"), "export const backend = \"pnpm\";\n").unwrap();
+    let third = fixture.run(&[]);
+
+    assert!(third.starts_with("PM:"), "{third}");
+    assert_eq!(fixture.emitter_runs(), 2, "an edited import must evaluate the config again");
+}
+
+/// `VIS_NO_CONFIG_CACHE=1` leaves a dynamic config to Node, exactly as before the cache existed.
+#[cfg(unix)]
+#[test]
+fn the_config_cache_can_be_turned_off() {
+    let fixture = EmitFixture::new("off", EMITTED_NPM);
+
+    let output = fixture.run(&[("VIS_NO_CONFIG_CACHE", "1")]);
+
+    assert!(output.starts_with("NODE:"), "the command was not delegated: {output}");
+    assert_eq!(fixture.emitter_runs(), 0);
+}
+
+/// A config with values that are not data (functions in `plugins`, …) is Node's to run, and that answer is cached too.
+#[cfg(unix)]
+#[test]
+fn a_config_that_is_not_data_is_delegated_to_node() {
+    let fixture = EmitFixture::new(
+        "node-only",
+        "{\"version\":1,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
+    );
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 1);
+}
+
+/// A result the emitter could not track completely is not used natively, since a stored copy could not stand
+/// in for it: Node runs the command, and the refusal is remembered so the config is not evaluated every time.
+#[cfg(unix)]
+#[test]
+fn a_result_that_cannot_be_tracked_is_left_to_node() {
+    let fixture = EmitFixture::new(
+        "untracked",
+        "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
+    );
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 1);
+}
+
+/// A config that is not evaluated for its value is not evaluated at all: a global option, an installer
+/// chosen by the environment, and `clean` (which only needs to know a config exists) go to Node directly,
+/// and nothing is written to the workspace.
+#[cfg(unix)]
+#[test]
+fn commands_that_never_use_the_value_do_not_evaluate_the_config() {
+    let fixture = EmitFixture::new("gated", EMITTED_NPM);
+
+    assert!(fixture.run_args(&["why", "lodash", "--config", "x.ts"], &[]).starts_with("NODE:"));
+    assert!(fixture.run(&[("VIS_INSTALLER", "npm")]).starts_with("NODE:"));
+    assert!(fixture.run_args(&["clean", "--dry-run"], &[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 0);
+    assert!(!fixture.project.join("node_modules").exists());
+}
+
+/// An emitter that fails (the config throws) falls back to Node, which reports the error itself.
+#[cfg(unix)]
+#[test]
+fn a_config_that_fails_to_evaluate_is_delegated_to_node() {
+    let fixture = EmitFixture::new("failing", "not json");
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+}
+
+/// A config in a directory Node would not read `vis.config` from is never run, since Node would not run it either.
+#[cfg(unix)]
+#[test]
+fn a_config_outside_a_monorepo_root_is_not_evaluated() {
+    let fixture = EmitFixture::new("not-root", EMITTED_NPM);
+
+    std::fs::remove_file(fixture.project.join("lerna.json")).unwrap();
+    fixture.run(&[]);
+
+    assert_eq!(fixture.emitter_runs(), 0);
+}
+
+/// Run `vis <args>` in an empty project (a pnpm lockfile pins the detected PM) with an
+/// empty `PATH`, so no package manager or runtime binary can be spawned. Returns the exit
+/// code and stderr.
+fn run_failing(args: &[&str], lockfile: &str) -> (Option<i32>, String) {
+    let base =
+        std::env::temp_dir().join(format!("vis-fail-{}-{}", std::process::id(), args.join("-").replace('/', "_")));
+    let project = base.join("project");
+    let empty_path = base.join("empty");
+
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&empty_path).unwrap();
+    std::fs::write(project.join(lockfile), "lockfileVersion: 9\n").unwrap();
+
+    let output = binary()
+        .args(args)
+        .current_dir(&project)
+        .env("PATH", &empty_path)
+        .env_remove("npm_config_user_agent")
+        .env_remove("VIS_RUNTIME")
+        .env_remove("VIS_UNFLAG")
+        .env_remove("VIS_AUGMENT_SUBPROCESS")
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&base);
+
+    (output.status.code(), String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+#[test]
+fn exec_without_a_command_reports_usage() {
+    let (code, stderr) = run_failing(&["exec"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "vis exec: No command specified. Usage: vis exec <command> [args...]\n");
+}
+
+#[test]
+fn exec_filter_without_a_value_reports_the_flag() {
+    let (code, stderr) = run_failing(&["exec", "--filter"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "vis exec: --filter requires a value\n");
+}
+
+#[test]
+fn exec_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["exec", "eslint"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis exec: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_without_a_subcommand_lists_the_available_ones() {
+    let (code, stderr) = run_failing(&["pm"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert!(stderr.starts_with("vis pm: No subcommand specified. Available: cache, publish, "), "stderr: {stderr}");
+    assert!(stderr.ends_with(", prune, plugin\n"), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["pm", "cache", "dir"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis pm: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn pm_family_reports_a_missing_package_manager_binary() {
+    let (code, stderr) = run_failing(&["remove", "left-pad"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(127));
+    assert!(stderr.starts_with("vis remove: failed to run 'pnpm': "), "stderr: {stderr}");
+}
+
+#[test]
+fn x_without_a_file_reports_usage_without_a_command_prefix() {
+    let (code, stderr) = run_failing(&["x"], "pnpm-lock.yaml");
+
+    assert_eq!(code, Some(1));
+    assert_eq!(stderr, "No file specified. Usage: vis x <file> [args...]\n");
+}
+
+#[test]
+fn x_reports_a_missing_bun_binary() {
+    let (code, stderr) = run_failing(&["x", "app.ts"], "bun.lock");
+
+    assert_eq!(code, Some(127));
+    assert_eq!(stderr, "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.\n");
 }

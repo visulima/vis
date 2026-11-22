@@ -5,8 +5,9 @@ use std::path::Path;
 
 use crate::entropy::shannon;
 use crate::lines::{compute_line_offsets, line_slice, offset_to_line_col};
+use crate::profile::{self, RuleScope};
 use crate::rules::{CompiledAllowlist, CompiledPatternRequirements, CompiledRule, CompiledRuleset, Engine};
-use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, SuppressionReason};
+use crate::suppression::{find_allow_regions, inline_suppressed, is_allowlisted, AllowRegion, SuppressionReason};
 
 /// Bytes of lookback/lookahead around each rule's AC keyword hit when
 /// windowed scanning kicks in. Covers the entire span of every kingfisher +
@@ -79,10 +80,22 @@ pub struct RawFinding {
     /// Findings of the rule's `[[rules.required]]` dependencies that satisfied it, nearest
     /// first, one per required id. Set by the composite pass; `None` for plain rules.
     pub required_findings: Option<Vec<RawFinding>>,
+    /// Byte offsets of the `secret` capture, in the same coordinate space as
+    /// `start_offset`/`end_offset`.
+    pub secret_start_offset: u32,
+    pub secret_end_offset: u32,
+    /// Fixed, secret-free reason the offsets above don't map back to the source file
+    /// (pre-regex-replaced or lossy-decoded text); such findings must not expose
+    /// rewrite spans. Other cases are labelled in `finalize`.
+    pub span_unavailable: Option<&'static str>,
     /// Archive entries only: the virtual suffix after the archive's own path, e.g.
     /// `!inner.zip!config/app.env`. `file` already ends with it; `finalize_findings` uses
     /// it to relativise just the on-disk part.
     pub archive_entry: Option<String>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
     /// Why the finding was suppressed. Only set when
     /// [`DetectOptions::report_suppressed`] is on; `None` for real findings.
     pub suppressed_by: Option<SuppressionReason>,
@@ -92,6 +105,11 @@ impl RawFinding {
     /// The decode pass's encoding chain, `None` for plain matches.
     pub fn decode_chain(&self) -> Option<&[String]> {
         self.decoded.as_ref().map(|d| d.chain.as_slice())
+    }
+
+    /// File-path rules match no content, so they carry zero offsets.
+    pub fn is_path_only(&self) -> bool {
+        self.start_offset == 0 && self.end_offset == 0
     }
 }
 
@@ -110,11 +128,14 @@ pub struct DetectOptions<'a> {
     /// `condition = "AND"` that list `commits` next to paths / regexes / stopwords read
     /// it: without a commit, such an allowlist never matches.
     pub commit: Option<&'a str>,
+    /// Set when the scanned text was decoded from bytes that don't map one-to-one to
+    /// it, so its offsets must not be exposed as source-file rewrite spans.
+    pub span_unavailable: Option<&'static str>,
 }
 
 impl Default for DetectOptions<'_> {
     fn default() -> Self {
-        Self { inline_allow: true, report_suppressed: false, commit: None }
+        Self { inline_allow: true, report_suppressed: false, commit: None, span_unavailable: None }
     }
 }
 
@@ -148,7 +169,7 @@ pub fn detect(
     // and `allowlists.paths`) match consistently on Windows. Without this,
     // a Windows path like `test\fixtures\x.kdbx` would never match `(?:^|/)test/`.
     let path_str = path.to_string_lossy().replace('\\', "/");
-    let allow_regions = if opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let allow_regions = if opts.inline_allow { find_allow_regions(content, ruleset) } else { Vec::new() };
 
     // 1) Candidate rules via AC keyword prefilter on the whole file. Empty-keywords rules
     //    are pre-marked so they always run. We use a bitmap indexed by rule id — O(rules)
@@ -229,6 +250,7 @@ pub fn detect(
     // Pre-compute line offsets for fast line/col lookup
     let line_offsets = compute_line_offsets(content);
 
+    let profiling = profile::is_active();
     let mut out: Vec<RawFinding> = Vec::new();
     for (i, &active) in candidates.iter().enumerate() {
         if !active {
@@ -241,6 +263,15 @@ pub fn detect(
                 continue;
             }
         }
+        let path_only = rule.engine.is_none() && rule.path_regex.is_some();
+        // Decoded passes skip path-only rules (the file was flagged on the plain pass) and
+        // rules with text replacements (their offsets would not map back).
+        if pass == Pass::Decoded && (path_only || !rule.pre_regex_replace.is_empty()) {
+            continue;
+        }
+        // Started only for rules that get past the filters, so the profile counts the
+        // rules whose matcher actually ran.
+        let _timer = profiling.then(|| RuleScope::start(i));
         // Path-only rules: emit a finding for the file itself.
         //
         // We consult **rule-level** allowlists only so authors can suppress matches
@@ -250,10 +281,7 @@ pub fn detect(
         // purpose is to flag those very files (e.g. `exposed-lockfile-in-build-output`).
         // Match / secret / line are empty strings; only `paths`-style allowlists are
         // meaningful for a rule that doesn't read content.
-        if rule.engine.is_none() && rule.path_regex.is_some() {
-            if pass == Pass::Decoded {
-                continue;
-            }
+        if path_only {
             let path_suppressed = is_allowlisted(&rule.allowlists, &rule.id, &path_str, "", "", "", opts.commit);
 
             if path_suppressed && !opts.report_suppressed {
@@ -284,9 +312,6 @@ pub fn detect(
         }
 
         let Some(engine) = rule.engine.as_ref() else { continue };
-        if pass == Pass::Decoded && !rule.pre_regex_replace.is_empty() {
-            continue;
-        }
 
         // Per-rule pre-regex text replacement. When a rule declares replacements we build a
         // new scratch `String` and rewrite line offsets for it; otherwise we scan the original
@@ -296,17 +321,26 @@ pub fn detect(
         // `preRegexReplace` and a content buffer of size M the worst case is O(N·M) in
         // allocation + replace_all work. Fine for ≤ a handful of rules (the intended use).
         // Avoid bulk-applying it on `generic-api-key`-sized allowlists.
-        let (text, text_offsets): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, [usize]>) =
+        // `lines_kept` holds while every replacement stays within one line (no match
+        // spans a newline) and adds no line (the newline count is unchanged, which also
+        // catches a newline inserted through a lookaround capture). Then every line of the
+        // rewritten text is the same line of `content`.
+        let (text, text_offsets, lines_kept): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, [usize]>, bool) =
             if rule.pre_regex_replace.is_empty() {
-                (std::borrow::Cow::Borrowed(content), std::borrow::Cow::Borrowed(&line_offsets))
+                (std::borrow::Cow::Borrowed(content), std::borrow::Cow::Borrowed(&line_offsets), true)
             } else {
                 let mut buf = content.to_string();
+                let mut lines_kept = true;
                 for (from, to) in &rule.pre_regex_replace {
+                    let newlines = lines_kept.then(|| count_newlines(&buf));
+                    lines_kept = lines_kept
+                        && from.find_iter(&buf).all(|found| found.is_ok_and(|found| !found.as_str().contains('\n')));
                     let replaced = from.replace_all(&buf, to.as_str());
+                    lines_kept = lines_kept && newlines == Some(count_newlines(&replaced));
                     buf = replaced.into_owned();
                 }
                 let lo = compute_line_offsets(&buf);
-                (std::borrow::Cow::Owned(buf), std::borrow::Cow::Owned(lo))
+                (std::borrow::Cow::Owned(buf), std::borrow::Cow::Owned(lo), lines_kept)
             };
 
         let offsets_ref: &[usize] = text_offsets.as_ref();
@@ -325,6 +359,7 @@ pub fn detect(
         // The slice stays at char boundaries via `window_around`, and we translate
         // slice-relative offsets back to absolute via `slice_start` before emission.
         let uses_pre_replace = !rule.pre_regex_replace.is_empty();
+        let span_unavailable = opts.span_unavailable.or(uses_pre_replace.then_some("pre-regex-replaced content"));
         let window = if uses_pre_replace || rule.unbounded_multiline { None } else { ac_spans[i] };
         let (slice_start, slice_end) = match window {
             Some(span) => window_around(text_ref, span),
@@ -337,8 +372,13 @@ pub fn detect(
             path: &path_str,
             text: text_ref,
             line_offsets: offsets_ref,
+            // Allow markers are read from the file as written, so a replacement cannot
+            // rewrite their scope. That needs every line to map to itself; a replacement
+            // that touches a newline falls back to the rewritten text.
+            marker_source: if lines_kept { (content, &line_offsets) } else { (text_ref, offsets_ref) },
             allow_regions: &allow_regions,
             opts,
+            span_unavailable,
         };
 
         // Secret extraction follows gitleaks: an explicit `secretGroup`, else the first
@@ -412,6 +452,10 @@ struct MatchSpan {
     secret_end: usize,
 }
 
+fn count_newlines(text: &str) -> usize {
+    text.bytes().filter(|&byte| byte == b'\n').count()
+}
+
 /// Everything [`MatchCtx::emit`] needs about the rule and the text it ran over.
 struct MatchCtx<'a> {
     ruleset: &'a CompiledRuleset,
@@ -421,8 +465,11 @@ struct MatchCtx<'a> {
     /// The text the rule ran over (post `preRegexReplace`) and its line offsets.
     text: &'a str,
     line_offsets: &'a [usize],
-    allow_regions: &'a [(usize, usize)],
+    /// Text and line offsets that inline allow markers are read from.
+    marker_source: (&'a str, &'a [usize]),
+    allow_regions: &'a [AllowRegion],
     opts: DetectOptions<'a>,
+    span_unavailable: Option<&'static str>,
 }
 
 impl MatchCtx<'_> {
@@ -485,7 +532,15 @@ impl MatchCtx<'_> {
         // `pragma: allowlist nextline secret` on the line preceding the match.
         // `inline_allow: false` disables all three so CI can audit them.
         let inline_allowed = self.opts.inline_allow
-            && inline_suppressed(self.text, self.line_offsets, self.allow_regions, sl, span.match_start);
+            && inline_suppressed(
+                self.marker_source.0,
+                self.marker_source.1,
+                self.allow_regions,
+                self.ruleset,
+                &self.rule.id,
+                sl,
+                span.match_start,
+            );
 
         // Allowlist (rule + global) — respects per-allowlist `targetRules` via the rule id.
         let allowlisted = |lists: &[CompiledAllowlist]| {
@@ -518,6 +573,9 @@ impl MatchCtx<'_> {
             priority: self.rule.priority,
             start_offset: span.match_start as u32,
             end_offset: span.match_end as u32,
+            secret_start_offset: span.secret_start as u32,
+            secret_end_offset: span.secret_end as u32,
+            span_unavailable: self.span_unavailable,
             source: self.rule.source.clone(),
             confidence: self.rule.confidence.as_str(),
             suppressed_by,

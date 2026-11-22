@@ -9,38 +9,37 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{exit, Command};
+use std::process::Command;
 
-use vis_core::detect::detect_package_manager;
+use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
     resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
     RemoveOptions, ResolvedCommand, WhyOptions,
 };
 
-/// Surface warnings, exec the resolved command, forward its exit status.
-fn finish(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> ! {
+use crate::error::{self, WrapperError};
+
+/// Surface warnings, exec the resolved command, and return the exit status to forward.
+fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
     for warning in &resolved.warnings {
         eprintln!("vis {verb}: {warning}");
     }
 
-    match Command::new(&resolved.bin).args(&resolved.args).current_dir(cwd).status() {
-        Ok(status) => {
-            let mut code = crate::forward_code(status);
+    let status = Command::new(&resolved.bin)
+        .args(&resolved.args)
+        .current_dir(cwd)
+        .status()
+        .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))?;
+    let mut code = crate::forward_code(status);
 
-            // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
-            // non-error case the Node handlers suppress. Match that so the native
-            // path doesn't break `&&` chains / CI on the common case.
-            if (verb == "outdated" || verb == "why") && code == 1 {
-                code = 0;
-            }
-
-            exit(code);
-        }
-        Err(error) => {
-            eprintln!("vis {verb}: failed to run '{}': {error}", resolved.bin);
-            exit(127);
-        }
+    // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
+    // non-error case the Node handlers suppress. Match that so the native
+    // path doesn't break `&&` chains / CI on the common case.
+    if (verb == "outdated" || verb == "why") && code == 1 {
+        code = 0;
     }
+
+    Ok(code)
 }
 
 /// Walk up from `cwd` looking for a `vis.config.*` file.
@@ -127,6 +126,14 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
     parsed.values.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
 }
 
+/// Whether `verb` runs Node's handler at the workspace root, which is not `cwd` when the root is above it:
+/// `link`, `dedupe`, `unlink` and `why`, below a monorepo root or a turbo.json. Applies to any config at all.
+fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
+    matches!(verb, "dedupe" | "link" | "unlink" | "why")
+        && (crate::vis_config::node_config_root(cwd).is_some_and(|root| root != cwd)
+            || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()))
+}
+
 /// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
 /// lockfiles, so a native choice from the lockfile would differ.
 fn installer_selected_by_environment() -> bool {
@@ -160,6 +167,14 @@ fn ancestor_pins_package_manager(cwd: &Path) -> bool {
     false
 }
 
+/// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
+/// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
+fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
+    cwd.ancestors()
+        .skip(1)
+        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+}
+
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
 /// argument parsing does not apply them, so they must reach Node.
 fn uses_global_option(args: &[String]) -> bool {
@@ -174,6 +189,10 @@ fn uses_global_option(args: &[String]) -> bool {
 pub fn run(verb: &str, full_args: &[String]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
+    if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
+        crate::delegate(full_args);
+    }
+
     // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
     // native PM detector doesn't read. For these PM commands — especially the
     // mutating ones (remove/dedupe/link/unlink) — running the wrong PM is
@@ -181,9 +200,41 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     // plain data without those keys stays native, unless the environment or a global
     // option can change which installer or workspace Node would use.
     // (exec/x make the opposite, documented cold-start trade-off.)
-    let config = crate::vis_config::read(&cwd);
+    let mut config = crate::vis_config::read(&cwd);
+
+    // A config that needs evaluating is evaluated (one Node start, then cached) only when its value can still
+    // matter: the reasons below that apply to any config at all are checked first.
+    if config == crate::vis_config::ConfigState::Dynamic
+        && !(installer_selected_by_environment()
+            || uses_global_option(full_args)
+            || ancestor_pins_package_manager(&cwd)
+            || runs_at_workspace_root(verb, &cwd))
+    {
+        config = crate::vis_config::read_evaluated(&cwd);
+    }
+
+    // A plain `install.backend` of npm, pnpm or bun runs here, but only where Node reads the same
+    // config (a monorepo root) and never for `outdated`, whose Node form is the `check` command.
+    // Any other pin is left to Node.
+    let pinned = crate::vis_config::native_backend_pin(&config);
+    let pin = pinned.filter(|_| verb != "outdated" && crate::vis_config::node_reads_pin(&cwd));
+
+    // Where Node finds no monorepo root it drops every config, so a pin there is not Node's to honour:
+    // the native detector answers the same way Node's installer detection does, with no backend.
+    let ignored_by_node = pinned.is_some() && verb != "outdated" && crate::vis_config::node_ignores_config(&cwd);
+
+    // link, dedupe, unlink and why run Node's handler at the workspace root, not at the invocation directory.
+    // A turbo.json above `cwd` makes that folder Node's root even where no package manager marks a workspace.
+    let at_workspace_root = config != crate::vis_config::ConfigState::Absent && runs_at_workspace_root(verb, &cwd);
+
+    // Node runs `remove` and `dedupe` through its security-enforcement plugin, whose warnings and errors the
+    // native path does not reproduce, so those two verbs stay with Node under a pin.
+    let security_checked_by_node = pin.is_some() && matches!(verb, "remove" | "dedupe");
 
     if crate::vis_config::requires_node(&config)
+        || security_checked_by_node
+        || (pinned.is_some() && pin.is_none() && !ignored_by_node)
+        || at_workspace_root
         || (config != crate::vis_config::ConfigState::Absent
             && (installer_selected_by_environment()
                 || uses_global_option(full_args)
@@ -193,7 +244,10 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };
-    let detected = detect_package_manager(&cwd.to_string_lossy(), None);
+    let detected = detect_package_manager(
+        &cwd.to_string_lossy(),
+        Some(DetectPackageManagerOptions { backend: pin.map(str::to_owned), ..Default::default() }),
+    );
     let pm = detected.name;
     let version = detected.version.unwrap_or_default();
 
@@ -311,17 +365,18 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
         _ => unreachable!("unknown pm-family verb: {verb}"),
     };
 
-    match resolved {
-        Ok(command) => finish(verb, command, &cwd),
-        Err(message) => {
-            eprintln!("vis {verb}: {message}");
-            exit(1);
-        }
-    }
+    let outcome = match resolved {
+        Ok(command) => run_resolved(verb, command, &cwd),
+        Err(message) => Err(WrapperError::usage(verb, message)),
+    };
+
+    error::finish(outcome)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{has, scan};
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -343,6 +398,20 @@ mod tests {
         assert!(has(&parsed, "save-dev"));
         // Packages AND the unknown flag are forwarded, in order.
         assert_eq!(parsed.rest, ["lodash", "--unknown", "react"]);
+    }
+
+    #[test]
+    fn a_root_marker_above_the_working_directory_is_a_possible_root() {
+        let root = std::env::temp_dir().join(format!("vis-pm-family-{}", std::process::id()));
+        let package = root.join("packages").join("app");
+
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(root.join("pnpm-workspace.yaml"), "packages: []\n").unwrap();
+
+        assert!(super::ancestor_may_be_workspace_root(&package));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

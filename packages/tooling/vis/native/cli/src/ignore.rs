@@ -2,21 +2,21 @@
 //!
 //! The pattern lists and the merge are copied from `ignore-file.ts`. The output also depends on
 //! the workspace root, which Node finds with `@visulima/package`'s search. This crate only
-//! answers when `VIS_MONOREPO_ROOT` is the working directory and no ancestor holds a marker that
-//! the search could stop at ([`native_context`]). Only the `--target`, `--json` and `--write`
-//! shapes are native. Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8
-//! files), a config or Deno file, a terminal, colour support, and a run outside CI all go to Node
-//! via [`crate::delegate`].
+//! answers when the working directory is that root by the rule in [`native_root_is_cwd`]
+//! ([`native_context`]). Only the `--target`, `--json` and `--write` shapes are native.
+//! Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8 files), a config or
+//! Deno file, a terminal, colour support, and a run outside CI all go to Node via [`crate::delegate`].
 
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{any_ancestor_has, in_ci, DENO_FILES};
+use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
+use crate::error::WrapperError;
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
@@ -68,21 +68,6 @@ const SLUG_EXTRAS: [&str; 1] = ["node_modules"];
 const VERCEL_EXTRAS: [&str; 2] = ["node_modules", ".vercel/"];
 
 const VIS_SECTION_HEADER: &str = "# Added by vis ignore";
-
-/// Markers that Node's root search (`findMonorepoRootSync`) reads in an ancestor. Finding one
-/// strictly above the working directory means the root may not be the working directory.
-const ROOT_MARKERS: [&str; 10] = [
-    "lerna.json",
-    "turbo.json",
-    "pnpm-workspace.yaml",
-    "package.json",
-    "pnpm-lock.yaml",
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "yarn.lock",
-    "bun.lock",
-    "bun.lockb",
-];
 
 /// Environment variables that make Node's colour detection turn colour on for the stdout log
 /// lines (the dimmed hint is printed there). Any of them sends the command to Node.
@@ -184,13 +169,9 @@ fn native_context(cwd: &Path) -> bool {
         return false;
     }
 
-    let root = env::var_os("VIS_MONOREPO_ROOT").filter(|root| !root.is_empty()).map(PathBuf::from);
+    let env_root = env::var_os("VIS_MONOREPO_ROOT");
 
-    if root.as_deref() != Some(cwd) {
-        return false;
-    }
-
-    if cwd.ancestors().skip(1).any(|ancestor| ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists())) {
+    if !native_root_is_cwd(cwd, env_root.as_deref()) {
         return false;
     }
 
@@ -204,7 +185,7 @@ fn native_context(cwd: &Path) -> bool {
 
 /// Whether Node could colour the stdout log lines. A `TERM` other than a dumb or mono one also
 /// counts, since Node reads it for the colour level.
-fn colour_may_be_forced() -> bool {
+pub(crate) fn colour_may_be_forced() -> bool {
     if COLOUR_ENVIRONMENT.iter().any(|key| env::var_os(key).is_some()) {
         return true;
     }
@@ -237,15 +218,14 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         Ok(()) => exit(0),
         // A closed pipe is not an error worth reporting.
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
-        Err(error) => {
-            eprintln!("vis ignore: failed to write the output: {error}");
-            exit(1);
-        }
+        Err(error) => WrapperError::write("ignore", "the output", error).exit(),
     }
 }
 
-/// The stdout text for the invocation, or `None` to hand the command to Node. Nothing is
-/// written to disk before a `None` is returned, so the delegated run starts from the same state.
+/// The stdout text for the invocation, or `None` to hand the command to Node. Nothing is written
+/// to disk before a `None` is returned, so the delegated run starts from the same state. Once the
+/// ignore file is open for writing the file is truncated, so a failure from then on is reported
+/// here and exits with 1: running Node on a damaged file would merge into it and report success.
 fn execute(options: &Options, cwd: &Path) -> Option<String> {
     let path = cwd.join(options.filename);
     let existing = match fs::read(&path) {
@@ -266,7 +246,11 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
             return Some(format!("{} is already up to date (no new patterns).\n", options.filename));
         }
 
-        write_atomically(&write_target(&path)?, &merged.content).ok()?;
+        let mut file = open_for_write(&write_target(&path)?).ok()?;
+
+        if let Err(error) = overwrite(&mut file, &merged.content) {
+            WrapperError::write("ignore", options.filename, error).exit();
+        }
 
         return Some(format!("Added {} pattern(s) to {}.\n", merged.added.len(), options.filename));
     }
@@ -283,9 +267,8 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
     Some(text)
 }
 
-/// The file a write to `path` lands in. `fs::write` follows a symlink and writes its target, so the
-/// rename must target the resolved path too, or the link would be replaced by a regular file.
-/// A dangling link is `None`: Node would create the target, so the write goes there instead.
+/// The file a write to `path` lands in. Opening a symlink writes its target, as `fs::write` does. A
+/// dangling link is `None`: Node would create the target, so the command is left to it.
 fn write_target(path: &Path) -> Option<PathBuf> {
     match fs::symlink_metadata(path) {
         Ok(_) => fs::canonicalize(path).ok(),
@@ -294,44 +277,25 @@ fn write_target(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// A sibling of `path` that only this process names, so a concurrent writer cannot pick it.
-fn temp_path(path: &Path) -> PathBuf {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-
-    path.with_file_name(format!(".{name}.vis-{}.tmp", std::process::id()))
+/// Opens `path` for the way Node's `fs.writeFile` writes it: an existing file is rewritten in place,
+/// so its inode, owner, hard links, ACLs and xattrs stay as they were, and a new file gets the default
+/// mode. It does not truncate, so a refused open (read-only file, a directory) leaves the file as it
+/// was and the caller can still hand the command to Node.
+fn open_for_write(path: &Path) -> io::Result<File> {
+    OpenOptions::new().write(true).create(true).truncate(false).open(path)
 }
 
-/// Replaces `path` with `contents` through a temporary file in the same directory and a rename, so
-/// a failed write never leaves a truncated ignore file. The temporary file is removed when a step
-/// after its creation fails; the caller delegates to Node, which reports the error.
-fn write_atomically(path: &Path, contents: &str) -> io::Result<()> {
-    // The rename below would replace a read-only destination that a direct write refuses, so
-    // check the destination can be written first. Opening without truncating leaves it intact.
-    if path.exists() {
-        OpenOptions::new().write(true).open(path)?;
-    }
+/// Replaces the contents of the file opened by `open_for_write`. Nothing is staged in a sibling, so
+/// no copy of the contents exists with a looser mode than the destination's. A failure here can
+/// leave the file truncated, as it can under Node.
+fn overwrite(file: &mut File, contents: &str) -> io::Result<()> {
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())
+}
 
-    let temp = temp_path(path);
-    let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
-
-    let result = (|| {
-        file.write_all(contents.as_bytes())?;
-
-        // A rename brings in the temporary file's mode, so keep the mode the target had.
-        if let Ok(metadata) = fs::metadata(path) {
-            file.set_permissions(metadata.permissions())?;
-        }
-
-        file.sync_all()?;
-
-        fs::rename(&temp, path)
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-
-    result
+#[cfg(test)]
+fn write_in_place(path: &Path, contents: &str) -> io::Result<()> {
+    overwrite(&mut open_for_write(path)?, contents)
 }
 
 /// `JSON.stringify({ added, file, target }, null, 2)` plus a newline. Every string is a constant
@@ -509,23 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_write_leaves_the_original_file_untouched() {
-        let directory = scratch("write-failure");
-        let target = directory.join(".dockerignore");
-
-        fs::write(&target, "original\n").unwrap();
-        // Another writer already holds the temporary name, so creating it fails before the target is touched.
-        fs::write(temp_path(&target), "theirs\n").unwrap();
-
-        assert!(write_atomically(&target, "replacement\n").is_err());
-        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
-        // The file was not created by this write, so the failed write must not remove it.
-        assert_eq!(fs::read_to_string(temp_path(&target)).unwrap(), "theirs\n");
-
-        fs::remove_dir_all(&directory).unwrap();
-    }
-
-    #[test]
     fn a_read_only_destination_is_refused_and_left_untouched() {
         let directory = scratch("read-only");
         let target = directory.join(".dockerignore");
@@ -535,38 +482,55 @@ mod tests {
         permissions.set_readonly(true);
         fs::set_permissions(&target, permissions).unwrap();
 
-        assert!(write_atomically(&target, "replacement\n").is_err());
-        assert!(!temp_path(&target).exists());
+        assert!(write_in_place(&target, "replacement\n").is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
 
         fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
-    fn a_failed_rename_removes_the_temporary_file() {
-        let directory = scratch("rename-failure");
+    fn a_directory_destination_is_refused() {
+        let directory = scratch("directory");
         let target = directory.join(".dockerignore");
 
-        // A file cannot be renamed over a directory, so the rename after the temporary write fails.
         fs::create_dir(&target).unwrap();
 
-        assert!(write_atomically(&target, "replacement\n").is_err());
-        assert!(!temp_path(&target).exists());
+        assert!(write_in_place(&target, "replacement\n").is_err());
         assert!(target.is_dir());
 
         fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
-    fn a_successful_write_replaces_the_file_and_leaves_no_temporary_file() {
-        let directory = scratch("write-success");
+    fn a_new_file_is_created_with_the_contents() {
+        let directory = scratch("write-new");
         let target = directory.join(".dockerignore");
 
-        fs::write(&target, "old\n").unwrap();
-        write_atomically(&target, "new\n").unwrap();
+        write_in_place(&target, "new\n").unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "new\n");
-        assert!(!temp_path(&target).exists());
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_keeps_the_inode_so_hard_links_receive_the_update() {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = scratch("hard-link");
+        let target = directory.join(".dockerignore");
+        let link = directory.join("linked");
+
+        fs::write(&target, "old\n").unwrap();
+        fs::hard_link(&target, &link).unwrap();
+        let inode = fs::metadata(&target).unwrap().ino();
+
+        write_in_place(&target, "new\n").unwrap();
+
+        assert_eq!(fs::metadata(&target).unwrap().ino(), inode);
+        assert_eq!(fs::read_to_string(&link).unwrap(), "new\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
 
         fs::remove_dir_all(&directory).unwrap();
     }

@@ -24,6 +24,10 @@ path = "src/main.rs"
 # `localtime_r` for the local clock in pail's header (see src/clean.rs).
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# Switches the console to ANSI mode at startup (see src/term.rs).
+windows-sys = { version = "0.61", features = [ "Win32_System_Console" ] }
+
 [dependencies]
 vis-core = { path = "../core" }
 # `hook run` fast path. `prek-identify` is pinned to the addon's version so both
@@ -34,6 +38,8 @@ regex = { version = "1", default-features = false, features = [
   "std",
   "perf"
 ] }
+# Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
+blake3 = { version = "1", default-features = false }
 serde = { version = "1", features = [ "derive" ] }
 serde_json = { version = "1", features = [ "float_roundtrip" ] }
 # Reads `vis.config.*` as data (see src/vis_config.rs). Pinned like the addon's copies.

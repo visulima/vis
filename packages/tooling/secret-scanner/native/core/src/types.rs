@@ -1,6 +1,7 @@
 //! Plain-Rust option, finding and report types of the scanner API. The napi addon
 //! mirrors these one-to-one (same field names, camelCased on the JS side).
 
+use crate::profile::ProfileReport;
 use crate::suppression::SuppressionReason;
 
 #[derive(Clone, Debug, Default)]
@@ -48,6 +49,20 @@ pub struct ScanOptions {
     /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
     /// match; without it they never do.
     pub commit: Option<String>,
+    /// Collect opt-in timing data (phases, per-file, per-rule) and attach it to
+    /// `ScanReport.profile`. Adds minor overhead; off by default.
+    pub profile: Option<bool>,
+}
+
+/// Byte spans into the scanned content, for consumers that rewrite findings in
+/// place. Only present when the offsets can be trusted against the source file:
+/// path-only, decoded, archive-entry and pre-replaced text findings omit it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub match_start: u32,
+    pub match_end: u32,
+    pub secret_start: u32,
+    pub secret_end: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +94,15 @@ pub struct Finding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld, e.g. `decoded content`.
+    /// Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 /// A match an allowlist or inline marker suppressed: a [`Finding`] plus its reason.
@@ -113,6 +137,15 @@ pub struct SuppressedFinding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld, e.g. `decoded content`.
+    /// Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
@@ -128,6 +161,8 @@ pub struct RequiredFinding {
     pub r#match: String,
     pub secret: String,
     pub decoded: Option<Vec<String>>,
+    pub source_span: Option<SourceSpan>,
+    pub span_unavailable_reason: Option<String>,
 }
 
 /// A file the scan could not read. `reason` is `"permission-denied"`,
@@ -141,6 +176,21 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
+/// An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+/// nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+/// suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+/// lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+/// or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+/// token that is neither a known rule id nor id-shaped.
+#[derive(Clone, Debug)]
+pub struct AllowWarning {
+    pub file: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub unknown_rule_ids: Vec<String>,
+}
+
 /// Result of every scan entry point.
 #[derive(Clone, Debug, Default)]
 pub struct ScanReport {
@@ -150,6 +200,10 @@ pub struct ScanReport {
     pub suppressed: Vec<SuppressedFinding>,
     /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
+    /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
+    pub allow_warnings: Vec<AllowWarning>,
+    /// Timing data. `None` unless `ScanOptions.profile` was set.
+    pub profile: Option<ProfileReport>,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +248,9 @@ impl Finding {
             alternate_matches: self.alternate_matches,
             decoded: self.decoded,
             required_findings: self.required_findings,
+            root: self.root,
+            source_span: self.source_span,
+            span_unavailable_reason: self.span_unavailable_reason,
             suppressed_by: reason.as_str().to_string(),
         }
     }

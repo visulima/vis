@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +23,8 @@ const nodeEntry = join(packageRoot, "dist", "bin.js");
 const fixturesRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "ignore");
 
 /**
- * Fixtures the native path answers in CI with `VIS_MONOREPO_ROOT` set to their directory. The
+ * Fixtures the native path answers in CI, from a working directory that holds a marker and has no
+ * marked ancestor (the scratch copy's own `package.json`). The
  * others carry a config or Deno file, or an ignore file the native path cannot read as UTF-8, so
  * they reach Node and only the parity of the output is checked.
  */
@@ -73,12 +74,14 @@ const ignoreFilesIn = (directory: string): Record<string, string | null> =>
 const nodeRun = (args: string[], cwd: string, extraEnv: Record<string, string> = {}) =>
     run(process.execPath, [nodeEntry, "ignore", ...args], cwd, { CI: "1", VIS_MONOREPO_ROOT: cwd, ...extraEnv });
 
-/** The native binary, with its own delegation target set so a delegated run can still reach Node. */
+/**
+ * The native binary, with its own delegation target set so a delegated run can still reach Node.
+ * `VIS_MONOREPO_ROOT` is left unset: the gate computes the root itself.
+ */
 const nativeRun = (args: string[], cwd: string, extraEnv: Record<string, string> = {}) =>
     run(binary as string, ["ignore", ...args], cwd, {
         CI: "1",
         VIS_FALLBACK_ENTRY: nodeEntry,
-        VIS_MONOREPO_ROOT: cwd,
         VIS_NODE: process.execPath,
         ...extraEnv,
     });
@@ -113,7 +116,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const missingEntry = join(scratch, "missing-entry.js");
 
         // Node cannot run from a missing entry, so a delegated run would fail with a different status.
-        const native = nativeRun([], directory, { VIS_FALLBACK_ENTRY: missingEntry });
+        const native = nativeRun([], directory, { VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
         const node = nodeRun([], copyFixture(fixture));
 
         expect(native.status).toBe(0);
@@ -121,9 +124,48 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.stderr).toBe("");
 
         const writeDirectory = copyFixture(fixture);
-        const nativeWrite = nativeRun(["--write"], writeDirectory, { VIS_FALLBACK_ENTRY: missingEntry });
+        const nativeWrite = nativeRun(["--write"], writeDirectory, { VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
 
         expect(nativeWrite.status).toBe(0);
+    }, 60_000);
+
+    it("delegates when VIS_MONOREPO_ROOT names another directory", () => {
+        expect.assertions(1);
+
+        const directory = copyFixture("empty-project");
+        const missingEntry = join(scratch, "missing-entry.js");
+
+        // A delegated run cannot reach a missing entry, so a non-zero status shows the binary handed over.
+        // Node's own output is not compared here: a delegated run would only compare Node with itself.
+        const stale = nativeRun([], directory, {
+            VIS_FALLBACK_ENTRY: missingEntry,
+            VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry,
+            VIS_MONOREPO_ROOT: scratch,
+        });
+
+        expect(stale.status).not.toBe(0);
+    }, 60_000);
+
+    it("delegates when an ancestor holds a root marker, and matches Node", () => {
+        expect.assertions(3);
+
+        const ancestor = join(scratch, "ancestor-marker");
+        const missingEntry = join(scratch, "missing-entry.js");
+
+        mkdirSync(join(ancestor, "child"), { recursive: true });
+        writeFileSync(join(ancestor, "package.json"), "{}");
+
+        const directory = join(ancestor, "child");
+
+        writeFileSync(join(directory, "package.json"), "{}");
+
+        const delegated = nativeRun([], directory, { VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
+        const native = nativeRun([], directory, { VIS_FALLBACK_ENTRY: nodeEntry });
+        const node = nodeRun([], directory);
+
+        expect(delegated.status).not.toBe(0);
+        expect(native.status).toBe(node.status);
+        expect(native.stdout).toBe(node.stdout);
     }, 60_000);
 
     it("keeps the write sequence identical across repeated runs", () => {

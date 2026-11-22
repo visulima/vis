@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { scanString } from "../src/index";
+import { maskSecret } from "../src/mask";
 import type { ScanOptions } from "../src/types";
 
 const directories: string[] = [];
@@ -21,6 +22,36 @@ afterEach(() => {
     for (const directory of directories.splice(0)) {
         rmSync(directory, { force: true, recursive: true });
     }
+});
+
+describe("redact defaults to true", () => {
+    const secret = "TESTTOKEN_abcdefghij0123456789";
+    const options: ScanOptions = {
+        config: {
+            extendBundled: false,
+            inline: { rules: [{ id: "test-token", keywords: ["TESTTOKEN_"], regex: "TESTTOKEN_[A-Za-z0-9]{20}" }] },
+        },
+    };
+
+    it("masks match and secret by default", async () => {
+        expect.assertions(3);
+
+        const findings = await scanString(`TOKEN=${secret}\n`, "c.env", options);
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.match).toBe(maskSecret(secret));
+        expect(findings[0]?.secret).toBe(maskSecret(secret));
+    });
+
+    it("reveals match and secret with redact: false", async () => {
+        expect.assertions(3);
+
+        const findings = await scanString(`TOKEN=${secret}\n`, "c.env", { ...options, redact: false });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.match).toBe(secret);
+        expect(findings[0]?.secret).toBe(secret);
+    });
 });
 
 describe("redact masks composite dependencies", () => {
@@ -63,6 +94,17 @@ describe("redact masks composite dependencies", () => {
 
         await expect(scanString(moved, "c.env", compositeOptions)).resolves.toHaveLength(2);
         await expect(scanString(moved, "c.env", { ...compositeOptions, baseline })).resolves.toStrictEqual([]);
+    });
+
+    it("matches a masked baseline by content hash when redact is false", async () => {
+        expect.assertions(2);
+
+        const baseline = await scanString(content, "c.env", compositeOptions);
+        const moved = `\n\n${content}`;
+        const revealed = { ...compositeOptions, redact: false };
+
+        await expect(scanString(moved, "c.env", revealed)).resolves.toHaveLength(2);
+        await expect(scanString(moved, "c.env", { ...revealed, baseline })).resolves.toStrictEqual([]);
     });
 
     it("masks requiredFindings without an ignore file", async () => {

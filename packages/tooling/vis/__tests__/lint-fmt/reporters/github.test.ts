@@ -108,6 +108,17 @@ describe(emitGitHub, () => {
         expect(out).not.toContain("has,comma:colon");
     });
 
+    it("leaves equals signs in property values unescaped", () => {
+        expect.assertions(1);
+
+        const out = emitGitHub({
+            runs: [{ findings: [baseFinding({ file: "/repo/src/a=b.ts" })] }],
+            workspaceRoot: "/repo",
+        });
+
+        expect(out).toContain("file=src/a=b.ts,");
+    });
+
     it("sorts findings by file, line, then column across runs", () => {
         expect.assertions(1);
 

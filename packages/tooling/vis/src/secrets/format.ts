@@ -3,8 +3,10 @@ import { pathToFileURL } from "node:url";
 import { cyan, dim, green, red, yellow } from "@visulima/colorize";
 import { readFileSync } from "@visulima/fs";
 import { isAbsolute, relative, resolve } from "@visulima/path";
-import type { Finding, GitFinding, GitSkippedBlob, RuleInfo, SkippedFile } from "@visulima/secret-scanner";
+import type { AllowWarning, Finding, GitFinding, GitSkippedBlob, RuleInfo, SkippedFile } from "@visulima/secret-scanner";
 import { toSarifUri as toRelativeSarifUri } from "@visulima/secret-scanner";
+
+import { toRelative } from "./baseline";
 
 const CONTEXT_RADIUS = 1;
 
@@ -221,6 +223,20 @@ export const formatSkipped = (
 
             lines.push(useColor ? dim(detail) : detail);
         }
+    }
+
+    return lines.join("\n");
+};
+
+/** Allow markers whose rule ids are not active: they still suppress every rule. */
+export const formatAllowWarnings = (warnings: ReadonlyArray<AllowWarning>, root: string, useColor: boolean): string => {
+    const summary = `${String(warnings.length)} allow marker(s) name unknown rule ids and still suppress every rule (rename or remove the ids):`;
+    const lines = [useColor ? yellow(summary) : summary];
+
+    for (const warning of warnings) {
+        const detail = `  - ${toRelative(warning.file, root)}:${String(warning.line)} unknown: ${warning.unknownRuleIds.join(", ")}`;
+
+        lines.push(useColor ? dim(detail) : detail);
     }
 
     return lines.join("\n");

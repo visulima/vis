@@ -15,10 +15,11 @@ Recursively scan one or more paths for secrets. Runs the detector on a Rust thre
 import { scan } from "@visulima/secret-scanner";
 
 const findings = await scan([process.cwd()], {
-    redact: true,
     walk: { gitignore: true, maxFileSize: 5 * 1024 * 1024 },
 });
 ```
+
+Findings are masked by default. Pass `redact: false` when you need the full `match` and `secret` values.
 
 - Respects `.gitignore`, `.ignore` and global excludes by default.
 - Walker-level exclusions come from `walk.excludePatterns` and `walk.excludeFromFiles`.
@@ -70,11 +71,22 @@ import { scanString } from "@visulima/secret-scanner";
 const findings = await scanString('const token = "ghp_..."', "src/app.ts");
 ```
 
-Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency.
+Runs synchronously on the calling thread (the binding exposes `scanTextSync`); the wrapper returns a Promise for API consistency. `scanStringDetailed` takes the same arguments and returns the full result, see below.
+
+### `isPathExcluded(file, options?, root)`
+
+Whether `file` is excluded by `walk.excludePatterns` / `walk.excludeFromFiles` in `options`, the filter `scanFiles` applies to a listed file. Relative paths resolve against `root`; a path outside `root` is never excluded. Use it before `scanString` when the buffer stands in for a file that a path scan would have skipped.
+
+```typescript
+import { isPathExcluded, scanString } from "@visulima/secret-scanner";
+
+const options = { walk: { excludePatterns: ["dist/**"] } };
+const findings = isPathExcluded("dist/app.js", options, process.cwd()) ? [] : await scanString(content, "dist/app.js", options);
+```
 
 ### `scanStringDetailed(content, file, options?)`
 
-Like `scanString`, with the diagnostics of `scanDetailed`: `suppressed` (with `reportSuppressed: true`) and `unusedIgnores`. `skipped` is always empty, since nothing is read from disk. `vis secrets --stdin <filename>` is built on it.
+Like `scanString`, with the diagnostics of `scanDetailed`: `allowWarnings` (allow markers naming rule ids that are not active), `suppressed` (with `reportSuppressed: true`) and `unusedIgnores`. `skipped` is always empty, since nothing is read from disk. `vis secrets --stdin <filename>` is built on it.
 
 ```typescript
 import { scanStringDetailed } from "@visulima/secret-scanner";
@@ -128,6 +140,40 @@ const { findings, skipped, suppressed, unusedIgnores } = await scanGitStaged({ c
 ```
 
 Findings carry the absolute working-tree path, like `scanFiles`. `walk.excludePatterns` / `walk.excludeFromFiles` apply relative to `cwd`.
+
+## Authoring and testing rules
+
+### `defineRule(input)` / `defineRuleset(rules, title?)`
+
+Compile a typed rule definition into the plain gitleaks-shaped object used by `config.inline.rules`. `regex` accepts a string or a `RegExp`; only the `i`, `m` and `s` flags can be represented and become Rust inline flags.
+
+`keywords` defaults to `"auto"`, which infers literal fragments that are mandatory on every branch of the regex. Set it to `false` (or omit the field when inference finds nothing) to leave the rule always-running, or pass an explicit `string[]` to take full control. `inferKeywords(pattern, { minLength? })` is exported for inspecting the inference directly.
+
+```typescript
+import { defineRule } from "@visulima/secret-scanner";
+
+const rule = defineRule({
+    description: "Internal API key",
+    id: "internal-api-key",
+    regex: /int_[A-Za-z0-9]{32}/,
+});
+// { description, id, keywords: ["int_"], regex: "int_[A-Za-z0-9]{32}" }
+```
+
+### `createRuleTester(rule | rules, options?)`
+
+Run true/false-positive cases through the real detector with a controlled configuration: bundled rules, validators, baseline suppression and inline allow markers are all off. `run()` throws an aggregated `RuleTesterError` on mismatch; `snapshot()` returns a stable, masked payload suitable for `toMatchSnapshot()`.
+
+```typescript
+import { createRuleTester } from "@visulima/secret-scanner";
+
+const tester = createRuleTester(rule);
+
+await tester.run({
+    invalid: ["int_abcdefghij0123456789abcdefghijkl"],
+    valid: ["not a secret"],
+});
+```
 
 ## Introspection
 
@@ -262,6 +308,7 @@ interface Finding {
     alternateMatches: string[];
     decoded?: string[];
     requiredFindings?: RequiredFinding[];
+    root?: string;
     source?: string;
     validation?: ValidationStatus;
 }
@@ -284,6 +331,7 @@ interface RequiredFinding {
 - `alternateMatches` lists other rule ids that matched the same byte span and were collapsed by the dedup pass.
 - `decoded` is present only when the secret was found inside encoded text (see `maxDecodeDepth`). It lists the encoding chain, outermost first, e.g. `["base64"]` or `["base64", "hex"]`. `match` and `secret` hold the decoded value; line and column point at the original encoded span.
 - `requiredFindings` is present only on findings of composite rules (`required` in the rule config, see [Composite rules](./configuration#composite-rules-required-skipreport)). It holds, for each required rule id, the nearest finding in the same file that satisfied the rule. `match` and `secret` are redacted with `redact: true`.
+- `root` is the canonical absolute path of the scan root `file` is relative to. It is absent when `file` was not made relative to a root (`scanString`, git history). Per-file `overrides` use it to match the right file when several roots hold the same relative path. Fingerprints and baselines ignore it, and baseline files do not store it.
 - `source` tags the rule's provenance — `"gitleaks"`, `"kingfisher"`, `"visulima"`, or whatever the user declared.
 - `validation` is set only when `config.validate: true`. See [`ValidationStatus`](#validationstatus) below.
 

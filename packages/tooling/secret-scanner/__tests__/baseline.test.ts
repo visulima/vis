@@ -245,6 +245,12 @@ describe(resolveBaselineSet, () => {
 });
 
 describe(createBaseline, () => {
+    it("leaves the scan-time root out of the serialised findings", () => {
+        expect.assertions(1);
+
+        expect(createBaseline([{ ...sampleFinding(), root: tmp }])).not.toContain('"root"');
+    });
+
     it("serialises findings as a pretty-printed JSON array round-trippable by the loader", async () => {
         expect.assertions(2);
 

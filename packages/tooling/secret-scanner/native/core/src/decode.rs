@@ -21,7 +21,7 @@ use crate::detector::{detect, DecodeOrigin, DetectOptions, Pass, RawFinding};
 use crate::lines::{compute_line_offsets, offset_to_line_col};
 use crate::rules::CompiledRuleset;
 use crate::scanner::TextScanOptions;
-use crate::suppression::{find_allow_regions, inline_suppressed, SuppressionReason};
+use crate::suppression::{find_allow_regions, inline_suppressed, AllowRegion, SuppressionReason};
 
 /// Default recursion depth. 2 covers "base64 in a k8s Secret" and one extra wrapping
 /// layer without the blow-up of deeper recursion.
@@ -126,9 +126,9 @@ pub fn scan_text_with_decoding(
     }
 
     let line_offsets = compute_line_offsets(content);
-    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content) } else { Vec::new() };
+    let allow_regions = if detect_opts.inline_allow { find_allow_regions(content, ruleset) } else { Vec::new() };
     let original =
-        Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts };
+        Original { content, line_offsets: &line_offsets, allow_regions: &allow_regions, detect: detect_opts, ruleset };
 
     let (mut buf, mut fragments) = first_level(content, segments);
     for depth in 1..=decode.max_depth {
@@ -174,8 +174,9 @@ fn already_reported(out: &[RawFinding], f: &RawFinding) -> bool {
 struct Original<'a> {
     content: &'a str,
     line_offsets: &'a [usize],
-    allow_regions: &'a [(usize, usize)],
+    allow_regions: &'a [AllowRegion],
     detect: DetectOptions<'a>,
+    ruleset: &'a CompiledRuleset,
 }
 
 /// Find decodable segments in `text[from..to]`. Returned offsets are absolute in `text`,
@@ -518,7 +519,15 @@ fn map_finding(mut f: RawFinding, fragments: &[Fragment], original: &Original<'_
     // fully contain — re-check them against the original content.
     let (sl, sc, el, ec) = offset_to_line_col(original.line_offsets, orig_start, orig_end, original.content);
     let inline_allowed = original.detect.inline_allow
-        && inline_suppressed(original.content, original.line_offsets, original.allow_regions, sl, orig_start);
+        && inline_suppressed(
+            original.content,
+            original.line_offsets,
+            original.allow_regions,
+            original.ruleset,
+            &f.rule_id,
+            sl,
+            orig_start,
+        );
     if inline_allowed {
         if !original.detect.report_suppressed {
             return None;
@@ -694,6 +703,18 @@ mod tests {
     }
 
     #[test]
+    fn scoped_allow_comment_on_original_line_is_rule_specific() {
+        let rs = ruleset(
+            r#"{"rules":[{"id":"openrouter","regex":"\\b(sk-or-v1-[0-9a-f]{64})\\b","secretGroup":1,"keywords":["sk-or-v1-"]},{"id":"other-rule","regex":"nomatch-[0-9]{9}","keywords":["nomatch-"]}]}"#,
+        );
+        let scan_scoped =
+            |text: &str| scan_text_with_decoding(&rs, Path::new("x.txt"), text, decode_opts(DecodeOptions::default()));
+
+        assert!(scan_scoped(&format!("value: {} # gitleaks:allow openrouter\n", b64(KEY))).is_empty());
+        assert_eq!(scan_scoped(&format!("value: {} # gitleaks:allow other-rule\n", b64(KEY))).len(), 1);
+    }
+
+    #[test]
     fn nextline_pragma_does_not_leak_into_another_fragment() {
         // Both lines carry an encoded segment, so their fragments sit next to each other
         // in the decode buffer. The pragma only covers line 2 of the original file.
@@ -736,6 +757,42 @@ mod tests {
         let text = format!("ääää ääää {} ääää sk-or-v1-{}\n", b64(KEY), "0123456789abcdef".repeat(4));
         let findings = scan_text_with_decoding(&rs, Path::new("a"), &text, TextScanOptions::default());
         assert!(findings.iter().all(|f| f.decoded.is_none()));
+    }
+
+    #[test]
+    fn allow_markers_are_read_before_pre_regex_replace() {
+        // The replacement rewrites the rule id inside the marker; the marker as written
+        // still names `tok-rule`, so its finding stays suppressed.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"tok-rule","to":"other-rule"}]},{"id":"other-rule","regex":"OTHER_[A-Z]{8}","keywords":["other_"]}]}"#,
+        );
+        let text = "key = TOK_ABCDEFGH // gitleaks:allow tok-rule\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn a_replacement_that_moves_newlines_does_not_borrow_another_lines_marker() {
+        // Same line count after the rewrite, but the secret now sits on line 2, which in
+        // the file as written holds a marker for a different line.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"key = ","to":"\n"},{"from":"p\nq","to":"pq"}]}]}"#,
+        );
+        let text = "key = TOK_ABCDEFGH\nz // gitleaks:allow\np\nq\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert_eq!(findings.len(), 1, "{findings:?}");
+    }
+
+    #[test]
+    fn a_newline_inserted_through_a_lookahead_capture_is_noticed() {
+        // `(?=(\n))` matches no newline itself, yet `$1` inserts one, pushing the secret
+        // onto line 3, where the file as written holds an unrelated marker.
+        let rs = ruleset(
+            r#"{"rules":[{"id":"tok-rule","regex":"TOK_[A-Z]{8}","keywords":["tok_"],"preRegexReplace":[{"from":"(?=(\n))","to":"$1"}]}]}"#,
+        );
+        let text = "a\nkey = TOK_ABCDEFGH\nz // gitleaks:allow\n";
+        let findings = scan_text_with_decoding(&rs, Path::new("a"), text, TextScanOptions::default());
+        assert_eq!(findings.len(), 1, "{findings:?}");
     }
 
     #[test]

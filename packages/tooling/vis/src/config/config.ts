@@ -350,21 +350,15 @@ const resolveConfigChain = async (
 };
 
 /**
- * Load the vis configuration from a `vis.config.ts` (or `.js`, `.mjs`, `.cjs`, `.mts`, `.cts`) file.
- *
- * Resolves the entire `extends` chain, post-order, and folds it into a
- * single merged config (extends first, root last — child wins).
- *
- * Falls back to secure defaults if no config file is found.
+ * Load and merge the config file and everything it `extends`, without applying
+ * the secure defaults. The result holds only what the user (and their presets)
+ * wrote, which is what the native CLI reads (`vis __emit-config`).
  * @param workspaceRoot The workspace root directory to search for the config file.
  * @param options Optional loader options.
- * @param options.explicitConfigPath Overrides discovery — used by the
- * global `--config` flag so users can point at any file regardless of
- * cwd. The path must exist; otherwise an error is thrown so the
- * config-loader plugin can surface it to the user.
- * @returns The loaded and resolved configuration with secure defaults applied.
+ * @param options.explicitConfigPath Same as for {@link loadVisConfig}.
+ * @returns The merged user configuration, `{}` when there is no config file.
  */
-const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPath?: string }): Promise<VisConfig> => {
+const loadMergedVisConfig = async (workspaceRoot: string, options?: { explicitConfigPath?: string }): Promise<VisConfig> => {
     let rootConfigPath: string | undefined;
 
     if (options?.explicitConfigPath) {
@@ -380,7 +374,7 @@ const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPa
     }
 
     if (!rootConfigPath) {
-        return applyDefaults({});
+        return {};
     }
 
     const inFlight = new Set<string>();
@@ -395,8 +389,26 @@ const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPa
         merged = mergeVisConfigs(merged, loaded.get(path)!);
     }
 
-    return applyDefaults(merged);
+    return merged;
 };
+
+/**
+ * Load the vis configuration from a `vis.config.ts` (or `.js`, `.mjs`, `.cjs`, `.mts`, `.cts`) file.
+ *
+ * Resolves the entire `extends` chain, post-order, and folds it into a
+ * single merged config (extends first, root last — child wins).
+ *
+ * Falls back to secure defaults if no config file is found.
+ * @param workspaceRoot The workspace root directory to search for the config file.
+ * @param options Optional loader options.
+ * @param options.explicitConfigPath Overrides discovery — used by the
+ * global `--config` flag so users can point at any file regardless of
+ * cwd. The path must exist; otherwise an error is thrown so the
+ * config-loader plugin can surface it to the user.
+ * @returns The loaded and resolved configuration with secure defaults applied.
+ */
+const loadVisConfig = async (workspaceRoot: string, options?: { explicitConfigPath?: string }): Promise<VisConfig> =>
+    applyDefaults(await loadMergedVisConfig(workspaceRoot, options));
 
 /**
  * Load the per-package `vis.task.ts` overlay for a project, if any.
@@ -494,6 +506,7 @@ export {
     defineTaskConfig,
     findVisConfigFile,
     findVisTaskConfigFile,
+    loadMergedVisConfig,
     loadVisConfig,
     loadVisTaskConfig,
     SECURITY_DEFAULTS,

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, chmodSync, constants, copyFileSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -184,9 +184,17 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
             expect(launcherKept()).toBe(false);
         });
 
+        // The `.bin/vis` shim pnpm wrote on the first install, before this script ran again.
+        const writeStaleShim = () => {
+            mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+            writeFileSync(join(root, "node_modules", ".bin", "vis"), "#!/bin/sh\nexec node \"$basedir/../@visulima/vis/bin/vis\" \"$@\"\n");
+            writeFileSync(join(root, "node_modules", ".modules.yaml"), "layoutVersion: 5\n");
+        };
+
         it("keeps the launcher on `pnpm rebuild`, where the shim was written before the script ran", () => {
             expect.assertions(1);
 
+            writeStaleShim();
             install({ ...pnpm, INIT_CWD: root, npm_command: "rebuild" });
 
             expect(launcherKept()).toBe(true);
@@ -195,10 +203,104 @@ describe.skipIf(process.platform === "win32" || nativeTarget() === undefined)("s
         it("keeps the launcher on `pnpm approve-builds`, which leaves the stale shim in place", () => {
             expect.assertions(2);
 
+            writeStaleShim();
             const approved = install({ ...pnpm, INIT_CWD: root, npm_command: "approve-builds" });
 
             expect(approved.status).toBe(0);
             expect(launcherKept()).toBe(true);
+        });
+
+        it("keeps the launcher when a stale shim exists, whatever `npm_command` pnpm reports", () => {
+            expect.assertions(1);
+
+            writeStaleShim();
+            install({ ...pnpm, INIT_CWD: root });
+
+            expect(launcherKept()).toBe(true);
+        });
+
+        // Writes the shim pnpm generates in `modules/.bin` for the `bin/vis` of `packageDirectory`.
+        const writeShim = (modules: string, packageDirectory: string, command = "exec node") => {
+            mkdirSync(join(modules, ".bin"), { recursive: true });
+            writeFileSync(join(modules, ".modules.yaml"), "layoutVersion: 5\n");
+            writeFileSync(join(modules, ".bin", "vis"), `#!/bin/sh\n${command}  "$basedir/${relative(join(modules, ".bin"), join(packageDirectory, "bin", "vis"))}" "$@"\n`);
+        };
+
+        // The package inside a virtual store at `storeRoot`, with the platform binary next to it.
+        const placeInStore = (storeRoot: string, packageVersion = "1.0.0") => {
+            const store = join(storeRoot, `@visulima+vis@${packageVersion}`, "node_modules", "@visulima");
+            const storedPackage = join(store, "vis");
+
+            mkdirSync(join(storedPackage, "bin"), { recursive: true });
+            mkdirSync(join(storedPackage, "scripts"), { recursive: true });
+            copyFileSync(installScript, join(storedPackage, "scripts", "install-native.cjs"));
+            writeFileSync(join(storedPackage, "bin", "vis"), PLACEHOLDER);
+            writeFileSync(join(storedPackage, "package.json"), JSON.stringify({ name: "@visulima/vis", version: packageVersion }));
+            mkdirSync(join(store, `vis-binding-${nativeTarget()}`), { recursive: true });
+            copyFileSync(join(platformPackage, "vis-native-cli"), join(store, `vis-binding-${nativeTarget()}`, "vis-native-cli"));
+
+            return storedPackage;
+        };
+
+        const storedLauncherKept = (storedPackage: string) => readFileSync(join(storedPackage, "bin", "vis"), "utf8") === PLACEHOLDER;
+
+        it("keeps the launcher when the shim sits in the node_modules of the workspace member that ran pnpm", () => {
+            expect.assertions(1);
+
+            const storedPackage = placeInStore(join(root, "node_modules", ".pnpm"));
+            const member = join(root, "packages", "app");
+
+            writeShim(join(member, "node_modules"), storedPackage);
+            install({ ...pnpm, INIT_CWD: member, npm_command: "rebuild" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(storedPackage)).toBe(true);
+        });
+
+        it("keeps the launcher when the virtual store is outside node_modules", () => {
+            expect.assertions(1);
+
+            const storedPackage = placeInStore(join(root, "vstore"));
+
+            writeShim(join(root, "node_modules"), storedPackage);
+            install({ ...pnpm, INIT_CWD: root, npm_command: "rebuild" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(storedPackage)).toBe(true);
+        });
+
+        it("goes native on an upgrade, where the shim still names the previous version", () => {
+            expect.assertions(1);
+
+            const previous = placeInStore(join(root, "node_modules", ".pnpm"), "0.9.0");
+            const upgraded = placeInStore(join(root, "node_modules", ".pnpm"), "1.0.0");
+
+            writeShim(join(root, "node_modules"), previous);
+            install({ ...pnpm, INIT_CWD: root, npm_command: "update" }, join(upgraded, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(upgraded)).toBe(false);
+        });
+
+        it("links on a first install even though pnpm wrote the shim before the script ran", () => {
+            expect.assertions(1);
+
+            const storedPackage = placeInStore(join(root, "node_modules", ".pnpm"));
+            const modules = join(root, "node_modules");
+
+            writeShim(modules, storedPackage);
+            rmSync(join(modules, ".modules.yaml"));
+            install({ ...pnpm, INIT_CWD: root, npm_command: "add" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(storedPackage)).toBe(false);
+        });
+
+        it("goes native when the shim for this package execs the binary directly", () => {
+            expect.assertions(1);
+
+            const storedPackage = placeInStore(join(root, "node_modules", ".pnpm"));
+
+            writeShim(join(root, "node_modules"), storedPackage, "exec");
+            install({ ...pnpm, INIT_CWD: root, npm_command: "update" }, join(storedPackage, "scripts", "install-native.cjs"));
+
+            expect(storedLauncherKept(storedPackage)).toBe(false);
         });
 
         // Lays the package out inside pnpm's virtual store and returns its installed `bin/vis`.

@@ -61,6 +61,8 @@ pub struct ScanOptions {
     /// with `condition = "AND"` that list `commits` next to paths / regexes / stopwords
     /// match; without it they never do.
     pub commit: Option<String>,
+    /// Collect opt-in timing data (phases, per-file, per-rule) and attach it to `ScanReport.profile`.
+    pub profile: Option<bool>,
 }
 
 impl From<ScanOptions> for core::ScanOptions {
@@ -80,6 +82,27 @@ impl From<ScanOptions> for core::ScanOptions {
             inline_allow: v.inline_allow,
             report_suppressed: v.report_suppressed,
             commit: v.commit,
+            profile: v.profile,
+        }
+    }
+}
+
+/// Byte spans into the scanned content, for consumers that rewrite findings in place.
+#[napi(object)]
+pub struct SourceSpan {
+    pub match_start: u32,
+    pub match_end: u32,
+    pub secret_start: u32,
+    pub secret_end: u32,
+}
+
+impl From<core::SourceSpan> for SourceSpan {
+    fn from(v: core::SourceSpan) -> Self {
+        Self {
+            match_start: v.match_start,
+            match_end: v.match_end,
+            secret_start: v.secret_start,
+            secret_end: v.secret_end,
         }
     }
 }
@@ -113,6 +136,14 @@ pub struct Finding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 impl From<core::Finding> for Finding {
@@ -134,6 +165,9 @@ impl From<core::Finding> for Finding {
             alternate_matches,
             decoded,
             required_findings,
+            root,
+            source_span,
+            span_unavailable_reason,
         } = v;
         Self {
             rule_id,
@@ -152,6 +186,9 @@ impl From<core::Finding> for Finding {
             alternate_matches,
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
         }
     }
 }
@@ -188,6 +225,14 @@ pub struct SuppressedFinding {
     /// Composite rules only: the findings of the rule's `required` dependencies that
     /// satisfied it, one per required id (the nearest), in declaration order.
     pub required_findings: Option<Vec<RequiredFinding>>,
+    /// The scan root `file` is relative to, as a canonical absolute path. `None` when `file`
+    /// was not rewritten against a root (in-memory scans, history scans, paths outside every
+    /// root). Not part of a finding's identity: fingerprints and baselines ignore it.
+    pub root: Option<String>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
     /// `"allowlist"` or `"inline-allow"`.
     pub suppressed_by: String,
 }
@@ -211,6 +256,9 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             alternate_matches,
             decoded,
             required_findings,
+            root,
+            source_span,
+            span_unavailable_reason,
             suppressed_by,
         } = v;
         Self {
@@ -230,6 +278,9 @@ impl From<core::SuppressedFinding> for SuppressedFinding {
             alternate_matches,
             decoded,
             required_findings: required_findings.map(|list| list.into_iter().map(Into::into).collect()),
+            root,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
             suppressed_by,
         }
     }
@@ -246,13 +297,38 @@ pub struct RequiredFinding {
     pub r#match: String,
     pub secret: String,
     pub decoded: Option<Vec<String>>,
+    /// Byte spans into the source content, when they can be trusted for rewriting.
+    pub source_span: Option<SourceSpan>,
+    /// Fixed explanation when `source_span` is withheld. Never contains a secret value.
+    pub span_unavailable_reason: Option<String>,
 }
 
 impl From<core::RequiredFinding> for RequiredFinding {
     fn from(v: core::RequiredFinding) -> Self {
-        let core::RequiredFinding { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded } =
-            v;
-        Self { rule_id, start_line, end_line, start_column, end_column, r#match, secret, decoded }
+        let core::RequiredFinding {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span,
+            span_unavailable_reason,
+        } = v;
+        Self {
+            rule_id,
+            start_line,
+            end_line,
+            start_column,
+            end_column,
+            r#match,
+            secret,
+            decoded,
+            source_span: source_span.map(Into::into),
+            span_unavailable_reason,
+        }
     }
 }
 
@@ -274,6 +350,28 @@ impl From<core::SkippedFile> for SkippedFile {
     }
 }
 
+/// An inline allow marker (`gitleaks:allow`, an allow-start / allow-end boundary or a
+/// nextline pragma) that lists id-shaped tokens naming no active rule, so it still
+/// suppresses every rule. Archive entries use their virtual path. An id-shaped token is
+/// lowercase kebab-case with at least one hyphen (`github-pat`) or a dotted id with two
+/// or more dots (`kingfisher.stripe.1`); the scan of the token list ends at the first
+/// token that is neither a known rule id nor id-shaped.
+#[napi(object)]
+pub struct AllowWarning {
+    pub file: String,
+    /// 1-based line of the marker.
+    pub line: u32,
+    /// Each unknown id once, in order of appearance.
+    pub unknown_rule_ids: Vec<String>,
+}
+
+impl From<core::AllowWarning> for AllowWarning {
+    fn from(v: core::AllowWarning) -> Self {
+        let core::AllowWarning { file, line, unknown_rule_ids } = v;
+        Self { file, line, unknown_rule_ids }
+    }
+}
+
 /// Result of every scan entry point.
 #[napi(object)]
 #[derive(Default)]
@@ -284,15 +382,93 @@ pub struct ScanReport {
     pub suppressed: Vec<SuppressedFinding>,
     /// Content that could not be read. Always empty for `scanTextSync`.
     pub skipped: Vec<SkippedFile>,
+    /// Allow markers naming rule ids that are not active. Empty with `inlineAllow: false`.
+    pub allow_warnings: Vec<AllowWarning>,
+    /// Timing data, present only when `profile` was requested.
+    pub profile: Option<ProfileReport>,
 }
 
 impl From<core::ScanReport> for ScanReport {
     fn from(v: core::ScanReport) -> Self {
-        let core::ScanReport { findings, suppressed, skipped } = v;
+        let core::ScanReport { findings, suppressed, skipped, allow_warnings, profile } = v;
         Self {
             findings: findings.into_iter().map(Into::into).collect(),
             suppressed: suppressed.into_iter().map(Into::into).collect(),
             skipped: skipped.into_iter().map(Into::into).collect(),
+            allow_warnings: allow_warnings.into_iter().map(Into::into).collect(),
+            profile: profile.map(Into::into),
+        }
+    }
+}
+
+/// A coarse scan phase (ruleset load, walk, detect, finalize, …).
+#[napi(object)]
+pub struct ProfilePhase {
+    /// How many times the phase ran.
+    pub count: u32,
+    /// Total milliseconds spent in the phase.
+    pub ms: f64,
+    pub name: String,
+}
+
+impl From<core::ProfilePhase> for ProfilePhase {
+    fn from(v: core::ProfilePhase) -> Self {
+        let core::ProfilePhase { count, ms, name } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, name }
+    }
+}
+
+/// Time spent in one rule's matcher, aggregated across every file and pass.
+#[napi(object)]
+pub struct ProfileRule {
+    /// How many times the rule's matcher ran.
+    pub count: u32,
+    /// Total milliseconds spent in the rule.
+    pub ms: f64,
+    /// The rule's main regex, when it has one.
+    pub pattern: Option<String>,
+    pub rule_id: String,
+}
+
+impl From<core::ProfileRule> for ProfileRule {
+    fn from(v: core::ProfileRule) -> Self {
+        let core::ProfileRule { count, ms, pattern, rule_id } = v;
+        Self { count: u32::try_from(count).unwrap_or(u32::MAX), ms, pattern, rule_id }
+    }
+}
+
+/// Wall-clock cost of scanning one file, relative to the scan root like findings.
+#[napi(object)]
+pub struct ProfileFile {
+    pub file: String,
+    pub ms: f64,
+}
+
+impl From<core::ProfileFile> for ProfileFile {
+    fn from(v: core::ProfileFile) -> Self {
+        let core::ProfileFile { file, ms } = v;
+        Self { file, ms }
+    }
+}
+
+/// Opt-in timing breakdown of one native scan. Each list is sorted by descending `ms`.
+#[napi(object)]
+pub struct ProfileReport {
+    pub files: Vec<ProfileFile>,
+    pub phases: Vec<ProfilePhase>,
+    pub rules: Vec<ProfileRule>,
+    /// Total wall-clock of the native scan, in milliseconds.
+    pub total_ms: f64,
+}
+
+impl From<core::ProfileReport> for ProfileReport {
+    fn from(v: core::ProfileReport) -> Self {
+        let core::ProfileReport { files, phases, rules, total_ms } = v;
+        Self {
+            files: files.into_iter().map(Into::into).collect(),
+            phases: phases.into_iter().map(Into::into).collect(),
+            rules: rules.into_iter().map(Into::into).collect(),
+            total_ms,
         }
     }
 }

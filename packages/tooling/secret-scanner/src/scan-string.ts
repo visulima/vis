@@ -12,7 +12,8 @@ import type { Finding, ScanOptions, ScanResult } from "./types";
 /**
  * Like {@link scanString}, with the diagnostics of `scanDetailed`: the findings a
  * baseline, allowlist, inline pragma or `.gitleaksignore` hid (with
- * `reportSuppressed`) and the `.gitleaksignore` entries nothing matched.
+ * `reportSuppressed`), the `.gitleaksignore` entries nothing matched, and the
+ * allow markers in the buffer that name rule ids which are not active.
  * `skipped` is always empty, as nothing is read from disk.
  */
 export const scanStringDetailed = async (content: string, file: string, options?: ScanOptions): Promise<ScanResult> => {
@@ -20,7 +21,7 @@ export const scanStringDetailed = async (content: string, file: string, options?
     const context = await createSuppressionContext(options, [process.cwd()]);
     const report = binding.scanTextSync(content, file, prepared.nativeOptions);
 
-    return finishResult(await postProcessDetailed(report, prepared, options, context), [], context);
+    return finishResult(await postProcessDetailed(report, prepared, options, context), [], context, { allowWarnings: report.allowWarnings });
 };
 
 /**
@@ -35,7 +36,7 @@ export const scanStringDetailed = async (content: string, file: string, options?
  * input yourself or offload to a worker.
  */
 export const scanString = async (content: string, file: string, options?: ScanOptions): Promise<Finding[]> => {
-    const result = await scanStringDetailed(content, file, options);
+    const { findings } = await scanStringDetailed(content, file, options);
 
-    return result.findings;
+    return findings;
 };
