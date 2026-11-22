@@ -95,7 +95,6 @@ describe("launcher routing (bin/route.mjs)", () => {
         [["cache"], true],
         [["cache", "--help"], true],
         [["cache", "list", "--help"], true],
-        [["cache", "list"], false],
         // Only the plain shapes are the binary's; any other flag is Node's, which prints the same listing.
         [["cache", "--no-color"], false],
     ])("routes the `cache` group `vis %j` to native: %s", (args: string[], expected: boolean) => {
@@ -104,7 +103,36 @@ describe("launcher routing (bin/route.mjs)", () => {
         expect(routesToNative(args, "linux")).toBe(expected);
     });
 
-    describe("Windows console (the binary enables virtual-terminal processing)", () => {
+    describe("`vis cache list|size` gate (cacheMayRunNatively)", () => {
+        const ci = { CI: "1" };
+
+        it.each([[["cache", "list"]], [["cache", "list", "--format", "json"]], [["cache", "size", "--type=ai"]], [["cache", "size", "--cache-dir", "x"]]])(
+            "routes `vis %j` in a non-interactive CI context",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+            },
+        );
+
+        it.each([
+            ["outside CI", "linux", {}, false],
+            ["on a terminal", "linux", ci, true],
+            ["on Windows", "win32", ci, false],
+        ])("keeps `vis cache list` in Node %s", (_label: string, platform: string, environment: Record<string, string>, interactive: boolean) => {
+            expect.assertions(1);
+
+            expect(routesToNative(["cache", "list"], platform, environment, "/work/app", interactive)).toBe(false);
+        });
+
+        it("leaves the other cache subcommands to Node", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(["cache", "clean"], "linux", ci, "/work/app", false)).toBe(false);
+        });
+    });
+
+    describe("windows console (the binary enables virtual-terminal processing)", () => {
         it.each([
             [["clean", "--help"]],
             [["clean", "-h"]],

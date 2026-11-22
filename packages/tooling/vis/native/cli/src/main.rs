@@ -26,6 +26,7 @@ use std::ffi::{OsStr, OsString};
 use std::process::{exit, Command, ExitStatus};
 
 mod advisories;
+mod cache;
 mod clean;
 mod complete;
 mod config_cache;
@@ -113,6 +114,13 @@ fn main() {
         // `vis clean` — the default and `--dry-run`/`--lockfile` shapes are answered natively;
         // every other shape (and `--help`, left to the arm below) goes to Node.
         "clean" if !surface::asks_for_help(&args) => clean::run(&raw_args),
+        // `vis cache list` / `vis cache size` — read-only cache inspection, native for the plain shapes in
+        // a CI context. Every other shape is delegated inside `cache::run`.
+        "cache"
+            if matches!(args.get(1).map(String::as_str), Some("list" | "size")) && !surface::asks_for_help(&args) =>
+        {
+            cache::run(&args, &raw_args)
+        }
         // `vis list` — the plain project listing, native for a JS-only workspace in CI. Every
         // other shape, and every root the gates reject, is delegated inside `list::run`.
         "list" if !surface::asks_for_help(&args) => list::run(&args, &raw_args),

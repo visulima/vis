@@ -357,7 +357,7 @@ fn json_string(text: &str) -> Option<String> {
 
 /// `JSON.stringify` of a finite JavaScript number: the shortest digits that round-trip, written
 /// the way `Number.prototype.toString` writes them (exponent form outside [1e-6, 1e21)).
-fn js_number(value: f64) -> String {
+pub(crate) fn js_number(value: f64) -> String {
     if value == 0.0 {
         return "0".to_owned();
     }
