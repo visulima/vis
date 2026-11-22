@@ -92,14 +92,7 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
             sourceFile: found!.file,
         });
 
-        const nested = findNestedPrettierConfigs(root);
-
-        if (nested.length > 0) {
-            const [first] = nested;
-            const more = nested.length > 1 ? ` and ${String(nested.length - 1)} more` : "";
-
-            warnings.push(`Only the root Prettier config is read; ${display(first!)}${more} in a subdirectory ${nested.length > 1 ? "are" : "is"} ignored.`);
-        }
+        warnings.push(...nestedConfigWarnings(root));
 
         if (scoped.length > 0) {
             warnings.push(`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`);
@@ -114,10 +107,23 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
         const { config } = mapPrettierConfig({}, { editorconfigPrintWidth: universal });
         const warnings = scoped.length > 0 ? [`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`] : [];
 
-        return { config, source: "prettier-defaults", warnings };
+        return { config, source: "prettier-defaults", warnings: [...warnings, ...nestedConfigWarnings(root)] };
     }
 
-    return { source: "defaults", warnings: [] };
+    return { source: "defaults", warnings: nestedConfigWarnings(root) };
+};
+
+/** Prettier applies the nearest config to each file, so a config below the root changes formatting wherever it is not read. */
+const nestedConfigWarnings = (root: string): string[] => {
+    const nested = findNestedPrettierConfigs(root);
+
+    if (nested.length === 0) {
+        return [];
+    }
+
+    const more = nested.length > 1 ? ` and ${String(nested.length - 1)} more` : "";
+
+    return [`Only the root Prettier config is read; ${relative(root, nested[0]!)}${more} in a subdirectory ${nested.length > 1 ? "are" : "is"} ignored.`];
 };
 
 const ignoredWarning = (used: string, ignored: ReadonlyArray<string>): string =>

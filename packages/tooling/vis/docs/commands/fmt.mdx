@@ -136,7 +136,7 @@ oxfmt's default `printWidth` is **100**; Prettier's is **80**. A Prettier config
 
 ### Reading the Prettier config
 
-Only the root Prettier config is read; Prettier configs in subdirectories are not. Every format Prettier accepts at the root works: `package.json#prettier` (an object, or the name of a shared-config package), `.prettierrc` (JSON or YAML), `.prettierrc.json|yaml|yml|json5|toml`, and `prettier.config.*` / `.prettierrc.*` as `js|cjs|mjs|ts|mts|cts`. A JavaScript config is evaluated once, so logic in it is not preserved. `.prettierignore` lines become `ignorePatterns`.
+Only the root Prettier config is read; Prettier configs in subdirectories are not, and `vis fmt` warns when it finds one (whether or not there is a root config). Every format Prettier accepts at the root works: `package.json#prettier` (an object, or the name of a shared-config package), `.prettierrc` (JSON or YAML), `.prettierrc.json|yaml|yml|json5|toml`, and `prettier.config.*` / `.prettierrc.*` as `js|cjs|mjs|ts|mts|cts`. A JavaScript config is evaluated once, so logic in it is not preserved. `.prettierignore` lines become `ignorePatterns`.
 
 The mapping is the one `oxfmt --migrate prettier` applies, checked by a test that runs it on the same fixtures:
 

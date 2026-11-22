@@ -172,6 +172,20 @@ describe("fmt option resolution", () => {
             expect(nested[0]).toContain("Only the root Prettier config is read");
         });
 
+        it("warns about nested Prettier configs when there is no root config at all", async () => {
+            expect.assertions(3);
+
+            mkdirSync(join(root, "packages/a"), { recursive: true });
+            write("packages/a/.prettierrc.json", "{}");
+
+            const plain = await resolveFmtOptions({ loadModule, root });
+            const declared = await resolveFmtOptions({ loadModule, prettierDeclared: true, root });
+
+            expect(plain.warnings).toStrictEqual([expect.stringContaining("packages/a/.prettierrc.json")]);
+            expect(declared.warnings).toStrictEqual([expect.stringContaining("packages/a/.prettierrc.json")]);
+            expect(declared.source).toBe("prettier-defaults");
+        });
+
         it("does not look for nested Prettier configs when Prettier is not the chosen source", async () => {
             expect.assertions(1);
 
