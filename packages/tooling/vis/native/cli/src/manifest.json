@@ -366,7 +366,7 @@
           "Build the dependencies of lint and test once, before fanning out"
         ],
         [
-          "vis ci test --skip-deps --no-install --skip-toolchain --partition=1/2",
+          "vis ci test --skip-deps --no-install --partition=1/2",
           "One parallel CI step after a --deps-only step"
         ]
       ],

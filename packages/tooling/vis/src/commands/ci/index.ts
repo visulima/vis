@@ -96,7 +96,7 @@ const ci = defineCommand({
         ["vis ci build --no-install", "Skip the install step (assume deps already present)"],
         ["vis ci build --parallel=6", "Increase concurrency"],
         ["vis ci lint,test --deps-only", "Build the dependencies of lint and test once, before fanning out"],
-        ["vis ci test --skip-deps --no-install --skip-toolchain --partition=1/2", "One parallel CI step after a --deps-only step"],
+        ["vis ci test --skip-deps --no-install --partition=1/2", "One parallel CI step after a --deps-only step"],
     ],
     group: "Run & Execute",
     loader: () => import("./handler"),
