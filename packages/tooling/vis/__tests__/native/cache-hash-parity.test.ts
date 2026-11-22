@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_ENVIRONMENTS, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis cache hash` exists twice: the Node handler (`src/commands/cache/hash.ts`) and the native
@@ -63,8 +64,8 @@ const environment = (extra: Record<string, string> = {}): Record<string, string>
     };
 };
 
-/** Replaces the workspace root and the clock, which differ between runs. */
-const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
+/** Replaces the workspace root, the clock and the process id in the Node runtime's own warnings, which differ between runs. */
+const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS").replaceAll(/\(node:\d+\)/g, "(node:PID)");
 
 interface Case {
     args: string[];
@@ -76,6 +77,7 @@ interface Case {
 }
 
 const RECORDED = "app:build";
+
 const LONG_TASK = "@scope/pkg-with-a-very-long-name-for-wrapping:build:production";
 
 const cases: Case[] = [
@@ -134,10 +136,24 @@ const cases: Case[] = [
     // A summary that does not parse is "no summary" in Node, but serde and `JSON.parse` differ in what they accept.
     { args: [RECORDED], delegates: true, workspace: "unreadable" },
     { args: [RECORDED, "--format", "json"], delegates: true, workspace: "unreadable" },
-    // Node colours its output where it detects colour, which the binary does not. (Outside CI Node also
-    // prints a random tip on stderr, so that context is covered by the routing fixture instead.)
-    { args: [RECORDED], delegates: true, env: { FORCE_COLOR: "1" }, workspace: "recorded" },
-    { args: [RECORDED, "--format", "json"], env: { FORCE_COLOR: "1" }, workspace: "recorded" },
+    // pail colours the header of its log lines where its colour detection says so, and the binary prints the same
+    // codes (`piped_colour_level` in `term.rs`). One block of cases per colour environment, over the table, the error
+    // block that goes to stderr, and the "no summary" message. (Outside CI Node also prints a random tip on
+    // stderr, so that context is covered by the routing fixture instead.)
+    ...COLOUR_ENVIRONMENTS.flatMap((env): Case[] => [
+        { args: [RECORDED], env, workspace: "recorded" },
+        { args: ["app:missing"], env, workspace: "recorded" },
+        { args: [RECORDED], env, workspace: "empty" },
+        { args: [RECORDED, "--format", "json"], env, workspace: "recorded" },
+        // The JSON forms print no pail block, whatever the colour environment: not on the error paths either.
+        { args: ["app:missing", "--format", "json"], env, workspace: "recorded" },
+        { args: [RECORDED, "--run", "no-such-run", "--format", "json"], env, workspace: "recorded" },
+        { args: [RECORDED, "--format", "json"], env, workspace: "empty" },
+    ]),
+    // The Node runtime warns on stderr, with its process id, when both are set; a colour flag is Node's too.
+    ...DELEGATED_COLOUR_ENVIRONMENTS.map((env): Case => { return { args: [RECORDED], delegates: true, env, workspace: "recorded" }; }),
+    { args: [RECORDED, "--no-color"], delegates: true, workspace: "recorded" },
+    { args: [RECORDED, "--color"], delegates: true, env: { GITHUB_ACTIONS: "true" }, workspace: "recorded" },
 ];
 
 /**

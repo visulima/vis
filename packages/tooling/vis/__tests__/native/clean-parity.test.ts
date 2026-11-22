@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_ENVIRONMENTS, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis clean` exists twice: the Node handler (`src/commands/clean/handler.ts`) and the native
@@ -92,8 +93,8 @@ const environment = (ci: boolean, extra: Record<string, string> = {}): Record<st
     };
 };
 
-const runNode = (args: string[], cwd: string) =>
-    spawnSync(process.execPath, [nodeEntry, "clean", ...args], { cwd, encoding: "utf8", env: environment(true) });
+const runNode = (args: string[], cwd: string, extra: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [nodeEntry, "clean", ...args], { cwd, encoding: "utf8", env: environment(true, extra) });
 
 const runNative = (args: string[], cwd: string, extra: Record<string, string> = {}, ci = true) =>
     spawnSync(nativeBinary, ["clean", ...args], { cwd, encoding: "utf8", env: environment(ci, extra) });
@@ -104,8 +105,8 @@ const listTree = (root: string): Set<string> => new Set(readdirSync(root, { recu
 /** The paths a run removed: present before, gone after. */
 const removedBy = (root: string, before: Set<string>): string[] => [...before].filter((path) => !listTree(root).has(path)).sort();
 
-/** Replaces the workspace root and the clock, which differ between runs. */
-const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
+/** Replaces the workspace root, the clock and the process id in the Node runtime's own warnings, which differ between runs. */
+const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS").replaceAll(/\(node:\d+\)/g, "(node:PID)");
 
 const delegation = (): Record<string, string> => { return { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }; };
 
@@ -194,13 +195,70 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.stdout).not.toContain("ERROR");
     });
 
-    it("hands a run that Node would colour to Node", () => {
-        expect.assertions(1);
+    // Success lines (stdout), the cleaned count and the removal errors (stderr) in every colour environment, with the
+    // removal itself compared too. The read-only package makes the error block, and a workspace without any
+    // `node_modules` the "none found" line.
+    describe.each(COLOUR_ENVIRONMENTS)("colour environment %j", (colour) => {
+        it.each([
+            ["workspace", ["--dry-run", "-l"]],
+            ["workspace", []],
+            ["no-node-modules", []],
+            ["read-only-package", []],
+        ] as [string, string[]][])("`clean` in %s with %j prints what Node prints, colour codes included", (name: string, flags: string[]) => {
+            expect.assertions(5);
 
-        const root = workspaceFor(nativeCases[0] as string);
+            const nodeRoot = workspaceFor(name);
+            const nativeRoot = workspaceFor(name);
+            const nodeBefore = listTree(nodeRoot);
+            const nativeBefore = listTree(nativeRoot);
 
-        // A declined invocation exits 70 without the Node entry; the native path must not answer.
-        expect(runNative(["--dry-run"], root, { GITHUB_ACTIONS: "true" }).status).toBe(70);
+            const node = runNode(flags, nodeRoot, colour);
+            const native = runNative(flags, nativeRoot, colour);
+
+            expect(native.status).toBe(node.status);
+            expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
+            expect(normalize(native.stderr, nativeRoot)).toBe(normalize(node.stderr, nodeRoot));
+            expect(removedBy(nativeRoot, nativeBefore)).toEqual(removedBy(nodeRoot, nodeBefore));
+            // Colour is on exactly where the detection says so; the header of the first line shows it.
+            expect(native.stdout.includes("\u001B[")).toBe(node.stdout.includes("\u001B["));
+        });
+    });
+
+    it("writes the colour of the error block to stderr and keeps the success lines coloured on stdout", () => {
+        expect.assertions(3);
+
+        const root = workspaceFor("read-only-package");
+        const native = runNative([], root, { GITHUB_ACTIONS: "true" });
+
+        const esc = String.fromCodePoint(27);
+
+        expect(native.stderr).toMatch(new RegExp(String.raw`${esc}\[31mERROR${esc}\[39m ${esc}\[90m\.{4}${esc}\[39m${esc}\[90m\.+${esc}\[39m\n\n.*packages/locked/node_modules`, "u"));
+        expect(native.stdout).toContain(`${esc}[32mSUCCESS${esc}[39m`);
+        expect(native.stdout).not.toContain("ERROR");
+    });
+
+    // The Node runtime warns on stderr, with its process id, when both variables are set, and a colour flag is read
+    // from the arguments by Node's detection: both stay Node's.
+    it.each([
+        ...DELEGATED_COLOUR_ENVIRONMENTS.map((colour) => [["--dry-run"], colour]),
+        [["--dry-run", "--no-color"], {}],
+        [["--dry-run", "--color"], { GITHUB_ACTIONS: "true" }],
+    ] as [string[], Record<string, string>][])("hands `clean %j` with %j to Node", (flags: string[], colour: Record<string, string>) => {
+        expect.assertions(4);
+
+        const name = nativeCases[0] as string;
+        const nodeRoot = workspaceFor(name);
+        const nativeRoot = workspaceFor(name);
+
+        const node = runNode(flags, nodeRoot, colour);
+
+        expect(runNative(flags, nativeRoot, colour).status).toBe(70);
+
+        const native = runNative(flags, nativeRoot, { ...colour, ...delegation() });
+
+        expect(native.status).toBe(node.status);
+        expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
+        expect(normalize(native.stderr, nativeRoot)).toBe(normalize(node.stderr, nodeRoot));
     });
 
     it("hands a run outside CI to Node, with Node's output", () => {

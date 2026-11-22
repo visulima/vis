@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis cache list` and `vis cache size` exist twice: the Node handlers (`src/commands/cache/`) and the
@@ -169,6 +170,7 @@ const normalize = (text: string): string =>
     text
         .replaceAll(scratch, "<SCRATCH>")
         .replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS")
+        .replaceAll(/\(node:\d+\)/g, "(node:PID)")
         .replaceAll(/"ageMs": [\d.]+/g, '"ageMs": <N>');
 
 const ageMsValues = (text: string): number[] => [...text.matchAll(/"ageMs": ([\d.]+)/g)].map((match) => Number(match[1]));
@@ -309,6 +311,18 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         everyShape("plain from a package directory", "plain/packages/app", ok);
         everyShape("empty cache", "empty", { listTable: "node", sizeTable: "native" });
         everyShape("missing cache", "missing", declined);
+
+        // Where Node's colour detection turns colour on, pail colours the header of its log lines. The tables and the JSON
+        // are plain, and what pail frames (an empty or missing cache directory) is handed to Node, so the routes do not move.
+        for (const colour of SHORT_COLOUR_ENVIRONMENTS) {
+            everyShape(`plain in ${JSON.stringify(colour)}`, "plain", ok, [], colour);
+            everyShape(`empty cache in ${JSON.stringify(colour)}`, "empty", { listTable: "node", sizeTable: "native" }, [], colour);
+        }
+
+        // The Node runtime warns on stderr, with its process id, when `FORCE_COLOR` and `NO_COLOR` are both set: Node's.
+        for (const colour of DELEGATED_COLOUR_ENVIRONMENTS) {
+            everyShape(`plain in ${JSON.stringify(colour)}`, "plain", nodes, [], colour);
+        }
 
         for (const type of ["task", "ai", "socket", "deps-dev", "snyk", "all"]) {
             both(`type ${type}`, "plain", "native", ["cache", "size", `--type=${type}`]);

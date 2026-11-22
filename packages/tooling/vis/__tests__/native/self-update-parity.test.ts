@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis self-update` exists twice: the Node handler (`src/commands/upgrade/handler.ts`) and the native
@@ -194,6 +195,38 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.status).toBe(node.status);
         expect(native.calls).toBe(node.calls);
     });
+
+    // This command prints through unstyled console lines, so its output has no colour codes in any colour environment; the cases
+    // pin that down against Node, and every pass is a native answer: the stub Node of the sandbox prints the marker otherwise.
+    const COLOUR_CASES = new Set(["--force when up to date", "update available, installed", "update available, installed with --silent", "update available with --check", "up to date"]);
+
+    for (const colour of SHORT_COLOUR_ENVIRONMENTS) {
+        for (const [label, test] of NATIVE.filter(([name]) => COLOUR_CASES.has(name))) {
+            it(`${label} in ${JSON.stringify(colour)}: vis self-update ${test.args.join(" ")}`, { timeout: 30_000 }, () => {
+                const native = runNative(test, { extra: colour });
+                const node = runNode(test, colour);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(native.stdout).toBe(node.stdout);
+                expect(native.stderr).toBe(node.stderr);
+                expect(native.status).toBe(node.status);
+                expect(native.calls).toBe(node.calls);
+                expect(native.stdout.includes("\u001B[")).toBe(node.stdout.includes("\u001B["));
+            });
+        }
+    }
+
+    // The Node runtime warns on stderr, with its process id, when both are set; a colour flag is read from the arguments.
+    it.each([...DELEGATED_COLOUR_ENVIRONMENTS.map((colour): [string[], Record<string, string>] => [["--check"], colour]), [["--check", "--no-color"], {}], [["--check", "--color"], { GITHUB_ACTIONS: "true" }]])(
+        "delegates `self-update %j` with %j before npm is run",
+        { timeout: 30_000 },
+        (args: string[], colour: Record<string, string>) => {
+            const native = runNative({ args }, { extra: colour });
+
+            expect(native.stdout).toContain(marker);
+            expect(native.calls).toBe("");
+        },
+    );
 
     it("shows what the stub does: Node's own output for an update", { timeout: 30_000 }, () => {
         const node = runNode({ args: [], current: "1.0.0" });

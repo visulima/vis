@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS, withoutColour } from "./colour-environments";
 
 /**
  * `vis list` exists twice: the Node handler (`src/commands/list/handler.ts`) and the native
@@ -48,9 +49,10 @@ const fixtures = [
 
 const argumentSets: string[][] = [[], ["--json"], ["--format=table"], ["--format=json"], ["--format=ndjson"], ["--deps"], ["--help"]];
 
-const contextEnvironment = (fixture: string, ci: boolean): Record<string, string | undefined> => {
+// The runner's own colour variables are dropped (a CI runner sets several), and a case adds the one it tests.
+const contextEnvironment = (fixture: string, ci: boolean, colour: Record<string, string> = {}): Record<string, string | undefined> => {
     const env: Record<string, string | undefined> = {
-        ...process.env,
+        ...withoutColour(process.env),
         VIS_CLI_TEST: "1",
         VIS_MONOREPO_ROOT: fixture,
         VIS_NO_UPDATE_CHECK: "1",
@@ -66,28 +68,28 @@ const contextEnvironment = (fixture: string, ci: boolean): Record<string, string
         env["CI"] = "1";
     }
 
-    return env;
+    return { ...env, ...colour };
 };
 
-const runNode = (fixture: string, args: string[], ci: boolean) =>
+const runNode = (fixture: string, args: string[], ci: boolean, colour: Record<string, string> = {}) =>
     spawnSync(process.execPath, [nodeEntry, "list", ...args], {
         cwd: fixture,
         encoding: "utf8",
-        env: contextEnvironment(fixture, ci),
+        env: contextEnvironment(fixture, ci, colour),
     });
 
 // `vis list` computes its root from the working directory and never reads `VIS_MONOREPO_ROOT`. The
 // native runs get a stale value on purpose, so a regression that trusted it would show up as a mismatch.
 // `root` is the inherited VIS_MONOREPO_ROOT. A delegated run gets the same value as its Node reference
 // (Node's `list --deps` reads it), while a native answer keeps the stale parent so it is never trusted.
-const runNative = (fixture: string, args: string[], ci: boolean, entry: string, root = dirname(fixture)) =>
+const runNative = (fixture: string, args: string[], ci: boolean, entry: string, root = dirname(fixture), colour: Record<string, string> = {}) =>
     spawnSync(binary as string, ["list", ...args], {
         cwd: fixture,
         encoding: "utf8",
         // A binary in a platform package (what CI runs) keeps the entry and version the launcher
         // passes; one inside the vis package (a dev copy) takes the override instead. Set both.
         env: {
-            ...contextEnvironment(fixture, ci),
+            ...contextEnvironment(fixture, ci, colour),
             VIS_FALLBACK_ENTRY: entry,
             VIS_FALLBACK_ENTRY_OVERRIDE: entry,
             VIS_MONOREPO_ROOT: root,
@@ -147,6 +149,33 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.stdout).toBe(node.stdout);
         expect(native.stderr).toBe(node.stderr);
         expect(native.status).toBe(node.status);
+    });
+
+    // The table and the JSON are plain where Node's colour detection turns colour on, so the binary answers them all natively.
+    it.each(SHORT_COLOUR_ENVIRONMENTS.flatMap((colour) => ["basic", "empty"].flatMap((fixture) => [[], ["--json"]].map((args) => [colour, fixture, args] as const))))(
+        "in %j, %s %j matches Node and is answered natively",
+        (colour, fixture, args) => {
+            expect.assertions(4);
+
+            const directory = join(paths.fixtures, fixture);
+            const node = runNode(directory, [...args], true, colour);
+            const native = runNative(directory, [...args], true, paths.stub, dirname(directory), colour);
+
+            expect(native.stdout).not.toContain(marker);
+            expect(native.stdout).toBe(node.stdout);
+            expect(native.stderr).toBe(node.stderr);
+            expect(native.status).toBe(node.status);
+        },
+    );
+
+    // The Node runtime warns on stderr, with its process id, when `FORCE_COLOR` and `NO_COLOR` are both set: Node's.
+    it.each(DELEGATED_COLOUR_ENVIRONMENTS)("hands a run with %j to Node", (colour) => {
+        expect.assertions(2);
+
+        const directory = join(paths.fixtures, "basic");
+
+        expect(runNative(directory, ["--json"], true, paths.stub, directory, colour).stdout).toContain(marker);
+        expect(runNative(directory, ["--json"], true, nodeEntry, directory, colour).stdout).toBe(runNode(directory, ["--json"], true, colour).stdout);
     });
 
     it.each(["basic", "bin-null", "empty"])("%s answers the plain listing natively", (fixture) => {

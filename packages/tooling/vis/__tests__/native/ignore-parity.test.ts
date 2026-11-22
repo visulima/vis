@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_ENVIRONMENTS, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis ignore` exists twice: the Node command (`src/commands/ignore/handler.ts`) and the native
@@ -204,13 +205,45 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(native.stdout).toBe(node.stdout);
     }, 60_000);
 
-    it("delegates when the log lines would be coloured, and matches Node", () => {
-        expect.assertions(2);
+    // The dimmed hint of the preview is the only coloured line. The native path prints it in escape codes exactly where
+    // Node's colour detection (`piped_colour_level` in `term.rs`) turns colour on. A missing fallback entry makes a
+    // delegated run fail, so every pass here was answered natively. The ambient environment is not passed on.
+    describe.each(COLOUR_ENVIRONMENTS)("colour environment %j", (colour) => {
+        it.each([[[]], [["--target", "npm"]], [["--json"]], [["--write"]]] as string[][][])("prints what Node prints for `ignore %j`", (variant: string[]) => {
+            expect.assertions(5);
 
-        const native = nativeRun([], copyFixture("empty-project"), { GITHUB_ACTIONS: "true" });
-        const node = nodeRun([], copyFixture("empty-project"), { GITHUB_ACTIONS: "true" });
+            const missingEntry = join(scratch, "missing-entry.js");
+            const nativeDirectory = copyFixture("existing-dockerignore");
+            const nodeDirectory = copyFixture("existing-dockerignore");
+            const native = nativeRun(variant, nativeDirectory, { ...colour, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
+            const node = nodeRun(variant, nodeDirectory, colour);
 
-        expect(native.status).toBe(node.status);
-        expect(native.stdout).toBe(node.stdout);
+            expect(native.status).toBe(node.status);
+            expect(native.stdout).toBe(node.stdout);
+            expect(native.stderr).toBe(node.stderr);
+            expect(ignoreFilesIn(nativeDirectory)).toStrictEqual(ignoreFilesIn(nodeDirectory));
+            // The preview's hint is dimmed in every colour environment that turns colour on, and only there.
+            expect(native.stdout.includes("\u001B[2m")).toBe(node.stdout.includes("\u001B[2m"));
+        });
+    });
+
+    // Node warns on stderr, with its process id, when `FORCE_COLOR` and `NO_COLOR` are both set, and its detection reads
+    // a colour flag from the arguments: both stay Node's.
+    it.each([
+        ...DELEGATED_COLOUR_ENVIRONMENTS.map((colour) => [[], colour]),
+        [["--no-color"], {}],
+        [["--color"], { GITHUB_ACTIONS: "true" }],
+    ] as [string[], Record<string, string>][])("delegates `ignore %j` with %j, and matches Node", (variant: string[], colour: Record<string, string>) => {
+        expect.assertions(3);
+
+        const normalize = (text: string): string => text.replaceAll(/\(node:\d+\)/g, "(node:PID)");
+        const native = nativeRun(variant, copyFixture("empty-project"), { ...colour, VIS_FALLBACK_ENTRY_OVERRIDE: join(scratch, "missing-entry.js") });
+        const delegated = nativeRun(variant, copyFixture("empty-project"), colour);
+        const node = nodeRun(variant, copyFixture("empty-project"), colour);
+
+        // Without Node to hand over to, the declined run fails; with it, the output is Node's.
+        expect(native.status).not.toBe(0);
+        expect(normalize(delegated.stdout)).toBe(normalize(node.stdout));
+        expect(normalize(delegated.stderr)).toBe(normalize(node.stderr));
     }, 60_000);
 });

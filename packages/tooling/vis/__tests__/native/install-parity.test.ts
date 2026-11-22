@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_ENVIRONMENTS, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis install` (no packages) exists twice: the Node handler (`src/commands/install/handler.ts`, with the
@@ -72,7 +73,7 @@ const stubSource = (name: string): string =>
         `echo "${name}:$*"`,
         'if [ -n "$STUB_STDERR" ]; then echo "$STUB_STDERR" >&2; fi',
         'if [ -n "$STUB_STDOUT" ]; then echo "$STUB_STDOUT"; fi',
-        'if [ -n "$STUB_ENV" ]; then env | grep -E "^(CEREBRO_|VIS_MONOREPO_ROOT)" | sort; fi',
+        'if [ -n "$STUB_ENV" ]; then env | grep -E "^(CEREBRO_|VIS_MONOREPO_ROOT|FORCE_COLOR|NO_COLOR)" | sort; fi',
         'exit "${STUB_EXIT:-0}"',
         "",
     ].join("\n");
@@ -130,8 +131,8 @@ const UNSET = "\0unset";
 /** Environment without the variables a case unsets. */
 const withoutUnset = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).filter(([, value]) => value !== UNSET));
 
-/** The clock in pail's header differs between runs. */
-const normalize = (text: string): string => text.replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
+/** The clock in pail's header and the process id in the Node runtime's own warnings differ between runs. */
+const normalize = (text: string): string => text.replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS").replaceAll(/\(node:\d+\)/g, "(node:PID)");
 
 interface Run {
     status: number | null;
@@ -253,6 +254,12 @@ const PARITY_CASES: ParityCase[] = [
     { args: ["install", "--silent"], env: { STUB_STDERR: PEER_WARNING }, fixture: "pnpm-single", label: "peer warning, --silent" },
     { args: ["install"], env: { STUB_EXIT: "3", STUB_STDERR: PEER_WARNING }, fixture: "pnpm-single", label: "peer warning, failing manager" },
     { args: ["install"], env: { STUB_STDERR: "unmet_peer is no warning" }, fixture: "pnpm-single", label: "text that is no peer warning" },
+    // In a colour environment: the peer hint's header, the security notice of a root, and the environment the manager runs in.
+    ...COLOUR_ENVIRONMENTS.flatMap((colour): ParityCase[] => [
+        { args: ["install"], env: { ...colour, STUB_STDERR: PEER_WARNING }, fixture: "pnpm-single", label: `peer warning in ${JSON.stringify(colour)}` },
+        { args: ["install"], env: { ...colour, STUB_STDERR: PEER_WARNING }, fixture: "pnpm-root", label: `peer warning and security notice in ${JSON.stringify(colour)}` },
+        { args: ["install", "--silent"], env: { ...colour, STUB_ENV: "1" }, fixture: "npm-root", label: `the manager's environment in ${JSON.stringify(colour)}` },
+    ]),
     // What Node's startup adds to the environment the package manager runs in.
     ...["pnpm-root", "pnpm-single"].map((fixture) => { return { args: ["install"], env: { STUB_ENV: "1" }, fixture, label: "the environment the manager runs in" }; }),
     // The exit code is the package manager's.
@@ -293,13 +300,14 @@ const DELEGATED_CASES: DelegatedCase[] = [
         ["install", "-Df"],
         ["install", "--force=true"],
         ["install", "--", "x"],
+        // A colour flag is read from the arguments by Node's detection.
+        ["install", "--no-color"],
+        ["install", "--color"],
     ].map((args) => { return { args, fixture: "pnpm-single", label: `vis ${args.join(" ")}` }; }),
     // Contexts: outside CI, colour, Node's output settings, the environment that picks the installer.
     { args: ["install"], ci: false, fixture: "pnpm-single", label: "outside CI" },
     ...[
-        { FORCE_COLOR: "1" },
-        { GITHUB_ACTIONS: "true" },
-        { TERM: "xterm-256color" },
+        ...DELEGATED_COLOUR_ENVIRONMENTS,
         { NODE_ENV: "test" },
         { DEBUG: "*" },
         { PAIL_LOG_LEVEL: "error" },

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS, withoutColour } from "./colour-environments";
 
 /**
  * `vis affected` exists twice: the Node handler (`src/commands/affected/handler.ts`) and the native
@@ -28,10 +29,11 @@ const PROVIDER_ENVIRONMENT = /^(?:BUILD_|BUILDKITE|CI$|CI_|CIRCLE|CONTINUOUS_INT
 const KEPT_GIT_CONFIG = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
 const DROPPED = new Set(["VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_VERSION"]);
 
+// The runner's own colour variables are dropped (a CI runner sets several), and a case adds the one it tests.
 const baseEnvironment = (): Record<string, string | undefined> =>
     Object.fromEntries(
         Object.entries({
-            ...process.env,
+            ...withoutColour(process.env),
             GIT_CONFIG_GLOBAL: "/dev/null",
             GIT_CONFIG_NOSYSTEM: "1",
             VIS_CLI_TEST: "1",
@@ -44,7 +46,7 @@ const baseEnvironment = (): Record<string, string | undefined> =>
 // With `FORCE_COLOR` (CI sets it) Node greys each frame with an SGR pair around the line, which the pattern allows for; every other colour code is still compared.
 const SGR = String.raw`(?:${String.fromCodePoint(27)}\[[\d;]*m)*`;
 const stackFrame = new RegExp(String.raw`^${SGR}\s+at (?:.+ \(.*:\d+:\d+\)|(?:async )?[^\s()]+:\d+:\d+)${SGR}(?: \{)?\n`, "gmu");
-const withoutStackFrames = (stderr: string): string => stderr.replaceAll(stackFrame, "");
+const withoutStackFrames = (stderr: string): string => stderr.replaceAll(stackFrame, "").replaceAll(/\(node:\d+\)/g, "(node:PID)");
 
 /** Repositories whose `project.json` carries config the native selection does not reproduce. */
 type Fixture = "external-input" | "implicit-dependency";
@@ -104,6 +106,10 @@ const cases: Case[] = [
     { args: [...sparse], env: { BUILDKITE: "true", BUILDKITE_COMMIT: "{sha:v4}", BUILDKITE_PULL_REQUEST_BASE_BRANCH: "dev" }, native: true },
     { args: [...sparse], env: { CIRCLE_PR_BASE_BRANCH: "dev", CIRCLECI: "true" }, native: true },
     { args: [...sparse], env: { SYSTEM_PULLREQUEST_TARGETBRANCH: "refs/heads/dev", TF_BUILD: "True" }, native: true },
+    // The selection prints no colour of its own: where Node's colour detection turns colour on, the output is the same. The Node
+    // runtime warns on stderr, with its process id, when `FORCE_COLOR` and `NO_COLOR` are both set, which stays Node's.
+    ...SHORT_COLOUR_ENVIRONMENTS.map((env): Case => { return { args: [...sparse, "--base=v1", "--head=v2"], env, native: true }; }),
+    ...DELEGATED_COLOUR_ENVIRONMENTS.map((env): Case => { return { args: [...sparse, "--base=v1", "--head=v2"], env, native: false }; }),
     // The root is found from a subdirectory too.
     { args: [...sparse, "--base=v1", "--head=v2"], cwd: "packages/core", native: true },
     { args: [...sparse, "--base=v5", "--uncommitted"], cwd: "apps/web", native: true },

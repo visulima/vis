@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_VARIABLES, DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis sync ci-workflow` exists twice: the Node generator (`src/commands/sync/handler.ts` over
@@ -28,33 +29,9 @@ const marker = "NATIVE-DELEGATED";
 const TIMEOUT = 60_000;
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
-// The variables that make Node colour its output and make the binary delegate (`colour_may_be_forced` and
-// `term::color_enabled`). A CI runner sets several of them (GITHUB_ACTIONS, GITHUB_WORKFLOW, TERM), which
-// would send every native case to Node, so none of them may reach the child.
-const COLOUR_ENVIRONMENT = [
-    "APPVEYOR",
-    "BUILDKITE",
-    "CIRCLECI",
-    "CI_NAME",
-    "COLORTERM",
-    "DRONE",
-    "FORCE_COLOR",
-    "GITEA_ACTIONS",
-    "GITHUB_ACTIONS",
-    "GITHUB_WORKFLOW",
-    "GITLAB_CI",
-    "PM2_HOME",
-    "TEAMCITY_VERSION",
-    "TERM",
-    "TERMINAL_EMULATOR",
-    "TERM_PROGRAM",
-    "TF_BUILD",
-    "TRAVIS",
-];
-
 // What changes Node's output apart from the arguments: the CI marker, colour, and test mode.
 const DROPPED_ENVIRONMENT = new Set([
-    ...COLOUR_ENVIRONMENT,
+    ...COLOUR_VARIABLES,
     "CI",
     "COLUMNS",
     "CONTINUOUS_INTEGRATION",
@@ -216,10 +193,24 @@ const append = (path: string, text: string) => (directory: string) => { writeFil
 const BOTH = ["--provider=github,gitlab"];
 const GITHUB_DIR = { ".github/workflows/keep.yml": "name: keep\n" };
 
+/**
+ * Every colour environment, over a generate (the log lines of both providers, and the notice about the toolchains the
+ * GitLab image lacks) and a `--check`. The native path answers all of them, in the codes Node prints.
+ */
+const colourFixtures = (): Record<string, Fixture> =>
+    Object.fromEntries(
+        SHORT_COLOUR_ENVIRONMENTS.flatMap((env): [string, Fixture][] => [
+            [`in ${JSON.stringify(env)}, generating`, { args: BOTH, env, files: workspace({ Gemfile: "source 'https://rubygems.org'\n", "global.json": "{}\n", "packages/a/requirements.txt": "x\n" }), native: true }],
+            [`in ${JSON.stringify(env)}, a missing file`, { args: ["--check", ...BOTH], env, files: workspace(), native: true }],
+            [`in ${JSON.stringify(env)}, up to date`, { args: [...BOTH, "--check"], env, files: workspace(), native: true, seed: BOTH }],
+        ]),
+    );
+
 // Grouped by what they show (native, `--check`, delegated), not alphabetically.
 /* eslint-disable perfectionist/sort-objects */
 const fixtures: Record<string, Fixture> = {
     // Native.
+    ...colourFixtures(),
     "existing github workflows directory": { args: [], files: workspace(GITHUB_DIR), native: true },
     "existing gitlab file": { args: [], files: workspace({ ".gitlab-ci.yml": "stages: [test]\n" }), native: true },
     "both existing": { args: [], files: workspace({ ...GITHUB_DIR, ".gitlab/vis-ci.gitlab-ci.yml": "x: 1\n" }), native: true },
@@ -337,7 +328,10 @@ const fixtures: Record<string, Fixture> = {
     // Node reads the config of the workspace root only; the binary does not guess about one above it.
     "a config above the workspace root": { args: BOTH, files: workspace({ "../vis.config.ts": "export default {};\n" }), native: false },
     "outside CI": { args: BOTH, ci: false, files: workspace(), native: false },
-    "with FORCE_COLOR": { args: BOTH, env: { FORCE_COLOR: "1" }, files: workspace(), native: false },
+    // The Node runtime warns on stderr, with its process id, when both are set; a colour flag is read from the arguments.
+    ...Object.fromEntries(DELEGATED_COLOUR_ENVIRONMENTS.map((env): [string, Fixture] => [`with ${JSON.stringify(env)}`, { args: BOTH, env, files: workspace(), native: false }])),
+    "with --no-color": { args: [...BOTH, "--no-color"], files: workspace(), native: false },
+    "with --color": { args: [...BOTH, "--color"], env: { GITHUB_ACTIONS: "true" }, files: workspace(), native: false },
     "with NODE_ENV=test": { args: BOTH, env: { NODE_ENV: "test" }, files: workspace(), native: false },
     "with DEBUG": { args: BOTH, env: { DEBUG: "1" }, files: workspace(), native: false },
     "with a CEREBRO_ variable": { args: BOTH, env: { CEREBRO_OUTPUT_LEVEL: "16" }, files: workspace(), native: false },
@@ -433,8 +427,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(native.stdout).toBe(node.stdout);
 
-        // Outside CI, Node may print a tip on stderr (chosen at random), so that run compares everything else.
-        const stderrOf = (run: Run): string => (fixture.ci === false ? "" : run.stderr);
+        // Outside CI, Node may print a tip on stderr (chosen at random), so that run compares everything else. The
+        // Node runtime's own warnings carry a process id.
+        const stderrOf = (run: Run): string => (fixture.ci === false ? "" : run.stderr.replaceAll(/\(node:\d+\)/g, "(node:PID)"));
 
         expect(stderrOf(native)).toBe(stderrOf(node));
         expect(native.status).toBe(node.status);
