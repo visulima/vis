@@ -49,6 +49,8 @@ const baseEnvironment = (): Record<string, string | undefined> => {
 
 interface Case {
     args: string[];
+    /** Working directory inside the repository; defaults to its root. */
+    cwd?: string;
     /** Extra environment; values may use `{sha:&lt;tag>}` and `{payload}`. */
     env?: Record<string, string>;
     /** Whether the binary answers it natively. Everything else must delegate and still match. */
@@ -98,6 +100,9 @@ const cases: Case[] = [
     { args: [...sparse], env: { BUILDKITE: "true", BUILDKITE_COMMIT: "{sha:v4}", BUILDKITE_PULL_REQUEST_BASE_BRANCH: "dev" }, native: true },
     { args: [...sparse], env: { CIRCLE_PR_BASE_BRANCH: "dev", CIRCLECI: "true" }, native: true },
     { args: [...sparse], env: { SYSTEM_PULLREQUEST_TARGETBRANCH: "refs/heads/dev", TF_BUILD: "True" }, native: true },
+    // The root is found from a subdirectory too.
+    { args: [...sparse, "--base=v1", "--head=v2"], cwd: "packages/core", native: true },
+    { args: [...sparse, "--base=v5", "--uncommitted"], cwd: "apps/web", native: true },
     // Shapes and inputs Node owns.
     { args: [...sparse, "--base=nope", "--head=v2"], native: false },
     { args: [...sparse, "--base=v1", "--head=nope"], native: false },
@@ -224,14 +229,14 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     // `VIS_MONOREPO_ROOT`; the native runs get a stale one on purpose, so trusting it would show.
     const runNode = (testCase: Case) =>
         spawnSync(process.execPath, [nodeEntry, ...testCase.args], {
-            cwd: paths.repository,
+            cwd: join(paths.repository, testCase.cwd ?? "."),
             encoding: "utf8",
             env: { ...environmentFor(testCase), VIS_MONOREPO_ROOT: paths.repository },
         });
 
     const runNative = (testCase: Case, entry: string) =>
         spawnSync(binary as string, testCase.args, {
-            cwd: paths.repository,
+            cwd: join(paths.repository, testCase.cwd ?? "."),
             encoding: "utf8",
             env: {
                 ...environmentFor(testCase),
@@ -243,7 +248,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             },
         });
 
-    it.each(cases.map((testCase) => [`${testCase.outsideCi ? "(no CI) " : ""}${JSON.stringify(testCase.env ?? {})} ${testCase.args.join(" ")}`, testCase] as const))(
+    it.each(cases.map((testCase) => [`${testCase.cwd ? `[${testCase.cwd}] ` : ""}${testCase.outsideCi ? "(no CI) " : ""}${JSON.stringify(testCase.env ?? {})} ${testCase.args.join(" ")}`, testCase] as const))(
         "%s matches Node",
         (_name, testCase) => {
             expect.assertions(4);
