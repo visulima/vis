@@ -177,10 +177,11 @@ const helpOrNative = (args, mayRunNatively) => {
     return mayRunNatively();
 };
 
-// Commands the binary always answers: the native command set, `hook run` (the other `hook`
-// subcommands - install, migrate, ... - are not native, so routing them through the binary would only
-// add a second Node boot) and `advisories bloom status`, whose other shapes the binary hands to Node
-// itself, as it does for `hook run`.
+// Commands whose routing needs no flag check here, because the binary decides every shape itself: the
+// native command set, `hook run` (the other `hook` subcommands - install, migrate, ... - are not native,
+// so routing them through the binary would only add a second Node boot) and `advisories bloom status`.
+// The binary answers that one natively only for `--format json --cache-dir <dir>` and hands every other
+// shape to Node, as it does for `hook run`; the launcher does not check those flags.
 const alwaysNative = (command, subcommand, args) =>
     NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
 
