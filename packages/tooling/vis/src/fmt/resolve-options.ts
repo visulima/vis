@@ -136,12 +136,12 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
         }
 
         // The file only mentioned "fmt" (or exports a function): carry on with the next source, keeping what was said about it.
-        const rest = await resolveFromPrettier({ display, loadModule, prettierDeclared, prettierFile, root });
+        const rest = await resolveFromPrettier({ loadModule, prettierDeclared, prettierFile, root });
 
         return { ...rest, warnings: [...warnings, ...rest.warnings] };
     }
 
-    return resolveFromPrettier({ display, loadModule, prettierDeclared, prettierFile, root });
+    return resolveFromPrettier({ loadModule, prettierDeclared, prettierFile, root });
 };
 
 const resolveFromPrettier = async ({
@@ -150,7 +150,6 @@ const resolveFromPrettier = async ({
     prettierFile,
     root,
 }: {
-    display: (file: string) => string;
     loadModule: ModuleLoader;
     prettierDeclared: boolean;
     prettierFile: string | undefined;
