@@ -1,3 +1,14 @@
+## @visulima/task-runner [3.0.5-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.4...@visulima/task-runner@3.0.5-next.1) (2026-11-22)
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+* **task-runner:** separate the identity fields in the command hash ([#143](https://github.com/visulima/vis/issues/143)) ([e8b7404](https://github.com/visulima/vis/commit/e8b7404f1b75df67fed628f30318f27147e9a596))
+
+### Code Refactoring
+
+* **task-runner:** narrow the core crate's public API to what its consumers use ([#146](https://github.com/visulima/vis/issues/146)) ([8268fb7](https://github.com/visulima/vis/commit/8268fb78e28d35fd8f911cbfffd0ae433793556e))
+
 ## @visulima/task-runner [3.0.4](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.3...@visulima/task-runner@3.0.4) (2026-11-21)
 
 ### Bug Fixes
