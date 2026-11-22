@@ -40,7 +40,7 @@ const fmtOptionDefinitions = {
 const fmt = defineCommand({
     description: "Orchestrate detected formatters (prettier, …) across the workspace",
     examples: [
-        ["vis fmt", "Apply formatting in place using every detected formatter"],
+        ["vis fmt", "Apply formatting in place (bundled oxfmt unless biome, dprint or ruff is in use)"],
         ["vis fmt --check", "Report files that would change without writing"],
         ["vis fmt --check --format json", "Emit findings as JSON for CI / editor integrations"],
         ["vis fmt --check --format sarif", "Emit a SARIF 2.1.0 document for code-scanning uploads"],
@@ -50,7 +50,7 @@ const fmt = defineCommand({
         ["vis fmt --quiet", "Suppress per-file logs"],
         ["vis fmt --since main", "Only format files changed vs the main branch"],
         ["vis fmt --staged", "Only format files currently staged in the git index"],
-        ["vis fmt --watch", "Re-run formatters when watched files change (cache makes incremental --check near-free)"],
+        ["vis fmt --watch", "Re-run the formatter when watched files change"],
         ["vis fmt --check --format sarif --output fmt.sarif", "Write the SARIF report to fmt.sarif instead of stdout"],
     ],
     group: "Lint & Format",

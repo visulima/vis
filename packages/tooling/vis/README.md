@@ -263,7 +263,7 @@ When aube is the installer, `vis doctor` surfaces aube's effective hardening pos
 | `vis secrets [paths]`   |        | Scan for hardcoded secrets / credentials (Rust-native)                                          |
 | `vis toolchain <cmd>`   |        | Inspect / delegate to the version manager (proto, mise, fnm, volta…)                            |
 | `vis lint [files]`      |        | Orchestrate detected source-code linters (oxlint, biome, eslint, stylelint)                     |
-| `vis fmt [files]`       |        | Orchestrate detected formatters (oxfmt, biome, dprint, prettier)                                |
+| `vis fmt [files]`       |        | Format with the bundled oxfmt, or run the detected formatters (biome, dprint, ruff)             |
 | `vis staged`            |        | Run tasks on staged files (built-in `lint-staged` replacement)                                  |
 | `vis migrate <type>`    |        | Migrate from other tools — now including `gitleaks` and `secretlint`                            |
 

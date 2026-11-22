@@ -1,3 +1,24 @@
+## @visulima/vis [7.1.0-next.6](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.5...@visulima/vis@7.1.0-next.6) (2026-11-22)
+
+### Features
+
+* **vis:** answer `affected --sparse-checkout` natively ([#155](https://github.com/visulima/vis/issues/155)) ([54d0fc7](https://github.com/visulima/vis/commit/54d0fc7d097f118d3299f29091087144f304823b))
+* **vis:** answer the working-tree vis secrets scan natively ([#159](https://github.com/visulima/vis/issues/159)) ([c1ed22c](https://github.com/visulima/vis/commit/c1ed22cce1c80c65836c66abc4efed9ba4af10b4))
+* **vis:** answer vis cache hash natively from the recorded run summary ([#156](https://github.com/visulima/vis/issues/156)) ([22b9a4c](https://github.com/visulima/vis/commit/22b9a4c958b6d687c8ca8d27bc5cf2f2157df0fb))
+
+### Bug Fixes
+
+* **vis:** publish the manifest the version step wrote ([#160](https://github.com/visulima/vis/issues/160)) ([0cca730](https://github.com/visulima/vis/commit/0cca730e29fd66ad63af358d1d4939b343305348))
+
+### Code Refactoring
+
+* **vis:** pull the always-native launcher cases into a helper ([#161](https://github.com/visulima/vis/issues/161)) ([f5916eb](https://github.com/visulima/vis/commit/f5916eb1b88dcbab5e09ad6335866464f4119fb9))
+
+### Tests
+
+* **vis:** keep the runner's colour variables out of the secrets parity environment ([#163](https://github.com/visulima/vis/issues/163)) ([1bb0bb3](https://github.com/visulima/vis/commit/1bb0bb3b27c58a4fd4270287e81f2d63d80a8be7))
+* **vis:** set the minute-aged cache entry's age again before each parity pair ([#164](https://github.com/visulima/vis/issues/164)) ([88ef067](https://github.com/visulima/vis/commit/88ef067f7ded3929f651b921aa952e60e298a868))
+
 ## @visulima/vis [7.1.0-next.5](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.4...@visulima/vis@7.1.0-next.5) (2026-11-22)
 
 ### Features
