@@ -261,7 +261,7 @@ export const renderGithubCiWorkflow = (plan: CiWorkflowPlan): string => {
         {
             comment: "Builds what the targets below depend on once, so the parallel steps\nnever build or restore the same outputs at the same time.",
             name: "Build dependencies",
-            run: `${plan.layers.length === 0 ? "" : visDependenciesCommand(plan, plan.layers.flat().map(({ name }) => name))}\n`,
+            run: `${visDependenciesCommand(plan, plan.layers.flat().map(({ name }) => name))}\n`,
         },
         ...targetSteps(plan),
         ...(plan.github.steps?.after ?? []),

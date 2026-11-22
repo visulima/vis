@@ -322,8 +322,7 @@ fn target_steps(plan: &Plan, exec: &str) -> Option<Vec<Step>> {
 pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     let exec = tables.package_manager(&plan.package_manager).exec.clone();
     let names: Vec<&str> = plan.layers.iter().flatten().map(|target| target.name.as_str()).collect();
-    let build_dependencies: Vec<String> =
-        if names.is_empty() { Vec::new() } else { vec![vis_dependencies_command(plan, &exec, &names)] };
+    let build_dependencies = vis_dependencies_command(plan, &exec, &names);
     let mut steps = vec![run(RunStep {
         comment: Some("Full history, so affected detection can diff against the base.".to_owned()),
         uses: pinned(tables.action("checkout")),
@@ -334,7 +333,7 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     steps.extend(setup_steps(plan, tables).into_iter().map(run));
     steps.push(run(RunStep {
         comment: Some("Builds what the targets below depend on once, so the parallel steps\nnever build or restore the same outputs at the same time.".to_owned()),
-        run: Some(format!("{}\n", build_dependencies.join("\n"))),
+        run: Some(format!("{build_dependencies}\n")),
         ..named("Build dependencies")
     }));
     steps.extend(target_steps(plan, &exec)?);
