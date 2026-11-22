@@ -1,3 +1,9 @@
+## @visulima/vis [7.1.0-next.4](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.3...@visulima/vis@7.1.0-next.4) (2026-11-22)
+
+### Bug Fixes
+
+* **deps:** point vis at the released secret-scanner version ([#157](https://github.com/visulima/vis/issues/157)) ([dcfdf13](https://github.com/visulima/vis/commit/dcfdf13f8b4bc6e9718014f9e20950187b8b24c8))
+
 ## @visulima/vis [7.1.0-next.3](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.2...@visulima/vis@7.1.0-next.3) (2026-11-22)
 
 ### Features
