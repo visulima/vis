@@ -78,6 +78,12 @@ const findings = (root: string): void => {
     write(root, "allowwarn.txt", `x = ${GITHUB} # gitleaks:allow no-such-rule\n`);
 };
 
+/** One finding, small enough to run at several terminal widths. */
+const oneFinding = (root: string): void => {
+    workspace(root);
+    write(root, "app.env", `stripe = "${STRIPE}"\n`);
+};
+
 const clean = (root: string): void => {
     workspace(root);
     write(root, "readme.txt", "nothing to see here\n");
@@ -132,6 +138,7 @@ const FIXTURES: Record<string, (root: string) => void> = {
     findings,
     gitleaksIgnored,
     malformedBaseline,
+    oneFinding,
     secretlintIgnored,
 };
 
@@ -179,10 +186,10 @@ const DELEGATED_AND_COMPARED: [fixture: string, args: string[]][] = [
 // What changes Node's output apart from the arguments: the CI marker, colour, and test mode.
 const DROPPED_ENVIRONMENT = new Set(["CI", "CONTINUOUS_INTEGRATION", "FORCE_COLOR", "NODE_ENV", "VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_MONOREPO_ROOT", "VIS_VERSION"]);
 
-const contextEnvironment = (ci: boolean): Record<string, string | undefined> => {
+const contextEnvironment = (ci: boolean, columns: string | undefined = "80"): Record<string, string | undefined> => {
     const env: Record<string, string | undefined> = Object.fromEntries(Object.entries(process.env).filter(([key]) => !DROPPED_ENVIRONMENT.has(key)));
 
-    env["COLUMNS"] = "80";
+    env["COLUMNS"] = columns;
     env["VIS_NO_UPDATE_CHECK"] = "1";
 
     if (ci) {
@@ -222,13 +229,14 @@ const capture = (command: string, args: string[], directory: string, env: Record
     }
 };
 
-const runNode = (directory: string, args: string[], ci: boolean): Run => capture(process.execPath, [nodeEntry, "secrets", ...args], directory, contextEnvironment(ci));
+const runNode = (directory: string, args: string[], ci: boolean, columns?: string): Run =>
+    capture(process.execPath, [nodeEntry, "secrets", ...args], directory, contextEnvironment(ci, columns));
 
-const runNative = (directory: string, args: string[], ci: boolean, entry: string): Run =>
+const runNative = (directory: string, args: string[], ci: boolean, entry: string, columns?: string): Run =>
     // A binary in a platform package keeps the entry and version the launcher passes; one inside the vis
     // package (a dev copy) takes the override instead. Set both.
     capture(binary as string, ["secrets", ...args], directory, {
-        ...contextEnvironment(ci),
+        ...contextEnvironment(ci, columns),
         VIS_FALLBACK_ENTRY: entry,
         VIS_FALLBACK_ENTRY_OVERRIDE: entry,
         VIS_NODE: process.execPath,
@@ -287,6 +295,29 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         expect(native.status).toBe(node.status);
     }, TIMEOUT);
 
+    // pail pads its header with dots to the terminal width and wraps the message to it. Every status
+    // kind (warning and notice with findings, success without) runs at narrow, wide and unset widths.
+    it.each([
+        ["oneFinding", "40"],
+        ["oneFinding", "50"],
+        ["oneFinding", "120"],
+        ["oneFinding", undefined],
+        ["clean", "40"],
+        ["clean", "120"],
+        ["clean", undefined],
+    ] as const)("%s prints the same status lines at COLUMNS=%s", (fixture, columns) => {
+        expect.assertions(4);
+
+        const directory = directoryOf(fixture);
+        const node = runNode(directory, ["--format", "json"], true, columns);
+        const native = runNative(directory, ["--format", "json"], true, paths.stub, columns);
+
+        expect(native.stdout).not.toContain(marker);
+        expect(normalize(native.stdout, directory)).toBe(normalize(node.stdout, directory));
+        expect(normalize(native.stderr, directory)).toBe(normalize(node.stderr, directory));
+        expect(native.status).toBe(node.status);
+    }, TIMEOUT);
+
     it.each(DELEGATED)("%s %j is delegated", (fixture, args) => {
         expect.assertions(1);
 
@@ -314,6 +345,8 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         ["with NODE_ENV=debug, which makes pail log more", { NODE_ENV: "debug" }, true],
         ["with DEBUG set, which makes pail log more", { DEBUG: "1" }, true],
         ["with PAIL_LOG_LEVEL set", { PAIL_LOG_LEVEL: "error" }, true],
+        ["with a COLUMNS too narrow for pail's header", { COLUMNS: "39" }, true],
+        ["with a COLUMNS that is not a number", { COLUMNS: "wide" }, true],
     ] as const)("delegates %s", (_name, extra, ci) => {
         expect.assertions(1);
 
