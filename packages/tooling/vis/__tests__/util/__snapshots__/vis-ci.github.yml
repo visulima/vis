@@ -60,9 +60,7 @@ jobs:
             # never build or restore the same outputs at the same time.
             - name: "Build dependencies"
               run: |
-                  pnpm exec vis ci lint --no-install --deps-only --if-present
-                  pnpm exec vis ci build --no-install --deps-only --if-present
-                  pnpm exec vis ci test --no-install --deps-only --if-present
+                  pnpm exec vis ci lint,build,test --no-install --deps-only --if-present
 
             - parallel:
                   - name: "lint"

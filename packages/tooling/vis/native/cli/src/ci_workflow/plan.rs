@@ -359,12 +359,24 @@ pub fn vis_drift_check_command(plan: &Plan, exec: &str) -> String {
 
 /// The `vis` invocation for one target.
 pub fn vis_target_command(plan: &Plan, exec: &str, target: &str, flags: &[String]) -> String {
+    target_command(plan, exec, &shell_word(target), flags)
+}
+
+/// One command that builds the dependencies of every target (`vis run a,b --deps-only`), so a dependency
+/// that several targets share runs once, even with caching disabled. Each name is quoted on its own: the
+/// shell joins the pieces around the commas into one word.
+pub fn vis_dependencies_command(plan: &Plan, exec: &str, targets: &[&str]) -> String {
+    target_command(plan, exec, &target_list_word(targets), &["--deps-only".to_owned()])
+}
+
+fn target_list_word(targets: &[&str]) -> String {
+    targets.iter().map(|target| shell_word(target)).collect::<Vec<_>>().join(",")
+}
+
+/// `word` is the shell word that names the target, or the comma-separated list of targets.
+fn target_command(plan: &Plan, exec: &str, word: &str, flags: &[String]) -> String {
     let vis = format!("{exec} vis");
-    let base = if plan.affected {
-        format!("{vis} ci {} --no-install", shell_word(target))
-    } else {
-        format!("{vis} run {}", shell_word(target))
-    };
+    let base = if plan.affected { format!("{vis} ci {word} --no-install") } else { format!("{vis} run {word}") };
     let mut parts = vec![base];
 
     parts.extend(flags.iter().cloned());
@@ -386,6 +398,13 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_target_list_is_one_comma_joined_word_with_each_name_quoted_on_its_own() {
+        assert_eq!(target_list_word(&["lint", "build", "test"]), "lint,build,test");
+        assert_eq!(target_list_word(&["a b", "test"]), "'a b',test");
+        assert_eq!(target_list_word(&["test"]), "test");
     }
 
     #[test]
