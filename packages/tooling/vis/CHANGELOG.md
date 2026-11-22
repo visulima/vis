@@ -1,3 +1,9 @@
+## @visulima/vis [7.1.0-next.5](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.4...@visulima/vis@7.1.0-next.5) (2026-11-22)
+
+### Features
+
+* **vis:** answer `cache list` and `cache size` natively ([#158](https://github.com/visulima/vis/issues/158)) ([d39ba3a](https://github.com/visulima/vis/commit/d39ba3a62c8e93b798bf022c5509dc3b4ca928ea))
+
 ## @visulima/vis [7.1.0-next.4](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.3...@visulima/vis@7.1.0-next.4) (2026-11-22)
 
 ### Bug Fixes
