@@ -166,8 +166,7 @@ struct Settings {
 /// The settings of the workspace root, or `None` when Node must answer.
 ///
 /// Node reads `vis.config.*` from the workspace root only, so a config anywhere else on the way up is
-/// one this path cannot tell Node's treatment of. At the root the config must be a literal or a
-/// cached evaluation, and free of the keys that change what Node does before the command runs.
+/// one this path cannot tell Node's treatment of. At the root the config must be a literal, and free of the keys that change what Node does before the command runs.
 fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
     let others = cwd.ancestors().chain(root.ancestors()).filter(|directory| *directory != root).any(has_config_file);
 
@@ -175,13 +174,8 @@ fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
         return None;
     }
 
-    let mut state = vis_config::read(root);
-
-    if !has_config_file(root) {
-        state = ConfigState::Absent;
-    } else if state == ConfigState::Dynamic {
-        state = vis_config::read_evaluated(root);
-    }
+    // A config that has to be evaluated is Node's: evaluating it would cost the Node start this path avoids.
+    let state = if has_config_file(root) { vis_config::read(root) } else { ConfigState::Absent };
 
     let config = match state {
         ConfigState::Absent => {

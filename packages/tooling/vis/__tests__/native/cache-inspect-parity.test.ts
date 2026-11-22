@@ -81,12 +81,13 @@ const fillCache = (root: string): string => {
         // Same modification time on two entries: the order between them is the listing's tie-break.
         a1b2c3d4e5f6a7b8: [3 * HOUR + 30 * MINUTE, [3000, 1500, 7]],
         bbbbbbbbbbbbbbbbbbbbbbbbbb: [2 * DAY + 12 * HOUR, [1500]],
-        cccccccccccccccc: [7 * MINUTE + 30, [1_048_576, 100]],
+        cccccccccccccccc: [50 * MINUTE + 30, [1_048_576, 100]],
         dddddddd: [40 * DAY, [1, 2, 3]],
         eeee: [5 * HOUR + 30 * MINUTE, []],
     });
 
-    const tied = 1_700_000_000;
+    // Fixed relative to now, so the day count in the table cannot change between the two runs.
+    const tied = Math.floor(Date.now() / 1000) - 100 * DAY - 12 * HOUR;
 
     for (const hash of ["tie-first", "tie-second"]) {
         populate(cache, { [hash]: [0, [10]] });
@@ -95,7 +96,7 @@ const fillCache = (root: string): string => {
 
     // A sub-millisecond modification time, a dot-directory, a plain file and the branch container.
     populate(cache, { "fraction-entry": [0, [5]] });
-    utimesSync(join(cache, "fraction-entry"), 1_700_000_100.123_456, 1_700_000_100.123_456);
+    utimesSync(join(cache, "fraction-entry"), tied + 100.123_456, tied + 100.123_456);
     mkdirSync(join(cache, ".hidden"));
     writeFileSync(join(cache, "plain-file"), "x");
     mkdirSync(join(cache, "branches", "elsewhere", "inner"), { recursive: true });
@@ -362,8 +363,23 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         // Cases are registered in `beforeAll`, so they run from one test to keep the fixtures in place.
         const failures: string[] = [];
 
+        // A declined shape is compared through real Node once per reason, command and format; the rest only have to be declined.
+        const compared = new Set<string>();
+
         for (const { args, cwd, env = {}, name, route } of cases) {
             const directory = join(scratch, cwd);
+            const key = `${name.split(": vis")[0] ?? name}|${args[1] ?? ""}|${String(args.some((argument) => argument.includes("json")))}`;
+
+            if (route === "node" && compared.has(key)) {
+                if (runNative(directory, args, env, stubEntry).status !== 99) {
+                    failures.push(`${name}: expected the binary to delegate, it answered`);
+                }
+
+                continue;
+            }
+
+            compared.add(key);
+
             const node = runNode(directory, args, env);
             const via = runNative(directory, args, env, route === "native" ? stubEntry : nodeEntry);
 
