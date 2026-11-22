@@ -228,7 +228,7 @@ const runOptionDefinitions = {
 
 const run = defineCommand({
     argument: {
-        description: "The target to run (e.g., build, test, lint)",
+        description: "The target to run (e.g., build, test, lint). With --deps-only, a comma-separated list (build,test) runs the shared dependencies of all of them once",
         name: "target",
         type: String,
     },

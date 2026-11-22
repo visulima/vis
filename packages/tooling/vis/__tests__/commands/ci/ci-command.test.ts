@@ -127,6 +127,29 @@ describe("vis ci", () => {
         expect(calls[2]!.argv).toContain("test");
     });
 
+    it("hands the whole target list to one affected run with --deps-only, so shared dependencies run once", async () => {
+        expect.assertions(4);
+
+        const { logger } = makeLogger();
+        const { calls, runtime } = makeRuntime();
+
+        await ciExecute({
+            argument: ["lint,test"],
+            logger,
+            options: { depsOnly: true, install: false, skipToolchain: true },
+            runtime,
+            visConfig: undefined,
+            workspaceRoot,
+        } as never);
+
+        const affectedRuns = calls.filter((call) => call.name === "affected");
+
+        expect(affectedRuns).toHaveLength(1);
+        expect(affectedRuns[0]!.argv[0]).toBe("lint,test");
+        expect(affectedRuns[0]!.argv).toContain("--deps-only");
+        expect(calls.some((call) => call.name === "install")).toBe(false);
+    });
+
     it("skips install when --no-install is passed", async () => {
         expect.assertions(2);
 

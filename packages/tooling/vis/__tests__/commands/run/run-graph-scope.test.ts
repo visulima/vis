@@ -1,11 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
 import type { Task, TaskGraph } from "@visulima/task-runner";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import runExecute from "../../../src/commands/run/handler";
-import { applyGraphScope, scopeTaskGraph } from "../../../src/commands/run/scope-task-graph";
+import { applyGraphScope, mergeScopedRuns, scopeTaskGraph } from "../../../src/commands/run/scope-task-graph";
 import { VisUserError } from "../../../src/errors/vis-user-error";
 import { cleanupTemporaryDirectory, createTemporaryDirectory } from "../../test-helpers";
 
@@ -243,5 +243,140 @@ describe("vis run --deps-only / --skip-deps", () => {
         expect.assertions(1);
 
         await expect(run({ depsOnly: true, partition: "1/2" })).rejects.toThrow("--deps-only cannot be combined with --partition");
+    });
+});
+
+describe(mergeScopedRuns, () => {
+    it("keeps every task once, unions the edges and makes the tasks nothing depends on the roots", () => {
+        expect.assertions(4);
+
+        const [shared, build, gen] = [task("lib", "gen"), task("app", "build"), task("lib", "gen2")];
+        const first: TaskGraph = {
+            dependencies: { "app:build": ["lib:gen"], "lib:gen": [] },
+            roots: ["app:build"],
+            tasks: { "app:build": build, "lib:gen": shared },
+        };
+        const second: TaskGraph = {
+            dependencies: { "lib:gen": [], "lib:gen2": ["lib:gen"] },
+            roots: ["lib:gen2"],
+            tasks: { "lib:gen": { ...shared }, "lib:gen2": gen },
+        };
+        const merged = mergeScopedRuns([
+            { persistentTasks: [], taskGraph: first },
+            { persistentTasks: [], taskGraph: second },
+        ]);
+
+        expect(Object.keys(merged.taskGraph.tasks).toSorted()).toStrictEqual(["app:build", "lib:gen", "lib:gen2"]);
+        // The first copy of a shared task wins.
+        expect(merged.taskGraph.tasks["lib:gen"]).toBe(shared);
+        expect(merged.taskGraph.dependencies).toStrictEqual({ "app:build": ["lib:gen"], "lib:gen": [], "lib:gen2": ["lib:gen"] });
+        expect(merged.initialTasks.map((t) => t.id).toSorted()).toStrictEqual(["app:build", "lib:gen2"]);
+    });
+});
+
+describe("vis run <target>,<target> --deps-only", () => {
+    let workspaceRoot: string;
+
+    const log = (name: string): string => join(workspaceRoot, `${name}.log`);
+    const lines = (name: string): string[] => (existsSync(log(name)) ? readFileSync(log(name), "utf8").split("\n").filter(Boolean) : []);
+    const append = (name: string): string => `echo run >> ${JSON.stringify(log(name))}`;
+
+    beforeEach(() => {
+        workspaceRoot = createTemporaryDirectory("vis-run-target-list-");
+        writeFileSync(join(workspaceRoot, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+        writeFileSync(join(workspaceRoot, "package.json"), JSON.stringify({ name: "root" }));
+
+        for (const name of ["lib", "app"]) {
+            mkdirSync(join(workspaceRoot, "packages", name), { recursive: true });
+        }
+
+        // `gen` has caching disabled: only one run can keep it from executing once per target.
+        writeFileSync(join(workspaceRoot, "packages", "lib", "package.json"), JSON.stringify({ name: "lib" }));
+        writeFileSync(join(workspaceRoot, "packages", "lib", "project.json"), JSON.stringify({ targets: { gen: { cache: false, command: append("gen"), outputs: [] } } }));
+        writeFileSync(join(workspaceRoot, "packages", "app", "package.json"), JSON.stringify({ dependencies: { lib: "workspace:*" }, name: "app" }));
+        writeFileSync(
+            join(workspaceRoot, "packages", "app", "project.json"),
+            JSON.stringify({
+                targets: {
+                    build: { cache: false, command: append("build"), dependsOn: ["^gen"], outputs: [] },
+                    lint: { command: append("lint"), outputs: [] },
+                    test: { command: append("test"), dependsOn: ["build", "^gen"], outputs: [] },
+                },
+            }),
+        );
+    });
+
+    afterEach(() => {
+        cleanupTemporaryDirectory(workspaceRoot);
+    });
+
+    const run = async (argument: string[], options?: Record<string, unknown>): Promise<void> => {
+        await runExecute({
+            argument,
+            logger: { debug: () => undefined, error: () => undefined, info: () => undefined, warn: () => undefined },
+            options: { cache: false, parallel: 1, skipToolchain: true, ...(options ?? { depsOnly: true }) },
+            runtime: {} as never,
+            visConfig: undefined,
+            workspaceRoot,
+        } as never);
+    };
+
+    it("runs a dependency the targets share once, where one run per target repeats it", async () => {
+        expect.assertions(2);
+
+        await run(["lint,test"]);
+
+        // lint has no dependencies, test needs build and lib:gen; both are the dependency step of `test`.
+        expect(lines("gen")).toHaveLength(1);
+
+        rmSync(log("gen"), { force: true });
+        await run(["build"]);
+        await run(["test"]);
+
+        expect(lines("gen")).toHaveLength(2);
+    });
+
+    it("executes the union of the single-target dependency runs, each task once, and never the listed tasks themselves", async () => {
+        expect.assertions(4);
+
+        await run(["build,test"]);
+
+        // test depends on build, so the dependency step of the pair still builds app:build, once.
+        expect(lines("gen")).toHaveLength(1);
+        expect(lines("build")).toHaveLength(1);
+        expect(lines("test")).toHaveLength(0);
+        expect(lines("lint")).toHaveLength(0);
+    });
+
+    it("collapses a repeated target", async () => {
+        expect.assertions(2);
+
+        await run(["build,build,test"]);
+
+        expect(lines("gen")).toHaveLength(1);
+        expect(lines("build")).toHaveLength(1);
+    });
+
+    it("skips a target no project has with --if-present, and does nothing when none has it", async () => {
+        expect.assertions(3);
+
+        await run(["missing,test"], { depsOnly: true, ifPresent: true });
+
+        expect(lines("gen")).toHaveLength(1);
+
+        rmSync(log("gen"), { force: true });
+        await run(["missing,absent"], { depsOnly: true, ifPresent: true });
+
+        expect(lines("gen")).toHaveLength(0);
+
+        await expect(run(["missing,test"])).rejects.toThrow(VisUserError);
+    });
+
+    it("rejects a list without --deps-only, with --skip-deps and with arguments after it", async () => {
+        expect.assertions(3);
+
+        await expect(run(["build,test"], {})).rejects.toThrow("run together only with --deps-only");
+        await expect(run(["build,test"], { skipDeps: true })).rejects.toThrow("run together only with --deps-only");
+        await expect(run(["build,test", "extra"])).rejects.toThrow("cannot follow the list");
     });
 });
