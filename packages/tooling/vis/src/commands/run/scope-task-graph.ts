@@ -35,17 +35,17 @@ const isRequested = (task: Task, target: string, selectedProjects: ReadonlySet<s
 /**
  * Narrows `taskGraph` to one side of the requested/dependency split.
  *
- * - `deps-only` keeps the dependency closure of the requested tasks, minus
- *   service tasks: a service has to run alongside its dependents, not ahead
- *   of them in a separate step. Tasks that are not dependencies at all, such
- *   as `always` tasks that run after the requested ones, are left out. The
+ * - `deps-only` keeps the dependency closure of the requested tasks. A service
+ *   has to run alongside its dependents, not ahead of them in a separate step,
+ *   so it stays only when a kept dependency needs it; a service only the
+ *   requested tasks need starts in the later `--skip-deps` run. `always` tasks
+ *   are left out: they run after the requested tasks, not before them. The
  *   closure is complete downwards, so every kept task keeps all its edges.
  * - `skip-deps` keeps the whole graph the requested tasks need but marks
  *   their non-service dependencies {@link Task.satisfied}: those are hashed
  *   (a task's cache key folds its dependencies' hashes, so they must stay in
  *   the graph) but neither executed nor restored. Services still start, and
- *   `always` tasks outside the closure (the requested tasks' finally-tasks)
- *   still run.
+ *   `always` tasks (the requested tasks' finally-tasks) still run.
  */
 export const scopeTaskGraph = (
     taskGraph: TaskGraph,
@@ -58,17 +58,27 @@ export const scopeTaskGraph = (
     const requested = new Set(Object.entries(taskGraph.tasks).flatMap(([id, task]) => (isRequested(task, target, selectedProjects) ? [id] : [])));
     const closure = reachableFrom(requested, (id) => taskGraph.dependencies[id]);
     const tasks: Record<string, Task> = {};
+    const isRegularDependency = (id: string, task: Task): boolean => closure.has(id) && !requested.has(id) && task.always !== true && !isService(task);
+    // Services that a dependency kept by `deps-only` needs, directly or through other services.
+    const needed = reachableFrom(
+        Object.entries(taskGraph.tasks).flatMap(([id, task]) => (isRegularDependency(id, task) ? [id] : [])),
+        (id) => taskGraph.dependencies[id],
+    );
 
     for (const [id, task] of Object.entries(taskGraph.tasks)) {
         const isDependency = closure.has(id) && !requested.has(id);
 
-        if (scope === "deps-only") {
-            if (isDependency && !isService(task)) {
+        if (task.always === true) {
+            if (scope === "skip-deps") {
+                tasks[id] = task;
+            }
+        } else if (scope === "deps-only") {
+            if (isDependency && (!isService(task) || needed.has(id))) {
                 tasks[id] = task;
             }
         } else if (isDependency) {
             tasks[id] = isService(task) ? task : { ...task, satisfied: true };
-        } else if (requested.has(id) || task.always === true) {
+        } else if (requested.has(id)) {
             tasks[id] = task;
         }
     }

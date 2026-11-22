@@ -99,6 +99,32 @@ describe(scopeTaskGraph, () => {
             // The service still starts; only the build is already done.
             expect(Object.values(scoped.taskGraph.tasks).flatMap((t) => (t.satisfied ? [t.id] : []))).toStrictEqual(["app:build"]);
         });
+
+        it("keeps a service that a dependency needs for deps-only, and leaves one only the requested task needs", () => {
+            expect.assertions(2);
+
+            const { initial, isService, taskGraph } = mixed();
+            const tasks = { ...taskGraph.tasks, "cache:serve": task("cache", "serve") };
+            const withBuildService: TaskGraph = {
+                ...taskGraph,
+                dependencies: { ...taskGraph.dependencies, "app:build": ["cache:serve"], "cache:serve": [] },
+                tasks,
+            };
+            const scoped = scopeTaskGraph(withBuildService, initial, "test", "deps-only", (t) => isService(t) || t.id === "cache:serve");
+
+            expect(Object.keys(scoped.taskGraph.tasks).toSorted()).toStrictEqual(["app:build", "cache:serve"]);
+            expect(scoped.taskGraph.dependencies["app:build"]).toStrictEqual(["cache:serve"]);
+        });
+
+        it("runs a finally-task only with skip-deps, even when the requested task lists it as a dependency", () => {
+            expect.assertions(2);
+
+            const { initial, isService, taskGraph } = mixed();
+            const withCleanupDependency: TaskGraph = { ...taskGraph, dependencies: { ...taskGraph.dependencies, "app:cleanup": [], "app:test": ["app:build", "app:cleanup"] } };
+
+            expect(Object.keys(scopeTaskGraph(withCleanupDependency, initial, "test", "deps-only", isService).taskGraph.tasks)).toStrictEqual(["app:build"]);
+            expect(scopeTaskGraph(withCleanupDependency, initial, "test", "skip-deps", isService).taskGraph.tasks["app:cleanup"]?.satisfied).toBeUndefined();
+        });
     });
 });
 
