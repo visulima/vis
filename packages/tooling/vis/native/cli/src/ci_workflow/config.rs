@@ -130,7 +130,8 @@ fn convert(expression: &Expression<'_>) -> Option<Yaml> {
             })
             .collect::<Option<Vec<_>>>()
             .map(Yaml::List),
-        Expression::StringLiteral(literal) => Some(Yaml::Str(literal.value.to_string())),
+        // A lone surrogate has no UTF-8 form: the parser stores it as an escape, and Node prints its own escape for it.
+        Expression::StringLiteral(literal) if !literal.lone_surrogates => Some(Yaml::Str(literal.value.to_string())),
         Expression::NumericLiteral(literal) => literal.value.is_finite().then_some(Yaml::Number(literal.value)),
         Expression::BooleanLiteral(literal) => Some(Yaml::Bool(literal.value)),
         Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::UnaryNegation => match &unary.argument {
@@ -548,6 +549,12 @@ mod tests {
             ("wrong-type", "vis.config.ts", "export default { ci: { workflow: { affected: 'yes' } } };\n"),
             ("null", "vis.config.ts", "export default { ci: { workflow: { runsOn: null } } };\n"),
             ("index-key", "vis.config.ts", "export default { ci: { workflow: { github: { env: { '1': 'a' } } } } };\n"),
+            ("lone-surrogate", "vis.config.ts", "export default { ci: { workflow: { runsOn: '\\ud800' } } };\n"),
+            (
+                "lone-surrogate-key",
+                "vis.config.ts",
+                "export default { ci: { workflow: { github: { env: { '\\udc00': 'x' } } } } };\n",
+            ),
             ("duplicate", "vis.config.ts", "export default { ci: { workflow: { runsOn: 'a', runsOn: 'b' } } };\n"),
             ("fraction", "vis.config.ts", "export default { ci: { workflow: { timeoutMinutes: 1.5 } } };\n"),
             ("task-command", "vis.config.ts", "export default { tasks: { check: { command: 'x' } } };\n"),

@@ -37,11 +37,26 @@ use crate::targets::{self, Targets};
 use plan::{build_plan, Provider, Workspace};
 use tables::Tables;
 
-/// What the command printed and how it ended.
+/// What the command printed, line by line in the order Node logs it (a terminal or a merged redirect shows
+/// that order), and how it ended.
 struct Outcome {
     code: i32,
-    stderr: String,
-    stdout: String,
+    lines: Vec<Line>,
+}
+
+struct Line {
+    stderr: bool,
+    text: String,
+}
+
+impl Outcome {
+    fn out(&mut self, text: String) {
+        self.lines.push(Line { stderr: false, text });
+    }
+
+    fn err(&mut self, text: String) {
+        self.lines.push(Line { stderr: true, text });
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -274,29 +289,28 @@ fn answer(args: &[String]) -> Option<Outcome> {
         })
         .collect::<Option<_>>()?;
 
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+    let mut outcome = Outcome { code: 0, lines: Vec::new() };
     let provider_names: Vec<&str> = providers.iter().map(|provider| provider.name()).collect();
 
-    stdout.push_str(&format!("▸ CI providers: {} ({reason})\n", provider_names.join(", ")));
+    outcome.out(format!("▸ CI providers: {} ({reason})\n", provider_names.join(", ")));
 
     if !plan.ecosystems.is_empty() {
         let names: Vec<&str> = plan.ecosystems.iter().map(|detected| detected.name.name()).collect();
 
-        stdout.push_str(&format!("▸ Toolchains: {}\n", names.join(", ")));
+        outcome.out(format!("▸ Toolchains: {}\n", names.join(", ")));
     }
 
     let missing = if providers.contains(&Provider::Gitlab) { gitlab::missing_toolchains(&plan) } else { Vec::new() };
 
     if !missing.is_empty() {
-        stderr.push_str(&format!(
+        outcome.err(format!(
             "GitLab jobs run in a node image without {}. Pin go, python, ruby or rust in toolchain.tools so vis installs them, or give .vis-ci-base an image that has them.\n",
             missing.join(", ")
         ));
     }
 
     if !build_first_ordered.is_empty() {
-        stdout.push_str(&format!(
+        outcome.out(format!(
             "▸ Running build before {} (ci.workflow.buildFirst; set it to false if dependsOn already says what needs build).\n",
             build_first_ordered.join(", ")
         ));
@@ -312,7 +326,7 @@ fn answer(args: &[String]) -> Option<Outcome> {
                 Ok(existing) if existing == content.as_bytes() => {}
                 Ok(_) => return None,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    stderr.push_str(&format!("{path} is out of date. Run `vis sync ci-workflow` to update it.\n"));
+                    outcome.err(format!("{path} is out of date. Run `vis sync ci-workflow` to update it.\n"));
                     stale = true;
                 }
                 Err(_) => return None,
@@ -323,11 +337,13 @@ fn answer(args: &[String]) -> Option<Outcome> {
 
         fs::create_dir_all(target.parent()?).ok()?;
         fs::write(&target, content).ok()?;
-        stdout.push_str(&format!("Wrote {path}\n"));
+        outcome.out(format!("Wrote {path}\n"));
     }
 
     if stale {
-        return Some(Outcome { code: 1, stderr, stdout });
+        outcome.code = 1;
+
+        return Some(outcome);
     }
 
     let groups: Vec<String> = plan
@@ -336,13 +352,13 @@ fn answer(args: &[String]) -> Option<Outcome> {
         .map(|layer| layer.iter().map(|target| target.name.as_str()).collect::<Vec<_>>().join(" + "))
         .collect();
 
-    stdout.push_str(&format!(
+    outcome.out(format!(
         "CI workflow {}: {}\n",
         if options.check { "is up to date" } else { "generated" },
         groups.join(" → ")
     ));
 
-    Some(Outcome { code: 0, stderr, stdout })
+    Some(outcome)
 }
 
 /// Answers `vis sync ci-workflow` natively or hands the whole invocation to Node. `args` is the lossy
@@ -352,10 +368,13 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::delegate(raw_args);
     };
 
-    let written = io::stdout()
-        .write_all(outcome.stdout.as_bytes())
-        .and_then(|()| io::stdout().flush())
-        .and_then(|()| io::stderr().write_all(outcome.stderr.as_bytes()));
+    let written = outcome.lines.iter().try_for_each(|line| {
+        if line.stderr {
+            io::stderr().write_all(line.text.as_bytes())
+        } else {
+            io::stdout().write_all(line.text.as_bytes()).and_then(|()| io::stdout().flush())
+        }
+    });
 
     std::process::exit(if written.is_err() { 1 } else { outcome.code });
 }

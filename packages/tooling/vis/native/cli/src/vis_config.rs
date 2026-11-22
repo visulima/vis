@@ -327,7 +327,8 @@ pub fn object_properties<'a, 'b>(
 
         let key = match &property.key {
             PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
-            PropertyKey::StringLiteral(literal) => literal.value.to_string(),
+            // A lone surrogate has no UTF-8 form; the parser encodes it in the value, which `JSON.stringify` would print as an escape.
+            PropertyKey::StringLiteral(literal) if !literal.lone_surrogates => literal.value.to_string(),
             _ => return None,
         };
 

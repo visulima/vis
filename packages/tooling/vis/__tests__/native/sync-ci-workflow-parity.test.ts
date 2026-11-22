@@ -23,6 +23,9 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const marker = "NATIVE-DELEGATED";
+
+// Each case starts Node up to six times (the seed runs and the reference run).
+const TIMEOUT = 60_000;
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 // The variables that make Node colour its output and make the binary delegate (`colour_may_be_forced` and
@@ -98,6 +101,20 @@ const capture = (command: string, args: string[], directory: string, env: Record
     } finally {
         closeSync(outFd);
         closeSync(errFd);
+    }
+};
+
+/** Runs a command with stdout and stderr on one file, which shows the order the lines were printed in. */
+const captureMerged = (command: string, args: string[], directory: string, env: Record<string, string | undefined>): { merged: string; status: number | null } => {
+    const file = join(directory, "..", `${randomUUID()}.log`);
+    const fd = openSync(file, "w");
+
+    try {
+        const { status } = spawnSync(command, args, { cwd: directory, env, stdio: ["ignore", fd, fd] });
+
+        return { merged: readFileSync(file, "utf8"), status };
+    } finally {
+        closeSync(fd);
     }
 };
 
@@ -267,6 +284,11 @@ const fixtures: Record<string, Fixture> = {
         files: workspace({ "packages/a/app.sln": "x\n", "packages/b/global.json": "{}\n" }),
         native: true,
     },
+    "a root package.json with its own scripts": {
+        args: BOTH,
+        files: workspace({ "package.json": JSON.stringify({ name: "fixture", private: true, scripts: { build: "vis run build", typecheck: "tsc", test: "pnpm -r test" } }) }),
+        native: true,
+    },
     "a script-less project": {
         args: BOTH,
         files: workspace({ "packages/c/package.json": JSON.stringify({ name: "c", version: "1.0.0" }) }),
@@ -400,6 +422,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         const directories = prepare(name, fixture);
         const env = contextEnvironment(fixture.ci ?? true, fixture.env);
+
         const node = runNode(directories.node, fixture.args, env);
         const probe = runNative(directories.probe, fixture.args, env, paths.stub);
 
@@ -409,13 +432,44 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const native = runNative(directories.native, fixture.args, env, nodeEntry);
 
         expect(native.stdout).toBe(node.stdout);
-        expect(native.stderr).toBe(node.stderr);
+
+        // Outside CI, Node may print a tip on stderr (chosen at random), so that run compares everything else.
+        const stderrOf = (run: Run): string => (fixture.ci === false ? "" : run.stderr);
+
+        expect(stderrOf(native)).toBe(stderrOf(node));
         expect(native.status).toBe(node.status);
         expect(written(directories.native)).toStrictEqual(written(directories.node));
         // A guard against a vacuous pass: Node answered the case, not an unrelated failure.
         expect(node.stdout + node.stderr).not.toBe("");
         expect(node.stderr).not.toContain("    at ");
-    });
+    }, TIMEOUT);
+
+    it.each([
+        ["a gitlab file for toolchains the node image lacks, written", ["--provider=gitlab"], undefined],
+        ["the same, checked while the file is missing", ["--check", "--provider=gitlab"], undefined],
+    ] as const)("prints %s in the order Node does when both streams share a file", (_name, args) => {
+        expect.assertions(3);
+
+        const fixture: Fixture = {
+            args: [...args],
+            files: workspace({ Gemfile: "source 'https://rubygems.org'\n", "global.json": "{}\n", "packages/a/requirements.txt": "x\n" }),
+            native: true,
+        };
+        const directories = prepare(`merged ${args.join(" ")}`, fixture);
+        const env = contextEnvironment(true);
+        const node = captureMerged(process.execPath, [nodeEntry, "sync", "ci-workflow", ...args], directories.node, env);
+        const native = captureMerged(binary as string, ["sync", "ci-workflow", ...args], directories.native, {
+            ...env,
+            VIS_FALLBACK_ENTRY: nodeEntry,
+            VIS_FALLBACK_ENTRY_OVERRIDE: nodeEntry,
+            VIS_NODE: process.execPath,
+            VIS_VERSION: version,
+        });
+
+        expect(native.merged).toBe(node.merged);
+        expect(native.status).toBe(node.status);
+        expect(node.merged).toContain("GitLab jobs run in a node image without dotnet, python, ruby");
+    }, TIMEOUT);
 
     it("answers the full config natively with the files Node writes for it", () => {
         expect.assertions(4);
