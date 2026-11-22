@@ -110,7 +110,7 @@ The bundled oxfmt takes its options from the **first** source that exists, used 
 1. `fmt.options` (with `fmt.overrides` and `fmt.ignorePatterns`) in `vis.config`.
 2. An `.oxfmtrc.json`, `.oxfmtrc.jsonc`, `oxfmt.config.ts` or `oxfmt.config.mts` in the workspace root. oxfmt reads it itself, so nested configs and TypeScript configs work as in oxfmt.
 3. The root Prettier config, mapped to oxfmt options (see below).
-4. oxfmt's defaults. `.editorconfig` is honoured by oxfmt in every case.
+4. Defaults. oxfmt's own, or, when Prettier is declared in the workspace but has no config, Prettier's: the same mapping as an empty Prettier config, so the print width stays 80 (and `package.json` stays unsorted) instead of becoming oxfmt's 100. `.editorconfig` is honoured by oxfmt in every case.
 
 `vis fmt` prints which source it used. When a lower source exists and is ignored (say a `vis.config` `fmt.options` next to a `.prettierrc.json`), it prints one warning naming both.
 

@@ -56,7 +56,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
 
     if (bundled) {
         // The bundled oxfmt is the only formatter that runs, so no file is formatted twice.
-        resolution = await resolveFmtOptions({ fmtConfig, loadModule: importTs, root });
+        resolution = await resolveFmtOptions({ fmtConfig, loadModule: importTs, prettierDeclared: enabled.some(({ adapter }) => adapter.id === "prettier"), root });
         eligible = [{ adapter: oxfmtAdapter, presence: detected.get("oxfmt") ?? { adapter: "oxfmt", declared: false, root } }];
 
         for (const warning of resolution.warnings) {

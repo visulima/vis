@@ -105,6 +105,18 @@ describe("vis fmt handler", () => {
             expect(messages.warn).toStrictEqual([]);
         });
 
+        it("keeps Prettier's 80 columns when Prettier is declared without a config, and says so", async () => {
+            expect.assertions(3);
+
+            writePackage({ prettier: "^3.0.0" });
+
+            await run();
+
+            expect(oxfmtCall().config).toStrictEqual({ ignorePatterns: [], printWidth: 80, sortPackageJson: false });
+            expect(messages.info.join("\n")).toContain("Prettier's defaults");
+            expect(messages.info.join("\n")).not.toContain("oxfmt defaults");
+        });
+
         it("keeps the adapter orchestration when biome is detected, and never runs the bundled oxfmt next to it", async () => {
             expect.assertions(3);
 

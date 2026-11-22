@@ -10,6 +10,9 @@ export interface ResolveFmtOptionsInput {
     /** `vis.config` `fmt` section. */
     fmtConfig?: NonNullable<VisConfig["fmt"]>;
     loadModule: ModuleLoader;
+
+    /** Prettier is declared or detected in the workspace, with or without a config file. */
+    prettierDeclared?: boolean;
     root: string;
 }
 
@@ -37,16 +40,18 @@ const findOxfmtConfigFile = (root: string): string | undefined => {
 /**
  * Picks where the bundled oxfmt gets its options. The first source that exists is used whole, in this
  * order: `vis.config` `fmt.options` (with `fmt.overrides` and `fmt.ignorePatterns`), an oxfmt config
- * file, a Prettier config, oxfmt's defaults. Sources are never merged. An `.oxfmtrc` or `oxfmt.config.*`
+ * file, a Prettier config, oxfmt's defaults (Prettier's, when Prettier is declared but has no config,
+ * so its 80-column width is kept). Sources are never merged. An `.oxfmtrc` or `oxfmt.config.*`
  * is only detected: oxfmt reads it itself.
  * @param input The `fmt` config, the workspace root and the JS/TS config loader.
  * @param input.fmtConfig `vis.config` `fmt` section.
  * @param input.loadModule Loads JS/TS Prettier configs.
+ * @param input.prettierDeclared Whether Prettier is declared or detected, config file or not.
  * @param input.root Workspace root.
  * @returns The chosen source with the config to hand to oxfmt (if vis has to), and the warnings to print.
  * @throws When the Prettier config is the chosen source but cannot be read.
  */
-export const resolveFmtOptions = async ({ fmtConfig, loadModule, root }: ResolveFmtOptionsInput): Promise<FmtResolution> => {
+export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclared = false, root }: ResolveFmtOptionsInput): Promise<FmtResolution> => {
     const oxfmtFile = findOxfmtConfigFile(root);
     const prettierFile = findPrettierConfigFile(root);
     const display = (file: string): string => relative(root, file);
@@ -103,6 +108,15 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, root }: Resolve
         return { config, file: found!.file, source: "prettier", warnings };
     }
 
+    if (prettierDeclared) {
+        // oxfmt defaults to 100 columns and sorts package.json; Prettier does neither. Same mapping as an empty config.
+        const { scoped, universal } = readEditorconfigPrintWidth(root);
+        const { config } = mapPrettierConfig({}, { editorconfigPrintWidth: universal });
+        const warnings = scoped.length > 0 ? [`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`] : [];
+
+        return { config, source: "prettier-defaults", warnings };
+    }
+
     return { source: "defaults", warnings: [] };
 };
 
@@ -125,6 +139,9 @@ export const describeFmtSource = (resolution: FmtResolution, root: string): stri
         }
         case "prettier": {
             return `${relative(root, resolution.file!)} (mapped to oxfmt options)`;
+        }
+        case "prettier-defaults": {
+            return "Prettier's defaults (Prettier is declared but has no config)";
         }
         default: {
             return "vis.config fmt.options";

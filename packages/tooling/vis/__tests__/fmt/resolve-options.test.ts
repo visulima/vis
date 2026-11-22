@@ -37,6 +37,48 @@ describe("fmt option resolution", () => {
             expect(resolution.warnings).toStrictEqual([]);
         });
 
+        it("falls back to Prettier's defaults, keeping 80 columns and package.json unsorted, when Prettier is declared without a config", async () => {
+            expect.assertions(4);
+
+            const resolution = await resolveFmtOptions({ loadModule, prettierDeclared: true, root });
+
+            expect(resolution.source).toBe("prettier-defaults");
+            expect(resolution.config).toStrictEqual({ ignorePatterns: [], printWidth: 80, sortPackageJson: false });
+            expect(resolution.file).toBeUndefined();
+            expect(resolution.warnings).toStrictEqual([]);
+        });
+
+        it("applies a universal .editorconfig width to Prettier's defaults", async () => {
+            expect.assertions(1);
+
+            write(".editorconfig", "[*]\nmax_line_length = 120\n");
+
+            const { config } = await resolveFmtOptions({ loadModule, prettierDeclared: true, root });
+
+            expect(config?.printWidth).toBe(120);
+        });
+
+        it("keeps oxfmt's defaults when Prettier is not declared", async () => {
+            expect.assertions(2);
+
+            const { config, source } = await resolveFmtOptions({ loadModule, prettierDeclared: false, root });
+
+            expect(source).toBe("defaults");
+            expect(config).toBeUndefined();
+        });
+
+        it("does not let a declared Prettier override an oxfmt config or vis.config", async () => {
+            expect.assertions(2);
+
+            write(".oxfmtrc.json", "{}");
+
+            const withOxfmtrc = await resolveFmtOptions({ loadModule, prettierDeclared: true, root });
+            const withVisConfig = await resolveFmtOptions({ fmtConfig: { options: {} }, loadModule, prettierDeclared: true, root });
+
+            expect(withOxfmtrc.source).toBe("oxfmtrc");
+            expect(withVisConfig.source).toBe("vis.config");
+        });
+
         it("uses vis.config fmt.options whole, with fmt.overrides and fmt.ignorePatterns", async () => {
             expect.assertions(3);
 
@@ -226,12 +268,13 @@ describe("fmt option resolution", () => {
 
     describe(describeFmtSource, () => {
         it("names each source for the run notice", () => {
-            expect.assertions(4);
+            expect.assertions(5);
 
             expect(describeFmtSource({ source: "vis.config", warnings: [] }, root)).toBe("vis.config fmt.options");
             expect(describeFmtSource({ file: join(root, ".oxfmtrc.json"), source: "oxfmtrc", warnings: [] }, root)).toBe(".oxfmtrc.json");
             expect(describeFmtSource({ file: join(root, ".prettierrc.json"), source: "prettier", warnings: [] }, root)).toBe(".prettierrc.json (mapped to oxfmt options)");
             expect(describeFmtSource({ source: "defaults", warnings: [] }, root)).toBe("oxfmt defaults");
+            expect(describeFmtSource({ source: "prettier-defaults", warnings: [] }, root)).toContain("Prettier's defaults");
         });
     });
 });
