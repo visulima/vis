@@ -148,9 +148,6 @@ impl Serialize for Bucket {
     }
 }
 
-/// A string list.
-struct Strings(Vec<String>);
-
 /// A map of string lists, in file order. Duplicate and reserved keys are Node's.
 struct Lists(Vec<(String, Vec<String>)>);
 
@@ -190,7 +187,7 @@ enum Field {
     Number(u32),
     Bucket(Bucket),
     Lists(Lists),
-    Strings(Strings),
+    Strings(Vec<String>),
 }
 
 #[derive(Clone, Copy)]
@@ -267,7 +264,7 @@ impl Record {
         self.0
             .iter()
             .find_map(|(key, field)| match field {
-                Field::Strings(list) if *key == name => Some(list.0.as_slice()),
+                Field::Strings(list) if *key == name => Some(list.as_slice()),
                 _ => None,
             })
             .unwrap_or_default()
@@ -290,7 +287,7 @@ impl Record {
                 Kind::Number => Field::Number(map.next_value()?),
                 Kind::Bucket => Field::Bucket(map.next_value()?),
                 Kind::Lists => Field::Lists(map.next_value()?),
-                Kind::Strings => Field::Strings(Strings(map.next_value()?)),
+                Kind::Strings => Field::Strings(map.next_value()?),
             };
 
             fields.push((name, field));
@@ -313,8 +310,8 @@ impl Serialize for Record {
                 Field::Text(text) => map.serialize_entry(name, text)?,
                 Field::Number(number) => map.serialize_entry(name, number)?,
                 Field::Bucket(bucket) => map.serialize_entry(name, bucket)?,
-                Field::Lists(lists) => map.serialize_entry(name, &ListsRef(lists))?,
-                Field::Strings(strings) => map.serialize_entry(name, &strings.0)?,
+                Field::Lists(lists) => map.serialize_entry(name, lists)?,
+                Field::Strings(strings) => map.serialize_entry(name, strings)?,
             }
         }
 
@@ -322,13 +319,11 @@ impl Serialize for Record {
     }
 }
 
-struct ListsRef<'a>(&'a Lists);
-
-impl Serialize for ListsRef<'_> {
+impl Serialize for Lists {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.0 .0.len()))?;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
 
-        for (key, value) in &self.0 .0 {
+        for (key, value) in &self.0 {
             map.serialize_entry(key, value)?;
         }
 
@@ -476,7 +471,7 @@ impl Summary {
 }
 
 /// The summary file the request names.
-fn summary_path(root: &Path, run: Option<&str>) -> std::path::PathBuf {
+fn summary_path(root: &Path, run: Option<&str>) -> PathBuf {
     match run {
         None => root.join(".vis").join("last-summary.json"),
         Some(id) => root.join(".vis").join("runs").join(format!("{id}.json")),
