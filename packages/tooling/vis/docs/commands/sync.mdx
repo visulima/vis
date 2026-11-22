@@ -152,7 +152,7 @@ The providers come from the first of these that answers: `--provider`, `ci.workf
 
 Targets are grouped by `dependsOn`: a target waits for the listed targets it depends on (directly, through `^target`, or through targets you did not list), and the rest of a group runs at once. With `buildFirst` (the default), `build` also runs before every listed target that `dependsOn` leaves unordered relative to it: most workspaces never declare that `test` or `typecheck` needs the dependencies' `dist`, because a sequential job built first anyway. Set `buildFirst: false` once `dependsOn` says what needs `build`.
 
-**GitHub Actions** triggers on `pull_request`, `push` to the configured branches and `merge_group` (a merge queue run is diffed against the commit its queue entry was built on), and gets one job that uses [parallel steps](https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel):
+**GitHub Actions** gets one job that uses [parallel steps](https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel):
 
 1. install once,
 2. `vis ci <target> --deps-only` for every target, which builds everything the targets depend on once,
@@ -179,9 +179,8 @@ The generated files are not edited by hand (`--check` would flag the edit and th
 export default defineConfig({
     ci: {
         workflow: {
-            // A target in object form gets its own environment variables (GitHub step env / GitLab job variables)
-            // and can limit the projects it runs for with a `--query`.
-            targets: ["lint", "build", { name: "test", env: { TZ: "UTC" }, query: "tag=type:package" }],
+            // A target in object form gets its own environment variables (GitHub step env / GitLab job variables).
+            targets: ["lint", "build", { name: "test", env: { TZ: "UTC" } }],
             github: {
                 env: { DATABASE_URL: "postgres://postgres:postgres@localhost:5432/test", NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" },
                 permissions: { "id-token": "write" }, // added to the default `contents: read`

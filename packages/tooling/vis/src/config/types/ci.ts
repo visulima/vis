@@ -79,12 +79,6 @@ export interface CiWorkflowTargetConfig {
     /** Environment variables for this target's step (GitHub) or job (GitLab). */
     env?: Record<string, string>;
     name: string;
-
-    /**
-     * Project query for this target, passed to every generated `vis` call for it
-     * as `--query`, e.g. `"tag=type:package"` to leave out fixture projects.
-     */
-    query?: string;
 }
 
 /**

@@ -4264,10 +4264,6 @@
                 },
                 "name": {
                     "type": "string"
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Project query for this target, passed to every generated `vis` call for it as `--query`, e.g. `\"tag=type:package\"` to leave out fixture projects."
                 }
             },
             "required": [
