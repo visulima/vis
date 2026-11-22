@@ -187,6 +187,36 @@ const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
     return cacheHashAsksForJson(flags) || (!IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && plainTerm(environment));
 };
 
+// A version `vis self-update` hands to npm natively: `x.y.z` with an optional `-pre` and `+build` part. Same
+// shape as `is_plain_version` in `native/cli/src/self_update.rs`.
+const SELF_UPDATE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Z.-]+)?(?:\+[0-9A-Z.-]+)?$/i;
+
+// Whether `vis self-update` can pass the binary's native gate (`parse` and `native_context` in `self_update.rs`):
+// at most one plain version and each of `--check`, `--force`, `--silent` at most once, in a CI context off a
+// terminal, without `DEBUG`, `CEREBRO_*` or an inherited `VIS_MONOREPO_ROOT`. The binary re-checks everything, including the
+// config and Deno files, `VIS_VERSION` and npm itself; this only skips the extra process when it would delegate
+// anyway. It stays in Node on Windows.
+const selfUpdateMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || environment.DEBUG !== undefined || environment.VIS_MONOREPO_ROOT !== undefined || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))) {
+        return false;
+    }
+
+    const flags = new Set();
+    let version = false;
+
+    for (const argument of args.slice(1)) {
+        if (["--check", "--force", "--silent"].includes(argument) && !flags.has(argument)) {
+            flags.add(argument);
+        } else if (!version && SELF_UPDATE_VERSION.test(argument)) {
+            version = true;
+        } else {
+            return false;
+        }
+    }
+
+    return true;
+};
+
 const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size"]);
 
 // Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
@@ -398,6 +428,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // are Node's and follow the help rule below.
     if (command === "sync" && subcommand === "ci-workflow") {
         return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+    }
+
+    // `self-update` is native for its plain shapes in a CI context (`native/cli/src/self_update.rs`); any other
+    // run would be delegated by the binary, which costs a second Node boot.
+    if (command === "self-update") {
+        return helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive));
     }
 
     // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
