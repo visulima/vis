@@ -291,15 +291,15 @@ vis migrate prettier --dry-run
 - `fmt.options`, `fmt.overrides` and `fmt.ignorePatterns` are added to `vis.config.ts` (the file is created when there is none). `printWidth` is pinned to 80 when the Prettier config does not set one, unless `.editorconfig` has a universal `max_line_length`.
 - The Prettier config files and `.prettierignore` are backed up to `.bak` and removed; the `prettier` key is removed from `package.json`.
 - `prettier` and the plugins oxfmt covers (`prettier-plugin-tailwindcss`, `prettier-plugin-packagejson`, `prettier-plugin-svelte`, `prettier-plugin-astro`) are removed from `dependencies` / `devDependencies`.
-- `prettier --write …` becomes `vis fmt …` and `prettier --check …` becomes `vis fmt --check …`, keeping paths, an environment prefix and the rest of the script. `--ignore-unknown` is dropped because oxfmt skips files it cannot format.
+- `prettier --write …` becomes `vis fmt …` and `prettier --check …` becomes `vis fmt --check …`, keeping paths, an environment prefix and the rest of the script. A `.` path is dropped (`vis fmt` formats the whole workspace) and `--ignore-unknown` is dropped because oxfmt skips files it cannot format. When biome, dprint or ruff is in the workspace, `vis fmt` routes paths by extension, so only explicit files are rewritten there.
 
 **Left alone, and listed in the report:**
 
 - A plugin with no oxfmt equivalent (for example `prettier-plugin-organize-imports`) stays in `package.json`, with `prettier`, and is not applied by `vis fmt`.
-- A script that uses an option `vis fmt` cannot reproduce exactly (`--cache`, `--config`, `--list-different`, no mode flag, …) is not rewritten, and `prettier` stays so it keeps working.
+- A script that uses an option `vis fmt` cannot reproduce exactly (`--cache`, `--config`, `--list-different`, no mode flag, …), or calls Prettier in a shape the step does not recognise (`yarn run prettier`, a call inside `if … then`), is not rewritten, and `prettier` stays so it keeps working.
 - Every dropped or unmappable option (`endOfLine: "auto"`, `experimentalTernaries`, unknown plugins and options, `parser` overrides) is a manual step. Nested Prettier configs below the root are not read by oxfmt and are listed too.
 
-**Safety:** nothing is removed unless the `fmt` block was written first. When `vis.config` already has an `fmt` block without options, or has no `defineConfig({` / `export default {` to insert into, the step writes nothing and prints the block to add by hand. When `vis.config` already has `fmt.options`, they win over the Prettier config, so the Prettier files are removed without being mapped. Only the root `package.json` is edited. A second run finds nothing to do. Output of `vis fmt` can differ from Prettier's; run `vis fmt --check` and review the diff.
+**Safety:** nothing is removed unless the `fmt` block was written first. When `vis.config` already has an `fmt` block without options, or has no `defineConfig({` / `export default {` to insert into, the step writes nothing and prints the block to add by hand. When `vis.config` already has `fmt.options`, or an `.oxfmtrc.json` / `oxfmt.config.ts` exists, that source wins over the Prettier config, so the Prettier files are removed without being mapped. Only the root `package.json` is edited. A second run finds nothing to do. Output of `vis fmt` can differ from Prettier's; run `vis fmt --check` and review the diff.
 
 ### self
 
