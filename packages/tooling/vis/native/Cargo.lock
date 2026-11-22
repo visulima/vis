@@ -2124,6 +2124,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "task-runner-core",
  "terminal_size",
  "vis-core",
  "windows-sys 0.61.2",

@@ -1,0 +1,280 @@
+{
+  "duration": 5,
+  "endTime": "2026-01-01T00:00:01.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "2026-01-01T00-00-00-000Z_0123456789abcdef-0123456789abcdef-0123456789abcdef",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 0,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 11,
+    "total": 11
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:build": [],
+      "app:declared": [],
+      "app:cached": [],
+      "app:nohash": [],
+      "app:trace": [],
+      "app:unicode": [],
+      "app:numeric": [],
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production": [],
+      "app:trace-missing": [],
+      "app:trace-odd": [],
+      "app:trace-empty": []
+    },
+    "roots": [
+      "app:build",
+      "app:declared",
+      "app:cached",
+      "app:nohash",
+      "app:trace",
+      "app:unicode",
+      "app:numeric",
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production",
+      "app:trace-missing",
+      "app:trace-odd",
+      "app:trace-empty"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "build"
+      },
+      "taskId": "app:build",
+      "hash": "cdab8924cdac275bcdacc592cdad63c9",
+      "hashDetails": {
+        "command": "6be302d56be3a10c6be43f436be4dd7a",
+        "implicitDeps": {
+          "__global__": "0a1a7c860a1b1abd0a1bb8f40a1c572b",
+          "node_modules/.pnpm/lock": "a851f637a852946ea85332a5a853d0dc"
+        },
+        "layout": 2,
+        "nodes": {
+          "src/index.ts": "9e3779b19e3817e89e38b61f9e395456",
+          "src/Index.test.ts": "3c6ef3623c6f91993c702fd03c70ce07",
+          "src/a-b.ts": "daa66d13daa70b4adaa7a981daa847b8",
+          "src/a_b.ts": "78dde6c478de84fb78df233278dfc169",
+          "src/a.b.ts": "171560751715feac17169ce317173b1a",
+          "src/A.ts": "b54cda26b54d785db54e1694b54eb4cb",
+          "package.json": "538453d75384f20e5385904553862e7c",
+          "README.md": "f1bbcd88f1bc6bbff1bd09f6f1bda82d",
+          "docs/10-intro.md": "8ff347398ff3e5708ff483a78ff521de",
+          "docs/9-intro.md": "2e2ac0ea2e2b5f212e2bfd582e2c9b8f",
+          "tsconfig.json": "cc623a9bcc62d8d2cc637709cc641540",
+          "packages/very/deep/nested/directory/structure/that/is/longer/than/forty/characters.ts": "6a99b44c6a9a52836a9af0ba6a9b8ef1"
+        },
+        "runtime": {
+          "NODE_ENV": "46896fe8468a0e1f468aac56468b4a8d",
+          "env:CI": "e4c0e999e4c187d0e4c22607e4c2c43e"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "declared"
+      },
+      "taskId": "app:declared",
+      "hash": "fbd64a0efbd6e845fbd7867cfbd824b3",
+      "hashSource": "declared-fallback",
+      "hashDetails": {
+        "command": "short",
+        "nodes": {
+          "a.txt": "x"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "cached"
+      },
+      "taskId": "app:cached",
+      "hashDetails": {
+        "command": "9a0dc3bf9a0e61f69a0f002d9a0f9e64",
+        "nodes": {}
+      }
+    },
+    {
+      "cacheable": false,
+      "cacheStatus": "SKIPPED",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "nohash"
+      },
+      "taskId": "app:nohash"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace"
+      },
+      "taskId": "app:trace",
+      "hash": "38453d703845dba7384679de38471815"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "unicode"
+      },
+      "taskId": "app:unicode",
+      "hash": "d67cb721d67d5558d67df38fd67e91c6",
+      "hashDetails": {
+        "command": "74b430d274b4cf0974b56d4074b60b77",
+        "nodes": {
+          "src/héllo.ts": "12ebaa8312ec48ba12ece6f112ed8528",
+          "src/zed.ts": "b1232434b123c26bb12460a2b124fed9"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "numeric"
+      },
+      "taskId": "app:numeric",
+      "hash": "4f5a9de54f5b3c1c4f5bda534f5c788a",
+      "hashDetails": {
+        "command": "ed921796ed92b5cded935404ed93f23b",
+        "nodes": {
+          "2": "b",
+          "10": "a",
+          "x": "c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "@scope/pkg-with-a-very-long-name-for-wrapping",
+        "target": "build"
+      },
+      "taskId": "@scope/pkg-with-a-very-long-name-for-wrapping:build:production",
+      "hash": "8bc991478bca2f7e8bcacdb58bcb6bec",
+      "hashDetails": {
+        "command": "2a010af82a01a92f2a0247662a02e59d",
+        "nodes": {
+          "a": "c83884a9c83922e0c839c117c83a5f4e"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace-missing"
+      },
+      "taskId": "app:trace-missing",
+      "hash": "69029b6c690339a36903d7da69047611"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace-odd"
+      },
+      "taskId": "app:trace-odd",
+      "hash": "073a151d073ab354073b518b073befc2"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace-empty"
+      },
+      "taskId": "app:trace-empty",
+      "hash": "a5718ecea5722d05a572cb3ca5736973"
+    }
+  ]
+}

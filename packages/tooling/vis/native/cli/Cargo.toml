@@ -30,6 +30,9 @@ windows-sys = { version = "0.61", features = [ "Win32_System_Console" ] }
 
 [dependencies]
 vis-core = { path = "../core" }
+# The pure task-runner engines (no napi). `cache hash` reads the main worktree root through it, so
+# the shared cache directory resolves exactly like the Node path, which calls the same function.
+task-runner-core = { path = "../../../task-runner/native/core" }
 # `hook run` fast path. `prek-identify` is pinned to the addon's version so both
 # classify files identically; `regex` is built without Unicode tables because the
 # fast path only accepts patterns whose ASCII semantics match JS `RegExp`.
@@ -41,7 +44,10 @@ regex = { version = "1", default-features = false, features = [
 # Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
 blake3 = { version = "1", default-features = false }
 serde = { version = "1", features = [ "derive" ] }
-serde_json = { version = "1", features = [ "float_roundtrip" ] }
+serde_json = { version = "1", features = [
+  "float_roundtrip",
+  "raw_value"
+] }
 # Reads `vis.config.*` as data (see src/vis_config.rs). Pinned like the addon's copies.
 oxc_allocator = "=0.154.0"
 oxc_ast = "=0.154.0"

@@ -166,6 +166,18 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
 // when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context.
 const cacheMayRunNatively = (platform, environment, interactive) => platform !== "win32" && !interactive && inCi(environment);
 
+// Whether `vis cache hash` can pass the binary's native gate (`native` in `cache_hash.rs`). The
+// binary re-checks the context and every shape (one task id, `--format json|table`, `--run <id>`),
+// so this only skips the extra process for a call that would be delegated anyway: no task id, or a
+// flag the binary does not know. It stays in Node on Windows (pail's clock is unix-only there).
+const CACHE_HASH_FLAG = /^--(?:format|run)(?:=.*)?$/;
+
+const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
+    const flags = args.slice(2);
+
+    return platform !== "win32" && !interactive && inCi(environment) && flags.length > 0 && flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token));
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -210,6 +222,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // (`native/cli/src/cache.rs`); the binary hands every other shape to Node itself.
     if (command === "cache" && (subcommand === "list" || subcommand === "size")) {
         return helpOrNative(args, () => cacheMayRunNatively(platform, environment, interactive));
+    }
+
+    // `cache hash` is native for one task id with `--format` / `--run` in a CI context
+    // (`native/cli/src/cache_hash.rs`); the binary delegates the rest (trace-mode tasks, odd summaries).
+    if (command === "cache" && subcommand === "hash") {
+        return helpOrNative(args, () => cacheHashMayRunNatively(platform, environment, args, interactive));
     }
 
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
