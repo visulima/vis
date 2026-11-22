@@ -1134,7 +1134,7 @@
                 },
                 "redact": {
                     "type": "boolean",
-                    "description": "Redact secret values in findings."
+                    "description": "Mask secret values in findings and reports. Default `true`; `false` reveals them."
                 },
                 "rules": {
                     "type": "object",
@@ -1170,7 +1170,7 @@
                             "const": false
                         }
                     ],
-                    "description": "`.secretlintignore` paths, or `false` to disable auto-discovery."
+                    "description": "`.secretlintignore` paths, or `false` to disable auto-discovery (`--secretlintignore` files still apply)."
                 },
                 "walk": {
                     "type": "object",
@@ -4185,6 +4185,11 @@
                     "items": {
                         "$ref": "#/$defs/CiGitlabService"
                     }
+                },
+                "stage": {
+                    "type": "string",
+                    "description": "Stage for every generated job. It has to be one of the `stages:` of the pipeline that includes the file.",
+                    "default": "test"
                 },
                 "tags": {
                     "type": "array",

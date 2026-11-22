@@ -62,6 +62,12 @@ export interface CiGitlabWorkflowConfig {
     /** Image for every job instead of `node:&lt;nodeVersion>`. It must have Node.js, which vis runs on. */
     image?: string;
     services?: CiGitlabService[];
+
+    /**
+     * Stage for every generated job. It has to be one of the `stages:` of the pipeline that includes the file.
+     * @default "test"
+     */
+    stage?: string;
     /** Runner tags that pick which runners take the jobs. */
     tags?: string[];
     /** Variables for every job. Use masked CI/CD variables for secrets. */

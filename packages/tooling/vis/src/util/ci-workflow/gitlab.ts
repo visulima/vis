@@ -19,6 +19,10 @@ import { yamlEntry, yamlString } from "./yaml";
 
 export const GITLAB_CI_WORKFLOW_PATH = ".gitlab/vis-ci.gitlab-ci.yml";
 
+/** GitLab rejects a pipeline with a job above these (https://docs.gitlab.com/ci/yaml/). */
+const MAX_PARALLEL_JOBS = 200;
+const MAX_NEEDS = 50;
+
 const jobName = (target: string): string => `vis:${target}`;
 
 /** A YAML single-quoted scalar, which GitLab `rules:if` expressions are usually written in. */
@@ -82,7 +86,8 @@ export const gitlabMissingToolchains = (plan: CiWorkflowPlan): string[] =>
  * Renders `.gitlab/vis-ci.gitlab-ci.yml`, meant to be pulled in with
  * `include: { local: .gitlab/vis-ci.gitlab-ci.yml }`. It declares no
  * `stages:` or `workflow:` of its own so it cannot clobber the including
- * pipeline's; ordering between groups uses `needs:` inside the `test` stage.
+ * pipeline's; ordering between groups uses `needs:` inside one stage (`test`
+ * unless `ci.workflow.gitlab.stage` names another).
  */
 export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
     const branchRules = plan.branches.map((branch) => `        - if: ${singleQuoted(branchRule(branch))}`).join("\n");
@@ -137,6 +142,14 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
 
     for (const layer of plan.layers) {
         for (const { env, name, shards } of layer) {
+            if (shards > MAX_PARALLEL_JOBS) {
+                throw new VisUserError(`ci.workflow.partitions.${name} is ${shards}, but GitLab runs at most ${MAX_PARALLEL_JOBS} parallel jobs. Lower it.`);
+            }
+
+            if (previous.length > MAX_NEEDS) {
+                throw new VisUserError(`The job ${jobName(name)} would need ${previous.length} jobs, but GitLab allows ${MAX_NEEDS} in needs. List fewer targets.`);
+            }
+
             const flags = shards === 1 ? [] : ["--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL"];
 
             jobs += `
@@ -160,7 +173,7 @@ ${shards === 1 ? "" : `    parallel: ${shards}\n`}${env === undefined ? "" : `${
 # Every target is its own job, so jobs in a group run on separate machines at
 # the same time; a partitioned target fans out with \`parallel: N\`.
 ${missingNote}.vis-ci-base:
-    stage: "test"
+    stage: ${yamlString(plan.gitlab.stage ?? "test")}
     image: ${yamlString(plan.gitlab.image ?? `node:${plan.nodeVersion}`)}
     timeout: "${plan.timeoutMinutes}m"
     variables:

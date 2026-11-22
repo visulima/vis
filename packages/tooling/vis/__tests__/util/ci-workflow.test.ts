@@ -375,6 +375,25 @@ describe(renderGitlabCiWorkflow, () => {
         expect(parseYaml(yaml)).toMatchObject({ ".vis-ci-base": { services: ["postgres:17", { alias: "cache", name: "redis:7" }], tags: ["docker"] } });
     });
 
+    it("puts the jobs in the configured stage", () => {
+        expect.assertions(2);
+
+        expect(renderGitlabCiWorkflow(plan({ gitlab: { stage: "verify" } }))).toContain('.vis-ci-base:\n    stage: "verify"');
+        expect(renderGitlabCiWorkflow(plan())).toContain('.vis-ci-base:\n    stage: "test"');
+    });
+
+    it("rejects more parallel jobs or needs than GitLab accepts, and allows the limits themselves", () => {
+        expect.assertions(4);
+
+        const layer = (count: number): CiWorkflowPlan["layers"][number] => Array.from({ length: count }, (_, index) => ({ env: undefined, name: `t${index}`, shards: 1 }));
+        const target = (shards: number): CiWorkflowPlan["layers"] => [[{ env: undefined, name: "test", shards }]];
+
+        expect(() => renderGitlabCiWorkflow(plan({ layers: target(201) }))).toThrow("at most 200 parallel jobs");
+        expect(() => renderGitlabCiWorkflow(plan({ layers: target(200) }))).not.toThrow();
+        expect(() => renderGitlabCiWorkflow(plan({ layers: [layer(51), layer(1)] }))).toThrow("allows 50 in needs");
+        expect(() => renderGitlabCiWorkflow(plan({ layers: [layer(50), layer(1)] }))).not.toThrow();
+    });
+
     it("adds a drift-check job and a job timeout", () => {
         expect.assertions(2);
 

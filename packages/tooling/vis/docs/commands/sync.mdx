@@ -164,7 +164,7 @@ Step 2 is what makes step 3 safe: the parallel steps share one checkout, so two 
 
 **Hardening.** Every action is pinned to a commit SHA with its version as a trailing comment, so Dependabot and `vis update` can bump it. The job has a timeout (`timeoutMinutes`), read-only `permissions`, and `persist-credentials: false`. With `checkDrift` (the default), the workflow runs `vis sync ci-workflow --check`, so CI fails when the committed workflow no longer matches vis.config.ts or the workspace.
 
-**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage, ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. The jobs run in a `node` image: cargo, Go module and pip caches move into the project so GitLab can cache them, vis's pre-flight installs go, python, ruby or rust when they are pinned in `toolchain.tools`, and any other detected toolchain is named in the file's header (and in a warning) so you can give `.vis-ci-base` an image that has it. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
+**GitLab CI** has no parallel steps, so each target becomes its own job in the `test` stage (`ci.workflow.gitlab.stage` picks another, which must be one of your pipeline's `stages:`), ordered with `needs:`, and a partitioned target uses `parallel: N` with `--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL`. Jobs run on separate machines, so each one runs its target with its dependencies, and each job keeps its own task cache. The jobs run in a `node` image: cargo, Go module and pip caches move into the project so GitLab can cache them, vis's pre-flight installs go, python, ruby or rust when they are pinned in `toolchain.tools`, and any other detected toolchain is named in the file's header (and in a warning) so you can give `.vis-ci-base` an image that has it. GitLab rejects more than 200 parallel jobs or 50 `needs:` per job, so the generator rejects a partition or a group beyond those. Branch globs such as `release/*` become regex rules. The file sets no `stages:` or `workflow:`; pull it into your pipeline with:
 
 ```yaml
 include:
@@ -201,6 +201,7 @@ export default defineConfig({
                 beforeScript: ["./scripts/prepare.sh"], // after the install
                 afterScript: ["./scripts/collect-reports.sh"],
                 tags: ["docker"],
+                stage: "verify", // default "test"; must be one of your pipeline's stages
             },
         },
     },
