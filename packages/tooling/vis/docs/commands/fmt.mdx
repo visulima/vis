@@ -41,6 +41,9 @@ vis fmt --since main
 # Re-run the formatter whenever watched files change
 vis fmt --watch
 
+# Show which engine and config source would be used, without formatting
+vis fmt --doctor
+
 # Write a SARIF report to a file instead of stdout
 vis fmt --check --format sarif --output fmt.sarif
 ```
@@ -50,12 +53,39 @@ vis fmt --check --format sarif --output fmt.sarif
 | Option     | Default | Description                                                                                  |
 | ---------- | ------- | -------------------------------------------------------------------------------------------- |
 | `--check`  | `false` | Report files that would change without writing                                               |
+| `--doctor` | `false` | Print which engine and config source `vis fmt` would use, and format nothing                 |
 | `--format` | `human` | Output format: `human`, `json`, `minimal`, `sarif`, `junit`, or `github`                     |
 | `--quiet`  | `false` | Suppress per-file logs                                                                       |
 | `--since`  |         | Only format files changed vs the given git ref (branch/tag/sha)                              |
 | `--staged` | `false` | Only format files currently staged in the git index                                          |
 | `--output` |         | Write formatted output to a file path instead of stdout (also accepts `-`/`stdout`/`stderr`) |
 | `--watch`  | `false` | Re-run formatters whenever watched files change                                              |
+
+### `--doctor`
+
+`vis fmt --doctor` answers "what would `vis fmt` do here, and why" without formatting or writing anything (not even the config file). It prints:
+
+- the **engine** that would run (the bundled oxfmt, or the adapter orchestration with the detected formatters) and the rule that chose it;
+- the **config source** that wins, with its path (for `vis.config`, the file it was found in), and every lower source that exists and is ignored;
+- whether the **bundled oxfmt** resolves and starts, with its version;
+- the **config file** vis would hand to oxfmt: none (oxfmt reads its own file or uses its defaults), the vis cache (`node_modules/.cache/vis/fmt/<hash>.json`), or the workspace root (`.vis-fmt-<pid>-<id>.json`, when `ignorePatterns` or `overrides` are set), with the reason;
+- the `.editorconfig` and the ignore files (`.gitignore`, `.prettierignore`) in the workspace root, which oxfmt reads itself.
+
+```text
+$ vis fmt --doctor
+Engine: bundled oxfmt
+  why: fmt.engine is "auto" and no formatter other than oxfmt or Prettier is detected
+Config source: .oxfmtrc.json
+  ignored lower sources:
+    - .prettierrc.json (Prettier config)
+Bundled oxfmt: resolves, version 0.79.0 (/…/node_modules/oxfmt/bin/oxfmt)
+Config file: none
+  why: oxfmt reads its own config file, so vis writes none
+.editorconfig: .editorconfig (read by oxfmt)
+Ignore files: .gitignore (oxfmt skips what they list)
+```
+
+It exits `0`, or `2` with the reason on stderr when the chosen config cannot be read (a broken Prettier config, a Vite `fmt` key that is not an object, a `..` in a glob, contradictory `fmt.engine` settings). With the adapter orchestration the config source is not resolved, since each detected formatter reads its own. `--format json` prints the same report as JSON (to `--output` when given); any other `--format` prints the text.
 
 ### `--since`
 
@@ -108,7 +138,7 @@ When the bundled oxfmt runs it is the only formatter that runs, so no file is fo
 The bundled oxfmt takes its options from the **first** source that exists, used whole. Sources are never merged: an `.oxfmtrc.json` that leaves out `printWidth` means oxfmt's default, not the value a Prettier config sets.
 
 1. `fmt.options` (with `fmt.overrides` and `fmt.ignorePatterns`) in `vis.config`.
-2. An `.oxfmtrc.json`, `.oxfmtrc.jsonc`, `oxfmt.config.ts` or `oxfmt.config.mts` in the workspace root. oxfmt reads it itself, so nested configs and TypeScript configs work as in oxfmt.
+2. An `.oxfmtrc.json`, `.oxfmtrc.jsonc`, `oxfmt.config.ts` or `oxfmt.config.mts` in the workspace root, or the `fmt` key of the root `vite.config.*` (see below). These two count as one source: when both exist the oxfmt file wins, and vis warns once naming both. oxfmt reads its own file itself, so nested configs and TypeScript configs work as in oxfmt.
 3. The root Prettier config, mapped to oxfmt options (see below).
 4. Defaults. oxfmt's own, or, when Prettier is declared in the workspace but has no config, Prettier's: the same mapping as an empty Prettier config, so the print width stays 80 (and `package.json` stays unsorted) instead of becoming oxfmt's 100. `.editorconfig` is honoured by oxfmt in every case.
 
@@ -129,6 +159,16 @@ export default defineConfig({
 `fmt.options` takes oxfmt's own option names: `printWidth`, `tabWidth`, `useTabs`, `semi`, `singleQuote`, `jsxSingleQuote`, `quoteProps`, `trailingComma`, `bracketSpacing`, `bracketSameLine`, `arrowParens`, `endOfLine`, `objectWrap`, `proseWrap`, `htmlWhitespaceSensitivity`, `embeddedLanguageFormatting`, `singleAttributePerLine`, `vueIndentScriptAndStyle`, `insertFinalNewline`, `experimentalOperatorPosition`, plus `sortImports`, `sortPackageJson`, `sortTailwindcss`, `jsdoc`, `svelte` and `astro`. `ignorePatterns` and the globs in `overrides` are relative to the workspace root and a pattern containing `..` is rejected with an error naming it. The generated `schemas/vis-config.schema.json` lists every option with its documentation.
 
 When the options come from `vis.config` or a Prettier config, vis writes them to a config file and passes it to oxfmt. A config without `ignorePatterns` or `overrides` goes to `node_modules/.cache/vis/fmt/`, named by a hash of its content: a later run with the same config reuses the file, and nothing is added to the working tree. oxfmt reads `ignorePatterns` and override globs relative to the config file's directory, so a config that has either is written to a temporary `.vis-fmt-<pid>-<id>.json` in the workspace root instead, and removed when the run ends, including on failure and on SIGINT / SIGTERM. That file lists itself in `ignorePatterns`, and the next run deletes any such file whose process is gone (and never reports one as a file to format), so one left behind by a killed process does no harm; add `.vis-fmt-*.json` to `.gitignore` to keep it out of `git status` (vis prints this hint when it is not ignored yet). The first source above that exists decides whether a file is written at all: with an `.oxfmtrc` or oxfmt's defaults, nothing is.
+
+### The `fmt` key of a Vite config
+
+A `fmt` key in the default export of the root `vite.config.ts|mts|cts|js|mjs|cjs` is read as an oxfmt config (`export default { fmt: { semi: false, ignorePatterns: ["gen/**"] } }`). oxfmt 0.79 does not read it by itself: it does so only inside the Vite+ toolchain (with `VP_VERSION` set and `vite-plus` installed), so vis evaluates the file, once, with the same JS/TS loader it uses for its own config. The key takes the same shape as an `.oxfmtrc.json` (options, `overrides`, `ignorePatterns`), the same `..` rule applies to its globs, and it is handed to oxfmt like `fmt.options`: through the cache file, or the root file when it has globs.
+
+A Vite config is only evaluated when its text contains a `fmt` key and nothing above it in the list wins, so a Vite project that does not use the key never has its config loaded by `vis fmt`. A config that exports a function (`defineConfig(({ mode }) => …)`) cannot be evaluated without Vite's arguments: vis warns and carries on with the next source. When the file cannot be loaded, or `fmt` is not an object, `vis fmt` fails and names the file.
+
+### `.editorconfig`
+
+oxfmt reads the `.editorconfig` in the workspace root itself, whichever way the options reach it, so `indent_style`, `indent_size` / `tab_width` and `max_line_length` shape the output when the winning source is the cache file, the root file or an `.oxfmtrc` (tests run the real oxfmt for all three). An option set in the winning source takes part like any other; the `.editorconfig` fills in what the config leaves open. For a Prettier config, a `max_line_length` in a `[*]` section also becomes the mapped `printWidth` (see below). `vis fmt --doctor` lists the file.
 
 ### `printWidth`: 80 or 100
 
