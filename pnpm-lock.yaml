@@ -1625,7 +1625,7 @@ importers:
         specifier: 5.0.0
         version: 5.0.0
       '@visulima/vis':
-        specifier: 7.1.0-next.5
+        specifier: 7.1.0-next.6
         version: link:../vis
       zod:
         specifier: catalog:utils
@@ -1758,6 +1758,12 @@ importers:
       vite-plugin-singlefile:
         specifier: ^2.3.3
         version: 2.3.3(rollup@4.63.6)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/tooling/vis/native/cli/tests/fixtures/cache-hash/empty: {}
+
+  packages/tooling/vis/native/cli/tests/fixtures/cache-hash/recorded: {}
+
+  packages/tooling/vis/native/cli/tests/fixtures/cache-hash/unreadable: {}
 
   packages/tooling/vis/npm/darwin-arm64: {}
 
