@@ -173,7 +173,8 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
         const toolFailure = bundled ? reportToolFailure(rawResults[0]!, logger) : false;
         const runs = jobs.map((job, index) => {
             const raw = rawResults[index]!;
-            const findings = job.adapter.parse(raw, job.presence);
+            // A transient config a killed run left behind is not the user's file, whatever oxfmt says about it.
+            const findings = job.adapter.parse(raw, job.presence).filter((finding) => !bundled || !isTransientConfig(finding.file));
 
             return { adapter: job.adapter, durationMs: raw.durationMs, exitCode: raw.exitCode, findings };
         });

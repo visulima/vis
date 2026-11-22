@@ -239,6 +239,17 @@ describe("vis fmt handler", () => {
             expect(extensions).toContain("md");
         });
 
+        it("never reports a leftover transient config as a file that would change", async () => {
+            expect.assertions(2);
+
+            vi.mocked(runOxfmt).mockResolvedValueOnce({ durationMs: 1, exitCode: 1, stderr: "", stdout: ".vis-fmt-123-abcdef.json\nsrc/a.ts\n" });
+
+            await run({ check: true });
+
+            expect(messages.info.join("\n")).toContain("a.ts");
+            expect(messages.info.join("\n")).not.toContain(".vis-fmt-");
+        });
+
         it("fails a --check run when oxfmt lists files that would change", async () => {
             expect.assertions(2);
 

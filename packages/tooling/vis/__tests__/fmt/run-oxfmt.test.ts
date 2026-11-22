@@ -137,6 +137,27 @@ describe("bundled oxfmt runner", () => {
             expect(leftovers()).toStrictEqual([]);
         });
 
+        it("removes transient configs of dead processes before a run, with or without a config of its own, and keeps live ones", async () => {
+            expect.assertions(5);
+
+            const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+            const stale = `${TRANSIENT_CONFIG_PREFIX}${String(gone)}-abcdef.json`;
+            const live = `${TRANSIENT_CONFIG_PREFIX}${String(process.pid)}-abcdef.json`;
+
+            for (const config of [undefined, {}]) {
+                writeFileSync(join(root, stale), "{}");
+                writeFileSync(join(root, live), "{}");
+
+                await runOxfmt({ binPath: stub, config, files: ["."], mode: "check", root });
+
+                expect(existsSync(join(root, stale))).toBe(false);
+            }
+
+            expect(existsSync(join(root, live))).toBe(true);
+            expect(leftovers()).toStrictEqual([live]);
+            expect(readdirSync(root).filter((name) => name.includes(String(gone)))).toStrictEqual([]);
+        });
+
         it("maps exit 1 and exit 2 through unchanged and still removes the config", async () => {
             expect.assertions(5);
 

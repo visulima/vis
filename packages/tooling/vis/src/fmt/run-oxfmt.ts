@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { basename, dirname, join } from "@visulima/path";
@@ -90,6 +90,45 @@ const removeQuietly = (path: string): void => {
     }
 };
 
+/** The name `writeTransientConfig` gives its files: prefix, pid, random id. */
+const TRANSIENT_CONFIG_NAME = /^\.vis-fmt-(\d+)-[0-9a-f]{6}\.json$/;
+
+const isProcessAlive = (pid: number): boolean => {
+    try {
+        process.kill(pid, 0);
+
+        return true;
+    } catch (error) {
+        // EPERM: the process exists but belongs to someone else.
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+};
+
+/**
+ * Removes transient configs that a killed run left in the workspace root. A file is stale when the
+ * process that wrote it is gone; one owned by a live process (a concurrent run) is left alone.
+ * Without this, a leftover would be formatted and reported like any other JSON file whenever the
+ * current run has no transient config of its own whose `ignorePatterns` hides it.
+ * @param root Workspace root.
+ */
+export const removeStaleTransientConfigs = (root: string): void => {
+    let names: string[];
+
+    try {
+        names = readdirSync(root);
+    } catch {
+        return;
+    }
+
+    for (const name of names) {
+        const pid = TRANSIENT_CONFIG_NAME.exec(name)?.[1];
+
+        if (pid !== undefined && !isProcessAlive(Number(pid))) {
+            removeQuietly(join(root, name));
+        }
+    }
+};
+
 /**
  * Runs the bundled oxfmt. When `config` is given it is written to a transient file in the workspace
  * root (so `ignorePatterns` and override globs keep their meaning), and removed when the run ends:
@@ -107,6 +146,8 @@ export const runOxfmt = async (options: RunOxfmtOptions): Promise<RunResult> => 
             removeQuietly(transientPath);
         }
     };
+
+    removeStaleTransientConfigs(root);
 
     try {
         transientPath = config === undefined ? undefined : writeTransientConfig(root, config);
