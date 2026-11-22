@@ -15,6 +15,7 @@ import type {
     MigrateMoonOptions,
     MigrateNanoStagedOptions,
     MigrateNxOptions,
+    MigratePrettierOptions,
     MigrateSecretlintOptions,
     MigrateSelfOptions,
     MigrateSherifOptions,
@@ -27,6 +28,7 @@ import { migrateLintStaged } from "./lint-staged";
 import { migrateMoon } from "./moon";
 import { migrateNanoStaged } from "./nano-staged";
 import { migrateNx } from "./nx";
+import { migratePrettier } from "./prettier";
 import { confirm } from "./prompt";
 import { buildProbeContext, getApplicableMigrations } from "./registry";
 import { migrateSecretlint } from "./secretlint";
@@ -291,6 +293,22 @@ const migrateSherifExecuteImpl = async ({ logger, options, visConfig, workspaceR
     printSummary(ctx.report, logger);
 };
 
+const migratePrettierExecuteImpl = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Console, MigratePrettierOptions>): Promise<void> => {
+    if (!(await maybeConfirm("prettier", options, logger))) {
+        return;
+    }
+
+    const ctx = buildContext({ logger, options, visConfig: visConfig as Record<string, unknown> | undefined, workspaceRoot });
+
+    announceDryRun(ctx);
+
+    logger.info("── Migrating Prettier ──");
+    await migratePrettier(ctx.root, { dryRun: ctx.dryRun, useEditorconfig: ctx.useEditorconfig, visConfig: ctx.config }, logger, ctx.report);
+    logger.info("");
+
+    printSummary(ctx.report, logger);
+};
+
 const migrateSelfExecuteImpl = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Console, MigrateSelfOptions>): Promise<void> => {
     if (!(await maybeConfirm("self", options, logger))) {
         return;
@@ -421,11 +439,11 @@ const migrateAllExecuteImpl = async ({ logger, options, visConfig, workspaceRoot
             logger.info(`── Applying ${entry.title} ──`);
 
             if (dryRun) {
-                for (const line of entry.probe(context)) {
+                for (const line of await entry.probe(context)) {
                     logger.info(line);
                 }
             } else {
-                entry.apply(context, report, logger);
+                await entry.apply(context, report, logger);
             }
 
             logger.info("");
@@ -455,6 +473,7 @@ export const migrateKingfisherExecute = migrateKingfisherExecuteImpl as CommandE
 export const migrateSecretlintExecute = migrateSecretlintExecuteImpl as CommandExecute<Toolbox>;
 export const migrateSyncpackExecute = migrateSyncpackExecuteImpl as CommandExecute<Toolbox>;
 export const migrateSherifExecute = migrateSherifExecuteImpl as CommandExecute<Toolbox>;
+export const migratePrettierExecute = migratePrettierExecuteImpl as CommandExecute<Toolbox>;
 export const migrateSelfExecute = migrateSelfExecuteImpl as CommandExecute<Toolbox>;
 export const migrateVerifyExecute = migrateVerifyExecuteImpl;
 export const migrateVerifyGraphExecute = migrateVerifyGraphExecuteImpl as CommandExecute<Toolbox>;

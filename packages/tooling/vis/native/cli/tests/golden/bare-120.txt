@@ -206,6 +206,7 @@ vis v6.6.0
     [32mmigrate syncpack[39m         Translate syncpack customTypes into vis policy and strip the syncpack dep/scripts          
     [32mmigrate sherif[39m           Strip sherif config/dep/scripts and surface ignore-rules as a positive `vis lint --<rule>` 
                              command                                                                                    
+    [32mmigrate prettier[39m         Move the Prettier config into vis.config fmt and rewrite prettier scripts to `vis fmt`     
     [32mmigrate verify[39m           Audit the workspace for stray gitleaks/secretlint/sherif/syncpack references (exit 1 on    
                              issues)                                                                                    
     [32mmigrate verify-graph[39m     Prove a turbo/nx/moon → vis migration preserved the task graph + cache-key surface (exit  

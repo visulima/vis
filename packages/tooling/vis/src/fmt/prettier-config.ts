@@ -11,7 +11,7 @@ import { VisUserError } from "../errors/vis-user-error";
 import type { ModuleLoader, OxfmtConfig } from "./options";
 
 /** Prettier's own search order for a root config. `package.json` only counts when it has a `prettier` key. */
-const PRETTIER_CONFIG_FILES: ReadonlyArray<string> = [
+export const PRETTIER_CONFIG_FILES: ReadonlyArray<string> = [
     "package.json",
     ".prettierrc",
     ".prettierrc.json",
@@ -348,7 +348,7 @@ const NAMESPACED_PLUGINS: ReadonlyArray<NamespacedPlugin> = [
     },
 ];
 
-const KNOWN_PLUGINS = new Set(["prettier-plugin-packagejson", ...NAMESPACED_PLUGINS.map(({ plugin }) => plugin)]);
+export const KNOWN_PLUGINS: ReadonlySet<string> = new Set(["prettier-plugin-packagejson", ...NAMESPACED_PLUGINS.map(({ plugin }) => plugin)]);
 const PLUGIN_OPTION_KEYS = new Set(NAMESPACED_PLUGINS.flatMap(({ mapping }) => Object.values(mapping)));
 
 const PARSER_TO_LANGUAGE = new Map([

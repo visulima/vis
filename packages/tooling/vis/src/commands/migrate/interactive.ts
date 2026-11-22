@@ -51,12 +51,14 @@ export const runMigrateInteractive = async (toolbox: InteractiveToolbox): Promis
     const context = buildProbeContext(root, visConfig);
     const applicable = getApplicableMigrations(context);
 
-    const items: MigrateItem[] = applicable.map((entry) => {
-        return {
-            entry,
-            preview: entry.probe(context),
-        };
-    });
+    const items: MigrateItem[] = await Promise.all(
+        applicable.map(async (entry) => {
+            return {
+                entry,
+                preview: await entry.probe(context),
+            };
+        }),
+    );
 
     const isTTY = Boolean(process.stdout.isTTY) && !isInCi;
 
@@ -104,7 +106,7 @@ export const runMigrateInteractive = async (toolbox: InteractiveToolbox): Promis
     for (const item of exitResult) {
         try {
             toolbox.logger.info(`── Applying ${item.entry.title} ──`);
-            item.entry.apply(context, report, toolbox.logger);
+            await item.entry.apply(context, report, toolbox.logger);
             toolbox.logger.info("");
         } catch (error) {
             failures.push({ entry: item.entry, error });
