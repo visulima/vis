@@ -6,6 +6,7 @@ import { join, relative } from "@visulima/path";
 import { findVisConfigFile } from "../../config/config";
 import { VisUserError } from "../../errors/vis-user-error";
 import type { ModuleLoader } from "../../fmt/options";
+import { OXFMT_DISCOVERED_CONFIG_FILES } from "../../fmt/options";
 import {
     findNestedPrettierConfigs,
     KNOWN_PLUGINS,
@@ -16,6 +17,7 @@ import {
     readPrettierIgnore,
 } from "../../fmt/prettier-config";
 import { importTs } from "../../runtime/ts-loader";
+import { TOOL_SIGNATURES } from "../../util/tool-signatures";
 import { backupFile } from "./backup";
 import { detectJsonIndent, readJsonFile } from "./json";
 import type { MigrateLogger, MigrationReport } from "./types";
@@ -72,14 +74,67 @@ const RUNNER_PREFIXES: ReadonlyArray<ReadonlyArray<string>> = [["npm", "exec", "
 
 const ENV_ASSIGNMENT_RE = /^[A-Z_][A-Z0-9_]*=\S*$/;
 const TOKEN_RE = /(?:[^\s"']|"[^"]*"|'[^']*')+/g;
-const SEGMENT_SPLIT_RE = /(\s*(?:&&|\|\||;|\|)\s*)/;
+/** A word `prettier` that is not part of a longer name or path (`prettier-plugin-x`, `.prettierrc`, `prettier/prettier`). */
+const STANDALONE_PRETTIER_RE = /(?<![\w@/.-])prettier(?![\w/.-])/;
+const GLOB_CHARACTER_RE = /[*?[\]{}()!]/;
+
+/**
+ * Splits a script at `&amp;&amp;`, `||`, `;` and `|` outside quotes. Returns the segments and the separators between them
+ * (`[segment, separator, segment, …]`), or `undefined` when a quote is left open.
+ */
+const splitScript = (script: string): string[] | undefined => {
+    const parts: string[] = [];
+    let current = "";
+    let quote: string | undefined;
+
+    for (let index = 0; index < script.length; index += 1) {
+        const character = script[index]!;
+
+        if (quote !== undefined) {
+            current += character;
+
+            if (character === "\\" && quote === '"') {
+                current += script[index + 1] ?? "";
+                index += 1;
+            } else if (character === quote) {
+                quote = undefined;
+            }
+
+            continue;
+        }
+
+        if (character === '"' || character === "'") {
+            quote = character;
+            current += character;
+
+            continue;
+        }
+
+        const pair = script.slice(index, index + 2);
+        const separator = pair === "&&" || pair === "||" ? pair : character === ";" || character === "|" ? character : undefined;
+
+        if (separator === undefined) {
+            current += character;
+
+            continue;
+        }
+
+        parts.push(current, separator);
+        current = "";
+        index += separator.length - 1;
+    }
+
+    parts.push(current);
+
+    return quote === undefined ? parts : undefined;
+};
 
 /** Flags `vis fmt` makes redundant: oxfmt skips files it cannot format on its own. */
 const REDUNDANT_FLAGS = new Set(["--ignore-unknown", "-u"]);
 
 type SegmentResult = { kind: "other" } | { kind: "rewritten"; value: string } | { kind: "unsupported" };
 
-const rewriteSegment = (segment: string): SegmentResult => {
+const rewriteSegment = (segment: string, orchestrated: boolean): SegmentResult => {
     const tokens = segment.match(TOKEN_RE) ?? [];
     let index = 0;
 
@@ -96,10 +151,17 @@ const rewriteSegment = (segment: string): SegmentResult => {
         return { kind: "other" };
     }
 
+    const rest = tokens.slice(index + 1);
+
+    // Text outside every token (an unbalanced or escaped quote) cannot be reproduced.
+    if (/\S/.test(segment.replaceAll(TOKEN_RE, ""))) {
+        return { kind: "unsupported" };
+    }
+
     let mode: "check" | "write" | undefined;
     const paths: string[] = [];
 
-    for (const token of tokens.slice(index + 1)) {
+    for (const token of rest) {
         if (token === "--write" || token === "-w" || token === "--check" || token === "-c") {
             const next = token === "--write" || token === "-w" ? "write" : "check";
 
@@ -121,22 +183,42 @@ const rewriteSegment = (segment: string): SegmentResult => {
         return { kind: "unsupported" };
     }
 
-    return { kind: "rewritten", value: [...envPrefix, "vis", "fmt", ...(mode === "check" ? ["--check"] : []), ...paths].join(" ") };
+    // `vis fmt` formats the whole workspace without paths. With the bundled oxfmt any other path goes to oxfmt as given;
+    // the adapter orchestration routes by extension and drops directories and globs, so only explicit files are safe there.
+    if (paths.includes(".") && paths.length > 1) {
+        return { kind: "unsupported" };
+    }
+
+    if (orchestrated && paths.some((path) => path !== "." && (GLOB_CHARACTER_RE.test(path) || !/\.\w+["']?$/.test(path)))) {
+        return { kind: "unsupported" };
+    }
+
+    return {
+        kind: "rewritten",
+        value: [...envPrefix, "vis", "fmt", ...(mode === "check" ? ["--check"] : []), ...paths.filter((path) => path !== ".")].join(" "),
+    };
 };
 
 /**
  * Rewrites the `prettier --write` / `prettier --check` calls in a script to `vis fmt` / `vis fmt --check`,
  * keeping the paths and any environment prefix. The script is left alone when a call uses an option that
- * `vis fmt` cannot reproduce exactly (any flag but `--ignore-unknown`, no mode flag, both mode flags).
+ * `vis fmt` cannot reproduce exactly (any flag but `--ignore-unknown`, no mode flag, both mode flags), or still has a `prettier`
+ * word after the rewrite (a call in a shape it does not recognise).
+ * `orchestrated` marks a workspace where biome, dprint or ruff keeps `vis fmt` on the adapter orchestration.
  * @param script The script text.
  * @returns The new text, `unchanged` for a script without a Prettier call, or `unsupported` when a call cannot be rewritten.
  */
-export const rewritePrettierScript = (script: string): { status: "rewritten" | "unchanged" | "unsupported"; value: string } => {
-    const parts = script.split(SEGMENT_SPLIT_RE);
+export const rewritePrettierScript = (script: string, { orchestrated = false }: { orchestrated?: boolean } = {}): { status: "rewritten" | "unchanged" | "unsupported"; value: string } => {
+    const parts = splitScript(script);
+
+    if (parts === undefined) {
+        return STANDALONE_PRETTIER_RE.test(script) ? { status: "unsupported", value: script } : { status: "unchanged", value: script };
+    }
+
     let rewritten = false;
 
     for (let index = 0; index < parts.length; index += 2) {
-        const result = rewriteSegment(parts[index]!.trim());
+        const result = rewriteSegment(parts[index]!.trim(), orchestrated);
 
         if (result.kind === "unsupported") {
             return { status: "unsupported", value: script };
@@ -152,7 +234,14 @@ export const rewritePrettierScript = (script: string): { status: "rewritten" | "
         }
     }
 
-    return rewritten ? { status: "rewritten", value: parts.join("") } : { status: "unchanged", value: script };
+    const value = rewritten ? parts.join("") : script;
+
+    // A Prettier call this does not recognise (`yarn run prettier`, `cross-env X=1 prettier`, a call inside `if … then`) still needs the binary.
+    if (STANDALONE_PRETTIER_RE.test(value)) {
+        return { status: "unsupported", value: script };
+    }
+
+    return rewritten ? { status: "rewritten", value } : { status: "unchanged", value: script };
 };
 
 // Detection ---------------------------------------------------------
@@ -163,12 +252,23 @@ const readPackageJson = (root: string): PackageJsonShape | undefined => {
     return isAccessibleSync(path) ? readJsonFile<PackageJsonShape>(path) : undefined;
 };
 
+/** Whether biome, dprint or ruff in the workspace keep `vis fmt` on the adapter orchestration instead of the bundled oxfmt. */
+const usesOtherFormatter = (root: string): boolean => {
+    const pkg = readPackageJson(root);
+    const names = new Set(Object.keys({ ...pkg?.dependencies, ...pkg?.devDependencies }));
+
+    return [TOOL_SIGNATURES.biome, TOOL_SIGNATURES.dprint, TOOL_SIGNATURES.ruff].some(
+        (signature) => signature.packageNames.some((name) => names.has(name)) || signature.configFiles.some((file) => isAccessibleSync(join(root, file))),
+    );
+};
+
 /**
  * Looks at the root for everything the Prettier step would change, without reading the Prettier config.
  * @param root Workspace root.
  * @returns What exists and what would be removed or rewritten; every list is empty once the step has run.
  */
 export const planPrettierMigration = (root: string): PrettierPlan => {
+    const orchestrated = usesOtherFormatter(root);
     const pkg = readPackageJson(root);
     const dependencies = { ...pkg?.dependencies, ...pkg?.devDependencies };
     const names = Object.keys(dependencies);
@@ -184,7 +284,7 @@ export const planPrettierMigration = (root: string): PrettierPlan => {
             continue;
         }
 
-        const result = rewritePrettierScript(value);
+        const result = rewritePrettierScript(value, { orchestrated });
 
         if (result.status === "rewritten") {
             rewrites.push({ from: value, name, to: result.value });
@@ -234,13 +334,22 @@ export const renderFmtSnippet = (fmt: FmtBlock): string => {
     return lines.map((line) => line.replace(/^(\s*)"([A-Z_$][\w$]*)":/i, "$1$2:")).join("\n");
 };
 
-type VisConfigFmtState = "configured" | "none" | "present";
+type VisConfigFmtState = "configured" | "none" | "oxfmtrc" | "present";
 
 const visConfigFmtState = (root: string, visConfig: { fmt?: Record<string, unknown> } | undefined): VisConfigFmtState => {
     const fmt = visConfig?.fmt;
 
     if (fmt !== undefined && (fmt.options !== undefined || fmt.overrides !== undefined || fmt.ignorePatterns !== undefined)) {
         return "configured";
+    }
+
+    // An oxfmt config file wins over the Prettier config in the resolver, so mapping Prettier into vis.config would outrank it.
+    if (OXFMT_DISCOVERED_CONFIG_FILES.some((file) => isAccessibleSync(join(root, file)))) {
+        return "oxfmtrc";
+    }
+
+    if (fmt !== undefined) {
+        return "present";
     }
 
     const configPath = findVisConfigFile(root);
@@ -369,11 +478,16 @@ export const migratePrettier = async (
     }
 
     const state = visConfigFmtState(root, options.visConfig);
-    const writable = state === "configured" || (state === "none" && canInsertFmt(root));
+    const writable = state === "configured" || state === "oxfmtrc" || (state === "none" && canInsertFmt(root));
     let snippet = "";
 
-    if (state === "configured") {
-        addMigrationWarning(report, "vis.config already has fmt options; they win over the Prettier config, so it was not mapped (the Prettier files are backed up and removed).");
+    if (state === "configured" || state === "oxfmtrc") {
+        addMigrationWarning(
+            report,
+            state === "oxfmtrc"
+                ? "An oxfmt config file exists and wins over the Prettier config, so the Prettier config was not mapped (the Prettier files are backed up and removed)."
+                : "vis.config already has fmt options; they win over the Prettier config, so it was not mapped (the Prettier files are backed up and removed).",
+        );
     } else {
         let found;
 
@@ -426,7 +540,7 @@ export const migratePrettier = async (
         if (Array.isArray(associations) && associations.length > 0) {
             addManualStep(
                 report,
-                `Prettier overrides set a "parser" for ${JSON.stringify(associations)}; vis.config fmt has no place for oxfmt "associations", so they were not written. Add them to an oxfmt config if needed.`,
+                `Prettier overrides set a "parser" for ${JSON.stringify(associations)}; vis.config fmt has no place for oxfmt "associations" yet, so they were not carried over and those files are formatted by their extension.`,
             );
         }
 
@@ -439,6 +553,10 @@ export const migratePrettier = async (
 
     if (nested.length > 0) {
         addManualStep(report, `Only the root Prettier config was migrated; ${String(nested.length)} nested config(s) are not read by oxfmt (for example ${relative(root, nested[0]!)}).`);
+    }
+
+    if (options.visConfig?.fmt?.engine === "prettier") {
+        addManualStep(report, 'vis.config sets fmt.engine to "prettier", so `vis fmt` keeps running Prettier; remove that setting to use the bundled oxfmt.');
     }
 
     for (const plugin of plan.keptPlugins) {
@@ -466,7 +584,7 @@ export const migratePrettier = async (
                 logger.info("[dry-run] Would add this fmt config to vis.config.ts:");
                 logger.info(snippet);
             } else {
-                logger.info("[dry-run] vis.config already has fmt options; the Prettier config would not be mapped.");
+                logger.info("[dry-run] An existing fmt or oxfmt config wins; the Prettier config would not be mapped.");
             }
 
             for (const file of plan.configFiles) {

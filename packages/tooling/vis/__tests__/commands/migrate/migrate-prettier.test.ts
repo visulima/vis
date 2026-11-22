@@ -41,14 +41,16 @@ describe("migrate-prettier", () => {
 
     describe(rewritePrettierScript, () => {
         it.each([
-            ["prettier --write .", "vis fmt ."],
-            ["prettier --check .", "vis fmt --check ."],
+            ["prettier --write .", "vis fmt"],
+            ["prettier --check .", "vis fmt --check"],
             ["prettier -w src test", "vis fmt src test"],
             ["prettier -c \"src/**/*.ts\"", "vis fmt --check \"src/**/*.ts\""],
-            ["pnpm exec prettier --write --ignore-unknown .", "vis fmt ."],
-            ["npx prettier --check .", "vis fmt --check ."],
+            ["pnpm exec prettier --write --ignore-unknown .", "vis fmt"],
+            ["npx prettier --check .", "vis fmt --check"],
             ["CI=1 yarn prettier --check src", "CI=1 vis fmt --check src"],
-            ["pnpm lint && prettier --check . || echo fail", "pnpm lint && vis fmt --check . || echo fail"],
+            ["pnpm lint && prettier --check . || echo fail", "pnpm lint && vis fmt --check || echo fail"],
+            [String.raw`prettier --write "src/**/*.+(js|ts)" && echo "a && b"`, String.raw`vis fmt "src/**/*.+(js|ts)" && echo "a && b"`],
+            ["prettier --write 'a b/c.ts'", "vis fmt 'a b/c.ts'"],
         ])("rewrites %s", (input, expected) => {
             expect.assertions(2);
 
@@ -56,6 +58,37 @@ describe("migrate-prettier", () => {
 
             expect(result.status).toBe("rewritten");
             expect(result.value).toBe(expected);
+        });
+
+        it.each([
+            "yarn run prettier --check .",
+            "pnpm dlx prettier --check .",
+            "npx --no-install prettier --check .",
+            "cross-env X=1 prettier --check .",
+            "if test -f x; then prettier --check .; fi",
+            "(prettier --check .)",
+            "echo prettier",
+            'prettier --write "src/**/*.ts',
+            String.raw`prettier --write "a\"b.ts"`,
+            "prettier --write . src",
+        ])("treats %s as a Prettier call it cannot rewrite", (input) => {
+            expect.assertions(2);
+
+            const result = rewritePrettierScript(input);
+
+            expect(result.status).toBe("unsupported");
+            expect(result.value).toBe(input);
+        });
+
+        it("only rewrites explicit files when biome, dprint or ruff keep the adapter orchestration", () => {
+            expect.assertions(4);
+
+            const orchestrated = { orchestrated: true };
+
+            expect(rewritePrettierScript("prettier --write .", orchestrated).value).toBe("vis fmt");
+            expect(rewritePrettierScript("prettier --write src/a.ts test/b.ts", orchestrated).value).toBe("vis fmt src/a.ts test/b.ts");
+            expect(rewritePrettierScript("prettier --write src", orchestrated).status).toBe("unsupported");
+            expect(rewritePrettierScript('prettier --write "src/**/*.ts"', orchestrated).status).toBe("unsupported");
         });
 
         it.each(["prettier --write --cache .", "prettier .", "prettier --list-different .", "prettier --check --write .", "prettier --write --config x.json ."])(
@@ -73,8 +106,8 @@ describe("migrate-prettier", () => {
         it("ignores scripts that do not run prettier", () => {
             expect.assertions(2);
 
-            expect(rewritePrettierScript("echo prettier --write .").status).toBe("unchanged");
-            expect(rewritePrettierScript("eslint . && tsc").status).toBe("unchanged");
+            expect(rewritePrettierScript("eslint --config prettier.config.js . && tsc").status).toBe("unchanged");
+            expect(rewritePrettierScript("eslint . && tsc -p prettier-plugin-x").status).toBe("unchanged");
         });
     });
 
@@ -311,7 +344,7 @@ describe("migrate-prettier", () => {
             const pkg = readPackage();
 
             expect(pkg.devDependencies).toStrictEqual({ typescript: "^5" });
-            expect(pkg.scripts).toStrictEqual({ format: "vis fmt .", "format:check": "vis fmt --check .", lint: "eslint ." });
+            expect(pkg.scripts).toStrictEqual({ format: "vis fmt", "format:check": "vis fmt --check", lint: "eslint ." });
             expect(report.removedPackageCount).toBe(3);
             expect(report.rewrittenScriptCount).toBe(2);
             expect(report.perMigration.prettier).toStrictEqual({ removedConfigCount: 1, removedPackageCount: 3, rewrittenScriptCount: 2 });
@@ -334,7 +367,7 @@ describe("migrate-prettier", () => {
             const pkg = readPackage();
 
             expect(pkg.devDependencies).toStrictEqual({ prettier: "^3", "prettier-plugin-organize-imports": "^4" });
-            expect(pkg.scripts.format).toBe("vis fmt .");
+            expect(pkg.scripts.format).toBe("vis fmt");
             expect(report.manualSteps.join("\n")).toContain("prettier-plugin-organize-imports has no oxfmt equivalent");
             expect(report.removedPackageCount).toBe(1);
         });
@@ -418,6 +451,43 @@ describe("migrate-prettier", () => {
             expect(existsSync(join(root, ".prettierrc.json"))).toBe(false);
             expect(visConfig()).not.toContain("semi: false");
             expect(report.warnings.join("\n")).toContain("already has fmt options");
+        });
+
+        it("cleans up but does not map when an oxfmt config file exists, since it wins over the Prettier config", async () => {
+            expect.assertions(4);
+
+            write(".oxfmtrc.json", "{}");
+            write(".prettierrc.json", JSON.stringify({ semi: false }));
+
+            const { report, result } = await run();
+
+            expect(result).toBe(true);
+            expect(existsSync(join(root, ".prettierrc.json"))).toBe(false);
+            expect(existsSync(join(root, "vis.config.ts"))).toBe(false);
+            expect(report.warnings.join("\n")).toContain("oxfmt config file exists");
+        });
+
+        it("treats a one-line fmt key as an existing fmt block when the loaded config has one", async () => {
+            expect.assertions(3);
+
+            write("vis.config.ts", "export default defineConfig({ fmt: { adapters: {} } });\n");
+            write(".prettierrc.json", "{}");
+
+            const { result } = await run(false, { visConfig: { fmt: { adapters: {} } } });
+
+            expect(result).toBe(false);
+            expect(visConfig().match(/fmt\s*:/g)).toHaveLength(1);
+            expect(existsSync(join(root, ".prettierrc.json"))).toBe(true);
+        });
+
+        it("points out fmt.engine \"prettier\"", async () => {
+            expect.assertions(1);
+
+            write(".prettierrc.json", "{}");
+
+            const { report } = await run(false, { visConfig: { fmt: { engine: "prettier", options: {} } } });
+
+            expect(report.manualSteps.join("\n")).toContain("fmt.engine");
         });
 
         it("fails softly when the Prettier config cannot be read", async () => {
