@@ -168,14 +168,22 @@ const cacheMayRunNatively = (platform, environment, interactive) => platform !==
 
 // Whether `vis cache hash` can pass the binary's native gate (`native` in `cache_hash.rs`). The
 // binary re-checks the context and every shape (one task id, `--format json|table`, `--run <id>`),
-// so this only skips the extra process for a call that would be delegated anyway: no task id, or a
-// flag the binary does not know. It stays in Node on Windows (pail's clock is unix-only there).
+// so this only skips the extra process for a call that would be delegated anyway: no task id, a
+// flag the binary does not know, or a table in a context where Node may colour it (the binary does
+// not; the JSON is written raw, so colour does not matter there). It stays in Node on Windows
+// (pail's clock is unix-only there).
 const CACHE_HASH_FLAG = /^--(?:format|run)(?:=.*)?$/;
+
+const cacheHashAsksForJson = (flags) => flags.includes("--format=json") || flags.some((flag, index) => flag === "--format" && flags[index + 1] === "json");
 
 const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
     const flags = args.slice(2);
 
-    return platform !== "win32" && !interactive && inCi(environment) && flags.length > 0 && flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token));
+    if (platform === "win32" || interactive || !inCi(environment) || flags.length === 0 || !flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token))) {
+        return false;
+    }
+
+    return cacheHashAsksForJson(flags) || (!IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && plainTerm(environment));
 };
 
 // Commands with a native gate answer help through the binary on every platform (it enables
