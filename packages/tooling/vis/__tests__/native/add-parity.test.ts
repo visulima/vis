@@ -53,25 +53,22 @@ const forwards = (): boolean => {
 
 const ready = Boolean(binary) && process.platform !== "win32" && existsSync(nodeEntry) && addonLoads();
 
-type Kind = "bun" | "npm" | "pnpm" | "yarn";
-
 const PACKAGE = { name: "app", version: "1.0.0" };
 
 /** Fixtures: a lockfile of one manager, and a workspace marker (a root) or not. */
-const FIXTURES: Record<string, { files: Record<string, string>; kind: Kind }> = {
-    "bun-root": { files: { "bun.lock": "{}\n", "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }) }, kind: "bun" },
-    "bun-single": { files: { "bun.lock": "{}\n", "package.json": JSON.stringify(PACKAGE) }, kind: "bun" },
-    "npm-root": { files: { "package-lock.json": "{}\n", "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }) }, kind: "npm" },
-    "npm-single": { files: { "package-lock.json": "{}\n", "package.json": JSON.stringify(PACKAGE) }, kind: "npm" },
-    "pnpm-bare": { files: { "package.json": JSON.stringify(PACKAGE) }, kind: "pnpm" },
-    "pnpm-root": { files: { "package.json": JSON.stringify(PACKAGE), "pnpm-lock.yaml": "lockfileVersion: 9\n", "pnpm-workspace.yaml": "packages: []\n" }, kind: "pnpm" },
-    "pnpm-single": { files: { "package.json": JSON.stringify(PACKAGE), "pnpm-lock.yaml": "lockfileVersion: 9\n" }, kind: "pnpm" },
+const FIXTURES: Record<string, { files: Record<string, string> }> = {
+    "bun-root": { files: { "bun.lock": "{}\n", "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }) } },
+    "bun-single": { files: { "bun.lock": "{}\n", "package.json": JSON.stringify(PACKAGE) } },
+    "npm-root": { files: { "package-lock.json": "{}\n", "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }) } },
+    "npm-single": { files: { "package-lock.json": "{}\n", "package.json": JSON.stringify(PACKAGE) } },
+    "pnpm-bare": { files: { "package.json": JSON.stringify(PACKAGE) } },
+    "pnpm-root": { files: { "package.json": JSON.stringify(PACKAGE), "pnpm-lock.yaml": "lockfileVersion: 9\n", "pnpm-workspace.yaml": "packages: []\n" } },
+    "pnpm-single": { files: { "package.json": JSON.stringify(PACKAGE), "pnpm-lock.yaml": "lockfileVersion: 9\n" } },
     "yarn-berry-root": {
         files: { ".yarnrc.yml": "nodeLinker: node-modules\n", "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }), "yarn.lock": "# yarn lockfile\n" },
-        kind: "yarn",
     },
-    "yarn-root": { files: { "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }), "yarn.lock": "# yarn lockfile\n" }, kind: "yarn" },
-    "yarn-single": { files: { "package.json": JSON.stringify(PACKAGE), "yarn.lock": "# yarn lockfile\n" }, kind: "yarn" },
+    "yarn-root": { files: { "package.json": JSON.stringify({ ...PACKAGE, workspaces: ["packages/*"] }), "yarn.lock": "# yarn lockfile\n" } },
+    "yarn-single": { files: { "package.json": JSON.stringify(PACKAGE), "yarn.lock": "# yarn lockfile\n" } },
 };
 
 let scratch = "";

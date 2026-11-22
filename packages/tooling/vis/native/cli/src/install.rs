@@ -426,7 +426,7 @@ fn parse(args: &[String]) -> Option<Flags> {
 }
 
 /// A `--filter` value: a non-empty word that is no flag.
-fn filter_value(value: &str) -> Option<String> {
+pub(crate) fn filter_value(value: &str) -> Option<String> {
     (!value.is_empty() && !value.starts_with('-')).then(|| value.to_owned())
 }
 

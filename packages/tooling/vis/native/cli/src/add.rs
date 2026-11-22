@@ -243,13 +243,13 @@ fn parse(args: &[String]) -> Option<Flags> {
             }
             "-F" | "--filter" => {
                 index += 1;
-                flags.filter.push(filter_value(args.get(index)?)?);
+                flags.filter.push(install::filter_value(args.get(index)?)?);
                 index += 1;
 
                 continue;
             }
             _ if token.starts_with("--filter=") => {
-                flags.filter.push(filter_value(&token["--filter=".len()..])?);
+                flags.filter.push(install::filter_value(&token["--filter=".len()..])?);
                 index += 1;
 
                 continue;
@@ -258,7 +258,7 @@ fn parse(args: &[String]) -> Option<Flags> {
             _ if token.starts_with('-') => return None,
             _ => {
                 // Node reads every word after `--filter` as another filter, so a package after one is no package.
-                if !flags.filter.is_empty() || !is_plain_package(token) {
+                if !flags.filter.is_empty() || parse_package_argument(token).is_none() {
                     return None;
                 }
 
@@ -283,17 +283,6 @@ fn parse(args: &[String]) -> Option<Flags> {
     }
 
     Some(flags)
-}
-
-/// A `--filter` value: a non-empty word that is no flag.
-fn filter_value(value: &str) -> Option<String> {
-    (!value.is_empty() && !value.starts_with('-')).then(|| value.to_owned())
-}
-
-/// A package argument the native path reads like Node's `parsePackageArgument` does, and whose name no
-/// shell or parser treats specially: `name[@spec]` or `@scope/name[@spec]`, ASCII, no trailing `@`.
-fn is_plain_package(argument: &str) -> bool {
-    parse_package_argument(argument).is_some()
 }
 
 /// `parsePackageArgument`: the name of `name[@spec]` or `@scope/name[@spec]`, and its spec. `None` for
