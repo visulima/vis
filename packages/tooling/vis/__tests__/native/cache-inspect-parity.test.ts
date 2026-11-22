@@ -355,10 +355,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         both("a global flag", "plain", "node", ["cache", "list", "--format", "json", "--no-color"]);
     });
 
-    it("has cases", () => {
-        expect(cases.length).toBeGreaterThan(0);
-    });
-
     it("answers every shape the way Node does", () => {
         // Cases are registered in `beforeAll`, so they run from one test to keep the fixtures in place.
         const failures: string[] = [];

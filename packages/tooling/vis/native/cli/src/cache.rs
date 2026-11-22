@@ -166,7 +166,8 @@ struct Settings {
 /// The settings of the workspace root, or `None` when Node must answer.
 ///
 /// Node reads `vis.config.*` from the workspace root only, so a config anywhere else on the way up is
-/// one this path cannot tell Node's treatment of. At the root the config must be a literal, and free of the keys that change what Node does before the command runs.
+/// one this path cannot tell Node's treatment of. At the root the config must be a literal, and free of the
+/// keys that change what Node does before the command runs.
 fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
     let others = cwd.ancestors().chain(root.ancestors()).filter(|directory| *directory != root).any(has_config_file);
 
