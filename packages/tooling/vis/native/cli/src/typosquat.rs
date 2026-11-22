@@ -147,39 +147,31 @@ pub(crate) fn generate_variants(name: &str) -> HashSet<String> {
 }
 
 /// Every name the check flags: the blocklisted typosquats and the generated variants of each
-/// legitimate name (the merge of the generated and the hand-curated blocklist).
-struct Blocklist {
-    flagged: HashSet<String>,
-}
+/// legitimate name, over the generated and the hand-curated blocklist together.
+fn flagged_set(sources: &[&str]) -> HashSet<String> {
+    let mut flagged = HashSet::new();
 
-fn blocklist() -> &'static Blocklist {
-    static LIST: OnceLock<Blocklist> = OnceLock::new();
+    for source in sources {
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(source) else {
+            continue;
+        };
 
-    LIST.get_or_init(|| {
-        let mut flagged = HashSet::new();
-
-        for source in [AUTO_BLOCKLIST, MANUAL_BLOCKLIST] {
-            let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(source) else {
-                continue;
-            };
-
-            for (legitimate, typosquats) in &entries {
-                for typosquat in typosquats.as_array().into_iter().flatten().filter_map(Value::as_str) {
-                    flagged.insert(typosquat.to_owned());
-                }
-
-                flagged.extend(generate_variants(legitimate));
+        for (legitimate, typosquats) in &entries {
+            for typosquat in typosquats.as_array().into_iter().flatten().filter_map(Value::as_str) {
+                flagged.insert(typosquat.to_owned());
             }
-        }
 
-        Blocklist { flagged }
-    })
+            flagged.extend(generate_variants(legitimate));
+        }
+    }
+
+    flagged
 }
 
-/// Every flagged name, for the parity test.
-#[cfg(test)]
-pub(crate) fn flagged_names() -> &'static HashSet<String> {
-    &blocklist().flagged
+fn blocklist() -> &'static HashSet<String> {
+    static LIST: OnceLock<HashSet<String>> = OnceLock::new();
+
+    LIST.get_or_init(|| flagged_set(&[AUTO_BLOCKLIST, MANUAL_BLOCKLIST]))
 }
 
 /// The part of a package name the check compares: the second `/` segment of a scoped name.
@@ -193,7 +185,11 @@ fn bare_name(package: &str) -> &str {
 
 /// `checkTyposquat(name) !== undefined`.
 pub(crate) fn is_typosquat(package: &str) -> bool {
-    blocklist().flagged.contains(bare_name(package))
+    is_flagged(blocklist(), package)
+}
+
+fn is_flagged(flagged: &HashSet<String>, package: &str) -> bool {
+    flagged.contains(bare_name(package))
 }
 
 /// The alias target of a dependency value (`npm:reaact@^18` -> `reaact`), the regex
@@ -266,19 +262,20 @@ pub(crate) fn scan_manifest(manifest: &Value) -> Scan {
 mod tests {
     use serde_json::json;
 
-    use super::{alias_target, bare_name, generate_variants, is_typosquat, scan_manifest, Scan};
+    use std::collections::HashSet;
+
+    use super::{
+        alias_target, bare_name, flagged_set, generate_variants, is_flagged, is_typosquat, scan_manifest, Scan,
+    };
 
     #[test]
     fn the_blocklist_names_are_ascii() {
         for source in [super::AUTO_BLOCKLIST, super::MANUAL_BLOCKLIST] {
             let entries: serde_json::Map<String, serde_json::Value> = serde_json::from_str(source).unwrap();
 
-            for (legitimate, typosquats) in &entries {
+            // Variants are generated from the keys only, as bytes; the listed typosquats are compared whole.
+            for legitimate in entries.keys() {
                 assert!(legitimate.is_ascii(), "{legitimate}");
-
-                for typosquat in typosquats.as_array().unwrap() {
-                    assert!(typosquat.as_str().unwrap().is_ascii());
-                }
             }
         }
     }
@@ -326,22 +323,28 @@ mod tests {
         assert_eq!(scan_manifest(&json!({ "dependencies": null })), Scan::Clean);
     }
 
-    /// What `__tests__/native/typosquat-parity.test.ts` wrote from the TypeScript implementation.
-    fn fixture() -> serde_json::Value {
-        serde_json::from_str(include_str!("../tests/fixtures/typosquat-parity.json")).unwrap()
+    /// What `__tests__/native/typosquat-parity.test.ts` wrote from the TypeScript implementation, and the
+    /// flagged set the Rust code builds from the same two blocklists.
+    fn fixture() -> (serde_json::Value, HashSet<String>) {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/typosquat-parity.json")).unwrap();
+        let auto = fixture["blocklists"]["auto"].to_string();
+        let manual = fixture["blocklists"]["manual"].to_string();
+
+        (fixture, flagged_set(&[&auto, &manual]))
     }
 
     #[test]
     fn the_flagged_set_is_the_one_the_typescript_code_flags() {
         use sha2::{Digest, Sha256};
 
-        let mut names: Vec<&String> = super::flagged_names().iter().collect();
+        let (fixture, flagged) = fixture();
+        let mut names: Vec<&String> = flagged.iter().collect();
 
         names.sort();
 
         let joined = names.iter().map(|name| name.as_str()).collect::<Vec<_>>().join("\n");
         let digest: String = Sha256::digest(joined.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-        let fixture = fixture();
 
         assert_eq!(names.len() as u64, fixture["flagged"]["count"].as_u64().unwrap());
         assert_eq!(digest, fixture["flagged"]["sha256"].as_str().unwrap());
@@ -349,7 +352,7 @@ mod tests {
 
     #[test]
     fn the_variants_of_each_sampled_name_are_the_typescript_variants() {
-        let fixture = fixture();
+        let (fixture, _) = fixture();
 
         for (name, expected) in fixture["variants"].as_object().unwrap() {
             let mut variants: Vec<String> = generate_variants(name).into_iter().collect();
@@ -365,7 +368,7 @@ mod tests {
 
     #[test]
     fn every_lookup_gives_the_typescript_answer() {
-        let fixture = fixture();
+        let (fixture, flagged) = fixture();
         let wrong: Vec<String> = fixture["lookups"]
             .as_array()
             .unwrap()
@@ -374,10 +377,16 @@ mod tests {
                 let name = entry[0].as_str().unwrap();
                 let expected = entry[1].as_bool().unwrap();
 
-                (is_typosquat(name) != expected).then(|| format!("{name:?} should be flagged: {expected}"))
+                (is_flagged(&flagged, name) != expected).then(|| format!("{name:?} should be flagged: {expected}"))
             })
             .collect();
 
         assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    #[test]
+    fn the_embedded_blocklists_build_a_non_empty_set() {
+        assert!(super::blocklist().len() > 1000);
+        assert!(is_typosquat("lodas"));
     }
 }

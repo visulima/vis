@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -124,6 +124,12 @@ const environment = (setup: Setup, extra: Record<string, string> = {}, ci = true
     };
 };
 
+/** A value that takes the variable out of the environment altogether. */
+const UNSET = "\0unset";
+
+/** Environment without the variables a case unsets. */
+const withoutUnset = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).filter(([, value]) => value !== UNSET));
+
 /** The clock in pail's header differs between runs. */
 const normalize = (text: string): string => text.replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
 
@@ -151,11 +157,11 @@ const capture = (command: string, args: string[], cwd: string, env: Record<strin
 };
 
 const runNode = (setup: Setup, args: string[], extra: Record<string, string> = {}, ci = true): Run =>
-    capture(process.execPath, [nodeEntry, ...args], setup.cwd, environment(setup, extra, ci));
+    capture(process.execPath, [nodeEntry, ...args], setup.cwd, withoutUnset(environment(setup, extra, ci)));
 
 const runNative = (setup: Setup, args: string[], extra: Record<string, string> = {}, ci = true): Run =>
     capture(nativeBinary, args, setup.cwd, {
-        ...environment(setup, extra, ci),
+        ...withoutUnset(environment(setup, extra, ci)),
         VIS_FALLBACK_ENTRY: join(scratch, "no-such-entry.js"),
         VIS_NODE: join(setup.bindir, "node"),
         VIS_VERSION: version,
@@ -183,6 +189,8 @@ interface ParityCase {
 /** A case the native side must hand to Node. */
 interface DelegatedCase {
     args: string[];
+    /** Executables added to the bin directory, which is first on PATH. */
+    bin?: string[];
     ci?: boolean;
     directory?: string;
     env?: Record<string, string>;
@@ -207,6 +215,14 @@ const SHAPES: string[][] = [
     ["install", "--force", "--no-frozen-lockfile", "--offline"],
 ];
 
+const DEFINE_CONFIG = 'import { defineConfig } from "@visulima/vis/config";\n\nexport default defineConfig({ update: { target: "minor" } });\n';
+
+/** An installed `@visulima/vis` that exports `./config`, as the package does. */
+const INSTALLED_VIS: Record<string, string> = {
+    "node_modules/@visulima/vis/dist/config.js": "export const defineConfig = (config) => config;\n",
+    "node_modules/@visulima/vis/package.json": JSON.stringify({ exports: { "./config": "./dist/config.js" }, name: "@visulima/vis", type: "module" }),
+};
+
 const manifest = (dependencies: Record<string, unknown>, field = "dependencies"): Record<string, string> => {
     return { "package.json": JSON.stringify({ ...PACKAGE, [field]: dependencies }) };
 };
@@ -219,10 +235,12 @@ const PARITY_CASES: ParityCase[] = [
     { args: ["install"], files: { "vis.config.ts": 'export default { update: { target: "minor" } };\n' }, fixture: "pnpm-root", label: "a config literal" },
     { args: ["install"], files: { "vis.config.json": "{}\n" }, fixture: "pnpm-root", label: "a json config, which Node never loads" },
     { args: ["install"], files: { "vis.config.ts": "export default {};\n" }, fixture: "pnpm-single", label: "a config outside a root, which Node ignores" },
+    { args: ["install"], files: { ...INSTALLED_VIS, "vis.config.ts": DEFINE_CONFIG }, fixture: "pnpm-root", label: "a defineConfig config with @visulima/vis installed" },
     // The peer-dependency hint, wrapped to COLUMNS.
     ...["pnpm-single", "pnpm-root", "npm-single", "yarn-single"].flatMap((fixture) =>
         ["80", "50", "100"].map((columns) => { return { args: ["install"], env: { COLUMNS: columns, STUB_STDERR: PEER_WARNING }, fixture, label: `peer warning at ${columns} columns` }; }),
     ),
+    { args: ["install"], env: { COLUMNS: UNSET, STUB_STDERR: PEER_WARNING }, fixture: "pnpm-single", label: "peer warning with COLUMNS unset, as in CI" },
     { args: ["install"], env: { STUB_STDOUT: "Issues with peer dependencies found" }, fixture: "pnpm-single", label: "peer warning on stdout" },
     ...["npm ERR! code ERESOLVE", "warning pkg has unmet peer dependency x", "YN0060: incompatible peer", "bun: incorrect peer dependency"].map((text) => {
         return {
@@ -301,11 +319,13 @@ const DELEGATED_CASES: DelegatedCase[] = [
         'export default { runtime: "node" };\n',
         'export default { update: { target: ["m", "inor"].join("") } };\n',
     ].map((config) => { return { args: ["install"], files: { "vis.config.ts": config }, fixture: "pnpm-root", label: `the config ${config.trim()}` }; }),
+    { args: ["install"], files: { "vis.config.ts": DEFINE_CONFIG }, fixture: "pnpm-root", label: "a defineConfig config before @visulima/vis is installed" },
     { args: ["install"], files: { ".npmrc": "ignore-scripts=true\n" }, fixture: "npm-root", label: "an .npmrc that mentions ignore-scripts" },
     { args: ["install"], files: { ".yarnrc.yml": "enableScripts: false\n" }, fixture: "yarn-berry-root", label: "a .yarnrc.yml that mentions enableScripts" },
     { args: ["install"], files: { "package.json": JSON.stringify({ ...PACKAGE, packageManager: "pnpm@9.0.0" }) }, fixture: "pnpm-single", label: "a packageManager pin" },
     { args: ["install"], files: { "bun.lock": "{}\n" }, fixture: "pnpm-single", label: "a bun lockfile beside another manager" },
     { args: ["install"], files: { "pnpm-lock.yaml": "lockfileVersion: 9\n" }, fixture: "npm-single", label: "two lockfile managers" },
+    { args: ["install"], bin: ["aube"], fixture: "pnpm-single", label: "aube on PATH" },
     { args: ["install"], directory: "packages/app", fixture: "pnpm-root", label: "a directory below the monorepo root" },
     { args: ["install"], files: { "lerna.json": '{ "packages": [] }\n' }, fixture: "pnpm-single", label: "lerna.json" },
     { args: ["install"], files: { "turbo.json": "{}\n" }, fixture: "pnpm-single", label: "turbo.json" },
@@ -340,7 +360,14 @@ describe.skipIf(!ready)("vis install: native vs Node", () => {
     it.each(DELEGATED_CASES.map((delegated) => [`${delegated.fixture}: ${delegated.label}`, delegated] as const))("hands %s to Node", (_label: string, delegated: DelegatedCase) => {
         expect.assertions(2);
 
-        const native = runNative(project(delegated.fixture, delegated.files, delegated.directory), delegated.args, delegated.env, delegated.ci ?? true);
+        const setup = project(delegated.fixture, delegated.files, delegated.directory);
+
+        for (const name of delegated.bin ?? []) {
+            writeFileSync(join(setup.bindir, name), "#!/bin/sh\nexit 0\n");
+            chmodSync(join(setup.bindir, name), 0o755);
+        }
+
+        const native = runNative(setup, delegated.args, delegated.env, delegated.ci ?? true);
 
         expect(native.stdout).toContain(marker);
         expect(native.stdout).not.toMatch(PACKAGE_MANAGER_LINE);
@@ -367,6 +394,22 @@ describe.skipIf(!ready)("vis install: native vs Node", () => {
         expect(runNative(setup, ["install", "--silent"], { STUB_STDERR: PEER_WARNING }).stdout).not.toContain("Peer dependency");
         expect(runNative(setup, ["install"], { STUB_EXIT: "3", STUB_STDERR: PEER_WARNING }).stdout).not.toContain("Peer dependency");
         expect(runNative(setup, ["install"], { STUB_EXIT: "3" }).status).toBe(3);
+    });
+
+    it.each(["npm-root", "pnpm-root", "pnpm-single"])("%s: leaves the same files behind as Node, in the project and in HOME", (fixture: string) => {
+        expect.assertions(2);
+
+        // Each side in a project and a home of its own, so one cannot see what the other wrote.
+        const tree = (setup: Setup): string[] => [...readdirSync(dirname(setup.cwd), { recursive: true }).map(String)].filter((path) => !path.startsWith("bin")).toSorted();
+        const nodeSide = project(fixture);
+        const nativeSide = project(fixture);
+        const before = tree(nodeSide);
+
+        runNode(nodeSide, ["install"]);
+        runNative(nativeSide, ["install"]);
+
+        expect(tree(nativeSide)).toStrictEqual(tree(nodeSide));
+        expect(tree(nodeSide)).toStrictEqual(before);
     });
 
     it("hands the call to Node when the package manager is not on PATH, where Node reports the failure", () => {

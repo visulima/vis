@@ -3,22 +3,49 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import autoBlocklist from "../../data/typosquats.json" with { type: "json" };
-import manualBlocklist from "../../data/typosquats-manual.json" with { type: "json" };
-import { checkTyposquat, generateVariants } from "../../src/security/typosquats";
+/**
+ * The blocklists this test runs the TypeScript check against: a fixed pair that covers the shapes of the
+ * real ones (unscoped, separated, scoped, overlapping and duplicated entries, generated and hand-curated).
+ * The real lists (`data/typosquats*.json`) are refreshed by a workflow, so a fixture built from them would
+ * go stale with every refresh; the matching is what must agree, and it agrees on any list.
+ */
+const { AUTO, MANUAL } = vi.hoisted(() => {
+    return {
+        AUTO: {
+            "@tanstack/start": ["start-tanstack-app", "tanstack-kit"],
+            express: ["expres", "exprss", "express-js"],
+            "left-pad": ["leftpad", "left_pad", "lef-tpad"],
+            lodash: ["lodahs", "l0dash", "lodash-js", "lodas"],
+            react: ["reakt", "reactt", "raect"],
+            "react-dom": ["reactdom"],
+            typescript: ["typscript", "typescrip"],
+            vue: ["vuee"],
+            "zz-lib": ["zz-lib-x"],
+        },
+        MANUAL: { "@scope/pkg": ["pkgg", "scope-pkgs"], react: ["raect", "rect"] },
+    };
+});
+
+vi.mock(import("../../data/typosquats.json"), () => {
+    return { default: AUTO };
+});
+vi.mock(import("../../data/typosquats-manual.json"), () => {
+    return { default: MANUAL };
+});
+
+const { checkTyposquat, generateVariants } = await import("../../src/security/typosquats");
 
 /**
  * The typosquat name check exists twice: `src/security/typosquats.ts` (Node) and
  * `native/cli/src/typosquat.rs`, which `vis install` runs natively before it installs. A name the native
  * check misses would install where Node stops, so the two must agree on every name.
  *
- * Both sides read the same blocklists (`data/typosquats*.json`, embedded with `include_str!` on the Rust
- * side). This test writes what the TypeScript code answers into a fixture the Rust unit tests check the
- * port against: the full set of flagged names (as a count and a digest), the exact variant sets of a
- * spread of names, and the answer for exact, variant, scoped, clean and odd names. If the TypeScript
- * matching changes, this test fails until the fixture is regenerated:
+ * This test writes what the TypeScript code answers, for the fixed blocklists above, into a fixture the Rust
+ * unit tests check the port against: the blocklists themselves, the full set of flagged names (as a count and
+ * a digest), the exact variant sets of a spread of names, and the answer for exact, variant, scoped, clean and
+ * odd names. If the TypeScript matching changes, this test fails until the fixture is regenerated:
  *
  *     UPDATE_TYPOSQUAT_PARITY=1 pnpm exec vitest run __tests__/native/typosquat-parity.test.ts
  */
@@ -27,7 +54,7 @@ const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..",
 
 type Blocklist = Record<string, string[]>;
 
-const sources = [autoBlocklist, manualBlocklist] as Blocklist[];
+const sources = [AUTO, MANUAL] as Blocklist[];
 
 /** Names whose full variant set is part of the fixture: short, separated, scoped, repeated and edge shapes. */
 const VARIANT_NAMES = [
@@ -97,13 +124,13 @@ const buildFixture = () => {
     const sorted = [...flagged].toSorted();
     const legitimateNames = [...new Set(sources.flatMap((source) => Object.keys(source)))];
     const typosquatNames = [...new Set(sources.flatMap((source) => Object.values(source).flat()))];
-    const sampledVariants = legitimateNames.flatMap((name) => [...generateVariants(name)].toSorted().slice(0, 3));
+    const sampledVariants = legitimateNames.flatMap((name) => [...generateVariants(name)].toSorted().slice(0, 12));
     const lookups = [
         ...new Set([
             ...legitimateNames,
             ...legitimateNames.map((name) => `@scope/${name}`),
             ...typosquatNames,
-            ...typosquatNames.slice(0, 40).map((name) => `@scope/${name}`),
+            ...typosquatNames.map((name) => `@scope/${name}`),
             ...sampledVariants,
             ...CLEAN_NAMES,
             ...ODD_NAMES,
@@ -111,6 +138,7 @@ const buildFixture = () => {
     ].map((name) => [name, checkTyposquat(name) !== undefined] as const);
 
     return {
+        blocklists: { auto: AUTO, manual: MANUAL },
         flagged: { count: sorted.length, sha256: createHash("sha256").update(sorted.join("\n")).digest("hex") },
         lookups,
         variants: Object.fromEntries(VARIANT_NAMES.map((name) => [name, [...generateVariants(name)].toSorted()])),
@@ -149,8 +177,8 @@ describe("typosquat check: Node vs native (fixture for native/cli/src/typosquat.
     it("covers hits and misses of every kind", () => {
         expect.assertions(3);
 
-        expect(fixture.lookups.filter(([, hit]) => hit).length).toBeGreaterThan(500);
-        expect(fixture.lookups.filter(([, hit]) => !hit).length).toBeGreaterThan(20);
+        expect(fixture.lookups.filter(([, hit]) => hit).length).toBeGreaterThan(100);
+        expect(fixture.lookups.filter(([, hit]) => !hit).length).toBeGreaterThan(15);
         expect(Object.keys(fixture.variants)).toHaveLength(VARIANT_NAMES.length);
     });
 });
