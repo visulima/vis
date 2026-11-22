@@ -114,9 +114,13 @@ describe("vis run injected and parent environment", () => {
         expect.assertions(1);
 
         const wholeEnvWrite = /Object\.assign\(process\.env\b|process\.env\s*=(?!=)/u;
+        // `vis __emit-config` swaps process.env for a recording proxy while it evaluates a
+        // vis.config, then restores it. It is a one-shot process that never builds a task env.
+        const configEmitter = /[\\/]config[\\/]emit\.ts$/u;
         const offending = Object.values(SCAN_ROOTS)
             .filter((root) => existsSync(root))
             .flatMap((root) => walk(root))
+            .filter((file) => !configEmitter.test(file))
             .filter((file) => wholeEnvWrite.test(readFileSync(file, "utf8")));
 
         expect(offending).toStrictEqual([]);

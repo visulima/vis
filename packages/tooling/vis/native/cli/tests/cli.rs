@@ -1067,6 +1067,205 @@ fn pm_family_delegates_dedupe_from_a_workspace_package_with_a_literal_config() {
     assert!(!stdout.contains("pnpm:"), "workspace-package dedupe ran natively: {stdout}");
 }
 
+/// A project whose config imports a helper (so it cannot be read as a literal), a `node` stub that
+/// plays the config emitter and counts its runs, and the JSON the emitter answers with.
+#[cfg(unix)]
+struct EmitFixture {
+    base: std::path::PathBuf,
+    project: std::path::PathBuf,
+    bindir: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl EmitFixture {
+    fn new(name: &str, emitted: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("vis-emit-{name}-{}", std::process::id()));
+        let project = base.join("project");
+        let bindir = base.join("bin");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&bindir).unwrap();
+        std::fs::write(project.join("helper.ts"), "export const backend = \"npm\";\n").unwrap();
+        std::fs::write(
+            project.join("vis.config.ts"),
+            "import { backend } from \"./helper\";\nexport default { install: { backend } };\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("lerna.json"), "{\"packages\":[]}\n").unwrap();
+        std::fs::write(project.join("yarn.lock"), "# yarn\n").unwrap();
+
+        let helper = project.join("helper.ts");
+        std::fs::write(
+            base.join("emitted.json"),
+            emitted.replace("{helper}", &helper.to_string_lossy().replace('\\', "\\\\")),
+        )
+        .unwrap();
+
+        let node = "#!/bin/sh\n\
+            case \"$*\" in\n\
+            *__emit-config*)\n\
+              echo run >> \"$VIS_TEST_COUNT\"\n\
+              while [ $# -gt 0 ]; do if [ \"$1\" = \"--out\" ]; then out=\"$2\"; fi; shift; done\n\
+              /bin/cp \"$VIS_TEST_EMITTED\" \"$out\" ;;\n\
+            *) echo \"NODE:$*\" ;;\n\
+            esac\n";
+
+        for (binary, body) in [("node", node), ("npm", "#!/bin/sh\necho \"PM:$*\"\n")] {
+            let path = bindir.join(binary);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        Self { base, project, bindir }
+    }
+
+    fn run(&self, extra_env: &[(&str, &str)]) -> String {
+        self.run_args(&["why", "lodash"], extra_env)
+    }
+
+    fn run_args(&self, args: &[&str], extra_env: &[(&str, &str)]) -> String {
+        let mut command = binary();
+
+        command
+            .args(args)
+            .current_dir(&self.project)
+            .env("VIS_NODE", self.bindir.join("node"))
+            .env("VIS_FALLBACK_ENTRY", self.base.join("dist").join("bin.js"))
+            .env("VIS_TEST_COUNT", self.base.join("count"))
+            .env("VIS_TEST_EMITTED", self.base.join("emitted.json"))
+            .env("PATH", &self.bindir)
+            .env_remove("VIS_INSTALLER")
+            .env_remove("VIS_NO_CONFIG_CACHE")
+            .env_remove("VIS_CACHE_DIRECTORY")
+            .env_remove("npm_config_user_agent");
+
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+
+        let output = command.output().expect("run binary");
+
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn emitter_runs(&self) -> usize {
+        std::fs::read_to_string(self.base.join("count")).map(|text| text.lines().count()).unwrap_or(0)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for EmitFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
+}
+
+#[cfg(unix)]
+const EMITTED_NPM: &str = "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
+    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\"}],\"env\":[],\"uncacheable\":[]}";
+
+/// A config that needs evaluation is evaluated once; the next runs read the stored result without Node,
+/// and editing a module the config imports evaluates it again.
+#[cfg(unix)]
+#[test]
+fn a_dynamic_config_is_evaluated_once_and_then_served_from_the_cache() {
+    let fixture = EmitFixture::new("cache", EMITTED_NPM);
+
+    let first = fixture.run(&[]);
+
+    assert!(first.starts_with("PM:"), "the evaluated config was not used natively: {first}");
+    assert_eq!(fixture.emitter_runs(), 1);
+
+    let second = fixture.run(&[]);
+
+    assert!(second.starts_with("PM:"), "the cached config was not used natively: {second}");
+    assert_eq!(fixture.emitter_runs(), 1, "a valid cache entry must not start Node");
+
+    std::fs::write(fixture.project.join("helper.ts"), "export const backend = \"pnpm\";\n").unwrap();
+    let third = fixture.run(&[]);
+
+    assert!(third.starts_with("PM:"), "{third}");
+    assert_eq!(fixture.emitter_runs(), 2, "an edited import must evaluate the config again");
+}
+
+/// `VIS_NO_CONFIG_CACHE=1` leaves a dynamic config to Node, exactly as before the cache existed.
+#[cfg(unix)]
+#[test]
+fn the_config_cache_can_be_turned_off() {
+    let fixture = EmitFixture::new("off", EMITTED_NPM);
+
+    let output = fixture.run(&[("VIS_NO_CONFIG_CACHE", "1")]);
+
+    assert!(output.starts_with("NODE:"), "the command was not delegated: {output}");
+    assert_eq!(fixture.emitter_runs(), 0);
+}
+
+/// A config with values that are not data (functions in `plugins`, …) is Node's to run, and that answer is cached too.
+#[cfg(unix)]
+#[test]
+fn a_config_that_is_not_data_is_delegated_to_node() {
+    let fixture = EmitFixture::new(
+        "node-only",
+        "{\"version\":1,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
+    );
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 1);
+}
+
+/// A result the emitter could not track completely is not used natively, since a stored copy could not stand
+/// in for it: Node runs the command, and the refusal is remembered so the config is not evaluated every time.
+#[cfg(unix)]
+#[test]
+fn a_result_that_cannot_be_tracked_is_left_to_node() {
+    let fixture = EmitFixture::new(
+        "untracked",
+        "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
+    );
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 1);
+}
+
+/// A config that is not evaluated for its value is not evaluated at all: a global option, an installer
+/// chosen by the environment, and `clean` (which only needs to know a config exists) go to Node directly,
+/// and nothing is written to the workspace.
+#[cfg(unix)]
+#[test]
+fn commands_that_never_use_the_value_do_not_evaluate_the_config() {
+    let fixture = EmitFixture::new("gated", EMITTED_NPM);
+
+    assert!(fixture.run_args(&["why", "lodash", "--config", "x.ts"], &[]).starts_with("NODE:"));
+    assert!(fixture.run(&[("VIS_INSTALLER", "npm")]).starts_with("NODE:"));
+    assert!(fixture.run_args(&["clean", "--dry-run"], &[]).starts_with("NODE:"));
+    assert_eq!(fixture.emitter_runs(), 0);
+    assert!(!fixture.project.join("node_modules").exists());
+}
+
+/// An emitter that fails (the config throws) falls back to Node, which reports the error itself.
+#[cfg(unix)]
+#[test]
+fn a_config_that_fails_to_evaluate_is_delegated_to_node() {
+    let fixture = EmitFixture::new("failing", "not json");
+
+    assert!(fixture.run(&[]).starts_with("NODE:"));
+}
+
+/// A config in a directory Node would not read `vis.config` from is never run, since Node would not run it either.
+#[cfg(unix)]
+#[test]
+fn a_config_outside_a_monorepo_root_is_not_evaluated() {
+    let fixture = EmitFixture::new("not-root", EMITTED_NPM);
+
+    std::fs::remove_file(fixture.project.join("lerna.json")).unwrap();
+    fixture.run(&[]);
+
+    assert_eq!(fixture.emitter_runs(), 0);
+}
+
 /// Run `vis <args>` in an empty project (a pnpm lockfile pins the detected PM) with an
 /// empty `PATH`, so no package manager or runtime binary can be spawned. Returns the exit
 /// code and stderr.
