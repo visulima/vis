@@ -10,11 +10,17 @@ import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 
 /**
  * `vis self-update` exists twice: the Node handler (`src/commands/upgrade/handler.ts`) and the native
- * path (`native/cli/src/self_update.rs`). Both ask npm for the latest version and may install one, so
- * the test puts a stub `npm` first on PATH that records its arguments and prints a version, and never
+ * path (`native/cli/src/self_update.rs`). Both ask npm for the latest version and Node may install one,
+ * so the test puts a stub `npm` first on PATH that records its arguments and prints a version, and never
  * reaches the registry. Every case runs through both with the same arguments and a CI context; stdout,
  * stderr, the exit code and the stub's recorded calls must match. A second stub stands in for Node on
  * the native side, so a run that quietly delegated is caught by its marker.
+ *
+ * Native answers `--check` and the up-to-date verdicts. An install is never native: the binary delegates
+ * it to Node before printing anything (a failed `npm install -g` is a plain `Error` that the CLI renders
+ * with a stack of bundle paths, which cannot be reproduced), so Node does the whole run and its output,
+ * exit code and single `npm install -g` call are the ones of a Node-only run. The cost is one extra
+ * `npm view`, which the tests assert.
  *
  * Both runs get an environment built from scratch: nothing of the machine (colour, CI or terminal
  * variables, the home directory with its tip and sponsor state) reaches them.
@@ -170,15 +176,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["up to date with --check", { args: ["--check"], current: "9.9.9" }],
         ["up to date with --force --check", { args: ["--force", "--check"], current: "9.9.9" }],
         ["update available with --check", { args: ["--check"], current: "1.0.0" }],
-        ["update available, installed", { args: [], current: "1.0.0" }],
-        ["update available, installed with --silent", { args: ["--silent"], current: "1.0.0" }],
-        ["--force when up to date", { args: ["--force"], current: "9.9.9" }],
-        ["explicit version", { args: ["2.0.0"], current: "1.0.0" }],
         ["explicit version with --check", { args: ["--check", "2.0.0-next.1"], current: "1.0.0" }],
         ["explicit version that is the running one", { args: ["2.0.0", "--check"], current: "2.0.0" }],
         ["explicit version that is the running one, forced", { args: ["--force", "2.0.0", "--check"], current: "2.0.0" }],
         ["a warning on the query's stderr", { args: ["--check"], current: "1.0.0", stub: { warn: "npm warn something" } }],
-        ["a warning on the query's stderr, installed", { args: [], current: "1.0.0", stub: { warn: "npm warn something" } }],
         ["the registry answers with a newer version", { args: ["--check"], current: "9.9.9", stub: { latest: "10.0.0-next.3" } }],
     ];
 
@@ -201,6 +202,32 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(node.stdout).toBe("info: checking for updates...\ninfo: found @visulima/vis@9.9.9 (current: 1.0.0)\ninfo: installing...\ninstalling install -g @visulima/vis@9.9.9\n\n✓ Updated @visulima/vis from 1.0.0 → 9.9.9\n");
         expect(node.calls).toBe("view @visulima/vis version\ninstall -g @visulima/vis@9.9.9\n");
     });
+
+    /** The runs that install: native delegates before printing anything, so Node's run is the whole output. */
+    const INSTALLS: [label: string, test: Case][] = [
+        ["update available", { args: [], current: "1.0.0" }],
+        ["update available with --silent", { args: ["--silent"], current: "1.0.0" }],
+        ["--force when up to date", { args: ["--force"], current: "9.9.9" }],
+        ["explicit version", { args: ["2.0.0"], current: "1.0.0" }],
+        ["a warning on the query's stderr", { args: [], current: "1.0.0", stub: { warn: "npm warn something" } }],
+    ];
+
+    for (const [label, test] of INSTALLS) {
+        it(`delegates an install before printing, and Node's run is the whole output: ${label}`, { timeout: 30_000 }, () => {
+            const native = runNative(test);
+            const delegated = runNative(test, { realEntry: true });
+            const node = runNode(test);
+
+            expect(native.stdout).toBe(`${marker}\n`);
+            expect(delegated.stdout).toBe(node.stdout);
+            expect(delegated.stderr).toBe(node.stderr);
+            expect(delegated.status).toBe(node.status);
+            expect(node.status).toBe(0);
+            // The native query, then Node's own query and the one install.
+            expect(delegated.calls).toBe(`view @visulima/vis version\n${node.calls}`);
+            expect(delegated.calls.match(/^install /gm)).toHaveLength(1);
+        });
+    }
 
     /** Shapes and contexts the native path hands to Node: before npm is run at all, and with the marker shown. */
     const DELEGATED: [label: string, test: Case, extra?: Record<string, string | undefined>, prepare?: (cwd: string) => void][] = [
@@ -255,20 +282,22 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect(delegated.status).toBe(1);
     });
 
-    // Known difference: the install cannot be taken back, so the lines printed before it are printed again
-    // by Node, which also runs the install a second time before it reports the error.
-    it("hands a failed install to Node, which repeats the lines and the install and then fails", { timeout: 30_000 }, () => {
+    it("delegates a failing install before printing, so Node reports it once, exactly as it does alone", { timeout: 30_000 }, () => {
         const test: Case = { args: [], current: "1.0.0", stub: { installStatus: 1 } };
+        const native = runNative(test);
         const delegated = runNative(test, { realEntry: true });
         const node = runNode(test);
         const lines = "info: checking for updates...\ninfo: found @visulima/vis@9.9.9 (current: 1.0.0)\ninfo: installing...\ninstalling install -g @visulima/vis@9.9.9\n";
 
+        expect(native.stdout).toBe(`${marker}\n`);
+        // Nothing of the native run shows: the lines appear once and the install runs once.
         expect(node.stdout).toBe(lines);
-        expect(delegated.stdout).toBe(`${lines}${lines}`);
-        expect(delegated.calls).toBe("view @visulima/vis version\ninstall -g @visulima/vis@9.9.9\nview @visulima/vis version\ninstall -g @visulima/vis@9.9.9\n");
+        expect(delegated.stdout).toBe(lines);
+        expect(delegated.calls).toBe("view @visulima/vis version\nview @visulima/vis version\ninstall -g @visulima/vis@9.9.9\n");
+        expect(delegated.calls.match(/^install /gm)).toHaveLength(1);
         expect(delegated.status).toBe(1);
         expect(node.status).toBe(1);
-        expect(withoutStack(delegated.stderr)).toBe(`install warning\n${withoutStack(node.stderr)}`);
-        expect(node.stderr).toContain("Error: Failed to update. Try running with sudo or fix npm permissions.");
+        expect(delegated.stderr).toBe(node.stderr);
+        expect(delegated.stderr).toContain("install warning\nError: Failed to update. Try running with sudo or fix npm permissions.");
     });
 });
