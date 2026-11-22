@@ -165,7 +165,7 @@ jobs:
                       packages/tooling/vis/*.node
                       packages/tooling/vis/npm/*/vis-native-cli
                       packages/tooling/vis/npm/*/vis-native-cli.exe
-                  key: "native-vis-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/vis/native/Cargo.toml', 'packages/tooling/vis/native/Cargo.lock', 'packages/tooling/vis/native/build.rs', 'packages/tooling/vis/native/src/**', 'packages/tooling/vis/native/cli/**', 'packages/tooling/vis/native/core/**') }}"
+                  key: "native-vis-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/vis/native/Cargo.toml', 'packages/tooling/vis/native/Cargo.lock', 'packages/tooling/vis/native/build.rs', 'packages/tooling/vis/native/src/**', 'packages/tooling/vis/native/cli/**', 'packages/tooling/vis/native/core/**', 'packages/tooling/task-runner/native/core/**') }}"
 
             - name: "Restore secret-scanner native build cache"
               id: "cache-secret-scanner"
