@@ -1,3 +1,14 @@
+## @visulima/task-runner-client [1.0.2-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner-client@1.0.1...@visulima/task-runner-client@1.0.2-next.1) (2026-11-22)
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+
+### Miscellaneous Chores
+
+* make ts-reset consistent across every package ([#828](https://github.com/visulima/vis/issues/828)) ([49dca85](https://github.com/visulima/vis/commit/49dca857499a739bc4f7b9a3f1501553f13a87ac))
+* point package repository urls at visulima/vis ([8f43d61](https://github.com/visulima/vis/commit/8f43d618694dde94f06867ee6155315714238b1c))
+
 ## @visulima/task-runner-client [1.0.1](https://github.com/visulima/visulima/compare/%40visulima%2Ftask-runner-client%401.0.0...%40visulima%2Ftask-runner-client%401.0.1) (2026-08-02)
 
 ## @visulima/task-runner-client 1.0.0 (2026-07-03)
