@@ -290,6 +290,13 @@ fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
     Some(listed)
 }
 
+/// Whether no inference detector applies to any project and every project has script targets, so
+/// that Node adds nothing (inputs, synthesized targets) beyond the `package.json` scripts.
+/// `affected` uses it to know no project declares an external input.
+pub(crate) fn inference_free(root: &Path, graph: &ProjectGraph) -> bool {
+    collect(root, graph).is_some()
+}
+
 /// Column width in UTF-16 units (`String.length`), which equals the char count for the
 /// BMP characters this table uses.
 fn units(text: &str) -> usize {

@@ -13,6 +13,35 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis affected` flag shapes (answer in affected.rs)", () => {
+        const ci = { CI: "1" };
+
+        it.each([[["affected", "build", "--sparse-checkout"]], [["affected", "build", "--sparse-checkout", "--base=main", "--no-uncommitted"]]])(
+            "routes `vis %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+            },
+        );
+
+        it.each([[["affected", "build"]], [["affected", "build", "--base=main"]], [["affected"]]])("keeps `vis %j` in Node: it forwards to `vis run`", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps `--sparse-checkout` in Node outside CI, on a terminal and on Windows", () => {
+            expect.assertions(3);
+
+            const args = ["affected", "build", "--sparse-checkout"];
+
+            expect(routesToNative(args, "linux", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(args, "linux", ci, "/work/app", true)).toBe(false);
+            expect(routesToNative(args, "win32", ci, "/work/app", false)).toBe(false);
+        });
+    });
+
     describe("`vis clean` flag shapes (plan in clean.rs)", () => {
         const ci = { CI: "1" };
 

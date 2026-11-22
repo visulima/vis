@@ -195,6 +195,13 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
     return platform !== "win32" && !interactive && inCi(environment);
 };
 
+// Whether `vis affected` can pass the binary's native gate (`answer` in `affected.rs`). Only the
+// `--sparse-checkout` shape is native, in a CI context; every other shape forwards to `vis run
+// --affected`, which the binary hands to Node itself. The binary re-checks everything, so this only
+// skips the extra process when it would delegate anyway.
+const affectedMayRunNatively = (platform, environment, args, interactive) =>
+    platform !== "win32" && !interactive && inCi(environment) && args.includes("--sparse-checkout");
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -239,6 +246,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // are native for their plain shapes in a CI context; the binary hands every other shape to Node itself.
     if (command === "cache" && CACHE_NATIVE_SUBCOMMANDS.has(subcommand)) {
         return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
+    }
+
+    // `affected <target> --sparse-checkout` is native in a CI context (`native/cli/src/affected.rs`); any
+    // other run would be delegated by the binary, which costs a second Node boot.
+    if (command === "affected") {
+        return helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive));
     }
 
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
