@@ -66,19 +66,16 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let target = options.version.clone().unwrap_or(latest);
     let verdict = decide(&options, &current, &target);
 
-    // Nothing is printed yet, so Node can take over and repeat the (read-only) query.
-    if verdict == Verdict::Install {
-        crate::delegate(raw);
-    }
+    let lines = match verdict {
+        Verdict::UpToDate(lines) => lines,
+        Verdict::Found(text) => vec![text],
+        // Nothing is printed yet, so Node can take over and repeat the (read-only) query.
+        Verdict::Install => crate::delegate(raw),
+    };
 
     say("info: checking for updates...");
     show_stderr(&query_stderr);
-
-    match verdict {
-        Verdict::UpToDate(lines) => lines.iter().for_each(|text| say(text)),
-        Verdict::Found(text) => say(&text),
-        Verdict::Install => unreachable!("an install is delegated above"),
-    }
+    lines.iter().for_each(|text| say(text));
 
     exit(0)
 }
