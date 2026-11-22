@@ -21,6 +21,15 @@ const generate: Task = {
     target: { project: "lib", target: "generate" },
 };
 
+const build: Task = {
+    cache: true,
+    id: "app:build",
+    outputs: [],
+    overrides: {},
+    projectRoot: "packages/app",
+    target: { project: "app", target: "build" },
+};
+
 const consume: Task = {
     cache: true,
     id: "app:consume",
@@ -35,13 +44,17 @@ describe("a declared task that depends on a traced task", () => {
     let executed: string[];
 
     // A fresh orchestrator per run, as every `vis run` invocation is: only the on-disk cache carries over.
-    const run = async (satisfied = false, tracedConsumer = false): Promise<Map<string, TaskResult>> => {
+    // With `chained`, a declared `app:build` sits between them: app:consume -> app:build -> lib:generate.
+    const run = async (satisfied = false, tracedConsumer = false, chained = false): Promise<Map<string, TaskResult>> => {
         const tasks = [
             { ...generate, ...(satisfied ? { satisfied: true } : {}) },
+            ...(chained ? [{ ...build, ...(satisfied ? { satisfied: true } : {}) }] : []),
             { ...consume, ...(tracedConsumer ? { declaresInputs: true, hashMode: "trace" as const } : {}) },
         ];
         const taskGraph: TaskGraph = {
-            dependencies: { "app:consume": ["lib:generate"], "lib:generate": [] },
+            dependencies: chained
+                ? { "app:build": ["lib:generate"], "app:consume": ["app:build"], "lib:generate": [] }
+                : { "app:consume": ["lib:generate"], "lib:generate": [] },
             roots: ["lib:generate"],
             tasks: Object.fromEntries(tasks.map((task) => [task.id, task])),
         };
@@ -163,6 +176,25 @@ describe("a declared task that depends on a traced task", () => {
 
         expect(second.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
         // Without a key for the dependency, the second run's result must not be served for `a = 3`.
+        expect(third.get("app:consume")?.terminalOutput).toBe("export const a = 3;");
+        expect(third.get("app:consume")?.status).toBe("success");
+    });
+
+    it("neither serves nor stores a dependent two levels from a satisfied traced dependency that has no valid entry", async () => {
+        expect.assertions(3);
+
+        await run(false, false, true);
+        // The traced task's input changed after the run that was meant to key it, so its entry no longer matches.
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 2;");
+
+        const second = await run(true, false, true);
+
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 3;");
+
+        const third = await run(true, false, true);
+
+        expect(second.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
+        // The declared task between them keeps a hash that leaves the traced task out, so it must not vouch for the chain.
         expect(third.get("app:consume")?.terminalOutput).toBe("export const a = 3;");
         expect(third.get("app:consume")?.status).toBe("success");
     });

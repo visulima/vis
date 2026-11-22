@@ -246,6 +246,13 @@ class TaskOrchestrator {
 
     readonly #alwaysTasks: Task[];
 
+    /**
+     * Ids of tasks that could not be keyed completely in this run, because a dependency (or one of
+     * its own dependencies) was left to an earlier run and has no key. A task that depends on one of
+     * these cannot be keyed either, however many levels away the unkeyed task sits.
+     */
+    readonly #unkeyedTasks = new Set<string>();
+
     readonly #whenContext: WhenContext;
 
     readonly #bail: boolean;
@@ -639,7 +646,11 @@ class TaskOrchestrator {
         }
 
         // The hash above leaves out a dependency that has no key, so it cannot vouch for this run.
-        const keyed = !this.#hasUnkeyedSatisfiedDependency(task);
+        const keyed = !this.#hasUnkeyedDependency(task);
+
+        if (!keyed) {
+            this.#unkeyedTasks.add(task.id);
+        }
 
         if (!this.#skipCache && task.cache !== false && keyed) {
             const cachedResult = await this.#cache.get(hash);
@@ -701,7 +712,12 @@ class TaskOrchestrator {
         let declaredKey: string | undefined;
         // The predecessor's key for a segment (see #chainKeyFor). `null` means the segment cannot be keyed this run.
         // A satisfied dependency with no key leaves the task unkeyed too: its fingerprint cannot vouch for that dependency.
-        const chainKey = this.#hasUnkeyedSatisfiedDependency(task) ? null : this.#chainKeyFor(task);
+        const unkeyed = this.#hasUnkeyedDependency(task);
+        const chainKey = unkeyed ? null : this.#chainKeyFor(task);
+
+        if (unkeyed) {
+            this.#unkeyedTasks.add(task.id);
+        }
 
         if (!this.#skipCache && task.cache !== false && chainKey !== null) {
             const cachedResult = await this.#cache.getByTaskId(task.id);
@@ -1195,17 +1211,17 @@ class TaskOrchestrator {
     }
 
     /**
-     * Whether a dependency of `task` was left to an earlier run (see {@link Task.satisfied}),
-     * should have a key, and has none: its trace entry is missing or no longer matches. That
-     * dependency would have re-run and been keyed in a single run, so the dependent's key
-     * cannot be trusted to cover it. A dependency with caching disabled never has a key; that case
-     * is left alone (see #foldDependencyHashes).
+     * Whether a dependency of `task` cannot vouch for the key: it was left to an earlier run (see
+     * {@link Task.satisfied}), should have a key, and has none (its trace entry is missing or no longer
+     * matches), or it was itself left unkeyed for that reason. Such a dependency would have re-run and been
+     * keyed in a single run, so the dependent's key cannot be trusted to cover it. A dependency with caching
+     * disabled never has a key; that case is left alone (see #foldDependencyHashes).
      */
-    #hasUnkeyedSatisfiedDependency(task: Task): boolean {
+    #hasUnkeyedDependency(task: Task): boolean {
         return (this.#taskGraph?.dependencies[task.id] ?? []).some((id) => {
             const dependency = this.#taskGraph?.tasks[id];
 
-            return dependency?.satisfied === true && dependency.cache !== false && !dependency.hash;
+            return this.#unkeyedTasks.has(id) || (dependency?.satisfied === true && dependency.cache !== false && !dependency.hash);
         });
     }
 
