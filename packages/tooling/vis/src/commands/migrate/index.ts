@@ -175,6 +175,23 @@ const migrateSherifCmd = defineCommand({
     options: migrateSherifCmdOptionDefinitions,
 });
 
+const migratePrettierCmdOptionDefinitions = {
+    ...sharedMigrateOptions,
+} as const;
+
+const migratePrettierCmd = defineCommand({
+    commandPath: ["migrate"],
+    description: "Move the Prettier config into vis.config fmt and rewrite prettier scripts to `vis fmt`",
+    examples: [
+        ["vis migrate prettier", "Move the Prettier config into vis.config fmt, remove prettier and rewrite its scripts (a .bak is taken first)"],
+        ["vis migrate prettier --dry-run", "Preview the changes without writing"],
+    ],
+    group: "Migrate",
+    loader: lazyNamed(() => import("./handler"), "migratePrettierExecute"),
+    name: "prettier",
+    options: migratePrettierCmdOptionDefinitions,
+});
+
 const migrateSelfCmdOptionDefinitions = {
     ...sharedMigrateOptions,
 } as const;
@@ -266,6 +283,7 @@ const migrateCommands: AnyCommandInput[] = [
     migrateSecretlintCmd,
     migrateSyncpackCmd,
     migrateSherifCmd,
+    migratePrettierCmd,
     migrateVerify,
     migrateVerifyGraphCmd,
 ];
@@ -298,6 +316,7 @@ export type MigrateKingfisherOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateSecretlintOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateSyncpackOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateSherifOptions = CreateOptions<SharedMigrateOptions>;
+export type MigratePrettierOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateSelfOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateAllOptions = CreateOptions<SharedMigrateOptions>;
 export type MigrateVerifyGraphOptions = CreateOptions<{

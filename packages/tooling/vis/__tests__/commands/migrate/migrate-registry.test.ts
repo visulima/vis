@@ -54,6 +54,7 @@ describe("migrate registry", () => {
                 "moon",
                 "nano-staged",
                 "nx",
+                "prettier",
                 "secretlint",
                 "sherif",
                 "syncpack",
@@ -62,7 +63,7 @@ describe("migrate registry", () => {
         });
 
         it("gives every entry a non-empty title and description", () => {
-            expect.assertions(22);
+            expect.assertions(24);
 
             for (const entry of MIGRATIONS) {
                 expect(entry.title.length).toBeGreaterThan(0);

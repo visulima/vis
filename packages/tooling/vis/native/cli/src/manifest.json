@@ -5643,6 +5643,40 @@
       "commandPath": [
         "migrate"
       ],
+      "description": "Move the Prettier config into vis.config fmt and rewrite prettier scripts to `vis fmt`",
+      "examples": [
+        [
+          "vis migrate prettier",
+          "Move the Prettier config into vis.config fmt, remove prettier and rewrite its scripts (a .bak is taken first)"
+        ],
+        [
+          "vis migrate prettier --dry-run",
+          "Preview the changes without writing"
+        ]
+      ],
+      "group": "Migrate",
+      "keys": [
+        "prettier"
+      ],
+      "name": "prettier",
+      "options": [
+        {
+          "description": "Preview changes without applying",
+          "name": "dry-run",
+          "type": "boolean"
+        },
+        {
+          "alias": "y",
+          "description": "Skip the confirmation prompt",
+          "name": "yes",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "commandPath": [
+        "migrate"
+      ],
       "description": "Audit the workspace for stray gitleaks/secretlint/sherif/syncpack references (exit 1 on issues)",
       "examples": [
         [

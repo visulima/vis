@@ -11,6 +11,7 @@ import { detectLintStagedConfig, migrateLintStaged } from "./lint-staged";
 import { migrateMoon } from "./moon";
 import { detectNanoStagedConfig, migrateNanoStaged } from "./nano-staged";
 import { migrateNx } from "./nx";
+import { detectPrettier, migratePrettier } from "./prettier";
 import { detectSecretlintConfig, detectSecretlintIgnore, migrateSecretlint } from "./secretlint";
 import { detectSherifConfig, detectSherifInstallation, migrateSherif } from "./sherif";
 import { detectSyncpackConfig, migrateSyncpack } from "./syncpack";
@@ -80,7 +81,7 @@ export interface ProbeContext {
 
 export interface MigrationEntry {
     /** Runs the migration for real and mutates the shared report. */
-    apply: (context: ProbeContext, report: MigrationReport, logger: MigrateLogger) => void;
+    apply: (context: ProbeContext, report: MigrationReport, logger: MigrateLogger) => Promise<void> | void;
     /** One-line description of what will be migrated. */
     description: string;
     /** Cheap filesystem check — decides whether to include the migration in the TUI. */
@@ -88,7 +89,7 @@ export interface MigrationEntry {
     /** Stable identifier (also matches the nested cerebro subcommand name). */
     id: string;
     /** Runs the migration in dry-run and returns the captured preview lines. */
-    probe: (context: ProbeContext) => string[];
+    probe: (context: ProbeContext) => Promise<string[]> | string[];
     /** Title displayed in the list. */
     title: string;
 }
@@ -296,6 +297,23 @@ const MIGRATIONS: MigrationEntry[] = [
             return lines;
         },
         title: "Sherif",
+    },
+    {
+        apply: async ({ root, visConfig }, report, logger) => {
+            await migratePrettier(root, { dryRun: false, visConfig }, logger, report);
+        },
+        description: "Move the Prettier config into vis.config fmt, remove prettier and rewrite `prettier --write|--check` scripts to `vis fmt`.",
+        detect: ({ root }) => detectPrettier(root),
+        id: "prettier",
+        probe: async ({ root, visConfig }) => {
+            const { lines, logger } = createCapturingLogger();
+            const report = createMigrationReport();
+
+            await migratePrettier(root, { dryRun: true, visConfig }, logger, report);
+
+            return lines;
+        },
+        title: "Prettier",
     },
 ];
 
