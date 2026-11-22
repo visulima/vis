@@ -183,8 +183,42 @@ const DELEGATED_AND_COMPARED: [fixture: string, args: string[]][] = [
     ["checksummed", ["--format", "json"]],
 ];
 
+// The variables that make Node colour its output and make the binary delegate (`colour_may_be_forced` and
+// `term::color_enabled`). A CI runner sets several of them (GITHUB_ACTIONS, GITHUB_WORKFLOW, TERM), which
+// would send every native case to Node, so none of them may reach the child.
+const COLOUR_ENVIRONMENT = [
+    "APPVEYOR",
+    "BUILDKITE",
+    "CIRCLECI",
+    "CI_NAME",
+    "COLORTERM",
+    "DRONE",
+    "FORCE_COLOR",
+    "GITEA_ACTIONS",
+    "GITHUB_ACTIONS",
+    "GITHUB_WORKFLOW",
+    "GITLAB_CI",
+    "PM2_HOME",
+    "TEAMCITY_VERSION",
+    "TERM",
+    "TERMINAL_EMULATOR",
+    "TERM_PROGRAM",
+    "TF_BUILD",
+    "TRAVIS",
+];
+
 // What changes Node's output apart from the arguments: the CI marker, colour, and test mode.
-const DROPPED_ENVIRONMENT = new Set(["CI", "COLUMNS", "CONTINUOUS_INTEGRATION", "FORCE_COLOR", "NODE_ENV", "VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_MONOREPO_ROOT", "VIS_VERSION"]);
+const DROPPED_ENVIRONMENT = new Set([
+    ...COLOUR_ENVIRONMENT,
+    "CI",
+    "COLUMNS",
+    "CONTINUOUS_INTEGRATION",
+    "NODE_ENV",
+    "VIS_FALLBACK_ENTRY",
+    "VIS_FALLBACK_ENTRY_OVERRIDE",
+    "VIS_MONOREPO_ROOT",
+    "VIS_VERSION",
+]);
 
 /** A case that leaves `COLUMNS` out of the child environment altogether. */
 const UNSET = "unset";
