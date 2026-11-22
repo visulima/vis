@@ -7,6 +7,11 @@ const fmtOptionDefinitions = {
         description: "Report files that would change without writing",
         type: Boolean,
     },
+    doctor: {
+        defaultValue: false,
+        description: "Print which engine and config source `vis fmt` would use, and format nothing",
+        type: Boolean,
+    },
     format: {
         defaultValue: "human",
         description: "Output format: human, json, minimal, sarif, junit, or github",
@@ -51,6 +56,7 @@ const fmt = defineCommand({
         ["vis fmt --since main", "Only format files changed vs the main branch"],
         ["vis fmt --staged", "Only format files currently staged in the git index"],
         ["vis fmt --watch", "Re-run the formatter when watched files change"],
+        ["vis fmt --doctor", "Show the engine, config source and bundled oxfmt version without formatting"],
         ["vis fmt --check --format sarif --output fmt.sarif", "Write the SARIF report to fmt.sarif instead of stdout"],
     ],
     group: "Lint & Format",
