@@ -346,6 +346,47 @@ describe("vis ci", () => {
         expect(runCall?.argv).toContain("build");
     });
 
+    it("hands a --deps-only target list through the real affected handler to one `vis run`", async () => {
+        expect.assertions(4);
+
+        const runCalls: RuntimeCall[] = [];
+        const runtime = {
+            runCommand: async (name: string, options: { argv: string[] }): Promise<void> => {
+                if (name !== "affected") {
+                    runCalls.push({ argv: options.argv, name });
+
+                    return;
+                }
+
+                await affectedExecute({
+                    argument: [options.argv[0]],
+                    logger: makeLogger().logger,
+                    options: {},
+                    rawArgv: options.argv,
+                    runtime: runtime as never,
+                    visConfig: {},
+                    workspaceRoot,
+                } as never);
+            },
+        };
+
+        await ciExecute({
+            argument: ["lint,build,lint"],
+            logger: makeLogger().logger,
+            options: { base: "main", depsOnly: true, head: "HEAD", install: false },
+            runtime: runtime as never,
+            visConfig: {},
+            workspaceRoot,
+        } as never);
+
+        const runs = runCalls.filter((call) => call.name === "run");
+
+        expect(runs).toHaveLength(1);
+        expect(runs[0]?.argv[0]).toBe("lint,build");
+        expect(runs[0]?.argv).toContain("--deps-only");
+        expect(runs[0]?.argv).toContain("--affected");
+    });
+
     it("forwards --upstream / --downstream / --parallel / --partition / --query when set", async () => {
         expect.assertions(4);
 

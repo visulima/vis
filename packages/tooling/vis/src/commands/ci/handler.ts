@@ -11,10 +11,14 @@ const execute = async ({ argument, logger, options, runtime, visConfig, workspac
         throw new Error("Missing targets. Usage: vis ci <target>[,<target>…]");
     }
 
-    const targets = rawTargets
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
+    const targets = [
+        ...new Set(
+            rawTargets
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean),
+        ),
+    ];
 
     if (targets.length === 0) {
         throw new Error("Missing targets. Usage: vis ci <target>[,<target>…]");

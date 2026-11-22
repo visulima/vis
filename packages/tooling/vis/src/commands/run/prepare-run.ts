@@ -90,17 +90,25 @@ export const prepareRun = async ({
     workspaceRoot: string;
 }): Promise<PreparedRun | undefined> => {
     // `argument` is empty when no target was typed (the interactive picker then asks for one).
-    const listed = splitTargetList(argument?.[0]);
+    const raw = argument?.[0];
+    const listed = splitTargetList(raw);
+
+    if (raw?.includes(",") && listed.length === 0) {
+        throw new VisUserError(`"${raw}" names no target. Usage: vis run <target>[,<target>…] --deps-only`);
+    }
 
     if (listed.length > 1) {
         validateTargetList(listed, argument, options);
     }
 
+    // `build,` and `build,build` are one target: run it as such, with the arguments that follow it.
+    const singleArgument = raw?.includes(",") && listed.length === 1 ? [listed[0] as string, ...argument.slice(1)] : argument;
+
     const prepared: PreparedRun[] = [];
 
     for (const item of listed.length > 1 ? listed : [undefined]) {
         const selection = await resolveRunSelection({
-            argument: item === undefined ? argument : [item],
+            argument: item === undefined ? singleArgument : [item],
             cacheDirectory,
             config,
             fileOwners,

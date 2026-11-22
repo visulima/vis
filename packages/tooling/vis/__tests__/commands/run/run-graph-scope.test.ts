@@ -324,9 +324,9 @@ describe("vis run <target>,<target> --deps-only", () => {
     it("runs a dependency the targets share once, where one run per target repeats it", async () => {
         expect.assertions(2);
 
-        await run(["lint,test"]);
+        await run(["build,test"]);
 
-        // lint has no dependencies, test needs build and lib:gen; both are the dependency step of `test`.
+        // Both targets need lib:gen: one run builds it once.
         expect(lines("gen")).toHaveLength(1);
 
         rmSync(log("gen"), { force: true });
@@ -348,13 +348,21 @@ describe("vis run <target>,<target> --deps-only", () => {
         expect(lines("lint")).toHaveLength(0);
     });
 
-    it("collapses a repeated target", async () => {
-        expect.assertions(2);
+    it("collapses a repeated target, and treats a list that names one target as that target", async () => {
+        expect.assertions(4);
 
         await run(["build,build,test"]);
 
         expect(lines("gen")).toHaveLength(1);
         expect(lines("build")).toHaveLength(1);
+
+        rmSync(log("gen"), { force: true });
+        await run(["build,build"]);
+        await run(["build,"], { depsOnly: true });
+
+        expect(lines("gen")).toHaveLength(2);
+
+        await expect(run([","])).rejects.toThrow("names no target");
     });
 
     it("skips a target no project has with --if-present, and does nothing when none has it", async () => {
