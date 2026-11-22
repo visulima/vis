@@ -1,14 +1,20 @@
+import { spawnSync } from "node:child_process";
+
 import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { bold, cyan, dim, green } from "@visulima/colorize";
-import { relative } from "@visulima/path";
+import { basename, relative } from "@visulima/path";
 
 import { resolveSharedCacheDirectory } from "../../cache/cache-directory";
+import { selectFmtEngine } from "../../fmt/engine";
+import type { FmtResolution } from "../../fmt/resolve-options";
+import { describeFmtSource, resolveFmtOptions } from "../../fmt/resolve-options";
+import { runOxfmt, TRANSIENT_CONFIG_PATTERN, TRANSIENT_CONFIG_PREFIX } from "../../fmt/run-oxfmt";
 import { biomeAdapter } from "../../lint-fmt/adapters/biome";
 import { dprintAdapter } from "../../lint-fmt/adapters/dprint";
-import { oxfmtAdapter } from "../../lint-fmt/adapters/oxfmt";
+import { BUNDLED_OXFMT_EXTENSIONS, oxfmtAdapter } from "../../lint-fmt/adapters/oxfmt";
 import { prettierAdapter } from "../../lint-fmt/adapters/prettier";
 import { ruffFmtAdapter } from "../../lint-fmt/adapters/ruff";
-import type { AdapterRunOptions, Finding, FmtAdapterId } from "../../lint-fmt/config-types";
+import type { AdapterId, AdapterRunOptions, Finding, FmtAdapterId, RunResult } from "../../lint-fmt/config-types";
 import { detectAdapters } from "../../lint-fmt/detect";
 import { changedFilesSince, stagedFiles } from "../../lint-fmt/diff";
 import type { OutputSink } from "../../lint-fmt/output";
@@ -21,6 +27,7 @@ import { aggregate, exitCodeFor, groupFindingsByFile } from "../../lint-fmt/resu
 import type { AdapterJob } from "../../lint-fmt/runner";
 import { runAdaptersParallel } from "../../lint-fmt/runner";
 import { runWatchLoop } from "../../lint-fmt/watch-loop";
+import { importTs } from "../../runtime/ts-loader";
 import type { FmtOptions } from "./index";
 
 const FORMAT_ADAPTERS = [oxfmtAdapter, biomeAdapter, dprintAdapter, prettierAdapter, ruffFmtAdapter];
@@ -33,9 +40,43 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     const adapters = registerAdapters(FORMAT_ADAPTERS, fmtConfig?.order);
     const detected = detectAdapters(root, adapters);
     const allEligible = adaptersByKind(detected, adapters, "fmt");
-    const eligible = allEligible.filter(({ adapter }) => fmtConfig?.adapters?.[adapter.id as FmtAdapterId]?.enabled !== false);
+    const enabled = allEligible.filter(({ adapter }) => fmtConfig?.adapters?.[adapter.id as FmtAdapterId]?.enabled !== false);
+    const bundled
+        = selectFmtEngine({
+            builtin: fmtConfig?.adapters?.oxfmt?.builtin,
+            detected: enabled.map(({ adapter }) => adapter.id as FmtAdapterId),
+            engine: fmtConfig?.engine,
+            oxfmtEnabled: fmtConfig?.adapters?.oxfmt?.enabled !== false,
+        }) === "bundled";
+    const format = options.format ?? "human";
+    const announce = format === "human" && !options.quiet;
 
-    if (eligible.length === 0) {
+    let resolution: FmtResolution | undefined;
+    let eligible = enabled;
+
+    if (bundled) {
+        // The bundled oxfmt is the only formatter that runs, so no file is formatted twice.
+        resolution = await resolveFmtOptions({ fmtConfig, loadModule: importTs, root });
+        eligible = [{ adapter: oxfmtAdapter, presence: detected.get("oxfmt") ?? { adapter: "oxfmt", declared: false, root } }];
+
+        for (const warning of resolution.warnings) {
+            logger.warn(`vis fmt: ${warning}`);
+        }
+
+        if (fmtConfig?.engine !== "oxfmt" && enabled.some(({ adapter }) => adapter.id === "prettier")) {
+            logger.warn('vis fmt: formatting with the bundled oxfmt instead of Prettier; the output can differ. Set `fmt.engine: "prettier"` in vis.config to keep running Prettier.');
+        }
+
+        if (announce) {
+            logger.info(
+                resolution.source === "defaults" ? "vis fmt: no config found, using oxfmt defaults" : `vis fmt: formatting with ${describeFmtSource(resolution, root)}`,
+            );
+
+            if (resolution.config !== undefined) {
+                hintGitignore(root, logger);
+            }
+        }
+    } else if (eligible.length === 0) {
         logger.warn("vis fmt: no formatter detected in this workspace (looked for: oxfmt, biome, dprint, prettier, ruff).");
 
         return;
@@ -54,7 +95,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     let sinceFiles: string[] | undefined;
 
     if (options.staged) {
-        sinceFiles = stagedFiles(root);
+        sinceFiles = stagedFiles(root)?.filter((file) => !isTransientConfig(file));
 
         if (sinceFiles === undefined) {
             logger.warn("vis fmt: could not resolve --staged (not a git repo or git unavailable). Falling back to a workspace-wide run.");
@@ -64,7 +105,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
             return;
         }
     } else if (typeof options.since === "string" && options.since.length > 0) {
-        sinceFiles = changedFilesSince(root, options.since);
+        sinceFiles = changedFilesSince(root, options.since)?.filter((file) => !isTransientConfig(file));
 
         if (sinceFiles === undefined) {
             logger.warn(`vis fmt: could not resolve --since ${options.since} (not a git repo or unknown ref). Falling back to a workspace-wide run.`);
@@ -76,7 +117,6 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     }
 
     const cacheRoot = resolveSharedCacheDirectory(root, undefined, undefined, true);
-    const format = options.format ?? "human";
 
     if (format === "human" && options.output !== undefined) {
         logger.warn("vis fmt: --output is ignored for the human format; pass --format json|minimal|sarif|junit|github to redirect findings to a file.");
@@ -88,8 +128,9 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
         const jobs: AdapterJob[] = [];
 
         if (explicit) {
-            // Route each explicit file to the adapter that owns its extension.
-            const grouped = routeFilesByExtension(explicit, eligible, fmtConfig?.extensionOverrides);
+            // Route each explicit file to the adapter that owns its extension. The bundled oxfmt takes every
+            // file and skips the ones it does not format itself.
+            const grouped = bundled ? new Map<AdapterId, string[]>([["oxfmt", explicit]]) : routeFilesByExtension(explicit, eligible, fmtConfig?.extensionOverrides);
 
             for (const { adapter, presence } of eligible) {
                 const files = grouped.get(adapter.id);
@@ -126,7 +167,10 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
             return;
         }
 
-        const rawResults = await runAdaptersParallel(jobs, runOptions, mode, { cacheRoot });
+        const rawResults = bundled
+            ? [await runOxfmt({ config: resolution?.config, extraArgs: jobs[0]!.options?.extraArgs, files: jobs[0]!.files, mode, root })]
+            : await runAdaptersParallel(jobs, runOptions, mode, { cacheRoot });
+        const toolFailure = bundled ? reportToolFailure(rawResults[0]!, logger) : false;
         const runs = jobs.map((job, index) => {
             const raw = rawResults[index]!;
             const findings = job.adapter.parse(raw, job.presence);
@@ -210,8 +254,11 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
 
         // In `fix` mode, "would change" findings shouldn't fail the run — the
         // tool just wrote them. Only escalate when the user asked for `--check`.
-        const exitCode
-            = mode === "fix" ? (result.hadProcessFailure ? 1 : 0) : exitCodeFor({ ...result, maxSeverity: result.findings.length > 0 ? "error" : undefined });
+        const exitCode = toolFailure
+            ? 1
+            : mode === "fix"
+                ? (result.hadProcessFailure ? 1 : 0)
+                : exitCodeFor({ ...result, maxSeverity: result.findings.length > 0 ? "error" : undefined });
 
         if (exitCode !== 0) {
             process.exitCode = exitCode;
@@ -219,10 +266,11 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     };
 
     if (options.watch) {
-        const extensions = [...new Set(eligible.flatMap(({ adapter }) => adapter.extensions))];
+        const extensions = bundled ? [...BUNDLED_OXFMT_EXTENSIONS] : [...new Set(eligible.flatMap(({ adapter }) => adapter.extensions))];
 
         await runWatchLoop({
             extensions,
+            ignore: isTransientConfig,
             initialFiles: sinceFiles,
             label: "fmt",
             log: (message) => {
@@ -236,6 +284,26 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     }
 
     await runCycle(sinceFiles);
+};
+
+const isTransientConfig = (file: string): boolean => basename(file).startsWith(TRANSIENT_CONFIG_PREFIX);
+
+/** Prints oxfmt's own error output when it failed (exit other than 0 or 1); true when it did. */
+const reportToolFailure = (raw: RunResult, logger: Toolbox["logger"]): boolean => {
+    if (raw.exitCode === 0 || raw.exitCode === 1) {
+        return false;
+    }
+
+    logger.error(raw.stderr.trim() || `vis fmt: oxfmt exited with ${raw.exitCode === null ? "no exit code" : `code ${String(raw.exitCode)}`}.`);
+
+    return true;
+};
+
+const hintGitignore = (root: string, logger: Toolbox["logger"]): void => {
+    // Exit 1 means "not ignored"; 128 (not a repository) and a missing git stay quiet.
+    if (spawnSync("git", ["check-ignore", "-q", `${TRANSIENT_CONFIG_PREFIX}x.json`], { cwd: root }).status === 1) {
+        logger.info(dim(`vis fmt: a temporary ${TRANSIENT_CONFIG_PATTERN} is written to the workspace root while it runs; add it to .gitignore.`));
+    }
 };
 
 const collectPositional = (options: FmtOptions): string[] => {
