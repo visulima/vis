@@ -466,6 +466,15 @@ fn render(graph: &ProjectGraph, affected: &BTreeSet<String>) -> String {
     text
 }
 
+/// Whether Node's selection reads a `project.json` of this workspace: the root's, or one in a project directory.
+/// Its `targets[].inputs` (external inputs), `implicitDependencies` and `tags` change which projects are selected,
+/// and none of them is reproduced here. Membership already delegates such a root; this keeps the selection from
+/// depending on that.
+fn reads_project_json(root: &Path, graph: &ProjectGraph) -> bool {
+    root.join("project.json").exists()
+        || graph.directories.values().any(|directory| root.join(directory).join("project.json").exists())
+}
+
 /// The text `vis affected … --sparse-checkout` prints, or `None` when Node must answer.
 fn answer(args: &[String]) -> Option<String> {
     let options = parse(args)?;
@@ -482,7 +491,7 @@ fn answer(args: &[String]) -> Option<String> {
 
     // Every project must be free of the inference that could add inputs. The gate also leaves a
     // project at the root directory and a non-ASCII directory to Node.
-    if !crate::list::inference_free(&root, &graph) {
+    if !crate::list::inference_free(&root, &graph) || reads_project_json(&root, &graph) {
         return None;
     }
 
@@ -783,6 +792,34 @@ mod tests {
         assert_eq!(selected(&["packages/ab/x.ts"], Scope::None, Scope::None), ["a", "b", "c", "d", "e"]);
         assert!(selected(&[], Scope::Deep, Scope::None).is_empty());
         assert_eq!(selected(&["packages/d"], Scope::Deep, Scope::None), ["d"]);
+    }
+
+    #[test]
+    fn a_project_json_at_the_root_or_in_a_project_is_left_to_node() {
+        let root = env::temp_dir().join(format!("vis-affected-project-json-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        std::fs::create_dir_all(root.join("packages/a")).unwrap();
+
+        let graph = graph();
+        let mut at_a = graph.directories.clone();
+
+        at_a.insert("a".to_owned(), "packages/a".to_owned());
+
+        let single = ProjectGraph { directories: at_a, ..graph };
+
+        assert!(!reads_project_json(&root, &single));
+
+        std::fs::write(root.join("packages/a/project.json"), "{}").unwrap();
+
+        assert!(reads_project_json(&root, &single));
+
+        std::fs::remove_file(root.join("packages/a/project.json")).unwrap();
+        std::fs::write(root.join("project.json"), "{}").unwrap();
+
+        assert!(reads_project_json(&root, &single));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -47,8 +47,12 @@ const baseEnvironment = (): Record<string, string | undefined> => {
     return env;
 };
 
-// A delegated error path prints a Node stack, whose async frames differ from one run to the next.
-const withoutStackFrames = (stderr: string): string => stderr.replaceAll(/^\s+at .*\n/gmu, "");
+// A delegated error path prints a Node stack, whose async frames differ from one run to the next. Only V8 frames
+// (`at fn (file:1:2)`, `at file:1:2`, `at async fn (file:1:2)`, optionally followed by the `{` that opens the error's properties) are dropped, so any other indented line still has to match.
+const withoutStackFrames = (stderr: string): string => stderr.replaceAll(/^\s+at (?:.+ \(.*:\d+:\d+\)|(?:async )?[^\s()]+:\d+:\d+)(?: \{)?\n/gmu, "");
+
+/** Repositories whose `project.json` carries config the native selection does not reproduce. */
+type Fixture = "external-input" | "implicit-dependency";
 
 interface Case {
     args: string[];
@@ -56,6 +60,8 @@ interface Case {
     cwd?: string;
     /** Extra environment; values may use `{sha:&lt;tag>}` and `{payload}`. */
     env?: Record<string, string>;
+    /** The repository the case runs in; defaults to the main one. */
+    fixture?: Fixture;
     /** Whether the binary answers it natively. Everything else must delegate and still match. */
     native: boolean;
     /** Defaults to a CI context. */
@@ -120,10 +126,16 @@ const cases: Case[] = [
     { args: ["affected"], native: false },
     { args: [...sparse, "--base=v1", "--head=v2", "--parallel=2"], native: false },
     { args: [...sparse, "--base=v1", "--head=v2"], native: false, outsideCi: true },
+    // `project.json` config the native selection cannot reproduce. Node selects `lib` from an external input with no stored
+    // hash snapshot (nothing changed in git), and `app` from an implicit dependency (`lib` changed in git).
+    { args: [...sparse, "--base=v1", "--head=v1"], fixture: "external-input", native: false },
+    { args: [...sparse, "--base=v1", "--head=v2"], fixture: "external-input", native: false },
+    { args: [...sparse, "--base=v1", "--head=v2"], fixture: "implicit-dependency", native: false },
+    { args: [...sparse, "--base=v1", "--head=v2", "--downstream=direct"], fixture: "implicit-dependency", native: false },
 ];
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis affected: native vs Node", () => {
-    const paths = { payload: "", repository: "", scratch: "", stub: "" };
+    const paths = { fixtures: {} as Record<Fixture, string>, payload: "", repository: "", scratch: "", shared: "", stub: "" };
     const shas: Record<string, string> = {};
 
     const git = (args: string[], cwd = paths.repository): string => {
@@ -136,19 +148,50 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         return result.stdout.trim();
     };
 
-    const write = (file: string, content: string): void => {
-        const path = join(paths.repository, file);
+    const write = (file: string, content: string, repository = paths.repository): void => {
+        const path = join(repository, file);
 
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, content);
     };
 
-    const commit = (message: string, tag: string): void => {
-        git(["add", "--all"]);
-        git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", message]);
-        git(["tag", tag]);
+    const commit = (message: string, tag: string, repository = paths.repository): void => {
+        git(["add", "--all"], repository);
+        git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", message], repository);
+        git(["tag", tag], repository);
 
-        shas[tag] = git(["rev-parse", "HEAD"]);
+        if (repository === paths.repository) {
+            shas[tag] = git(["rev-parse", "HEAD"], repository);
+        }
+    };
+
+    // A small workspace with `lib` and `app` (no package.json edge between them) whose `project.json` files come from
+    // `projectJson`. `v1` is the initial commit and `v2` changes `lib`.
+    const createFixture = (name: Fixture, projectJson: Record<string, Record<string, unknown>>): string => {
+        const repository = join(paths.scratch, name);
+
+        mkdirSync(repository);
+        git(["init", "--quiet", "-b", "main"], repository);
+
+        write("package.json", '{"name":"fixture-root","private":true}\n', repository);
+        write("pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n', repository);
+        write("pnpm-lock.yaml", "lockfileVersion: 9\n", repository);
+        write("packages/lib/package.json", manifest("lib"), repository);
+        write("packages/lib/index.ts", "export const lib = 1;\n", repository);
+        write("packages/app/package.json", manifest("app"), repository);
+        write("packages/app/index.ts", "export const app = 1;\n", repository);
+
+        for (const [project, config] of Object.entries(projectJson)) {
+            write(`packages/${project}/project.json`, `${JSON.stringify(config)}\n`, repository);
+        }
+
+        commit("initial", "v1", repository);
+        git(["update-ref", "refs/remotes/origin/main", "HEAD"], repository);
+
+        write("packages/lib/index.ts", "export const lib = 2;\n", repository);
+        commit("lib", "v2", repository);
+
+        return repository;
     };
 
     const manifest = (name: string, extra: Record<string, unknown> = {}): string => `${JSON.stringify({ name, scripts: { build: "echo build" }, ...extra })}\n`;
@@ -207,6 +250,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         write("notes.md", "scratch\n");
 
         writeFileSync(paths.payload, JSON.stringify({ before: shas["v3"] }));
+
+        paths.shared = join(paths.scratch, "shared");
+        mkdirSync(paths.shared);
+        writeFileSync(join(paths.shared, "data.txt"), "shared input\n");
+
+        paths.fixtures["external-input"] = createFixture("external-input", {
+            lib: { name: "lib", targets: { build: { inputs: ["{workspaceRoot}/../shared/**"] } } },
+        });
+        paths.fixtures["implicit-dependency"] = createFixture("implicit-dependency", { app: { implicitDependencies: ["lib"], name: "app" } });
     });
 
     afterAll(() => {
@@ -227,30 +279,44 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         return env;
     };
 
+    const repositoryOf = (testCase: Case): string => (testCase.fixture ? paths.fixtures[testCase.fixture] : paths.repository);
+
+    // Node stores the external-input hashes of a run under `node_modules/.cache/vis` and reads them on the next one. Every run
+    // starts without that snapshot, so the Node reference and the Node fallback see the same state.
+    const forgetExternalInputs = (testCase: Case): void => {
+        rmSync(join(repositoryOf(testCase), "node_modules"), { force: true, recursive: true });
+    };
+
     // `vis affected` computes its root from the working directory and ignores an inherited
     // `VIS_MONOREPO_ROOT`; the native runs get a stale one on purpose, so trusting it would show.
-    const runNode = (testCase: Case) =>
-        spawnSync(process.execPath, [nodeEntry, ...testCase.args], {
-            cwd: join(paths.repository, testCase.cwd ?? "."),
-            encoding: "utf8",
-            env: { ...environmentFor(testCase), VIS_MONOREPO_ROOT: paths.repository },
-        });
+    const runNode = (testCase: Case) => {
+        forgetExternalInputs(testCase);
 
-    const runNative = (testCase: Case, entry: string) =>
-        spawnSync(binary as string, testCase.args, {
-            cwd: join(paths.repository, testCase.cwd ?? "."),
+        return spawnSync(process.execPath, [nodeEntry, ...testCase.args], {
+            cwd: join(repositoryOf(testCase), testCase.cwd ?? "."),
+            encoding: "utf8",
+            env: { ...environmentFor(testCase), VIS_MONOREPO_ROOT: repositoryOf(testCase) },
+        });
+    };
+
+    const runNative = (testCase: Case, entry: string) => {
+        forgetExternalInputs(testCase);
+
+        return spawnSync(binary as string, testCase.args, {
+            cwd: join(repositoryOf(testCase), testCase.cwd ?? "."),
             encoding: "utf8",
             env: {
                 ...environmentFor(testCase),
                 VIS_FALLBACK_ENTRY: entry,
                 VIS_FALLBACK_ENTRY_OVERRIDE: entry,
-                VIS_MONOREPO_ROOT: dirname(paths.repository),
+                VIS_MONOREPO_ROOT: dirname(repositoryOf(testCase)),
                 VIS_NODE: process.execPath,
                 VIS_VERSION: version,
             },
         });
+    };
 
-    it.each(cases.map((testCase) => [`${testCase.cwd ? `[${testCase.cwd}] ` : ""}${testCase.outsideCi ? "(no CI) " : ""}${JSON.stringify(testCase.env ?? {})} ${testCase.args.join(" ")}`, testCase] as const))(
+    it.each(cases.map((testCase) => [`${testCase.fixture ? `<${testCase.fixture}> ` : ""}${testCase.cwd ? `[${testCase.cwd}] ` : ""}${testCase.outsideCi ? "(no CI) " : ""}${JSON.stringify(testCase.env ?? {})} ${testCase.args.join(" ")}`, testCase] as const))(
         "%s matches Node",
         (_name, testCase) => {
             expect.assertions(4);
