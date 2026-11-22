@@ -1,3 +1,9 @@
+## @visulima/tui [5.0.2-next.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.1...@visulima/tui@5.0.2-next.1) (2026-11-22)
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+
 ## @visulima/tui [5.0.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.0...@visulima/tui@5.0.1) (2026-10-27)
 
 ### Bug Fixes

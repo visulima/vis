@@ -1,3 +1,9 @@
+## @visulima/secret-scanner [3.0.1-next.1](https://github.com/visulima/vis/compare/@visulima/secret-scanner@3.0.0...@visulima/secret-scanner@3.0.1-next.1) (2026-11-22)
+
+### Bug Fixes
+
+* **release:** publish next as a prerelease channel ([#145](https://github.com/visulima/vis/issues/145)) ([23f5391](https://github.com/visulima/vis/commit/23f5391cf38011ee141dbeba0cc353f39a1e93ca))
+
 ## @visulima/secret-scanner [3.0.0](https://github.com/visulima/vis/compare/@visulima/secret-scanner@2.1.0...@visulima/secret-scanner@3.0.0) (2026-11-21)
 
 ### ⚠ BREAKING CHANGES
