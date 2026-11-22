@@ -73,6 +73,23 @@ const populate = (directory: string, entries: Record<string, [number, number[]]>
     }
 };
 
+/**
+ * The entry whose age prints in minutes. Its age is a whole unit plus half a minute, so the two runs of a case
+ * (seconds apart) agree, but the cases together take longer than that, so it is set again before each pair.
+ */
+const MINUTE_AGED_ENTRY = "cccccccccccccccc"; // the key in `fillCache`
+const MINUTE_AGED_SECONDS = 50 * MINUTE + 30;
+
+const reageMinuteEntry = (workspace: string): void => {
+    for (const cache of [join(workspace, "node_modules", ".cache", "vis"), join(workspace, "custom-cache")]) {
+        const entry = join(cache, MINUTE_AGED_ENTRY);
+
+        if (existsSync(entry)) {
+            age(entry, MINUTE_AGED_SECONDS);
+        }
+    }
+};
+
 /** The default cache directory of a workspace, filled with the entries the cases read. */
 const fillCache = (root: string): string => {
     const cache = join(root, "node_modules", ".cache", "vis");
@@ -82,7 +99,7 @@ const fillCache = (root: string): string => {
         // Same modification time on two entries: the order between them is the listing's tie-break.
         a1b2c3d4e5f6a7b8: [3 * HOUR + 30 * MINUTE, [3000, 1500, 7]],
         bbbbbbbbbbbbbbbbbbbbbbbbbb: [2 * DAY + 12 * HOUR, [1500]],
-        cccccccccccccccc: [50 * MINUTE + 30, [1_048_576, 100]],
+        cccccccccccccccc: [MINUTE_AGED_SECONDS, [1_048_576, 100]],
         dddddddd: [40 * DAY, [1, 2, 3]],
         eeee: [5 * HOUR + 30 * MINUTE, []],
     });
@@ -401,6 +418,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             }
 
             compared.add(key);
+            reageMinuteEntry(directory);
 
             const node = runNode(directory, args, env);
             const via = runNative(directory, args, env, route === "native" ? stubEntry : nodeEntry);
