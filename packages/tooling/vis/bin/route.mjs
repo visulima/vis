@@ -233,7 +233,8 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     }
 
     // `cache hash` is native for one task id with `--format` / `--run` in a CI context
-    // (`native/cli/src/cache_hash.rs`); the binary delegates the rest (trace-mode tasks, odd summaries).
+    // (`native/cli/src/cache_hash.rs`), trace-mode tasks included: their tracked inputs are read from the
+    // cache entry. The binary delegates the rest (other shapes, odd summaries or fingerprints, a moved cache).
     if (command === "cache" && subcommand === "hash") {
         return helpOrNative(args, () => cacheHashMayRunNatively(platform, environment, args, interactive));
     }
