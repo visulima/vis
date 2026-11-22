@@ -251,10 +251,11 @@ export const buildCiWorkflowPlan = ({
             throw new VisUserError(`ci.workflow.partitions.${target} must be a positive integer, got ${JSON.stringify(shards)}.`);
         }
 
-        // Shards run at the same time, so a shard cannot wait for another shard's tasks.
-        if (shards > 1 && declaredEdges.get(target)?.has(target)) {
+        // Shards run at the same time, so a shard cannot wait for another shard's tasks. The target
+        // reaches itself when its dependsOn chain leads back to it, directly or through other targets.
+        if (shards > 1 && reachableFrom([target], (node) => declaredEdges.get(node)).has(target)) {
             throw new VisUserError(
-                `ci.workflow.partitions.${target}: ${target} depends on ${target} of other projects (^${target}), so its shards would depend on each other. Remove the partition.`,
+                `ci.workflow.partitions.${target}: ${target} depends on ${target} of other projects (^${target}), directly or through other targets, so its shards would depend on each other. Remove the partition.`,
             );
         }
     }

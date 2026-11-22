@@ -128,6 +128,16 @@ describe(buildCiWorkflowPlan, () => {
         expect(result.layers.flat().find(({ name }) => name === "test")?.env).toStrictEqual({ CI_SHARD: "1" });
     });
 
+    it("rejects partitioning a target that reaches itself through another target", () => {
+        expect.assertions(1);
+
+        const chained = { app: { targets: { build: { dependsOn: ["^test"] }, test: { dependsOn: ["build"] } } } };
+
+        expect(() =>
+            buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects: chained, settings: { partitions: { test: 2 } }, visVersion: "1.2.3" }),
+        ).toThrow("directly or through other targets");
+    });
+
     it.each([
         ["a partition for a target the workflow does not run", { partitions: { tset: 2 } }, "\"tset\" is not one of the workflow's targets"],
         ["a non-integer shard count", { partitions: { test: 1.5 } }, "must be a positive integer"],
