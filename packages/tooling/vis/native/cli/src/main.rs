@@ -29,6 +29,7 @@ mod advisories;
 mod affected;
 mod cache;
 mod cache_hash;
+mod ci_workflow;
 mod clean;
 mod complete;
 mod config_cache;
@@ -138,6 +139,12 @@ fn main() {
         // `vis secrets` — the working-tree scan with `--format json|sarif`, `--quiet` and `--baseline`.
         // Every other shape is delegated inside `secrets::run`; help is left to the arm below.
         "secrets" if !surface::asks_for_help(&args) => secrets::run(&args, &raw_args),
+        // `vis sync ci-workflow` — the generator and its `--check`, native for a JS-only pnpm workspace in CI.
+        // Every other shape, and every input it cannot reproduce byte for byte, is delegated inside
+        // `ci_workflow::run`; help is left to the arm below.
+        "sync" if args.get(1).map(String::as_str) == Some("ci-workflow") && !surface::asks_for_help(&args) => {
+            ci_workflow::run(&args, &raw_args)
+        }
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

@@ -68,12 +68,18 @@ const WORKSPACE_YAML_NAMES: [&str; 2] = ["aube-workspace.yaml", "pnpm-workspace.
 /// `Native` only when every gate passes: no config or overlay that applies, no non-JS
 /// marker, and only the pattern shapes this module reproduces.
 pub fn project_directories(root: &Path) -> Membership {
-    resolve(root).unwrap_or(Membership::Delegate)
+    resolve(root, false).unwrap_or(Membership::Delegate)
+}
+
+/// Like [`project_directories`], but a `vis.config.*` at the root does not delegate. The caller
+/// has read that config and knows none of its keys can change which directories are projects.
+pub fn project_directories_vetted(root: &Path) -> Membership {
+    resolve(root, true).unwrap_or(Membership::Delegate)
 }
 
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
-fn resolve(root: &Path) -> Option<Membership> {
+fn resolve(root: &Path, config_vetted: bool) -> Option<Membership> {
     if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
         return None;
     }
@@ -82,7 +88,7 @@ fn resolve(root: &Path) -> Option<Membership> {
         return None;
     }
 
-    if root.ancestors().any(|dir| CONFIG_NAMES.iter().any(|name| dir.join(name).exists())) {
+    if !config_vetted && root.ancestors().any(|dir| CONFIG_NAMES.iter().any(|name| dir.join(name).exists())) {
         return None;
     }
 

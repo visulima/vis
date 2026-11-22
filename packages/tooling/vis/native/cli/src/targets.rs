@@ -22,7 +22,7 @@ const MARKERS_JSON: &str = include_str!("inference-markers.json");
 const DEPENDENCY_FIELDS: [&str; 4] = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
 /// Script names that `defaults[name]` would resolve through `Object.prototype` in the Node path.
-const PROTOTYPE_NAMES: [&str; 12] = [
+pub(crate) const PROTOTYPE_NAMES: [&str; 12] = [
     "__proto__",
     "constructor",
     "hasOwnProperty",
@@ -56,7 +56,17 @@ pub enum Targets {
 ///
 /// `root` must be absolute with no `.` or `..` components, as `workspace::project_directories` requires.
 pub fn script_targets(root: &Path) -> Targets {
-    match workspace::project_directories(root) {
+    targets_of(root, workspace::project_directories(root))
+}
+
+/// Like [`script_targets`], for a root whose `vis.config.*` the caller has read and found free of keys that
+/// change the project set or the targets (see `workspace::project_directories_vetted`).
+pub fn script_targets_vetted(root: &Path) -> Targets {
+    targets_of(root, workspace::project_directories_vetted(root))
+}
+
+fn targets_of(root: &Path, membership: Membership) -> Targets {
+    match membership {
         Membership::Native(directories) => native_targets(root, directories).map_or(Targets::Delegate, Targets::Native),
         Membership::Delegate => Targets::Delegate,
     }

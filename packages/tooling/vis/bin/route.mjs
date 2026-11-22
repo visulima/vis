@@ -285,6 +285,49 @@ const secretsMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return (format ?? "text") !== "text" || quiet;
 };
 
+// Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
+// `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
+// `--provider` values. The binary re-checks everything, including the config, the providers and the
+// workspace; this only skips the extra process when it would delegate anyway. Like `secrets`, it stays in
+// Node when the working directory is not the workspace root, on Windows, on a terminal, and where Node's
+// colour, `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change the log lines.
+const syncCiWorkflowMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+        return false;
+    }
+
+    if (
+        ["debug", "test"].includes(environment.NODE_ENV)
+        || environment.DEBUG !== undefined
+        || environment.PAIL_LOG_LEVEL !== undefined
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    let check = false;
+    let index = 2;
+
+    while (index < args.length) {
+        if (args[index] === "--check" && !check) {
+            check = true;
+            index += 1;
+
+            continue;
+        }
+
+        const given = optionValue(args, index, "--provider");
+
+        if (!Array.isArray(given)) {
+            return false;
+        }
+
+        [, index] = given;
+    }
+
+    return true;
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -348,6 +391,13 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // run would be delegated by the binary, which costs a second Node boot.
     if (command === "secrets") {
         return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+    }
+
+    // `sync ci-workflow` is native for the generator and its `--check` (`native/cli/src/ci_workflow/`); any
+    // other run would be delegated by the binary, which costs a second Node boot. The other `sync` kinds
+    // are Node's and follow the help rule below.
+    if (command === "sync" && subcommand === "ci-workflow") {
+        return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
     }
 
     // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
