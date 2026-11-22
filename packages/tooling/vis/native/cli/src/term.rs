@@ -4,29 +4,45 @@
 use std::env;
 use std::io::IsTerminal;
 
-/// Whether colour codes should be emitted, in the Node CLI's precedence order:
-/// an explicit `--color` / `--no-color` flag, then `FORCE_COLOR`, then
-/// `NO_COLOR`, then whether stdout is a terminal that can show colour.
-pub fn color_enabled(args: &[String]) -> bool {
+/// What the colour flags and variables say, before looking at a terminal: the Node CLI's precedence
+/// order is an explicit `--color` / `--no-color` flag, then `FORCE_COLOR`, then `NO_COLOR`.
+fn colour_requested(args: &[String]) -> Option<bool> {
     for argument in args {
         match argument.as_str() {
             "--" => break,
-            "--no-color" | "--no-colors" | "--color=false" | "--color=never" => return false,
-            "--color" | "--colors" | "--color=true" | "--color=always" => return true,
+            "--no-color" | "--no-colors" | "--color=false" | "--color=never" => return Some(false),
+            "--color" | "--colors" | "--color=true" | "--color=always" => return Some(true),
             _ => {}
         }
     }
 
     if let Ok(force) = env::var("FORCE_COLOR") {
-        return !matches!(force.as_str(), "0" | "false");
+        return Some(!matches!(force.as_str(), "0" | "false"));
     }
 
     if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
-        return false;
+        return Some(false);
     }
 
-    // On Windows the console only shows colour once virtual-terminal processing is on.
-    std::io::stdout().is_terminal() && env::var("TERM").map_or(true, |term| term != "dumb") && enable_virtual_terminal()
+    None
+}
+
+/// Whether a terminal that can show colour is behind the stream. On Windows the console only shows
+/// colour once virtual-terminal processing is on.
+fn can_show_colour(is_terminal: bool) -> bool {
+    is_terminal && env::var("TERM").map_or(true, |term| term != "dumb") && enable_virtual_terminal()
+}
+
+/// Whether colour codes should be emitted on stdout: the flags and variables, then whether stdout is
+/// a terminal that can show colour.
+pub fn color_enabled(args: &[String]) -> bool {
+    colour_requested(args).unwrap_or_else(|| can_show_colour(std::io::stdout().is_terminal()))
+}
+
+/// Like [`color_enabled`], for output that goes to stderr: `vis cache 2>log` must not write colour
+/// codes into the log, nor lose them on a terminal when stdout is piped.
+pub fn color_enabled_stderr(args: &[String]) -> bool {
+    colour_requested(args).unwrap_or_else(|| can_show_colour(std::io::stderr().is_terminal()))
 }
 
 fn positive(value: Option<String>) -> Option<usize> {

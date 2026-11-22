@@ -103,9 +103,11 @@ pub fn answer(args: &[String]) -> Option<i32> {
 
     let manifest = Manifest::load();
     let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+    // The bare group's listing goes to stderr, so its colour follows that stream.
+    let to_stderr = group_listing && !request.wants_help();
     let help = Help {
         manifest: &manifest,
-        style: Style { color: term::color_enabled(args) },
+        style: Style { color: if to_stderr { term::color_enabled_stderr(args) } else { term::color_enabled(args) } },
         width: term::terminal_width(),
         version: &version,
     };
