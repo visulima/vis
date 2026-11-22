@@ -111,7 +111,7 @@ const isProcessAlive = (pid: number): boolean => {
  * current run has no transient config of its own whose `ignorePatterns` hides it.
  * @param root Workspace root.
  */
-export const removeStaleTransientConfigs = (root: string): void => {
+const removeStaleTransientConfigs = (root: string): void => {
     let names: string[];
 
     try {

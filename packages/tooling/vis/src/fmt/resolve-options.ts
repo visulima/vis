@@ -115,9 +115,7 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
 
         warnings.push(...nestedConfigWarnings(root));
 
-        if (scoped.length > 0) {
-            warnings.push(`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`);
-        }
+        warnings.push(...scopedWidthWarnings(scoped));
 
         return { config, file: found!.file, source: "prettier", warnings };
     }
@@ -126,13 +124,15 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
         // oxfmt defaults to 100 columns and sorts package.json; Prettier does neither. Same mapping as an empty config.
         const { scoped, universal } = readEditorconfigPrintWidth(root);
         const { config } = mapPrettierConfig({}, { editorconfigPrintWidth: universal });
-        const warnings = scoped.length > 0 ? [`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`] : [];
 
-        return { config, source: "prettier-defaults", warnings: [...warnings, ...nestedConfigWarnings(root)] };
+        return { config, source: "prettier-defaults", warnings: [...scopedWidthWarnings(scoped), ...nestedConfigWarnings(root)] };
     }
 
     return { source: "defaults", warnings: nestedConfigWarnings(root) };
 };
+
+const scopedWidthWarnings = (scoped: ReadonlyArray<string>): string[] =>
+    (scoped.length > 0 ? [`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`] : []);
 
 /** Prettier applies the nearest config to each file, so a config below the root changes formatting wherever it is not read. */
 const nestedConfigWarnings = (root: string): string[] => {
