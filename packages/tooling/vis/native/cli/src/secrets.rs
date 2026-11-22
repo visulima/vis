@@ -429,10 +429,8 @@ fn report_findings(found: Vec<Finding>, checksum_rules: &HashSet<String>) -> Opt
                 .get(finding.file.as_str())
                 .is_some_and(|others| others.iter().any(|other| overlaps(finding, other)))
     };
-    let kept: Vec<Finding> =
-        found.iter().filter(|finding| !shadowed(finding) && !is_false_positive(finding)).cloned().collect();
 
-    Some(kept)
+    Some(found.iter().filter(|finding| !shadowed(finding) && !is_false_positive(finding)).cloned().collect())
 }
 
 /// Masks the findings, as the report shows them, and drops the baselined ones.
@@ -1091,7 +1089,6 @@ mod tests {
 
     #[test]
     fn fingerprints_are_the_first_16_hex_digits_of_sha256() {
-        // sha256("a\0b\0c") = 1b3e55...; the content-hash form is stable across runs.
         assert_eq!(fingerprint("a", "b", "c").len(), 16);
         assert_eq!(fingerprint("a", "b", "c"), fingerprint("a", "b", "c"));
         assert_ne!(fingerprint("a", "b", "c"), fingerprint("a", "b", "d"));
