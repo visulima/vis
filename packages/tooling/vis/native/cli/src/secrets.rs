@@ -32,6 +32,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::advisories::{in_ci, monorepo_root, quiet_context};
+use crate::pail::{Layout, Level as LogLevel};
 
 /// The tool version Node stamps into SARIF (`toolVersion` in the secrets handler).
 const TOOL_VERSION: &str = "0.0.0-alpha";
@@ -129,7 +130,7 @@ fn root_collation() -> bool {
 /// Everything the scan needs from the machine, once the context is proven.
 struct Context {
     root: PathBuf,
-    width: usize,
+    layout: Layout,
     ruleset: PathBuf,
 }
 
@@ -139,13 +140,7 @@ fn context(args: &[String]) -> Option<Context> {
         return None;
     }
 
-    // pail colours its status lines on a terminal and where Node's colour detection turns colour on.
-    if crate::term::color_enabled(args)
-        || crate::ignore::colour_may_be_forced()
-        || !in_ci()
-        || io::stdout().is_terminal()
-        || io::stderr().is_terminal()
-    {
+    if !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return None;
     }
 
@@ -159,7 +154,7 @@ fn context(args: &[String]) -> Option<Context> {
         return None;
     }
 
-    let width = crate::clean::pail_width()?;
+    let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // Node scans the workspace root; the text view prints paths relative to the working directory.
@@ -182,7 +177,7 @@ fn context(args: &[String]) -> Option<Context> {
         return None;
     }
 
-    Some(Context { ruleset: ruleset_path()?, root: cwd, width })
+    Some(Context { ruleset: ruleset_path()?, root: cwd, layout })
 }
 
 /// Whether a `.secretlintignore` is discovered for `root`: in it or a parent up to the repository
@@ -866,22 +861,6 @@ fn render_sarif(findings: &[Finding], rules: &[RuleInfo], root: &Path) -> Option
     Some(format!("{}\n", serde_json::to_string_pretty(&log).ok()?))
 }
 
-/// One pail block: the header with the local time and the label, dots to the line width, a blank
-/// line and the word-wrapped message (see `clean.rs`).
-fn pail(width: usize, label: &str, message: &str, out: &mut String) {
-    let limit = width - 3;
-    let head = format!("{} {label} ", crate::clean::clock());
-
-    out.push_str(&head);
-    out.push_str(&".".repeat(limit.saturating_sub(head.len())));
-    out.push_str("\n\n");
-
-    for line in crate::clean::wrap(message, limit) {
-        out.push_str(&line);
-        out.push('\n');
-    }
-}
-
 /// The stderr summary of the files the scan could not read.
 fn skipped_summary(skipped: &[SkippedFile]) -> String {
     let mut counts: Vec<(&str, usize)> = Vec::new();
@@ -960,15 +939,15 @@ fn answer(plan: &Plan, context: &Context) -> Option<Output> {
 
     if !plan.quiet {
         if findings.is_empty() {
-            pail(context.width, "SUCCESS", "No secrets detected.", &mut out.stderr);
+            out.stderr.push_str(&context.layout.block(LogLevel::Success, "No secrets detected."));
         } else {
-            pail(context.width, "WARNING", &format!("{} potential secret(s) found", findings.len()), &mut out.stderr);
-            pail(
-                context.width,
-                "NOTICE",
-                "Suppress individual lines with `gitleaks:allow` / `secret-scanner:allow`, or run `vis secrets --update-baseline`.",
-                &mut out.stderr,
+            out.stderr.push_str(
+                &context.layout.block(LogLevel::Warning, &format!("{} potential secret(s) found", findings.len())),
             );
+            out.stderr.push_str(&context.layout.block(
+                LogLevel::Notice,
+                "Suppress individual lines with `gitleaks:allow` / `secret-scanner:allow`, or run `vis secrets --update-baseline`.",
+            ));
         }
     }
 
@@ -1262,18 +1241,5 @@ mod tests {
 
         assert_eq!(text, "a.env\n  ✖ [demo] (gitleaks, low) line 1:1\n\nb.env\n  ✖ [demo] (low) line 1:1 also: x, y\n");
         assert_eq!(render_text(&[]), "No secrets detected.\n");
-    }
-
-    #[test]
-    fn a_pail_block_is_a_header_a_blank_line_and_the_message() {
-        let mut out = String::new();
-
-        pail(80, "WARNING", "2 potential secret(s) found", &mut out);
-
-        let lines: Vec<&str> = out.lines().collect();
-
-        assert_eq!(lines.len(), 3);
-        assert!(lines[0].ends_with(&".".repeat(60)) && lines[0].contains(" WARNING "));
-        assert_eq!((lines[1], lines[2]), ("", "2 potential secret(s) found"));
     }
 }

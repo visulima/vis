@@ -9,7 +9,7 @@
 //! The native path answers only what it can reproduce exactly, and hands everything else to Node:
 //!
 //! - the argument shapes of [`parse`], and the same quiet context as `list` (CI, no terminal, no
-//!   `vis.config`, no Deno file), with pail's colour switched off for the table;
+//!   `vis.config`, no Deno file), with the header lines of the table coloured as pail does;
 //! - a summary file that is absent (Node's "no summary" and "not found" messages), or one that
 //!   deserializes without a doubt. Anything else about the file goes to Node, since `JSON.parse`
 //!   and serde disagree on lone surrogates, depth and so on;
@@ -35,8 +35,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
 use crate::advisories::{in_ci, monorepo_root, quiet_context};
-use crate::clean::{clock, pail_width, wrap};
 use crate::error::WrapperError;
+use crate::pail::{pail_width, Layout, Level};
 
 /// A recorded hash is cut to this many characters in the table, then `…` follows.
 const HASH_DISPLAY_PREFIX: usize = 16;
@@ -526,21 +526,6 @@ struct Output {
     exit_code: i32,
 }
 
-/// One pail block: the header with the local time and the label, filled with dots to the line
-/// width, a blank line, then the message word-wrapped to the same width (see `clean::pail`).
-fn pail_block(width: usize, label: &str, message: &str) -> String {
-    let limit = width - 3;
-    let head = format!("{} {label} ", clock());
-    let mut block = format!("{head}{}\n\n", ".".repeat(limit.saturating_sub(head.len())));
-
-    for line in wrap(message, limit) {
-        block.push_str(&line);
-        block.push('\n');
-    }
-
-    block
-}
-
 /// A string pail and `padEnd` handle exactly: printable ASCII, no space.
 fn plain(text: &str) -> bool {
     text.bytes().all(|byte| byte.is_ascii_graphic())
@@ -635,7 +620,7 @@ fn table(
     summary: &Summary,
     task: &Task,
     tracked: Option<&Fingerprint>,
-    width: usize,
+    layout: Layout,
 ) -> Option<Output> {
     let mut out = Output::default();
 
@@ -647,7 +632,7 @@ fn table(
         return None;
     }
 
-    out.stdout.push_str(&pail_block(width, "INFO", &format!("Hash for {} (run {})", request.task_id, summary.id)));
+    out.stdout.push_str(&layout.block(Level::Info, &format!("Hash for {} (run {})", request.task_id, summary.id)));
     out.stdout.push('\n');
     out.stdout.push_str(&format!("  status:  {}\n", task.cache_status));
     out.stdout.push_str(&format!("  hash:    {}\n", task.hash.as_deref().unwrap_or("(none)")));
@@ -687,7 +672,7 @@ fn table(
                 render_bucket(&mut out.stdout, "tracked env", fingerprint.bucket("envHashes"))?;
                 render_bucket(&mut out.stdout, "missing files", &missing)?;
             }
-            None => out.stdout.push_str(&pail_block(width, "INFO", "No hash details recorded for this task.")),
+            None => out.stdout.push_str(&layout.block(Level::Info, "No hash details recorded for this task.")),
         },
     }
 
@@ -753,7 +738,7 @@ fn tracked_fingerprint(root: &Path, hash: &str) -> Option<Option<Fingerprint>> {
 }
 
 /// The output for the request, or `None` to delegate.
-fn answer(request: &Request, summary: Loaded, root: &Path, width: usize) -> Option<Output> {
+fn answer(request: &Request, summary: Loaded, root: &Path, layout: Layout) -> Option<Output> {
     let mut out = Output { exit_code: 1, ..Output::default() };
 
     let summary = match summary {
@@ -782,7 +767,7 @@ fn answer(request: &Request, summary: Loaded, root: &Path, width: usize) -> Opti
                 return None;
             }
 
-            out.stderr = pail_block(width, "ERROR", &message);
+            out.stderr = layout.block(Level::Error, &message);
 
             return Some(out);
         }
@@ -798,11 +783,8 @@ fn answer(request: &Request, summary: Loaded, root: &Path, width: usize) -> Opti
                     task_id: &request.task_id,
                 })?;
             } else if plain(&request.task_id) && plain(&summary.id) {
-                out.stderr = pail_block(
-                    width,
-                    "ERROR",
-                    &format!("Task \"{}\" was not part of run {}.", request.task_id, summary.id),
-                );
+                out.stderr = layout
+                    .block(Level::Error, &format!("Task \"{}\" was not part of run {}.", request.task_id, summary.id));
             } else {
                 return None;
             }
@@ -832,7 +814,7 @@ fn answer(request: &Request, summary: Loaded, root: &Path, width: usize) -> Opti
         return Some(out);
     }
 
-    let mut printed = table(request, &summary, &task, tracked.as_ref(), width)?;
+    let mut printed = table(request, &summary, &task, tracked.as_ref(), layout)?;
 
     printed.exit_code = 0;
 
@@ -855,15 +837,12 @@ fn native(args: &[String]) -> Option<Output> {
         return None;
     }
 
-    // The table is pail's, and the native path does not colour; the JSON is written raw.
-    if !request.json && (crate::term::color_enabled(args) || crate::ignore::colour_may_be_forced()) {
-        return None;
-    }
-
-    let width = pail_width()?;
+    // The table is pail's, coloured as `Layout::detect` decides; the JSON is written raw, so colour
+    // does not matter there.
+    let layout = if request.json { Layout { width: pail_width()?, colour: false } } else { Layout::detect(args)? };
     let loaded = load(&summary_path(&root, request.run.as_deref()))?;
 
-    answer(&request, loaded, &root, width)
+    answer(&request, loaded, &root, layout)
 }
 
 /// Answers `vis cache hash` natively or hands the whole invocation to Node. `raw_args` keeps the

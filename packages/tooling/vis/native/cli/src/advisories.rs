@@ -198,9 +198,10 @@ pub(crate) fn native_context() -> bool {
 }
 
 /// Whether Node would print nothing to stderr for a command run from `cwd` under the workspace
-/// root `root`: CI, a non-terminal stderr, and no config or Deno file at or above either one.
+/// root `root`: CI, a non-terminal stderr, no runtime warning about the colour variables, and no config or
+/// Deno file at or above either one.
 pub(crate) fn quiet_context(cwd: &Path, root: &Path) -> bool {
-    if !in_ci() || io::stderr().is_terminal() {
+    if !in_ci() || io::stderr().is_terminal() || crate::term::node_warns_about_colour() {
         return false;
     }
 

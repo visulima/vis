@@ -8,7 +8,7 @@
 //!
 //! - flags: only the exact tokens below, each at most once, and no package names (those go to the
 //!   `add` pipeline);
-//! - context: CI, no terminal, no colour, a unix platform, and no environment that changes which
+//! - context: CI, no terminal, a unix platform, and no environment that changes which
 //!   installer Node picks or what its plugins print;
 //! - workspace: the working directory is either where Node finds no monorepo root (it then loads no
 //!   config and runs no plugin), or the root itself (it then prints the security line below);
@@ -34,6 +34,7 @@ use serde_json::Value;
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{resolve_install, InstallOptions};
 
+use crate::pail::{Layout, Level};
 use crate::typosquat::{self, Scan};
 use crate::vis_config::{self, ConfigState};
 
@@ -93,7 +94,7 @@ struct Plan {
     /// Node puts the root it found into the environment of everything it runs.
     root: Option<PathBuf>,
     silent: bool,
-    width: usize,
+    layout: Layout,
 }
 
 /// Answer `vis install` natively, or delegate to Node. Never returns.
@@ -162,7 +163,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     if code == 0 && !plan.silent && has_peer_dependency_warnings(&output) {
         let mut stdout = io::stdout().lock();
 
-        let _ = stdout.write_all(crate::pail::block(plan.width, "INFO", PEER_HINT).as_bytes());
+        let _ = stdout.write_all(plan.layout.block(Level::Info, PEER_HINT).as_bytes());
         let _ = stdout.flush();
     }
 
@@ -232,13 +233,13 @@ pub(crate) struct Setup {
     pub(crate) manager: String,
     pub(crate) version: String,
     pub(crate) root: Root,
-    pub(crate) width: usize,
+    pub(crate) layout: Layout,
 }
 
 /// The gates `install` and `add` share: a unix platform, valid UTF-8 arguments, a CI context, a working
 /// directory that is no root or the only root, a config the native path can read, and a manager Node would
 /// pick the same way. `None` delegates.
-pub(crate) fn setup(raw: &[OsString]) -> Option<Setup> {
+pub(crate) fn setup(args: &[String], raw: &[OsString]) -> Option<Setup> {
     // Windows keeps the Node path: it runs the package manager through a shell there.
     if !cfg!(unix) || raw.iter().any(|argument| argument.to_str().is_none()) {
         return None;
@@ -248,7 +249,7 @@ pub(crate) fn setup(raw: &[OsString]) -> Option<Setup> {
         return None;
     }
 
-    let width = crate::pail::pail_width()?;
+    let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // A marker above the working directory could be the root Node installs in, or change what it
@@ -280,13 +281,13 @@ pub(crate) fn setup(raw: &[OsString]) -> Option<Setup> {
 
     let version = detected.version.filter(|version| !version.is_empty()).unwrap_or_else(|| "latest".to_owned());
 
-    Some(Setup { cwd, manager, version, root, width })
+    Some(Setup { cwd, manager, version, root, layout })
 }
 
 /// The plan for this invocation, or `None` to delegate.
 fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     let flags = parse(args)?;
-    let setup = setup(raw)?;
+    let setup = setup(args, raw)?;
 
     if typosquat_scan(&setup.cwd) != Scan::Clean {
         return None;
@@ -329,7 +330,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         notices,
         root: (setup.root == Root::Here).then_some(setup.cwd),
         silent: flags.silent,
-        width: setup.width,
+        layout: setup.layout,
     })
 }
 
@@ -432,14 +433,9 @@ pub(crate) fn filter_value(value: &str) -> Option<String> {
 
 /// Whether the environment leaves Node's output and installer choice to what the native path knows.
 fn context_allows_native() -> bool {
-    // pail colours its output on a terminal, under FORCE_COLOR, or where Node's colour detection turns
-    // colour on; the peer hint is pail output. The package manager itself gets a forced colour on a
-    // terminal, which the native path does not reproduce.
-    if !crate::advisories::in_ci()
-        || io::stdout().is_terminal()
-        || io::stderr().is_terminal()
-        || crate::ignore::colour_may_be_forced()
-    {
+    // The peer hint is pail output, coloured by `Layout::detect`. The package manager itself gets a
+    // forced colour on a terminal, which the native path does not reproduce.
+    if !crate::advisories::in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return false;
     }
 

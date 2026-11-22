@@ -941,7 +941,7 @@ fn answer(args: &[String]) -> Option<String> {
     let cwd = env::current_dir().ok()?;
     let root = monorepo_root(&cwd)?;
 
-    if !in_ci() || io::stderr().is_terminal() {
+    if !in_ci() || io::stderr().is_terminal() || crate::term::node_warns_about_colour() {
         return None;
     }
 

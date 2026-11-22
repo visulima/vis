@@ -116,7 +116,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         return None;
     }
 
-    let setup = install::setup(raw)?;
+    let setup = install::setup(args, raw)?;
 
     if !flags.no_typosquat_check && flags.packages.iter().any(|package| is_typosquat(package)) {
         return None;
