@@ -77,8 +77,8 @@ export interface RunOxfmtOptions {
 
 const SIGNALS: ReadonlyArray<NodeJS.Signals> = ["SIGINT", "SIGTERM"];
 
-/** Whether oxfmt reads a glob from the config relative to the config's own directory. */
-const hasGlobs = (config: OxfmtConfig): boolean => (config.ignorePatterns?.length ?? 0) > 0 || (config.overrides?.length ?? 0) > 0;
+/** Whether the config carries a glob that oxfmt reads relative to the config's own directory, so the file has to sit in the workspace root. */
+export const hasGlobs = (config: OxfmtConfig): boolean => (config.ignorePatterns?.length ?? 0) > 0 || (config.overrides?.length ?? 0) > 0;
 
 /**
  * Keeps a config without globs in the vis cache, named by a hash of its content: a run with the same
