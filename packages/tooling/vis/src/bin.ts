@@ -10,9 +10,10 @@ import { injectVersion } from "./io/terminal";
 // `applyHeapTuning()` re-execs Node with a bumped --max-old-space-size (~290ms,
 // a full extra process boot). Skip it for commands that do no heavy in-process
 // work (version/help/completion, the pure dispatchers dlx/exec, and the lean
-// file runner x); heavy commands (run, cache, audit, sbom, graph, …) keep the
+// file runner x, and fmt, which resolves a config and hands the files to a child
+// oxfmt process); heavy commands (run, cache, audit, sbom, graph, …) keep the
 // bump. Deny-list, so any unlisted/new command defaults to tuned — safe.
-const HEAP_TUNING_SKIP = new Set(["", "--help", "--version", "-h", "-v", "__emit-config", "completion", "dlx", "exec", "x"]);
+const HEAP_TUNING_SKIP = new Set(["", "--help", "--version", "-h", "-v", "__emit-config", "completion", "dlx", "exec", "fmt", "x"]);
 const firstArgument = process.argv[2] ?? "";
 
 if (!HEAP_TUNING_SKIP.has(firstArgument) && !process.argv.includes("--help") && !process.argv.includes("-h")) {

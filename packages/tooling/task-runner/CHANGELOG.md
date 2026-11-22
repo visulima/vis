@@ -1,3 +1,20 @@
+## @visulima/task-runner [3.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.5-next.1...@visulima/task-runner@3.1.0-next.1) (2026-11-22)
+
+### Features
+
+* **vis:** generate CI workflows that run targets as parallel steps ([88cdbea](https://github.com/visulima/vis/commit/88cdbea0303c11246e5cf948a0880fd7fee44245))
+
+### Bug Fixes
+
+* **task-runner:** carry an unkeyed dependency through every dependent task ([766465b](https://github.com/visulima/vis/commit/766465b9e6618d2a668b26a038c7d254a629022c))
+* **task-runner:** do not serve or store a dependent whose satisfied traced dependency has no key ([2355bf5](https://github.com/visulima/vis/commit/2355bf5dd190c285c48c056eddab29af751498dc))
+* **task-runner:** do not serve or store a traced task whose satisfied dependency has no key ([0311c9e](https://github.com/visulima/vis/commit/0311c9e7942b502a0bf9cacb370782d4892b00c4))
+* **vis:** address review feedback on the ci-workflow generator ([3d17402](https://github.com/visulima/vis/commit/3d174020f7ea4261970442e8b7d0e4d8790d4a9d))
+
+### Code Refactoring
+
+* **task-runner:** drop a private-member doc link from the unkeyed-dependency comment ([c4ff604](https://github.com/visulima/vis/commit/c4ff604c7280f76f8fb3f3b1d315a218b17b7e0e))
+
 ## @visulima/task-runner [3.0.5-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.4...@visulima/task-runner@3.0.5-next.1) (2026-11-22)
 
 ### Bug Fixes
