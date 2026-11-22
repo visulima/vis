@@ -561,7 +561,7 @@ mod tests {
             ("task-inherit", "vis.config.ts", "export default { tasks: { build: { dependsOn: ['@inherit'] } } };\n"),
             ("task-pattern", "vis.config.ts", "export default { tasks: { build: { dependsOn: ['src/*.ts'] } } };\n"),
             (
-                "both-run-and-uses-shape",
+                "unknown-steps-position",
                 "vis.config.ts",
                 "export default { ci: { workflow: { github: { steps: { before: [] } } } } };\n",
             ),
