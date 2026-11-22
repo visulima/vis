@@ -125,6 +125,22 @@
             "binary": "native",
             "env": { "CI": "1", "COLUMNS": "80" }
         },
+        { "args": ["cache", "hash", "app:build"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "GITHUB_ACTIONS": "true" } },
+        { "args": ["cache", "hash", "app:build"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "FORCE_COLOR": "1" } },
+        { "args": ["cache", "hash", "app:build"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "TERM": "xterm" } },
+        { "args": ["cache", "hash", "app:build"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80", "TERM": "dumb" } },
+        {
+            "args": ["cache", "hash", "app:build", "--format", "json"],
+            "launcher": "native",
+            "binary": "native",
+            "env": { "CI": "1", "COLUMNS": "80", "GITHUB_ACTIONS": "true", "TERM": "xterm" }
+        },
+        {
+            "args": ["cache", "hash", "--format=json", "app:build"],
+            "launcher": "native",
+            "binary": "native",
+            "env": { "CI": "1", "COLUMNS": "80", "FORCE_COLOR": "1" }
+        },
         { "args": ["cache", "hash", "app:build", "--json"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         {
             "args": ["cache", "hash", "app:build", "--format=JSON"],

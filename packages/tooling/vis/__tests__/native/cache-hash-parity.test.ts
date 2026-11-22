@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,13 +134,35 @@ const cases: Case[] = [
     // A summary that does not parse is "no summary" in Node, but serde and `JSON.parse` differ in what they accept.
     { args: [RECORDED], delegates: true, workspace: "unreadable" },
     { args: [RECORDED, "--format", "json"], delegates: true, workspace: "unreadable" },
-    // Not a CI context: Node prints notices and colours its output.
-    { args: [RECORDED], delegates: true, env: { CI: "0" }, workspace: "recorded" },
+    // Node colours its output where it detects colour, which the binary does not. (Outside CI Node also
+    // prints a random tip on stderr, so that context is covered by the routing fixture instead.)
     { args: [RECORDED], delegates: true, env: { FORCE_COLOR: "1" }, workspace: "recorded" },
     { args: [RECORDED, "--format", "json"], env: { FORCE_COLOR: "1" }, workspace: "recorded" },
 ];
 
-describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis cache hash: native vs Node", () => {
+/**
+ * Whether the Node side can run at all: the handler resolves the shared cache directory first, which
+ * needs the task-runner addon, and without it every case would fail instead of being skipped.
+ */
+const nodeAddonLoads = (): boolean => {
+    if (!binary || !existsSync(nodeEntry)) {
+        return false;
+    }
+
+    const probe = mkdtempSync(join(tmpdir(), "vis-cache-hash-probe-"));
+
+    writeFileSync(join(probe, "package.json"), '{"name":"probe"}');
+
+    try {
+        const { stderr } = spawnSync(process.execPath, [nodeEntry, "cache", "hash", "probe:probe"], { cwd: probe, encoding: "utf8", env: environment() });
+
+        return !stderr.includes("native addon could not be loaded");
+    } finally {
+        rmSync(probe, { force: true, recursive: true });
+    }
+};
+
+describe.skipIf(process.platform === "win32" || !nodeAddonLoads())("vis cache hash: native vs Node", () => {
     beforeAll(() => {
         scratch = mkdtempSync(join(tmpdir(), "vis-cache-hash-parity-"));
         nativeBinary = join(scratch, "bin", "vis");
@@ -205,7 +227,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(git(main, "init", "-q").status).toBe(0);
         expect(git(main, "commit", "-q", "--allow-empty", "-m", "init").status).toBe(0);
-        expect(git(main, "worktree", "add", "-q", "--detach", linked).status).toBe(0);
+        expect(git(main, "worktree", "add", "-q", "-b", "feature/branch", linked).status).toBe(0);
 
         // The linked checkout holds the summary only: its cache entries are the main checkout's.
         cpSync(join(main, ".vis"), join(linked, ".vis"), { recursive: true });

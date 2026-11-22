@@ -73,6 +73,7 @@ jobs:
                         - '.github/workflows/build-native.yml'
                       vis:
                         - 'packages/tooling/vis/native/**'
+                        - 'packages/tooling/task-runner/native/core/**'
                         - 'packages/tooling/vis/npm/**'
                         - 'packages/tooling/vis/package.json'
                         - 'packages/tooling/vis/index.js'
