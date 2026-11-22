@@ -26,7 +26,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use regex::bytes::{Regex, RegexBuilder};
@@ -197,8 +197,6 @@ fn tee(mut from: impl Read, mut to: impl Write, captured: &Mutex<Vec<u8>>) {
 /// The patterns of `PEER_WARNING_PATTERNS` in `src/util/peer-warnings.ts`, with their flags. JavaScript
 /// regexes without the `u` flag are ASCII: `\b` and the case folding only know ASCII letters.
 fn peer_patterns() -> &'static [Regex] {
-    use std::sync::OnceLock;
-
     static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
 
     PATTERNS.get_or_init(|| {
