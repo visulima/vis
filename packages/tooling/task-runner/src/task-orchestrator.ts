@@ -1197,8 +1197,8 @@ class TaskOrchestrator {
      * Whether a dependency of `task` was left to an earlier run (see {@link Task.satisfied}),
      * should have a key, and has none: its trace entry is missing or no longer matches. That
      * dependency would have re-run and been keyed in a single run, so the dependent's key
-     * cannot be trusted to cover it. A dependency with caching disabled never has a key, which
-     * is the documented case in {@link TaskOrchestrator.#foldDependencyHashes}.
+     * cannot be trusted to cover it. A dependency with caching disabled never has a key; that case
+     * is left alone (see #foldDependencyHashes).
      */
     #hasUnkeyedSatisfiedDependency(task: Task): boolean {
         return (this.#taskGraph?.dependencies[task.id] ?? []).some((id) => {
