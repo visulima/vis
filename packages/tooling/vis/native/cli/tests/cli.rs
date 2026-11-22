@@ -607,8 +607,8 @@ fn unknown_command_with_no_close_match_still_errors() {
 #[test]
 fn command_groups_and_bare_migrate_still_reach_node() {
     // `vis migrate` (bare) opens an interactive flow in the Node CLI, and a parent such
-    // as `cache` is a Node matter too: none of them may be turned into an error here.
-    for args in [&["migrate"][..], &["cache"], &["cache", "--help"], &["docker"]] {
+    // as `docker` is a Node matter too: none of them may be turned into an error here.
+    for args in [&["migrate"][..], &["docker"]] {
         let output = binary().args(args).env_remove("VIS_FALLBACK_ENTRY").output().expect("run binary");
 
         assert_eq!(

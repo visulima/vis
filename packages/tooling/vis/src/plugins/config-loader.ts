@@ -9,6 +9,7 @@ import { join, resolve } from "@visulima/path";
 import isInCi from "is-in-ci";
 import { satisfies, validRange } from "semver";
 
+import { groupListing } from "../../bin/group-listing.mjs";
 import { findVisConfigFile, loadVisConfig } from "../config/config";
 import type { VisConfig } from "../config/workspace";
 import getPackageVersion from "../util/package-version";
@@ -138,7 +139,8 @@ const configLoaderPlugin: Plugin = {
             }
 
             // First-run detection: prompt to create config when missing
-            const command = process.argv[2] ?? "";
+            // `vis cache` is served as `vis help cache`, which has no first-run prompt either.
+            const command = groupListing(process.argv.slice(2))?.argv[0] ?? process.argv[2] ?? "";
             const skipHint = new Set(["--help", "--version", "-h", "-V", "create", "help", "implode", "init"]);
 
             if (!skipHint.has(command) && !configFilePath && !isInCi) {

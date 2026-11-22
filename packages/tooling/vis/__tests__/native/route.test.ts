@@ -91,6 +91,19 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    it.each([
+        [["cache"], true],
+        [["cache", "--help"], true],
+        [["cache", "list", "--help"], true],
+        [["cache", "list"], false],
+        // Only the plain shapes are the binary's; any other flag is Node's, which prints the same listing.
+        [["cache", "--no-color"], false],
+    ])("routes the `cache` group `vis %j` to native: %s", (args: string[], expected: boolean) => {
+        expect.assertions(1);
+
+        expect(routesToNative(args, "linux")).toBe(expected);
+    });
+
     describe("Windows console (the binary enables virtual-terminal processing)", () => {
         it.each([
             [["clean", "--help"]],
@@ -104,6 +117,8 @@ describe("launcher routing (bin/route.mjs)", () => {
             [["list", "--help"]],
             [["hook", "run", "--help"]],
             [["advisories", "bloom", "status", "--help"]],
+            [["cache"]],
+            [["cache", "--help"]],
         ])("routes the help surface `vis %j` to native", (args: string[]) => {
             expect.assertions(1);
 

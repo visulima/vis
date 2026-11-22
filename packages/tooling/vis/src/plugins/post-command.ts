@@ -6,10 +6,16 @@ import { showMcpPromote } from "../util/mcp-promote";
 import { showSponsorNotice } from "../util/sponsor";
 import { showTip } from "../util/tips";
 
-const postCommandPlugin = (upgradeCheckCallback?: () => void): Plugin => {
+/**
+ * After-command hooks (upgrade notice, tip, sponsor and MCP notices).
+ *
+ * `effectiveArgs` are the arguments of the command that actually ran, when they differ from
+ * `process.argv`: a command group runs as `vis help` plus the group, so it gets the `help` opt-outs.
+ */
+const postCommandPlugin = (upgradeCheckCallback?: () => void, effectiveArgs?: string[]): Plugin => {
     return {
         afterCommand: async (toolbox) => {
-            const args = process.argv.slice(2);
+            const args = effectiveArgs ?? process.argv.slice(2);
             const command = args[0] ?? "";
             const success = process.exitCode === undefined || process.exitCode === 0;
 
