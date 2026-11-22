@@ -387,26 +387,103 @@ const installShapeIsNative = (flags) => {
     return !(named("-D", "--dev") && named("-P", "--prod")) && !(named("--frozen-lockfile") && named("--no-frozen-lockfile"));
 };
 
-// Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in a CI
-// context, with no terminal, no colour and none of the variables that change which installer Node picks or what its
-// output looks like. The binary re-checks everything, including the workspace root, the config and `package.json`;
-// this only skips the extra process when it would delegate anyway. It stays in Node on Windows, where Node runs the
-// package manager through a shell.
-const installMayRunNatively = (platform, environment, args, interactive) => {
+// Whether the context lets `vis install` and `vis add` pass the binary's native gate (`install::setup` in
+// `install.rs`): a CI context with no terminal, no colour and none of the variables that change which installer Node
+// picks or what its output looks like. It stays in Node on Windows, where Node runs the package manager through a shell.
+const installContextIsNative = (platform, environment, interactive) => {
     if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
         return false;
     }
 
-    if (
+    return !(
         ["debug", "test"].includes(environment.NODE_ENV)
         || ["DEBUG", "PAIL_LOG_LEVEL", "VIS_INSTALLER", "VIS_MONOREPO_ROOT", "VIS_RUNTIME", "VIS_SECURITY_WARNINGS"].some((key) => environment[key] !== undefined)
         || Object.keys(environment).some((key) => key.startsWith("CEREBRO_") || key.startsWith("MARSHALL_"))
-    ) {
-        return false;
+    );
+};
+
+// Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in that
+// context. The binary re-checks everything, including the workspace root, the config and `package.json`; this only
+// skips the extra process when it would delegate anyway.
+const installMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && installShapeIsNative(args.slice(1));
+
+// The flags `vis add` takes natively (`parse` in `add.rs`): each at most once, none of them with a value except
+// `--filter`. `--no-marshall-check` is required: without it Node looks the packages up in the registry first.
+const ADD_FLAGS = [
+    ["-D", "--save-dev"],
+    ["-E", "--exact"],
+    ["-O", "--save-optional"],
+    ["-P", "--save-peer"],
+    ["-g", "--global"],
+    ["-w", "--workspace-root"],
+    ["--workspace"],
+    ["--run-scripts"],
+    ["--no-marshall-check"],
+    ["--no-socket-check"],
+    ["--no-typosquat-check"],
+];
+
+// A package argument of the plain `name[@spec]` or `@scope/name[@spec]` shape (`parse_package_argument` in `add.rs`).
+const ADD_PACKAGE = /^(?:@[a-z0-9][\w.~-]*\/)?[a-z0-9][\w.~-]*(?:@[\w.^~<>=*|+:/#,@-]+)?$/i;
+
+// Whether the arguments after `add` are a shape the binary answers: plain packages first, then the flags above and
+// `--filter` with a value, and `--no-marshall-check` among them.
+const addShapeIsNative = (rest) => {
+    const seen = new Set();
+    let packages = 0;
+    let filtered = false;
+    let index = 0;
+
+    while (index < rest.length) {
+        const next = afterFilter(rest, index);
+
+        if (next === -1) {
+            return false;
+        }
+
+        if (next !== undefined) {
+            filtered = true;
+            index = next;
+
+            continue;
+        }
+
+        const flag = rest[index];
+        const group = ADD_FLAGS.find((names) => names.includes(flag));
+
+        if (group === undefined) {
+            // Node reads every word after `--filter` as another filter, so a package after one is no package.
+            if (filtered || flag.startsWith("-") || !ADD_PACKAGE.test(flag)) {
+                return false;
+            }
+
+            packages += 1;
+            index += 1;
+
+            continue;
+        }
+
+        if (seen.has(group)) {
+            return false;
+        }
+
+        seen.add(group);
+        index += 1;
     }
 
-    return installShapeIsNative(args.slice(1));
+    return packages > 0 && rest.includes("--no-marshall-check");
 };
+
+// Whether `vis add` can pass the binary's native gate (`plan` in `add.rs`). The binary re-checks everything,
+// including the packages against the typosquat blocklist; this only skips the extra process when it would delegate anyway.
+const addMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && addShapeIsNative(args.slice(1));
+
+// The commands that run a package manager natively, by the name they are typed with.
+const PACKAGE_MANAGER_SHAPES = new Map([
+    ["add", addMayRunNatively],
+    ["i", installMayRunNatively],
+    ["install", installMayRunNatively],
+]);
 
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
@@ -516,10 +593,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
     }
 
-    // `install` (alias `i`) with no packages is native in a CI context (`native/cli/src/install.rs`); any other
-    // run would be delegated by the binary, which costs a second Node boot.
-    if (command === "install" || command === "i") {
-        return helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive));
+    // `install` (alias `i`) with no packages, and `add <packages...> --no-marshall-check`, are native in a CI context
+    // (`native/cli/src/install.rs`, `add.rs`); any other run would be delegated by the binary, which costs a second Node boot.
+    const packageManagerShape = PACKAGE_MANAGER_SHAPES.get(command);
+
+    if (packageManagerShape !== undefined) {
+        return helpOrNative(args, () => packageManagerShape(platform, environment, args, interactive));
     }
 
     // `sync ci-workflow` is native for the generator and its `--check` (`native/cli/src/ci_workflow/`); any
