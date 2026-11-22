@@ -9,11 +9,16 @@ import execute from "../../../src/commands/fmt/handler";
 import type { VisConfig } from "../../../src/config/types";
 import { runOxfmt } from "../../../src/fmt/run-oxfmt";
 import { runAdaptersParallel } from "../../../src/lint-fmt/runner";
+import { runWatchLoop } from "../../../src/lint-fmt/watch-loop";
 
 vi.mock(import("../../../src/lint-fmt/runner"), () => {
     return {
         runAdaptersParallel: vi.fn(async (jobs: ReadonlyArray<unknown>) => jobs.map(() => { return { durationMs: 1, exitCode: 0, stderr: "", stdout: "" }; })),
     };
+});
+
+vi.mock(import("../../../src/lint-fmt/watch-loop"), () => {
+    return { runWatchLoop: vi.fn(async () => undefined) };
 });
 
 vi.mock(import("../../../src/fmt/run-oxfmt"), async (importOriginal) => {
@@ -50,6 +55,7 @@ describe("vis fmt handler", () => {
         previousExitCode = process.exitCode;
         vi.mocked(runOxfmt).mockClear();
         vi.mocked(runAdaptersParallel).mockClear();
+        vi.mocked(runWatchLoop).mockClear();
     });
 
     afterEach(() => {
@@ -207,6 +213,18 @@ describe("vis fmt handler", () => {
 
             expect(messages.warn.filter((line) => line.includes("instead of Prettier"))).toHaveLength(1);
             expect(oxfmtCall().config).toMatchObject({ tabWidth: 3 });
+        });
+
+        it("watches every extension oxfmt formats, Svelte and Astro included", async () => {
+            expect.assertions(3);
+
+            await run({ watch: true });
+
+            const { extensions } = vi.mocked(runWatchLoop).mock.calls[0]![0];
+
+            expect(extensions).toContain("svelte");
+            expect(extensions).toContain("astro");
+            expect(extensions).toContain("md");
         });
 
         it("fails a --check run when oxfmt lists files that would change", async () => {

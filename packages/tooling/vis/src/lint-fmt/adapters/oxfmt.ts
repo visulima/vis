@@ -88,6 +88,7 @@ export const oxfmtAdapter: ToolAdapter = {
  * files go to oxfmt unfiltered, since it skips a path it does not format.
  */
 export const BUNDLED_OXFMT_EXTENSIONS: ReadonlyArray<string> = [
+    "astro",
     "cjs",
     "css",
     "cts",
@@ -111,6 +112,7 @@ export const BUNDLED_OXFMT_EXTENSIONS: ReadonlyArray<string> = [
     "pcss",
     "postcss",
     "scss",
+    "svelte",
     "toml",
     "ts",
     "tsx",
