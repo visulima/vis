@@ -220,6 +220,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         populate(backslashNested, { bbbb0000bbbb0000: [DAY, [100]] });
         writeFileSync(join(backslashNested, "bbbb0000bbbb0000", String.raw`nested\file`), "x");
+        // Writing into an entry moves its modification time, so its age is set again.
+        age(join(backslashNested, "bbbb0000bbbb0000"), DAY);
 
         // ... and a store file, under a HOME of its own.
         backslashHome = join(scratch, "home-backslash");
@@ -402,6 +404,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             const node = runNode(directory, args, env);
             const via = runNative(directory, args, env, route === "native" ? stubEntry : nodeEntry);
+
+            // The two runs are a moment apart, so an age in seconds could differ by one: the fixtures must not print any.
+            if (/^ {2}\S+ +\S+ +\d+s *$/m.test(node.stdout)) {
+                failures.push(`${name}: a fixture entry is young enough to print its age in seconds`);
+            }
 
             if (route === "native" && via.status === 99) {
                 failures.push(`${name}: expected a native answer, the binary delegated`);
