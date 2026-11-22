@@ -150,8 +150,9 @@ fn main() {
         "sync" if args.get(1).map(String::as_str) == Some("ci-workflow") && !surface::asks_for_help(&args) => {
             ci_workflow::run(&args, &raw_args)
         }
-        // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and install, native in
-        // a CI context; every other shape (and `--help`, left to the arm below) goes to Node.
+        // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and the verdicts that need
+        // no install, native in a CI context; an install, every other shape and `--help` (left to the arm
+        // below) go to Node.
         "self-update" if !surface::asks_for_help(&args) => self_update::run(&args, &raw_args),
         // `vis add <packages...> --no-marshall-check` — the add without the registry lookups, in a CI context.
         // Every other shape, and every root, config or environment the gates reject, is delegated inside

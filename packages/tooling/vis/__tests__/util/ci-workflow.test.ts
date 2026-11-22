@@ -7,6 +7,7 @@ import { buildCiWorkflowPlan, collectTargetDependencies, layerTargets, withBuild
 import { detectEcosystems } from "../../src/util/ci-workflow/ecosystems";
 import { renderGithubCiWorkflow } from "../../src/util/ci-workflow/github";
 import { gitlabMissingToolchains, renderGitlabCiWorkflow } from "../../src/util/ci-workflow/gitlab";
+import { visDependenciesCommand, visTargetCommand } from "../../src/util/ci-workflow/plan";
 
 const plan = (overrides: Partial<CiWorkflowPlan> = {}, shards: Record<string, number> = {}): CiWorkflowPlan => {
     return {
@@ -449,5 +450,18 @@ describe(detectEcosystems, () => {
             { manifests: ["services/api/go.mod"], name: "go" },
             { manifests: ["Cargo.toml"], name: "rust" },
         ]);
+    });
+});
+
+describe(visDependenciesCommand, () => {
+    it("builds the dependencies of every target in one command, with each name quoted on its own", () => {
+        expect.assertions(5);
+
+        expect(visDependenciesCommand(plan(), ["lint", "build", "test"])).toBe("pnpm exec vis ci lint,build,test --no-install --deps-only --if-present");
+        expect(visDependenciesCommand(plan({ affected: false }), ["lint", "build"])).toBe("pnpm exec vis run lint,build --deps-only --if-present");
+        expect(visDependenciesCommand(plan(), ["a b", "test"])).toBe("pnpm exec vis ci 'a b',test --no-install --deps-only --if-present");
+        // One target reads the same as the per-target command it replaces.
+        expect(visDependenciesCommand(plan(), ["test"])).toBe(visTargetCommand(plan(), "test", ["--deps-only"]));
+        expect(visDependenciesCommand(plan({ packageManager: undefined }), ["lint", "test"])).toBe("vis ci lint,test --no-install --deps-only --if-present");
     });
 });

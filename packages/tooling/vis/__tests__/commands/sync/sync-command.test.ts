@@ -778,7 +778,8 @@ describe("vis sync ci-workflow", () => {
 
         const yaml = readFileSync(join(workspaceRoot, ".github/workflows/vis-ci.yml"), "utf8");
 
-        expect(yaml).toContain("pnpm exec vis ci test --no-install --deps-only --if-present");
+        // One dependency step over every target, in layer order (build first, then lint and test).
+        expect(yaml).toContain("pnpm exec vis ci build,lint,test --no-install --deps-only --if-present");
         // buildFirst puts build alone ahead of the lint + test group.
         expect(yaml.indexOf(STANDALONE_BUILD)).toBeLessThan(yaml.indexOf("- parallel:"));
         await expect(access(join(workspaceRoot, ".gitlab/vis-ci.gitlab-ci.yml"))).rejects.toThrow("ENOENT");

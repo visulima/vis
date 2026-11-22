@@ -567,6 +567,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
     ["self-update", ({ args, environment, interactive, platform }) => helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
     [

@@ -312,9 +312,20 @@ export const visDriftCheckCommand = (plan: CiWorkflowPlan): string => `${visComm
 /** Installs vis on its own, for a workspace without a JS package manager. */
 export const visInstallCommand = (plan: CiWorkflowPlan): string => `npm install --global @visulima/vis@${plan.visVersion}`;
 
-export const visTargetCommand = (plan: CiWorkflowPlan, target: string, flags: ReadonlyArray<string>): string => {
+/** `word` is the shell word that names the target, or the comma-separated list of targets. */
+const targetCommand = (plan: CiWorkflowPlan, word: string, flags: ReadonlyArray<string>): string => {
     const vis = visCommand(plan);
-    const base = plan.affected ? `${vis} ci ${shellWord(target)} --no-install` : `${vis} run ${shellWord(target)}`;
+    const base = plan.affected ? `${vis} ci ${word} --no-install` : `${vis} run ${word}`;
 
     return [base, ...flags, "--if-present"].join(" ");
 };
+
+export const visTargetCommand = (plan: CiWorkflowPlan, target: string, flags: ReadonlyArray<string>): string => targetCommand(plan, shellWord(target), flags);
+
+/**
+ * One command that builds the dependencies of every target (`vis run a,b --deps-only`), so a dependency that
+ * several targets share runs once, even with caching disabled. Each name is quoted on its own: the shell joins
+ * the pieces around the commas into one word.
+ */
+export const visDependenciesCommand = (plan: CiWorkflowPlan, targets: ReadonlyArray<string>): string =>
+    targetCommand(plan, targets.map((target) => shellWord(target)).join(","), ["--deps-only"]);

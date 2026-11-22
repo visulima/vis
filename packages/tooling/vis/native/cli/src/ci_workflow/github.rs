@@ -5,7 +5,7 @@
 //! target group as a `parallel:` group (`--skip-deps`).
 
 use super::ecosystems::{Detected, Ecosystem};
-use super::plan::{vis_drift_check_command, vis_target_command, Plan, GENERATED_NOTE};
+use super::plan::{vis_dependencies_command, vis_drift_check_command, vis_target_command, Plan, GENERATED_NOTE};
 use super::tables::{Action, Tables};
 use super::yaml::{self, Yaml};
 
@@ -321,12 +321,8 @@ fn target_steps(plan: &Plan, exec: &str) -> Option<Vec<Step>> {
 /// Renders `.github/workflows/vis-ci.yml`, or `None` where Node raises an error.
 pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     let exec = tables.package_manager(&plan.package_manager).exec.clone();
-    let build_dependencies: Vec<String> = plan
-        .layers
-        .iter()
-        .flatten()
-        .map(|target| vis_target_command(plan, &exec, &target.name, &["--deps-only".to_owned()]))
-        .collect();
+    let names: Vec<&str> = plan.layers.iter().flatten().map(|target| target.name.as_str()).collect();
+    let build_dependencies = vis_dependencies_command(plan, &exec, &names);
     let mut steps = vec![run(RunStep {
         comment: Some("Full history, so affected detection can diff against the base.".to_owned()),
         uses: pinned(tables.action("checkout")),
@@ -337,7 +333,7 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     steps.extend(setup_steps(plan, tables).into_iter().map(run));
     steps.push(run(RunStep {
         comment: Some("Builds what the targets below depend on once, so the parallel steps\nnever build or restore the same outputs at the same time.".to_owned()),
-        run: Some(format!("{}\n", build_dependencies.join("\n"))),
+        run: Some(format!("{build_dependencies}\n")),
         ..named("Build dependencies")
     }));
     steps.extend(target_steps(plan, &exec)?);

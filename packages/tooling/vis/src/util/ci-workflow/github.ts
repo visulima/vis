@@ -23,7 +23,7 @@ import type { GithubAction } from "../github-actions";
 import { GITHUB_ACTIONS } from "../github-actions";
 import type { DetectedEcosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visDriftCheckCommand, visInstallCommand, visTargetCommand } from "./plan";
+import { GENERATED_NOTE, visDependenciesCommand, visDriftCheckCommand, visInstallCommand, visTargetCommand } from "./plan";
 import { yamlEntry, yamlString } from "./yaml";
 
 /** GitHub runs at most 10 background steps of a job at once; more would queue. */
@@ -261,10 +261,7 @@ export const renderGithubCiWorkflow = (plan: CiWorkflowPlan): string => {
         {
             comment: "Builds what the targets below depend on once, so the parallel steps\nnever build or restore the same outputs at the same time.",
             name: "Build dependencies",
-            run: `${plan.layers
-                .flat()
-                .map(({ name }) => visTargetCommand(plan, name, ["--deps-only"]))
-                .join("\n")}\n`,
+            run: `${visDependenciesCommand(plan, plan.layers.flat().map(({ name }) => name))}\n`,
         },
         ...targetSteps(plan),
         ...(plan.github.steps?.after ?? []),
