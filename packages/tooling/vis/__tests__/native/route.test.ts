@@ -60,7 +60,10 @@ describe("launcher routing (bin/route.mjs)", () => {
 
     describe("`vis secrets` flag shapes (parse in secrets.rs)", () => {
         const ci = { CI: "1" };
-        const route = (args: string[], environment: Record<string, string> = ci) => routesToNative(["secrets", ...args], "linux", environment, "/work/app", false);
+        const root = "/work/app";
+        // `root` holds the only root marker, so a working directory below it is not the workspace root.
+        const route = (args: string[], environment: Record<string, string> = ci, cwd = root) =>
+            routesToNative(["secrets", ...args], "linux", environment, cwd, false, (directory: string) => directory === root);
 
         it.each([[["--format", "json"]], [["--format=sarif"]], [["--quiet"]], [["--quiet", "--format", "json"]], [["--format", "json", "--baseline", "b.json"]], [["--baseline=b.json", "--quiet"]]])(
             "routes `vis secrets %j` in CI",
@@ -99,11 +102,19 @@ describe("launcher routing (bin/route.mjs)", () => {
             },
         );
 
+        it("delegates from a directory below the workspace root, and from one that is not the inherited root", () => {
+            expect.assertions(3);
+
+            expect(route(["--format", "json"], ci, `${root}/packages/a`)).toBe(false);
+            expect(route(["--format", "json"], { ...ci, VIS_MONOREPO_ROOT: "/work/other" })).toBe(false);
+            expect(route(["--format", "json"], { ...ci, VIS_MONOREPO_ROOT: root })).toBe(true);
+        });
+
         it("delegates on a terminal and on Windows", () => {
             expect.assertions(2);
 
-            expect(routesToNative(["secrets", "--format", "json"], "linux", ci, "/work/app", true)).toBe(false);
-            expect(routesToNative(["secrets", "--format", "json"], "win32", ci, "/work/app", false)).toBe(false);
+            expect(routesToNative(["secrets", "--format", "json"], "linux", ci, root, true, (directory: string) => directory === root)).toBe(false);
+            expect(routesToNative(["secrets", "--format", "json"], "win32", ci, root, false, (directory: string) => directory === root)).toBe(false);
         });
 
         it("renders the help surface natively on every platform", () => {

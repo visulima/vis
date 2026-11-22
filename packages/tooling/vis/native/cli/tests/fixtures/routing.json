@@ -1,5 +1,5 @@
 {
-    "$comment": "Which invocations the Node launcher hands to the native binary (`launcher`: native or node) and what the binary then does with them (`binary`: native answers itself, node delegates). Read by __tests__/native/routing-fixture.test.ts and native/cli/tests/routing.rs; a case without `binary` is checked against the launcher only; `platform` defaults to linux, `interactive` means stdout is a terminal, and `files` are written into the project the binary runs in.",
+    "$comment": "Which invocations the Node launcher hands to the native binary (`launcher`: native or node) and what the binary then does with them (`binary`: native answers itself, node delegates). Read by __tests__/native/routing-fixture.test.ts and native/cli/tests/routing.rs; a case without `binary` is checked against the launcher only; `platform` defaults to linux, `interactive` means stdout is a terminal, `files` are written into the project the binary runs in, and `directory` runs it in a directory below the project root.",
     "cases": [
         { "args": [], "launcher": "native", "binary": "native" },
         { "args": ["--help"], "launcher": "native", "binary": "native" },
@@ -238,6 +238,8 @@
         { "args": ["affected", "build", "--sparse-checkout"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
         { "args": ["affected", "--help"], "launcher": "native", "platform": "win32" },
         { "args": ["secrets", "--format", "json"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
+        { "args": ["secrets", "--format", "json"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "directory": "packages/a" },
+        { "args": ["secrets", "--quiet"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "directory": "packages/a" },
         { "args": ["secrets", "--quiet"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["secrets", "--format=sarif", "--baseline", "b.json"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["secrets"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },

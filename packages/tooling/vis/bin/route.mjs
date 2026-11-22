@@ -96,6 +96,19 @@ const plainTerm = (environment) => {
     return term === undefined || term.includes("dumb") || term.includes("mono");
 };
 
+// Whether the launcher's root search ends at `cwd`, so a binary that computes the root from the working
+// directory finds the same one as Node. The inherited `VIS_MONOREPO_ROOT` is only a reason to delegate,
+// never the root itself.
+const cwdIsRoot = (environment, cwd, holdsMarker) => {
+    const inheritedRoot = environment.VIS_MONOREPO_ROOT;
+
+    if (inheritedRoot && inheritedRoot !== cwd) {
+        return false;
+    }
+
+    return rootIsCwd(cwd, holdsMarker);
+};
+
 // Whether `vis ignore` can pass the binary's native gate (`native_context` in `ignore.rs`). The
 // binary re-checks everything; this only skips the extra process when it would delegate anyway.
 // It never answers `ignore` on Windows (Node's colour detection and path handling differ there).
@@ -108,14 +121,7 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMark
         return false;
     }
 
-    // The inherited variable is only a reason to delegate, never the root itself.
-    const inheritedRoot = environment.VIS_MONOREPO_ROOT;
-
-    if (inheritedRoot && inheritedRoot !== cwd) {
-        return false;
-    }
-
-    if (!rootIsCwd(cwd, holdsMarker)) {
+    if (!cwdIsRoot(environment, cwd, holdsMarker)) {
         return false;
     }
 
@@ -224,10 +230,11 @@ const optionValue = (args, index, name) => {
 // working-tree scan with `--format json|sarif|text`, `--quiet` and `--baseline <file>`, each at most once,
 // and the text view only with `--quiet`. The binary re-checks everything, including the workspace root
 // and the ignore and config files; this only skips the extra process when it would delegate anyway. Like
-// `clean`, it never answers on Windows or on a terminal, and not where Node's colour, `NODE_ENV`, `DEBUG`,
-// `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change what the status lines look like.
-const secretsMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+// `ignore`, it stays in Node when the working directory is not the workspace root. Like `clean`, it never
+// answers on Windows or on a terminal, and not where Node's colour, `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`
+// or `CEREBRO_*` output settings could change what the status lines look like.
+const secretsMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
         return false;
     }
 
@@ -340,7 +347,7 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // `secrets` is native for the plain working-tree scan (`native/cli/src/secrets.rs`); any other
     // run would be delegated by the binary, which costs a second Node boot.
     if (command === "secrets") {
-        return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, interactive));
+        return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
     }
 
     // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
