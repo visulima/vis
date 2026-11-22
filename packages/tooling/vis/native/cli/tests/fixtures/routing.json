@@ -1,5 +1,5 @@
 {
-    "$comment": "Which invocations the Node launcher hands to the native binary (`launcher`: native or node) and what the binary then does with them (`binary`: native answers itself, node delegates). Read by __tests__/native/routing-fixture.test.ts and native/cli/tests/routing.rs; a case without `binary` is checked against the launcher only; `platform` defaults to linux, `interactive` means stdout is a terminal, `files` are written into the project the binary runs in, and `directory` runs it in a directory below the project root.",
+    "$comment": "Which invocations the Node launcher hands to the native binary (`launcher`: native or node) and what the binary then does with them (`binary`: native answers itself, node delegates). Read by __tests__/native/routing-fixture.test.ts and native/cli/tests/routing.rs; a case without `binary` is checked against the launcher only; `platform` defaults to linux, `interactive` means stdout is a terminal, `files` are written into the project the binary runs in, `directory` runs it in a directory below the project root, and `stubPackageManagers` puts a `pnpm`, `npm`, `yarn` and `bun` that succeed on PATH, so a command that runs the package manager natively answers instead of handing over to Node.",
     "cases": [
         { "args": [], "launcher": "native", "binary": "native" },
         { "args": ["--help"], "launcher": "native", "binary": "native" },
@@ -333,6 +333,34 @@
             "note": "the binary leaves a project with a vis config to Node"
         },
         { "args": ["self-update", "--check"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
-        { "args": ["self-update"], "launcher": "node", "platform": "win32" }
+        { "args": ["self-update"], "launcher": "node", "platform": "win32" },
+        { "args": ["install"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["i"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--frozen-lockfile", "-D", "--silent"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--filter", "app", "-r", "--offline"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--no-frozen-lockfile", "--run-scripts"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "react"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": {  }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "platform": "win32", "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "interactive": true, "stubPackageManagers": true },
+        { "args": ["install", "--ci"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--force", "--force"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "-D", "--prod"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--no-typosquat-check"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install", "--filter"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "FORCE_COLOR": "1" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "VIS_INSTALLER": "npm" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "MARSHALL_DISABLE_ALL": "1" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "NODE_ENV": "test" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80", "VIS_MONOREPO_ROOT": "/elsewhere" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "vis.config.ts": "export default { security: {} };\n" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "vis.config.ts": "export default { install: { backend: \"npm\" } };\n" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "package.json": "{\"name\":\"t\",\"packageManager\":\"pnpm@9.0.0\"}" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "package.json": "{\"name\":\"t\",\"dependencies\":{\"lodas\":\"1.0.0\"}}" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "package.json": "{\"name\":\"t\",\"dependencies\":{\"app\":\"npm:lodas@1.0.0\"}}" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "package.json": "{ not json" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "lerna.json": "{\"packages\":[]}" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "turbo.json": "{}" }, "stubPackageManagers": true },
+        { "args": ["install"], "launcher": "native", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" }, "files": { "deno.json": "{}" }, "stubPackageManagers": true }
     ]
 }

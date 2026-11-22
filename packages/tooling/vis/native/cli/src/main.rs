@@ -39,9 +39,11 @@ mod graph;
 mod help;
 mod hook;
 mod ignore;
+mod install;
 mod list;
 mod manifest;
 mod node_contract;
+mod pail;
 mod pm;
 mod pm_family;
 mod pm_shim;
@@ -53,6 +55,7 @@ mod table;
 #[cfg_attr(not(test), allow(dead_code))]
 mod targets;
 mod term;
+mod typosquat;
 mod vis_config;
 mod width_tables;
 mod workspace;
@@ -149,6 +152,9 @@ fn main() {
         // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and install, native in
         // a CI context; every other shape (and `--help`, left to the arm below) goes to Node.
         "self-update" if !surface::asks_for_help(&args) => self_update::run(&args, &raw_args),
+        // `vis install` (alias `i`) with no packages — the plain install in a CI context. Every other
+        // shape, and every root, config or environment the gates reject, is delegated inside `install::run`.
+        "install" | "i" if !surface::asks_for_help(&args) => install::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

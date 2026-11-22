@@ -315,6 +315,99 @@ const secretsMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return (format ?? "text") !== "text" || quiet;
 };
 
+// The flags `vis install` takes natively (`parse` in `install.rs`): each at most once, none of them with a value
+// except `--filter`, and no package names (those run the `add` pipeline).
+const INSTALL_FLAGS = [
+    ["-D", "--dev"],
+    ["-P", "--prod"],
+    ["-f", "--force"],
+    ["--frozen-lockfile"],
+    ["--no-frozen-lockfile"],
+    ["--lockfile-only"],
+    ["--no-optional"],
+    ["--offline"],
+    ["-r", "--recursive"],
+    ["--run-scripts"],
+    ["-s", "--silent"],
+    ["-w", "--workspace-root"],
+];
+
+// Where the arguments continue after the `--filter` option at `flags[index]`: `undefined` when it is another
+// argument, `-1` when its value is missing or looks like a flag.
+const afterFilter = (flags, index) => {
+    const flag = flags[index];
+
+    if (flag.startsWith("--filter=")) {
+        const inline = flag.slice("--filter=".length);
+
+        return inline === "" || inline.startsWith("-") ? -1 : index + 1;
+    }
+
+    if (flag !== "-F" && flag !== "--filter") {
+        return undefined;
+    }
+
+    const value = flags[index + 1];
+
+    return value === undefined || value === "" || value.startsWith("-") ? -1 : index + 2;
+};
+
+// Whether the arguments after `install` / `i` are a shape the binary answers: the flags above, `--filter` with a value.
+const installShapeIsNative = (flags) => {
+    const seen = new Set();
+    let index = 0;
+
+    while (index < flags.length) {
+        const next = afterFilter(flags, index);
+
+        if (next === -1) {
+            return false;
+        }
+
+        if (next !== undefined) {
+            index = next;
+
+            continue;
+        }
+
+        const flag = flags[index];
+        const group = INSTALL_FLAGS.find((names) => names.includes(flag));
+
+        if (group === undefined || seen.has(group)) {
+            return false;
+        }
+
+        seen.add(group);
+        index += 1;
+    }
+
+    // Node rejects these pairs with a usage error.
+    const named = (...names) => names.some((name) => flags.includes(name));
+
+    return !(named("-D", "--dev") && named("-P", "--prod")) && !(named("--frozen-lockfile") && named("--no-frozen-lockfile"));
+};
+
+// Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in a CI
+// context, with no terminal, no colour and none of the variables that change which installer Node picks or what its
+// output looks like. The binary re-checks everything, including the workspace root, the config and `package.json`;
+// this only skips the extra process when it would delegate anyway. It stays in Node on Windows, where Node runs the
+// package manager through a shell.
+const installMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+        return false;
+    }
+
+    if (
+        ["debug", "test"].includes(environment.NODE_ENV)
+        || ["DEBUG", "PAIL_LOG_LEVEL", "VIS_INSTALLER", "VIS_MONOREPO_ROOT", "VIS_RUNTIME", "VIS_SECURITY_WARNINGS"].some((key) => environment[key] !== undefined)
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_") || key.startsWith("MARSHALL_"))
+    ) {
+        return false;
+    }
+
+    return installShapeIsNative(args.slice(1));
+};
+
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
 // `--provider` values. The binary re-checks everything, including the config, the providers and the
@@ -421,6 +514,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // run would be delegated by the binary, which costs a second Node boot.
     if (command === "secrets") {
         return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+    }
+
+    // `install` (alias `i`) with no packages is native in a CI context (`native/cli/src/install.rs`); any other
+    // run would be delegated by the binary, which costs a second Node boot.
+    if (command === "install" || command === "i") {
+        return helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive));
     }
 
     // `sync ci-workflow` is native for the generator and its `--check` (`native/cli/src/ci_workflow/`); any

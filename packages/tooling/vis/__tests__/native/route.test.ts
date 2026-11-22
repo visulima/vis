@@ -42,6 +42,46 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis install` flag shapes (plan in install.rs)", () => {
+        const ci = { CI: "1" };
+
+        it.each([[["install"]], [["i"]], [["install", "-D", "--silent"]], [["install", "-F", "app", "--filter=lib"]], [["install", "--no-frozen-lockfile", "--lockfile-only"]]])(
+            "routes `vis %j` in CI",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+            },
+        );
+
+        it.each([
+            [["install", "react"]],
+            [["install", "--ci"]],
+            [["install", "--force", "--force"]],
+            [["install", "-D", "--prod"]],
+            [["install", "--frozen-lockfile", "--no-frozen-lockfile"]],
+            [["install", "-F"]],
+            [["install", "--filter", "-D"]],
+            [["install", "--filter="]],
+            [["install", "--cwd", "x"]],
+        ])("keeps `vis %j` in Node", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps a plain install in Node outside CI, on a terminal, on Windows and where output settings could change", () => {
+            expect.assertions(6);
+
+            expect(routesToNative(["install"], "linux", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(["install"], "linux", ci, "/work/app", true)).toBe(false);
+            expect(routesToNative(["install"], "win32", ci, "/work/app", false)).toBe(false);
+            expect(routesToNative(["install"], "linux", { ...ci, GITHUB_ACTIONS: "true" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(["install"], "linux", { ...ci, MARSHALL_DISABLE_ALL: "1" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(["install"], "linux", { ...ci, VIS_INSTALLER: "npm" }, "/work/app", false)).toBe(false);
+        });
+    });
+
     describe("`vis clean` flag shapes (plan in clean.rs)", () => {
         const ci = { CI: "1" };
 

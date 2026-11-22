@@ -56,6 +56,10 @@ struct Case {
     #[serde(rename = "note")]
     _note: Option<String>,
     platform: Option<String>,
+    /// Put an executable `pnpm`, `npm`, `yarn` and `bun` that exit 0 on `PATH`. A command that runs the
+    /// package manager natively then answers instead of failing to find one and handing over to Node.
+    #[serde(default, rename = "stubPackageManagers")]
+    stub_package_managers: bool,
 }
 
 /// A JS-only workspace that the gated commands (`list`, `clean`) accept; a case's `files` come on top.
@@ -71,6 +75,24 @@ fn write_file(directory: &Path, name: &str, content: &str) {
 
     fs::create_dir_all(path.parent().expect("file has a parent")).expect("create project directory");
     fs::write(path, content).expect("write project file");
+}
+
+/// A directory holding a `pnpm`, `npm`, `yarn` and `bun` that do nothing and succeed.
+fn stub_package_managers(directory: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let stubs = directory.join("stub-package-managers");
+
+    fs::create_dir_all(&stubs).expect("create stub directory");
+
+    for name in ["pnpm", "npm", "yarn", "bun"] {
+        let path = stubs.join(name);
+
+        fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write stub package manager");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("make stub executable");
+    }
+
+    stubs
 }
 
 fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
@@ -92,7 +114,10 @@ fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
         .current_dir(&working_directory)
         .env_clear()
         // No package manager on PATH: a native pm command fails to spawn instead of running one.
-        .env("PATH", empty_path)
+        .env(
+            "PATH",
+            if case.stub_package_managers { stub_package_managers(directory) } else { empty_path.to_path_buf() },
+        )
         .env("VIS_NODE", "/nonexistent/node")
         .env("VIS_FALLBACK_ENTRY", "/nonexistent/bin.js")
         .envs(&case.env)
