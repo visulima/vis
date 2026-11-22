@@ -89,6 +89,16 @@ const resolveGithub = (env: NodeJS.ProcessEnv, defaultBase: string, readEventPay
     const payload = eventPath ? readEventPayload(eventPath) : undefined;
 
     if (payload) {
+        // A merge queue run has no pull request base; the queue entry names the commit it was built on.
+        const mergeGroup = payload["merge_group"];
+        const mergeGroupBase = typeof mergeGroup === "object" && mergeGroup !== null ? (mergeGroup as Record<string, unknown>)["base_sha"] : undefined;
+
+        if (typeof mergeGroupBase === "string" && isNonEmptySha(mergeGroupBase)) {
+            notes.push(`merge_group: event.merge_group.base_sha=${mergeGroupBase}`);
+
+            return { base: mergeGroupBase, head: headSha, notes, provider: "github" };
+        }
+
         const before = typeof payload["before"] === "string" ? payload["before"] : undefined;
 
         if (isNonEmptySha(before)) {

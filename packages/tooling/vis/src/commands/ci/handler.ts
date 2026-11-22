@@ -100,6 +100,14 @@ const execute = async ({ argument, logger, options, runtime, visConfig, workspac
             argv.push(`--query=${String(options.query)}`);
         }
 
+        if (options.depsOnly) {
+            argv.push("--deps-only");
+        }
+
+        if (options.skipDeps) {
+            argv.push("--skip-deps");
+        }
+
         // An empty selection fails `vis run` by default; this is the explicit opt-out.
         if (options.ifPresent) {
             argv.push("--if-present");

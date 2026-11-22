@@ -246,6 +246,13 @@ class TaskOrchestrator {
 
     readonly #alwaysTasks: Task[];
 
+    /**
+     * Ids of tasks that could not be keyed completely in this run, because a dependency (or one of
+     * its own dependencies) was left to an earlier run and has no key. A task that depends on one of
+     * these cannot be keyed either, however many levels away the unkeyed task sits.
+     */
+    readonly #unkeyedTasks = new Set<string>();
+
     readonly #whenContext: WhenContext;
 
     readonly #bail: boolean;
@@ -638,11 +645,23 @@ class TaskOrchestrator {
             return this.#dryRunResult(task, startTime);
         }
 
-        if (!this.#skipCache && task.cache !== false) {
+        // The hash above leaves out a dependency that has no key, so it cannot vouch for this run.
+        const keyed = !this.#hasUnkeyedDependency(task);
+
+        if (!keyed) {
+            this.#unkeyedTasks.add(task.id);
+        }
+
+        if (!this.#skipCache && task.cache !== false && keyed) {
             const cachedResult = await this.#cache.get(hash);
 
             if (cachedResult) {
                 return this.#applyCachedResult(task, cachedResult, startTime);
+            }
+
+            // Nothing to fetch for a task that will neither run nor restore outputs.
+            if (task.satisfied) {
+                return this.#satisfiedResult(task, startTime);
             }
 
             if (this.#remoteCache) {
@@ -662,9 +681,13 @@ class TaskOrchestrator {
             }
         }
 
-        const result = await this.#executeTask(task, startTime);
+        if (task.satisfied) {
+            return this.#satisfiedResult(task, startTime);
+        }
 
-        if (result.code === 0 && task.cache !== false && task.hash && this.#remoteCache) {
+        const result = await this.#executeTask(task, startTime, keyed);
+
+        if (keyed && result.code === 0 && task.cache !== false && task.hash && this.#remoteCache) {
             storeByTaskHash(this.#remoteCache, task.hash, this.#cache.cacheDirectory, this.#onRemoteUploadError).catch(() => {});
         }
 
@@ -688,7 +711,13 @@ class TaskOrchestrator {
         // The declared hash, when the lookup computed it (see the declared-fallback branch below).
         let declaredKey: string | undefined;
         // The predecessor's key for a segment (see #chainKeyFor). `null` means the segment cannot be keyed this run.
-        const chainKey = this.#chainKeyFor(task);
+        // A satisfied dependency with no key leaves the task unkeyed too: its fingerprint cannot vouch for that dependency.
+        const unkeyed = this.#hasUnkeyedDependency(task);
+        const chainKey = unkeyed ? null : this.#chainKeyFor(task);
+
+        if (unkeyed) {
+            this.#unkeyedTasks.add(task.id);
+        }
 
         if (!this.#skipCache && task.cache !== false && chainKey !== null) {
             const cachedResult = await this.#cache.getByTaskId(task.id);
@@ -751,6 +780,10 @@ class TaskOrchestrator {
             }
         }
 
+        if (task.satisfied) {
+            return this.#satisfiedResult(task, startTime);
+        }
+
         return this.#executeTaskWithTracking(task, startTime, cacheMissReasons, declaredKey, chainKey);
     }
 
@@ -797,7 +830,8 @@ class TaskOrchestrator {
     }
 
     async #applyCachedResult(task: Task, cachedResult: CachedResult, startTime: number, hashSource?: TaskResult["hashSource"]): Promise<TaskResult> {
-        const restored = await this.#cache.restoreOutputs(cachedResult.hash, task.outputs, task.cacheRestore);
+        // A satisfied task's outputs are already on disk from the run that produced them.
+        const restored = task.satisfied !== true && (await this.#cache.restoreOutputs(cachedResult.hash, task.outputs, task.cacheRestore));
         const status: TaskStatus = restored ? "local-cache" : "local-cache-kept-existing";
 
         const result: TaskResult = {
@@ -815,7 +849,7 @@ class TaskOrchestrator {
         return result;
     }
 
-    async #executeTask(task: Task, startTime: number): Promise<TaskResult> {
+    async #executeTask(task: Task, startTime: number, store = true): Promise<TaskResult> {
         try {
             const { code, retryAttempts, terminalOutput } = await this.#taskExecutor(task, {
                 captureOutput: this.#captureOutput,
@@ -844,7 +878,7 @@ class TaskOrchestrator {
             // exited 0 but its output is treated as incomplete-by-policy
             // so the next run starts fresh. Matches vite-task's
             // documented cancellation contract.
-            if (code === 0 && task.cache !== false && task.hash && !skipCacheOnWarning && !this.#aborted) {
+            if (store && code === 0 && task.cache !== false && task.hash && !skipCacheOnWarning && !this.#aborted) {
                 const modified = await this.#detectSelfModifiedInputs(task);
 
                 if (modified.length > 0) {
@@ -1174,6 +1208,41 @@ class TaskOrchestrator {
         return zeroAccesses
             ? "Tracker observed no workspace file accesses — likely a static binary on a platform without strace. Caching skipped."
             : "Tracker returned accesses but none fell inside the workspace. Caching skipped to avoid false cache hits.";
+    }
+
+    /**
+     * Whether a dependency of `task` cannot vouch for the key: it was left to an earlier run (see
+     * {@link Task.satisfied}), should have a key, and has none (its trace entry is missing or no longer
+     * matches), or it was itself left unkeyed for that reason. Such a dependency would have re-run and been
+     * keyed in a single run, so the dependent's key cannot be trusted to cover it. A dependency with caching
+     * disabled never has a key; that case is left alone (see #foldDependencyHashes).
+     */
+    #hasUnkeyedDependency(task: Task): boolean {
+        return (this.#taskGraph?.dependencies[task.id] ?? []).some((id) => {
+            const dependency = this.#taskGraph?.tasks[id];
+
+            return this.#unkeyedTasks.has(id) || (dependency?.satisfied === true && dependency.cache !== false && !dependency.hash);
+        });
+    }
+
+    /**
+     * A satisfied task (see {@link Task.satisfied}) that has no cache entry to
+     * keep: it ran earlier in the job without storing one (cache disabled, or a
+     * traced task that stored no key). Its dependents still run.
+     */
+    #satisfiedResult(task: Task, startTime: number): TaskResult {
+        const result: TaskResult = {
+            code: 0,
+            endTime: Date.now(),
+            startTime,
+            status: "skipped",
+            task,
+            terminalOutput: "Already ran earlier in this job (--deps-only).",
+        };
+
+        this.#results.set(task.id, result);
+
+        return result;
     }
 
     #dryRunResult(task: Task, startTime: number): TaskResult {

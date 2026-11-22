@@ -8,6 +8,7 @@ import type { ToolchainConfig as InternalToolchainConfig, VersionManagerName } f
 import type { StagedConfig } from "../staged";
 import type { VisTargetConfiguration } from "../task/target-options";
 import type { VisPlugin } from "../util/hooks";
+import type { CiConfig } from "./types/ci";
 import type { CodeownersConfig } from "./types/codeowners";
 import type { LintFmtAdapterOverride, OxfmtAdapterOverride } from "./types/lint";
 import type { VisPolicyConfig } from "./types/policies";
@@ -85,6 +86,12 @@ export interface VisConfig {
      * @default false
      */
     branchScopedCache?: boolean;
+
+    /**
+     * CI settings. `ci.workflow` drives the GitHub Actions / GitLab CI
+     * workflow that `vis sync ci-workflow` generates.
+     */
+    ci?: CiConfig;
 
     /**
      * Code ownership configuration. Controls how `vis sync codeowners`
@@ -995,6 +1002,17 @@ export interface VisConfig {
     zig?: { discover?: boolean };
 }
 
+export type {
+    CiConfig,
+    CiGithubService,
+    CiGithubStep,
+    CiGithubWorkflowConfig,
+    CiGitlabService,
+    CiGitlabWorkflowConfig,
+    CiWorkflowConfig,
+    CiWorkflowProvider,
+    CiWorkflowTargetConfig,
+} from "./types/ci";
 export type { CodeownersConfig, CodeownersSource, OwnersEntry } from "./types/codeowners";
 export type { LintFmtAdapterOverride, OxfmtAdapterOverride } from "./types/lint";
 export type { NativeAuditExclusions, PolicyName } from "./types/policies";

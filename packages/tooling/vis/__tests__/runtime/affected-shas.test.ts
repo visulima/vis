@@ -50,6 +50,23 @@ describe(resolveAffectedShas, () => {
             expect(readEventPayload).toHaveBeenCalledWith("/tmp/event.json");
         });
 
+        it("diffs a merge queue run against the commit the queue entry was built on", () => {
+            expect.assertions(3);
+
+            const result = resolveAffectedShas(
+                makeOptions({
+                    env: { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "merge_group", GITHUB_EVENT_PATH: "/tmp/event.json", GITHUB_SHA: "queueSha" },
+                    readEventPayload: () => {
+                        return { merge_group: { base_sha: "baseSha", head_sha: "queueSha" } };
+                    },
+                }),
+            );
+
+            expect(result.base).toBe("baseSha");
+            expect(result.head).toBe("queueSha");
+            expect(result.notes[0]).toMatch(/merge_group/u);
+        });
+
         it("ignores all-zero before SHA (new branch push) and falls back to defaultBase", () => {
             expect.assertions(2);
 

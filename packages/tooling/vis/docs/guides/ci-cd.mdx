@@ -40,6 +40,10 @@ jobs:
               run: vis affected test --base=origin/main
 ```
 
+### Running targets in parallel
+
+`vis sync ci-workflow` generates a workflow that builds the shared dependencies once and then runs independent targets (and test shards) as GitHub Actions parallel steps, plus an optional GitLab CI file. See [`vis sync ci-workflow`](/commands/sync#ci-workflow).
+
 ### Dependency Health Checks
 
 Run scheduled dependency checks:
