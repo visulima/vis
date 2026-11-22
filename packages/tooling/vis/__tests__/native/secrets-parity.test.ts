@@ -184,12 +184,19 @@ const DELEGATED_AND_COMPARED: [fixture: string, args: string[]][] = [
 ];
 
 // What changes Node's output apart from the arguments: the CI marker, colour, and test mode.
-const DROPPED_ENVIRONMENT = new Set(["CI", "CONTINUOUS_INTEGRATION", "FORCE_COLOR", "NODE_ENV", "VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_MONOREPO_ROOT", "VIS_VERSION"]);
+const DROPPED_ENVIRONMENT = new Set(["CI", "COLUMNS", "CONTINUOUS_INTEGRATION", "FORCE_COLOR", "NODE_ENV", "VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_MONOREPO_ROOT", "VIS_VERSION"]);
 
-const contextEnvironment = (ci: boolean, columns: string | undefined = "80"): Record<string, string | undefined> => {
+/** A case that leaves `COLUMNS` out of the child environment altogether. */
+const UNSET = "unset";
+
+/** `COLUMNS` is `columns`, 80 unless a case says otherwise, or absent for {@link UNSET}. */
+const contextEnvironment = (ci: boolean, columns: string = "80"): Record<string, string | undefined> => {
     const env: Record<string, string | undefined> = Object.fromEntries(Object.entries(process.env).filter(([key]) => !DROPPED_ENVIRONMENT.has(key)));
 
-    env["COLUMNS"] = columns;
+    if (columns !== UNSET) {
+        env["COLUMNS"] = columns;
+    }
+
     env["VIS_NO_UPDATE_CHECK"] = "1";
 
     if (ci) {
@@ -301,10 +308,10 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         ["oneFinding", "40"],
         ["oneFinding", "50"],
         ["oneFinding", "120"],
-        ["oneFinding", undefined],
+        ["oneFinding", UNSET],
         ["clean", "40"],
         ["clean", "120"],
-        ["clean", undefined],
+        ["clean", UNSET],
     ] as const)("%s prints the same status lines at COLUMNS=%s", (fixture, columns) => {
         expect.assertions(4);
 
@@ -376,6 +383,26 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
 
         expect(probe.stdout).toContain(marker);
     }, TIMEOUT);
+
+    it("leaves COLUMNS out of the environment of an unset case, even when the parent has it", () => {
+        expect.assertions(3);
+
+        const parent = process.env["COLUMNS"];
+
+        process.env["COLUMNS"] = "123";
+
+        try {
+            expect(contextEnvironment(true, UNSET)).not.toHaveProperty("COLUMNS");
+            expect(contextEnvironment(true)).toHaveProperty("COLUMNS", "80");
+            expect(contextEnvironment(true, "40")).toHaveProperty("COLUMNS", "40");
+        } finally {
+            if (parent === undefined) {
+                delete process.env["COLUMNS"];
+            } else {
+                process.env["COLUMNS"] = parent;
+            }
+        }
+    });
 
     it("reports what Node reports, so the fixture covers every stage", () => {
         expect.assertions(9);
