@@ -153,8 +153,30 @@
           "type": "string"
         },
         {
+          "description": "Disable --deps-only.",
+          "hidden": true,
+          "name": "no-deps-only",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the dependencies of the requested tasks, not the tasks themselves. Pair with a later --skip-deps run to fan the requested tasks out over parallel CI steps.",
+          "name": "deps-only",
+          "type": "boolean"
+        },
+        {
           "description": "Show what would run without executing",
           "name": "dry-run",
+          "type": "boolean"
+        },
+        {
+          "description": "Disable --skip-deps.",
+          "hidden": true,
+          "name": "no-skip-deps",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the requested tasks and treat their dependencies as already done (by an earlier --deps-only run). Lets parallel CI steps share one dependency build.",
+          "name": "skip-deps",
           "type": "boolean"
         },
         {
@@ -338,6 +360,14 @@
         [
           "vis ci build --parallel=6",
           "Increase concurrency"
+        ],
+        [
+          "vis ci lint,test --deps-only",
+          "Build the dependencies of lint and test once, before fanning out"
+        ],
+        [
+          "vis ci test --skip-deps --no-install --skip-toolchain --partition=1/2",
+          "One parallel CI step after a --deps-only step"
         ]
       ],
       "group": "Run & Execute",
@@ -362,6 +392,17 @@
           "description": "Git base ref for affected detection (default: auto-detected from CI env)",
           "name": "base",
           "type": "string"
+        },
+        {
+          "description": "Disable --deps-only.",
+          "hidden": true,
+          "name": "no-deps-only",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the dependencies of the requested targets (forwarded to `vis run`)",
+          "name": "deps-only",
+          "type": "boolean"
         },
         {
           "defaultValue": "deep",
@@ -400,6 +441,17 @@
           "description": "Filter affected projects by a query (e.g. 'language=typescript && tag=lib')",
           "name": "query",
           "type": "string"
+        },
+        {
+          "description": "Disable --skip-deps.",
+          "hidden": true,
+          "name": "no-skip-deps",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the requested targets; assume an earlier --deps-only run built their dependencies (forwarded to `vis run`)",
+          "name": "skip-deps",
+          "type": "boolean"
         },
         {
           "description": "Skip the toolchain pre-flight (no auto-install for any pinned tool: node / pnpm / yarn / npm / bun / go / python / ruby / rust)",
@@ -606,8 +658,30 @@
           "type": "boolean"
         },
         {
+          "description": "Disable --deps-only.",
+          "hidden": true,
+          "name": "no-deps-only",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the dependencies of the requested tasks, not the tasks themselves. Pair with a later --skip-deps run to fan the requested tasks out over parallel CI steps.",
+          "name": "deps-only",
+          "type": "boolean"
+        },
+        {
           "description": "Show what would run without executing",
           "name": "dry-run",
+          "type": "boolean"
+        },
+        {
+          "description": "Disable --skip-deps.",
+          "hidden": true,
+          "name": "no-skip-deps",
+          "type": "boolean"
+        },
+        {
+          "description": "Run only the requested tasks and treat their dependencies as already done (by an earlier --deps-only run). Lets parallel CI steps share one dependency build.",
+          "name": "skip-deps",
           "type": "boolean"
         },
         {
@@ -1878,7 +1952,7 @@
     },
     {
       "argument": {
-        "description": "What to sync: codeowners | package-json-fields",
+        "description": "What to sync: ci-workflow | codeowners | package-json-fields",
         "name": "kind",
         "type": "string"
       },
@@ -1911,6 +1985,18 @@
         [
           "vis sync codeowners --write-guard",
           "Also emit GitHub + GitLab Write Guard CI for restricted projects"
+        ],
+        [
+          "vis sync ci-workflow",
+          "Generate .github/workflows/vis-ci.yml, running targets as parallel steps"
+        ],
+        [
+          "vis sync ci-workflow --provider=github,gitlab",
+          "Also generate an includable .gitlab/vis-ci.gitlab-ci.yml"
+        ],
+        [
+          "vis sync ci-workflow --check",
+          "Fail if the generated CI workflow is stale"
         ],
         [
           "vis sync package-json-fields",
@@ -1975,6 +2061,12 @@
           "description": "Splice the generated block between markers in the existing file instead of overwriting it. Codeowners kind only.",
           "name": "preserve-block",
           "type": "boolean"
+        },
+        {
+          "description": "CI providers to generate for (ci-workflow kind only): github, gitlab. Comma-separated or repeated. Defaults to ci.workflow.providers, then the repository's CI files or git remote.",
+          "multiple": true,
+          "name": "provider",
+          "type": "string"
         },
         {
           "description": "Suppress per-package log lines; print only the summary (package-json-fields kind only)",
