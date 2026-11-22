@@ -117,6 +117,41 @@ export const scopeTaskGraph = (
 };
 
 /**
+ * Merges the `--deps-only` runs of several targets into one: every task once (the first copy of a task
+ * wins), the union of the edges, and the tasks nothing depends on as the new roots. The result is what
+ * running each target's own dependency step one after the other would execute, without repeating a
+ * task they share, whether or not it is cached.
+ */
+export const mergeScopedRuns = (
+    runs: ReadonlyArray<{ persistentTasks: ReadonlyArray<Task>; taskGraph: TaskGraph }>,
+): { initialTasks: Task[]; persistentTasks: Task[]; taskGraph: TaskGraph } => {
+    const tasks: Record<string, Task> = {};
+    const edges: Record<string, Set<string>> = {};
+    const persistent = new Map<string, Task>();
+
+    for (const run of runs) {
+        for (const [id, task] of Object.entries(run.taskGraph.tasks)) {
+            tasks[id] ??= task;
+            edges[id] = new Set([...(edges[id] ?? []), ...(run.taskGraph.dependencies[id] ?? [])]);
+        }
+
+        for (const task of run.persistentTasks) {
+            persistent.set(task.id, task);
+        }
+    }
+
+    const dependencies = Object.fromEntries(Object.entries(edges).map(([id, dependencyIds]) => [id, [...dependencyIds]]));
+    const dependedOn = new Set(Object.values(dependencies).flat());
+    const rootTasks = Object.values(tasks).filter((task) => !dependedOn.has(task.id));
+
+    return {
+        initialTasks: rootTasks,
+        persistentTasks: [...persistent.values()],
+        taskGraph: { dependencies, roots: rootTasks.map((task) => task.id), tasks },
+    };
+};
+
+/**
  * Reads `--deps-only` / `--skip-deps`. The two are opposites, and
  * `--deps-only` with `--partition` would build only a shard's share of the
  * dependencies while later `--skip-deps` shards expect all of them, so both

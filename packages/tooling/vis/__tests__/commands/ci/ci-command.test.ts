@@ -127,6 +127,29 @@ describe("vis ci", () => {
         expect(calls[2]!.argv).toContain("test");
     });
 
+    it("hands the whole target list to one affected run with --deps-only, so shared dependencies run once", async () => {
+        expect.assertions(4);
+
+        const { logger } = makeLogger();
+        const { calls, runtime } = makeRuntime();
+
+        await ciExecute({
+            argument: ["lint,test"],
+            logger,
+            options: { depsOnly: true, install: false, skipToolchain: true },
+            runtime,
+            visConfig: undefined,
+            workspaceRoot,
+        } as never);
+
+        const affectedRuns = calls.filter((call) => call.name === "affected");
+
+        expect(affectedRuns).toHaveLength(1);
+        expect(affectedRuns[0]!.argv[0]).toBe("lint,test");
+        expect(affectedRuns[0]!.argv).toContain("--deps-only");
+        expect(calls.some((call) => call.name === "install")).toBe(false);
+    });
+
     it("skips install when --no-install is passed", async () => {
         expect.assertions(2);
 
@@ -321,6 +344,47 @@ describe("vis ci", () => {
 
         expect(runCall).toBeDefined();
         expect(runCall?.argv).toContain("build");
+    });
+
+    it("hands a --deps-only target list through the real affected handler to one `vis run`", async () => {
+        expect.assertions(4);
+
+        const runCalls: RuntimeCall[] = [];
+        const runtime = {
+            runCommand: async (name: string, options: { argv: string[] }): Promise<void> => {
+                if (name !== "affected") {
+                    runCalls.push({ argv: options.argv, name });
+
+                    return;
+                }
+
+                await affectedExecute({
+                    argument: [options.argv[0]],
+                    logger: makeLogger().logger,
+                    options: {},
+                    rawArgv: options.argv,
+                    runtime: runtime as never,
+                    visConfig: {},
+                    workspaceRoot,
+                } as never);
+            },
+        };
+
+        await ciExecute({
+            argument: ["lint,build,lint"],
+            logger: makeLogger().logger,
+            options: { base: "main", depsOnly: true, head: "HEAD", install: false },
+            runtime: runtime as never,
+            visConfig: {},
+            workspaceRoot,
+        } as never);
+
+        const runs = runCalls.filter((call) => call.name === "run");
+
+        expect(runs).toHaveLength(1);
+        expect(runs[0]?.argv[0]).toBe("lint,build");
+        expect(runs[0]?.argv).toContain("--deps-only");
+        expect(runs[0]?.argv).toContain("--affected");
     });
 
     it("forwards --upstream / --downstream / --parallel / --partition / --query when set", async () => {

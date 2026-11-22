@@ -63,7 +63,7 @@ vi.mock(import("../../../src/config/workspace"), () => {
 
 const toolbox = (): unknown => {
     return {
-        argument: undefined,
+        argument: [],
         logger: { error: () => {}, info: () => {}, log: () => {}, warn: () => {} },
         options: { dryRun: false, stopServices: false },
         visConfig: {},
