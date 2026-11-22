@@ -160,6 +160,17 @@
         { "args": ["cache", "hash", "app:build"], "launcher": "node", "binary": "node" },
         { "args": ["cache", "hash", "app:build"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "interactive": true },
         { "args": ["cache", "hash", "--help"], "launcher": "native", "binary": "native" },
+        {
+            "args": ["affected", "build", "--sparse-checkout"],
+            "launcher": "native",
+            "binary": "node",
+            "env": { "CI": "1" },
+            "note": "the fixture project is no git repository, so the binary hands the call to Node; the parity test covers the native answer"
+        },
+        { "args": ["affected", "build"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["affected", "build", "--sparse-checkout"], "launcher": "node", "binary": "node" },
+        { "args": ["affected", "build", "--sparse-checkout"], "launcher": "node", "env": { "CI": "1" }, "interactive": true },
+        { "args": ["affected", "build", "--sparse-checkout", "--help"], "launcher": "native", "binary": "native" },
         { "args": ["clean"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["clean", "--dry-run"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["clean", "--other"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
@@ -223,6 +234,8 @@
         { "args": ["cache", "list", "--format", "json"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
         { "args": ["cache", "size"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
         { "args": ["cache", "hash", "app:build"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "platform": "win32" },
-        { "args": ["cache", "hash", "--help"], "launcher": "native", "platform": "win32" }
+        { "args": ["cache", "hash", "--help"], "launcher": "native", "platform": "win32" },
+        { "args": ["affected", "build", "--sparse-checkout"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
+        { "args": ["affected", "--help"], "launcher": "native", "platform": "win32" }
     ]
 }

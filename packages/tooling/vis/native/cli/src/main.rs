@@ -26,6 +26,7 @@ use std::ffi::{OsStr, OsString};
 use std::process::{exit, Command, ExitStatus};
 
 mod advisories;
+mod affected;
 mod cache;
 mod cache_hash;
 mod clean;
@@ -130,6 +131,9 @@ fn main() {
         "cache" if args.get(1).map(String::as_str) == Some("hash") && !surface::asks_for_help(&args) => {
             cache_hash::run(&args, &raw_args)
         }
+        // `vis affected <target> --sparse-checkout` — the affected project roots. Every other shape
+        // forwards to `vis run --affected` and is delegated inside `affected::run`.
+        "affected" if !surface::asks_for_help(&args) => affected::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
