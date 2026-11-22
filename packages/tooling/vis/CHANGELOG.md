@@ -1,3 +1,14 @@
+## @visulima/vis [7.1.0-next.3](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.2...@visulima/vis@7.1.0-next.3) (2026-11-22)
+
+### Features
+
+* **vis:** scan standard input with vis secrets --stdin <filename> ([#129](https://github.com/visulima/vis/issues/129)) ([09db062](https://github.com/visulima/vis/commit/09db06296bae7f51578c617e326a571e348eea2b))
+
+
+### Dependencies
+
+* **@visulima/secret-scanner:** upgraded to 3.1.0-next.1
+
 ## @visulima/vis [7.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.1...@visulima/vis@7.1.0-next.2) (2026-11-22)
 
 ### Features
