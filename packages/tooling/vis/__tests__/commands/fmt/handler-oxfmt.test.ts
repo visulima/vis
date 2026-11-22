@@ -110,6 +110,18 @@ describe("vis fmt (bundled oxfmt, end to end)", () => {
             expect(leftovers()).toStrictEqual([]);
         });
 
+        it("formats with the fmt key of a TypeScript vite.config.ts, which oxfmt does not read itself", async () => {
+            expect.assertions(3);
+
+            writeFileSync(join(root, "vite.config.ts"), "const config: { fmt: { semi: boolean } } = { fmt: { semi: false } };\n\nexport default config;\n");
+
+            const lines = await run();
+
+            expect(source()).toBe('const a = "x"\n');
+            expect(lines.join("\n")).toContain("formatting with the fmt key of vite.config.ts");
+            expect(leftovers()).toStrictEqual([]);
+        });
+
         it("lets a discovered .oxfmtrc.json drive the run", async () => {
             expect.assertions(1);
 

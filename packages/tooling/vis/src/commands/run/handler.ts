@@ -10,17 +10,16 @@ import { cleanupLegacyTaskRunnerLayout } from "../../util/vis-paths";
 import type { RunOptions } from "./index";
 import { MAX_OUTPUT_BYTES } from "./output";
 import { renderLastRunSummary } from "./parse";
+import { prepareRun } from "./prepare-run";
 import { createRunCleanup } from "./run-cleanup";
 import { printDryRunPlan } from "./run-dry-run";
 import { createInteractiveSession, runInteractiveRerun, waitForInteractiveAction } from "./run-interactive";
 import { runStartupPreflights } from "./run-preflight";
 import { createRunRuntime } from "./run-runtime";
-import { resolveRunSelection } from "./run-selection";
 import { wireRunServices } from "./run-services";
 import { runStaticMode } from "./run-static";
 import { logRegistryServiceHint } from "./run-summary";
 import { finalizeRunTaskGraph } from "./run-task-graph";
-import { buildRunTasks } from "./run-tasks";
 import { resolveTaskCommand } from "./shell";
 import { resolveRetrySpawn } from "./task-env";
 
@@ -73,7 +72,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         workspaceRoot,
     });
 
-    const selection = await resolveRunSelection({
+    const prepared = await prepareRun({
         argument,
         cacheDirectory: runCacheDirectory,
         config,
@@ -88,36 +87,16 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
         workspaceRoot,
     });
 
-    if (!selection) {
+    if (!prepared) {
         return;
     }
 
-    const { affectedExternalInputState, affectedFiles, currentOs, forwardedArgs, projectsWithTarget, projectTargetIndex, target } = selection;
-
-    const runTasks = buildRunTasks({
-        affectedFiles,
-        config,
-        forwardedArgs,
-        logger,
-        options,
-        projectGraph,
-        projectOptions,
-        projectsWithTarget,
-        projectTargetIndex,
-        target,
-        workspace,
-    });
-
-    if (!runTasks) {
-        return;
-    }
-
-    const { persistentTasks } = runTasks;
-    let { initialTasks, taskGraph } = runTasks;
+    const { affectedExternalInputState, affectedFiles, currentOs, persistentTasks, projectsWithTarget, targets } = prepared;
+    let { initialTasks, taskGraph } = prepared;
 
     await runStartupPreflights({ config, logger, options, packageJsons, workspaceRoot });
 
-    const services = await wireRunServices({ config, initialTasks, logger, options, persistentTasks, target, taskGraph, workspaceRoot });
+    const services = await wireRunServices({ config, initialTasks, logger, options, persistentTasks, target: targets.join(","), taskGraph, workspaceRoot });
 
     initialTasks = services.initialTasks;
     taskGraph = services.taskGraph;
@@ -173,7 +152,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
             runCacheDirectory,
             serviceEnvByTaskId,
             serviceResult,
-            target,
+            targets,
             taskGraph,
             visConfig,
             workspaceRoot,

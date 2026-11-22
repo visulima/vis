@@ -5,7 +5,9 @@ import { bold, cyan, dim, green } from "@visulima/colorize";
 import { basename, relative } from "@visulima/path";
 
 import { resolveSharedCacheDirectory } from "../../cache/cache-directory";
-import { selectFmtEngine } from "../../fmt/engine";
+import { findVisConfigFile } from "../../config/config";
+import { collectFmtDoctor, formatFmtDoctor } from "../../fmt/doctor";
+import { decideFmtEngine } from "../../fmt/engine";
 import type { FmtResolution } from "../../fmt/resolve-options";
 import { describeFmtSource, resolveFmtOptions } from "../../fmt/resolve-options";
 import { hasGlobs, runOxfmt, TRANSIENT_CONFIG_PATTERN, TRANSIENT_CONFIG_PREFIX } from "../../fmt/run-oxfmt";
@@ -41,13 +43,20 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     const detected = detectAdapters(root, adapters);
     const allEligible = adaptersByKind(detected, adapters, "fmt");
     const enabled = allEligible.filter(({ adapter }) => fmtConfig?.adapters?.[adapter.id as FmtAdapterId]?.enabled !== false);
-    const bundled
-        = selectFmtEngine({
-            builtin: fmtConfig?.adapters?.oxfmt?.builtin,
-            detected: enabled.map(({ adapter }) => adapter.id as FmtAdapterId),
-            engine: fmtConfig?.engine,
-            oxfmtEnabled: fmtConfig?.adapters?.oxfmt?.enabled !== false,
-        }) === "bundled";
+    const engineInput = {
+        builtin: fmtConfig?.adapters?.oxfmt?.builtin,
+        detected: enabled.map(({ adapter }) => adapter.id as FmtAdapterId),
+        engine: fmtConfig?.engine,
+        oxfmtEnabled: fmtConfig?.adapters?.oxfmt?.enabled !== false,
+    };
+
+    if (options.doctor) {
+        await runDoctor({ engineInput, fmtConfig, format: options.format ?? "human", logger, output: options.output, prettierDeclared: enabled.some(({ adapter }) => adapter.id === "prettier"), root });
+
+        return;
+    }
+
+    const bundled = decideFmtEngine(engineInput).engine === "bundled";
     const format = options.format ?? "human";
     const announce = format === "human" && !options.quiet;
 
@@ -286,6 +295,44 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
     }
 
     await runCycle(sinceFiles);
+};
+
+interface DoctorInput {
+    engineInput: Parameters<typeof decideFmtEngine>[0];
+    fmtConfig: NonNullable<Toolbox["visConfig"]>["fmt"];
+    format: string;
+    logger: Toolbox["logger"];
+    output: string | undefined;
+    prettierDeclared: boolean;
+    root: string;
+}
+
+/** `vis fmt --doctor`: reports the engine and config source without formatting or writing anything. Exit 2 when the config cannot be read. */
+const runDoctor = async ({ engineInput, fmtConfig, format, logger, output, prettierDeclared, root }: DoctorInput): Promise<void> => {
+    try {
+        const engine = decideFmtEngine(engineInput);
+        const resolution = engine.engine === "bundled" ? await resolveFmtOptions({ fmtConfig, loadModule: importTs, prettierDeclared, root }) : undefined;
+        const report = collectFmtDoctor({ adapters: engineInput.detected, engine, resolution, root, visConfigFile: findVisConfigFile(root) });
+
+        if (format === "json") {
+            const sink = resolveOutput({ cwd: root, target: output });
+
+            try {
+                sink.write(`${JSON.stringify(report, null, 2)}\n`);
+            } finally {
+                sink.close();
+            }
+
+            return;
+        }
+
+        for (const line of formatFmtDoctor(report)) {
+            logger.info(line);
+        }
+    } catch (error) {
+        logger.error(`vis fmt --doctor: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 2;
+    }
 };
 
 const isTransientConfig = (file: string): boolean => basename(file).startsWith(TRANSIENT_CONFIG_PREFIX);

@@ -37,7 +37,7 @@ vis affected build --base=origin/main --sparse-checkout
 | `--cache`           | `true`   | Enable caching (`--no-cache` to disable)                                                                      |
 | `--dry-run`         | `false`  | Show what would run without executing                                                                         |
 | `--partition`       |          | Partition for distributed CI (e.g. `1/4`)                                                                     |
-| `--deps-only`       | `false`  | Run only the dependencies of the requested tasks                                                              |
+| `--deps-only`       | `false`  | Run only the dependencies of the requested tasks; the target may be a comma-separated list (see `vis run`)      |
 | `--skip-deps`       | `false`  | Run only the requested tasks; assume `--deps-only` ran                                                        |
 | `--if-present`      | `false`  | Exit 0 when the target, `--query` or tag selects no projects. Forwarded to `vis run`                          |
 | `--query`           |          | Filter affected projects by query                                                                             |

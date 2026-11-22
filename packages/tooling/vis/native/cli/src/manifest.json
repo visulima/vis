@@ -2,7 +2,7 @@
   "commands": [
     {
       "argument": {
-        "description": "The target to run (e.g., build, test, lint)",
+        "description": "The target to run (e.g., build, test, lint). With --deps-only, a comma-separated list (build,test) runs the shared dependencies of all of them once",
         "name": "target",
         "type": "string"
       },
@@ -2443,6 +2443,10 @@
           "Re-run the formatter when watched files change"
         ],
         [
+          "vis fmt --doctor",
+          "Show the engine, config source and bundled oxfmt version without formatting"
+        ],
+        [
           "vis fmt --check --format sarif --output fmt.sarif",
           "Write the SARIF report to fmt.sarif instead of stdout"
         ]
@@ -2456,6 +2460,11 @@
         {
           "description": "Report files that would change without writing",
           "name": "check",
+          "type": "boolean"
+        },
+        {
+          "description": "Print which engine and config source `vis fmt` would use, and format nothing",
+          "name": "doctor",
           "type": "boolean"
         },
         {

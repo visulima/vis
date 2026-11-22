@@ -38,7 +38,7 @@ export const createRunRuntime = async ({
     runCacheDirectory,
     serviceEnvByTaskId,
     serviceResult,
-    target,
+    targets,
     taskGraph,
     visConfig,
     workspaceRoot,
@@ -55,7 +55,7 @@ export const createRunRuntime = async ({
     runCacheDirectory: string;
     serviceEnvByTaskId: ApplyServiceRegistryResult["serviceEnvByTaskId"];
     serviceResult: ApplyServiceRegistryResult;
-    target: string;
+    targets: string[];
     taskGraph: TaskGraph;
     visConfig: Toolbox<Console, RunOptions>["visConfig"];
     workspaceRoot: string;
@@ -243,7 +243,7 @@ export const createRunRuntime = async ({
     // even when the regular task graph is empty (e.g. `vis run serve`
     // for a project whose `serve` target has `preset: "server"`).
     const lifecycleOptions = {
-        args: { parallel: runnerOptions.parallel, targets: [target] },
+        args: { parallel: runnerOptions.parallel, targets },
         autoExit: autoExitConfig,
         projectNames: projectsWithTarget,
         // A `splitCompound` target runs as its segments, so list those in its

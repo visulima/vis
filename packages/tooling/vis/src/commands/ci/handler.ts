@@ -11,10 +11,14 @@ const execute = async ({ argument, logger, options, runtime, visConfig, workspac
         throw new Error("Missing targets. Usage: vis ci <target>[,<target>…]");
     }
 
-    const targets = rawTargets
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
+    const targets = [
+        ...new Set(
+            rawTargets
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean),
+        ),
+    ];
 
     if (targets.length === 0) {
         throw new Error("Missing targets. Usage: vis ci <target>[,<target>…]");
@@ -77,7 +81,8 @@ const execute = async ({ argument, logger, options, runtime, visConfig, workspac
         logger.info("▸ Skipping install (--no-install)");
     }
 
-    for (const target of targets) {
+    // The dependency step builds what the targets share once: one run over the whole list, not one per target.
+    for (const target of options.depsOnly ? [targets.join(",")] : targets) {
         logger.info(`▸ Running affected ${target} (base=${base}, head=${head})`);
 
         const argv: string[] = [
