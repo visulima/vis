@@ -302,6 +302,8 @@ vis v6.6.0
     migrate sherif           Strip sherif config/dep/scripts and surface        
                              ignore-rules as a positive `vis lint --<rule>`     
                              command                                            
+    migrate prettier         Move the Prettier config into vis.config fmt and   
+                             rewrite prettier scripts to `vis fmt`              
     migrate verify           Audit the workspace for stray                      
                              gitleaks/secretlint/sherif/syncpack references     
                              (exit 1 on issues)                                 
