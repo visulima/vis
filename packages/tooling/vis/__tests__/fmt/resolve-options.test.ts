@@ -107,6 +107,33 @@ describe("fmt option resolution", () => {
             expect(resolution.config).toStrictEqual(expected);
         });
 
+        it.each([
+            ["ignorePatterns", { ignorePatterns: ["dist", "../outside/**"] }, "../outside/**"],
+            ["a negated ignore pattern", { ignorePatterns: ["!../keep.ts"] }, "!../keep.ts"],
+            ["a nested segment", { ignorePatterns: ["a/../../b"] }, "a/../../b"],
+            ["an override's files", { overrides: [{ files: ["*.ts", "../x/*.ts"], options: {} }] }, "../x/*.ts"],
+            ["an override's excludeFiles", { overrides: [{ excludeFiles: String.raw`..\x`, files: "*.ts", options: {} }] }, String.raw`..\x`],
+        ])("rejects a vis.config glob that climbs out of the root: %s", async (_name, fmtConfig, pattern) => {
+            expect.assertions(2);
+
+            const rejected = resolveFmtOptions({ fmtConfig, loadModule, root });
+
+            await expect(rejected).rejects.toThrow(/must not contain "\.\."/);
+            await expect(rejected).rejects.toThrow(pattern);
+        });
+
+        it("accepts globs that only contain dots in names", async () => {
+            expect.assertions(1);
+
+            const { source } = await resolveFmtOptions({
+                fmtConfig: { ignorePatterns: ["..hidden/**", "a..b/*.ts", "**/*.d.ts"], overrides: [{ files: ["*.config..js"], options: {} }] },
+                loadModule,
+                root,
+            });
+
+            expect(source).toBe("vis.config");
+        });
+
         it("does not treat fmt keys that are not options as a source", async () => {
             expect.assertions(1);
 

@@ -288,7 +288,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "description": "Files the bundled oxfmt skips, relative to the workspace root. Same shape as oxfmt's `ignorePatterns`; patterns must not contain `..`."
+                    "description": "Files the bundled oxfmt skips, relative to the workspace root. Same shape as oxfmt's `ignorePatterns`. A pattern containing `..` is rejected."
                 },
                 "options": {
                     "$ref": "#/$defs/FmtOptions",
@@ -306,7 +306,7 @@
                     "items": {
                         "$ref": "#/$defs/FmtOverride"
                     },
-                    "description": "File-specific option overrides for the bundled oxfmt. Later entries win."
+                    "description": "File-specific option overrides for the bundled oxfmt. Later entries win. A `files` or `excludeFiles` glob containing `..` is rejected."
                 }
             },
             "additionalProperties": false,

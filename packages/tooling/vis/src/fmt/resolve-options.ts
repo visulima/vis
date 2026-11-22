@@ -2,6 +2,7 @@ import { isAccessibleSync } from "@visulima/fs";
 import { join, relative } from "@visulima/path";
 
 import type { VisConfig } from "../config/types";
+import { VisUserError } from "../errors/vis-user-error";
 import type { FmtConfigSourceKind, ModuleLoader, OxfmtConfig } from "./options";
 import { OXFMT_DISCOVERED_CONFIG_FILES } from "./options";
 import { findNestedPrettierConfigs, findPrettierConfigFile, mapPrettierConfig, readEditorconfigPrintWidth, readPrettierConfig, readPrettierIgnore } from "./prettier-config";
@@ -31,6 +32,24 @@ export interface FmtResolution {
 const hasVisConfigOptions = (fmtConfig: ResolveFmtOptionsInput["fmtConfig"]): fmtConfig is NonNullable<ResolveFmtOptionsInput["fmtConfig"]> =>
     fmtConfig !== undefined && (fmtConfig.options !== undefined || fmtConfig.overrides !== undefined || fmtConfig.ignorePatterns !== undefined);
 
+/** Globs are resolved against the workspace root, and oxfmt rejects one that climbs out of it. */
+const assertInsideRoot = (location: string, patterns: ReadonlyArray<string>): void => {
+    for (const pattern of patterns) {
+        if (pattern.replace(/^!/, "").split(/[/\\]/).includes("..")) {
+            throw new VisUserError(`vis.config ${location}: "${pattern}" must not contain "..". Patterns are relative to the workspace root.`);
+        }
+    }
+};
+
+const validateFmtGlobs = (fmtConfig: NonNullable<ResolveFmtOptionsInput["fmtConfig"]>): void => {
+    assertInsideRoot("fmt.ignorePatterns", fmtConfig.ignorePatterns ?? []);
+
+    for (const [index, override] of (fmtConfig.overrides ?? []).entries()) {
+        assertInsideRoot(`fmt.overrides[${String(index)}].files`, [override.files].flat());
+        assertInsideRoot(`fmt.overrides[${String(index)}].excludeFiles`, [override.excludeFiles ?? []].flat());
+    }
+};
+
 const findOxfmtConfigFile = (root: string): string | undefined => {
     const name = OXFMT_DISCOVERED_CONFIG_FILES.find((candidate) => isAccessibleSync(join(root, candidate)));
 
@@ -49,7 +68,7 @@ const findOxfmtConfigFile = (root: string): string | undefined => {
  * @param input.prettierDeclared Whether Prettier is declared or detected, config file or not.
  * @param input.root Workspace root.
  * @returns The chosen source with the config to hand to oxfmt (if vis has to), and the warnings to print.
- * @throws When the Prettier config is the chosen source but cannot be read.
+ * @throws When the Prettier config is the chosen source but cannot be read, or a `vis.config` glob contains `..`.
  */
 export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclared = false, root }: ResolveFmtOptionsInput): Promise<FmtResolution> => {
     const oxfmtFile = findOxfmtConfigFile(root);
@@ -57,6 +76,8 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, prettierDeclare
     const display = (file: string): string => relative(root, file);
 
     if (hasVisConfigOptions(fmtConfig)) {
+        validateFmtGlobs(fmtConfig);
+
         const ignored = [oxfmtFile, prettierFile].filter((file): file is string => file !== undefined).map((file) => display(file));
         const config: Record<string, unknown> = { ...fmtConfig.options };
 

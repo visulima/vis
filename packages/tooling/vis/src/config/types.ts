@@ -301,7 +301,7 @@ export interface VisConfig {
 
         /**
          * Files the bundled oxfmt skips, relative to the workspace root. Same shape as
-         * oxfmt's `ignorePatterns`; patterns must not contain `..`.
+         * oxfmt's `ignorePatterns`. A pattern containing `..` is rejected.
          */
         ignorePatterns?: string[];
 
@@ -319,7 +319,7 @@ export interface VisConfig {
          */
         order?: FmtAdapterId[];
 
-        /** File-specific option overrides for the bundled oxfmt. Later entries win. */
+        /** File-specific option overrides for the bundled oxfmt. Later entries win. A `files` or `excludeFiles` glob containing `..` is rejected. */
         overrides?: FmtOverride[];
     };
 
