@@ -1,3 +1,62 @@
+## @visulima/vis [7.1.0-next.7](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.6...@visulima/vis@7.1.0-next.7) (2026-11-22)
+
+### Features
+
+* **vis:** detect the CI provider for `vis sync ci-workflow` ([10a08e1](https://github.com/visulima/vis/commit/10a08e1f23c5344a3e41e1031d0a29e4699e7587))
+* **vis:** format with a bundled oxfmt and a config fallback chain ([#162](https://github.com/visulima/vis/issues/162)) ([17e607c](https://github.com/visulima/vis/commit/17e607cf49fe13abad53c092ba95d836341d70d8))
+* **vis:** generate CI workflows that run targets as parallel steps ([88cdbea](https://github.com/visulima/vis/commit/88cdbea0303c11246e5cf948a0880fd7fee44245))
+* **vis:** harden generated CI workflows and support non-JS toolchains ([4a486f6](https://github.com/visulima/vis/commit/4a486f664ed9dbe1eb74e310f25796dc049f2a5f))
+* **vis:** keep the fmt config in the vis cache when it has no globs ([#165](https://github.com/visulima/vis/issues/165)) ([3a4d727](https://github.com/visulima/vis/commit/3a4d727afcfaa3e33e476cfe60bc0f6e18b0c8bd))
+* **vis:** let a workflow target carry a project query ([1e55891](https://github.com/visulima/vis/commit/1e558915a6133787239a9f020cf376cb7afb89ca))
+* **vis:** run the generated GitHub workflow in a merge queue ([fa53fe3](https://github.com/visulima/vis/commit/fa53fe37e5e0f30fec375bfccbca69d1b765cfda))
+* **vis:** typed extension points for the generated CI workflow ([2661053](https://github.com/visulima/vis/commit/26610534019a171a112f60ac40f6dc6fbd0d9f47))
+
+### Bug Fixes
+
+* **vis:** address review feedback on the ci-workflow generator ([3d17402](https://github.com/visulima/vis/commit/3d174020f7ea4261970442e8b7d0e4d8790d4a9d))
+* **vis:** check the workflow drift against the providers it was generated for ([dec7e60](https://github.com/visulima/vis/commit/dec7e60bb0ffd2508b5008b6bdee43a8547f1365))
+* **vis:** drop `--skip-toolchain` from the `vis ci` parallel-step example ([f2786f8](https://github.com/visulima/vis/commit/f2786f8184ad27fa9fd871907b18853841a95301))
+* **vis:** give each non-PR CI run its own concurrency group ([f2a1995](https://github.com/visulima/vis/commit/f2a19958e73aad2d3fbbb6f1c02aed0f3e84f945))
+* **vis:** install the aube executable in generated CI workflows ([ed58e59](https://github.com/visulima/vis/commit/ed58e592f9c137ae8d7afc13484bd50e83653f77))
+* **vis:** keep a dependency's services and drop finalizers from `vis run --deps-only` ([4fbec78](https://github.com/visulima/vis/commit/4fbec78eb47de0f57342fe2bc98825b159e0e91c))
+* **vis:** let the generated GitLab jobs use the including pipeline's stage, and refuse values GitLab rejects ([5cad57e](https://github.com/visulima/vis/commit/5cad57e6d283efbd16df05a1b2385b68e14280d8))
+* **vis:** pin .NET from a project's global.json in the generated GitHub workflow ([8644b87](https://github.com/visulima/vis/commit/8644b87f2f89dc24990227f506bfb1c5bd3add7e))
+* **vis:** refuse a workflow partition whose target reaches itself through another target ([d7b41ad](https://github.com/visulima/vis/commit/d7b41ad59cad27f7ed71ed74d4fbafbf8d849cd7))
+* **vis:** reject a GitLab cache directory that climbs out of the project through an inner `..` ([a856f4e](https://github.com/visulima/vis/commit/a856f4e9f1b256fd1bb6e23ac230e7cdb10f3e1b))
+* **vis:** run a dependency's finally-task once, after the dependencies ([6e7ac42](https://github.com/visulima/vis/commit/6e7ac42a1b9ee528df9123e113b144dec873a1fa))
+
+### Performance Improvements
+
+* **vis:** do not re-exec Node with a larger heap for vis fmt ([e69f91b](https://github.com/visulima/vis/commit/e69f91b61023e4c1e605d0fb8651f1fb066abc33))
+
+### Reverts
+
+* drop the per-target project query from the CI workflow generator ([4c8a2be](https://github.com/visulima/vis/commit/4c8a2be7d69898aae22f760ccf9e8d59c2c73d30))
+
+### Documentation
+
+* **vis:** describe the drift check's `--provider` flag ([08baa36](https://github.com/visulima/vis/commit/08baa3685dc941f76b4104af58ae6aea6794e40f))
+
+### Miscellaneous Chores
+
+* **vis:** regenerate the command manifest for the dependency-scope flags ([8f84bbd](https://github.com/visulima/vis/commit/8f84bbd89bfde24984fc72a028df6b76af48f7fb))
+
+### Code Refactoring
+
+* **vis:** drop redundant parentheses in the YAML list renderer ([c126d40](https://github.com/visulima/vis/commit/c126d40f59015bfbbd7c81c53b480e332b114a33))
+* **vis:** drop unused ci-workflow exports ([99ec322](https://github.com/visulima/vis/commit/99ec322cbeec7b8bf0ec48bc9aec7f80fd3f5740))
+* **vis:** replace an identity map with a type guard ([ea66017](https://github.com/visulima/vis/commit/ea66017674594a4c0a8c66f56684361191e140e1))
+
+### Tests
+
+* **vis:** add a formatter benchmark of vis fmt, the bundled oxfmt and bun fmt ([#166](https://github.com/visulima/vis/issues/166)) ([002c9aa](https://github.com/visulima/vis/commit/002c9aabb684990fb67b34c61c2398b257488923))
+* **vis:** write the GitLab limit test's layer helper with a block body ([7eb69f1](https://github.com/visulima/vis/commit/7eb69f1e4b09df25b2eb360debed031d4266df4b))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 3.1.0-next.1
+
 ## @visulima/vis [7.1.0-next.6](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.5...@visulima/vis@7.1.0-next.6) (2026-11-22)
 
 ### Features
