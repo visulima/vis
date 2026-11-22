@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ModuleLoader } from "../../src/fmt/options";
 import {
+    findNestedPrettierConfigs,
     findPrettierConfigFile,
     mapPrettierConfig,
     parseEditorconfigMaxLineLength,
@@ -215,6 +216,38 @@ describe("prettier config", () => {
 
             expect(readEditorconfigPrintWidth(root).universal).toBe(110);
             expect(readEditorconfigPrintWidth(root).scoped).toStrictEqual([]);
+        });
+    });
+
+    describe(findNestedPrettierConfigs, () => {
+        it("finds configs below the root, a package.json key included, and not the root one", () => {
+            expect.assertions(1);
+
+            write({
+                ".prettierrc.json": "{}",
+                "packages/a/.prettierrc.yaml": "semi: false\n",
+                "packages/b/package.json": JSON.stringify({ prettier: { semi: false } }),
+                "packages/c/package.json": JSON.stringify({ name: "c" }),
+                "packages/d/src/prettier.config.mjs": "export default {};\n",
+            });
+
+            expect(findNestedPrettierConfigs(root).map((file) => file.slice(root.length + 1)).sort()).toStrictEqual([
+                "packages/a/.prettierrc.yaml",
+                "packages/b/package.json",
+                "packages/d/src/prettier.config.mjs",
+            ]);
+        });
+
+        it("skips dependency and build directories and stops at a bounded depth", () => {
+            expect.assertions(1);
+
+            write({
+                "a/b/c/d/e/f/g/h/.prettierrc": "{}\n",
+                "dist/.prettierrc": "{}\n",
+                "node_modules/pkg/.prettierrc": "{}\n",
+            });
+
+            expect(findNestedPrettierConfigs(root)).toStrictEqual([]);
         });
     });
 

@@ -4,7 +4,7 @@ import { join, relative } from "@visulima/path";
 import type { VisConfig } from "../config/types";
 import type { FmtConfigSourceKind, ModuleLoader, OxfmtConfig } from "./options";
 import { OXFMT_DISCOVERED_CONFIG_FILES } from "./options";
-import { findPrettierConfigFile, mapPrettierConfig, readEditorconfigPrintWidth, readPrettierConfig, readPrettierIgnore } from "./prettier-config";
+import { findNestedPrettierConfigs, findPrettierConfigFile, mapPrettierConfig, readEditorconfigPrintWidth, readPrettierConfig, readPrettierIgnore } from "./prettier-config";
 
 export interface ResolveFmtOptionsInput {
     /** `vis.config` `fmt` section. */
@@ -86,6 +86,15 @@ export const resolveFmtOptions = async ({ fmtConfig, loadModule, root }: Resolve
             ignorePatterns: readPrettierIgnore(root),
             sourceFile: found!.file,
         });
+
+        const nested = findNestedPrettierConfigs(root);
+
+        if (nested.length > 0) {
+            const [first] = nested;
+            const more = nested.length > 1 ? ` and ${String(nested.length - 1)} more` : "";
+
+            warnings.push(`Only the root Prettier config is read; ${display(first!)}${more} in a subdirectory ${nested.length > 1 ? "are" : "is"} ignored.`);
+        }
 
         if (scoped.length > 0) {
             warnings.push(`.editorconfig sets max_line_length only for ${scoped.join(", ")}; those sections are not applied.`);

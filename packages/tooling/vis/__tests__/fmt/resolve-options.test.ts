@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
@@ -111,6 +111,35 @@ describe("fmt option resolution", () => {
             expect(resolution.file).toBe(join(root, ".prettierrc.json"));
             expect(resolution.config).toStrictEqual({ ignorePatterns: ["dist"], printWidth: 80, semi: false, sortPackageJson: false });
             expect(resolution.warnings).toStrictEqual([expect.stringContaining("printWidth")]);
+        });
+
+        it("warns once that nested Prettier configs are not read", async () => {
+            expect.assertions(3);
+
+            write(".prettierrc.json", "{}");
+            mkdirSync(join(root, "packages/a"), { recursive: true });
+            mkdirSync(join(root, "packages/b"), { recursive: true });
+            write("packages/a/.prettierrc.json", "{}");
+            write("packages/b/.prettierrc.json", "{}");
+
+            const { warnings } = await resolveFmtOptions({ loadModule, root });
+            const nested = warnings.filter((warning) => warning.includes("subdirectory"));
+
+            expect(nested).toHaveLength(1);
+            expect(nested[0]).toContain("and 1 more");
+            expect(nested[0]).toContain("Only the root Prettier config is read");
+        });
+
+        it("does not look for nested Prettier configs when Prettier is not the chosen source", async () => {
+            expect.assertions(1);
+
+            write(".oxfmtrc.json", "{}");
+            mkdirSync(join(root, "packages/a"), { recursive: true });
+            write("packages/a/.prettierrc.json", "{}");
+
+            const { warnings } = await resolveFmtOptions({ loadModule, root });
+
+            expect(warnings).toStrictEqual([]);
         });
 
         it("takes printWidth from a universal .editorconfig section and notes glob-scoped ones", async () => {

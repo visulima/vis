@@ -63,7 +63,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
             logger.warn(`vis fmt: ${warning}`);
         }
 
-        if (fmtConfig?.engine !== "oxfmt" && enabled.some(({ adapter }) => adapter.id === "prettier")) {
+        if (fmtConfig?.engine !== "oxfmt" && (resolution.source === "prettier" || enabled.some(({ adapter }) => adapter.id === "prettier"))) {
             logger.warn('vis fmt: formatting with the bundled oxfmt instead of Prettier; the output can differ. Set `fmt.engine: "prettier"` in vis.config to keep running Prettier.');
         }
 
@@ -245,7 +245,7 @@ const execute = async ({ logger, options, visConfig, workspaceRoot }: Toolbox<Co
                     break;
                 }
                 default: {
-                    printHuman(result.findings, root, mode, logger);
+                    printHuman(result.findings, root, mode, logger, bundled);
                 }
             }
         } finally {
@@ -312,9 +312,10 @@ const collectPositional = (options: FmtOptions): string[] => {
     return [...(bag._ ?? bag.args ?? [])];
 };
 
-const printHuman = (findings: ReadonlyArray<Finding>, root: string, mode: "check" | "fix", logger: Toolbox["logger"]): void => {
+// `oxfmt --write` does not report what it rewrote, so the bundled fix run cannot say "nothing to change".
+const printHuman = (findings: ReadonlyArray<Finding>, root: string, mode: "check" | "fix", logger: Toolbox["logger"], bundled: boolean): void => {
     if (findings.length === 0) {
-        logger.info(green(mode === "fix" ? "✓ fmt: nothing to change" : "✓ fmt: all files already formatted"));
+        logger.info(green(mode === "check" ? "✓ fmt: all files already formatted" : bundled ? "✓ fmt: formatted with oxfmt" : "✓ fmt: nothing to change"));
 
         return;
     }

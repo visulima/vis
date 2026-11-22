@@ -258,6 +258,31 @@ describe("bundled oxfmt runner", () => {
             expect(leftovers()).toStrictEqual([]);
         });
 
+        it("applies ignorePatterns and .prettierignore to explicit paths, and handles bracketed and absolute ones", async () => {
+            expect.assertions(5);
+
+            setup();
+            mkdirSync(join(root, "gen"));
+            mkdirSync(join(root, "app", "[id]"), { recursive: true });
+            writeFileSync(join(root, "gen", "b.ts"), 'const b = "y";\n');
+            writeFileSync(join(root, "pi.ts"), 'const p = "y";\n');
+            writeFileSync(join(root, ".prettierignore"), "pi.ts\n");
+            writeFileSync(join(root, "app", "[id]", "page.ts"), 'const c = "y";\n');
+
+            const { stdout } = await runOxfmt({
+                config: { ignorePatterns: ["gen/**"], semi: false },
+                files: ["gen/b.ts", "pi.ts", "app/[id]/page.ts", join(root, "src", "a.ts")],
+                mode: "check",
+                root,
+            });
+
+            expect(stdout).toContain("page.ts");
+            expect(stdout).toContain("a.ts");
+            expect(stdout).not.toContain("gen");
+            expect(stdout).not.toContain("pi.ts");
+            expect(leftovers()).toStrictEqual([]);
+        });
+
         it("leaves a discovered .oxfmtrc.json in charge when no config is passed", async () => {
             expect.assertions(1);
 

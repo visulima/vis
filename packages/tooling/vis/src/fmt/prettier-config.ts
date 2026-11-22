@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { isAccessibleSync, readJsonSync } from "@visulima/fs";
@@ -11,7 +11,7 @@ import { VisUserError } from "../errors/vis-user-error";
 import type { ModuleLoader, OxfmtConfig } from "./options";
 
 /** Prettier's own search order for a root config. `package.json` only counts when it has a `prettier` key. */
-export const PRETTIER_CONFIG_FILES: ReadonlyArray<string> = [
+const PRETTIER_CONFIG_FILES: ReadonlyArray<string> = [
     "package.json",
     ".prettierrc",
     ".prettierrc.json",
@@ -98,6 +98,50 @@ const loadScript = async (file: string, loadModule: ModuleLoader): Promise<unkno
     const namespace = await loadModule(file);
 
     return "default" in namespace ? namespace.default : namespace;
+};
+
+const SKIPPED_DIRECTORIES = new Set([".git", ".vis", "build", "coverage", "dist", "node_modules"]);
+const NESTED_SCAN_MAX_DEPTH = 6;
+const NESTED_SCAN_MAX_DIRECTORIES = 2000;
+
+/**
+ * Finds Prettier configs below the root. Prettier applies the nearest config to each file, but only the
+ * root config is mapped, so a nested one is a place where the formatting will change. The scan is bounded
+ * and skips dependency and build directories.
+ * @param root Workspace root.
+ * @returns Absolute paths of the nested configs found.
+ */
+export const findNestedPrettierConfigs = (root: string): string[] => {
+    const names = new Set(PRETTIER_CONFIG_FILES);
+    const found: string[] = [];
+    const queue: { depth: number; directory: string }[] = [{ depth: 0, directory: root }];
+    let visited = 0;
+
+    for (let next = queue.shift(); next !== undefined && visited < NESTED_SCAN_MAX_DIRECTORIES; next = queue.shift()) {
+        visited += 1;
+
+        let entries;
+
+        try {
+            entries = readdirSync(next.directory, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+
+        for (const entry of entries) {
+            const path = join(next.directory, entry.name);
+
+            if (entry.isDirectory()) {
+                if (next.depth < NESTED_SCAN_MAX_DEPTH && !SKIPPED_DIRECTORIES.has(entry.name)) {
+                    queue.push({ depth: next.depth + 1, directory: path });
+                }
+            } else if (next.depth > 0 && names.has(entry.name) && (entry.name !== "package.json" || readPackageJson(path)?.prettier !== undefined)) {
+                found.push(path);
+            }
+        }
+    }
+
+    return found;
 };
 
 /**

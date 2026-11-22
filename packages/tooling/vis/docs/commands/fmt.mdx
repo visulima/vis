@@ -163,7 +163,7 @@ The cache is skipped for:
 - workspace-wide runs that pass `.` (the file vector is unbounded)
 - runs where `VIS_NO_CACHE=1` is set
 
-Failed or killed processes are never stored. Clear the cache with `vis cache clean` or by removing the directory directly. The bundled oxfmt is not cached: it is fast enough that a replayed result would not pay for the extra fingerprinting.
+Failed or killed processes are never stored. Clear the cache with `vis cache clean` or by removing the directory directly. The bundled oxfmt is not cached.
 
 ## Detection
 

@@ -189,6 +189,26 @@ describe("vis fmt handler", () => {
             expect(oxfmtCall().files).toStrictEqual(["logo.png", "docs/a.md", "src/b.ts"]);
         });
 
+        it("does not claim nothing changed after a write run, which oxfmt does not itemise", async () => {
+            expect.assertions(2);
+
+            await run();
+
+            expect(messages.info.join("\n")).toContain("formatted with oxfmt");
+            expect(messages.info.join("\n")).not.toContain("nothing to change");
+        });
+
+        it("warns that Prettier is replaced when the only sign of it is a package.json key or a TOML config", async () => {
+            expect.assertions(2);
+
+            writeFileSync(join(root, ".prettierrc.toml"), "tabWidth = 3\n");
+
+            await run();
+
+            expect(messages.warn.filter((line) => line.includes("instead of Prettier"))).toHaveLength(1);
+            expect(oxfmtCall().config).toMatchObject({ tabWidth: 3 });
+        });
+
         it("fails a --check run when oxfmt lists files that would change", async () => {
             expect.assertions(2);
 
