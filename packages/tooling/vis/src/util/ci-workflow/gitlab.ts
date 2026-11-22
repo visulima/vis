@@ -8,6 +8,8 @@
  * `--skip-toolchain`): there is no earlier step on that machine to do it.
  */
 
+import { isAbsolute, normalize } from "@visulima/path";
+
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { Ecosystem } from "./ecosystems";
@@ -46,11 +48,14 @@ const cachePath = (cacheDirectory: string | undefined): string => {
         return ".vis-cache";
     }
 
-    if (cacheDirectory.startsWith("/") || cacheDirectory.startsWith("..")) {
+    // Normalised first, so a `..` segment after the first one cannot climb out either.
+    const normalized = normalize(cacheDirectory);
+
+    if (isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) {
         throw new VisUserError(`GitLab can only cache paths inside the project; taskRunner.cacheDirectory is "${cacheDirectory}".`);
     }
 
-    return cacheDirectory.replaceAll(/^\.\/|\/$/gu, "");
+    return normalized.replaceAll(/^\.\/|\/$/gu, "");
 };
 
 /** Toolchains vis's own pre-flight installs when they are pinned in `toolchain.tools`. */

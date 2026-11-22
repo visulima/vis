@@ -376,10 +376,19 @@ describe(renderGitlabCiWorkflow, () => {
         expect(yaml).toContain('    timeout: "60m"');
     });
 
-    it("refuses a cache directory outside the project", () => {
+    it.each(["/tmp/vis", "../vis", "cache/../../outside", "./a/../.."])("refuses the cache directory %s outside the project", (cacheDirectory) => {
         expect.assertions(1);
 
-        expect(() => renderGitlabCiWorkflow(plan({ cacheDirectory: "/tmp/vis" }))).toThrow("inside the project");
+        expect(() => renderGitlabCiWorkflow(plan({ cacheDirectory }))).toThrow("inside the project");
+    });
+
+    it("caches a nested cache directory that stays inside the project", () => {
+        expect.assertions(2);
+
+        const yaml = renderGitlabCiWorkflow(plan({ cacheDirectory: "./build/../tmp/vis/" }));
+
+        expect(yaml).toContain('            - "tmp/vis/"');
+        expect(yaml).not.toContain("..");
     });
 });
 
