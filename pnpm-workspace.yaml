@@ -11,6 +11,7 @@ packages:
   - "!packages/tooling/vis/native/cli/tests/fixtures/targets/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/ignore/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/clean/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/cache-hash/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/list/**"
 
 allowBuilds:
