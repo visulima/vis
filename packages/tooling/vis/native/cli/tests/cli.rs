@@ -391,6 +391,45 @@ fn outdated_suppresses_exit_one_but_remove_does_not() {
     assert_eq!(remove, Some(1), "remove should forward exit 1");
 }
 
+#[cfg(unix)]
+#[test]
+fn pm_family_delegates_when_vis_config_is_present() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!("vis-cfg-{}", std::process::id()));
+    let project = base.join("project");
+    let bindir = base.join("bin");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(project.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+    // A vis.config pins the backend the native detector can't read -> delegate.
+    std::fs::write(project.join("vis.config.ts"), "export default { install: { backend: \"aube\" } };\n").unwrap();
+
+    let stub_node = bindir.join("node");
+    std::fs::write(&stub_node, "#!/bin/sh\necho \"NODE:$*\"\n").unwrap();
+    std::fs::set_permissions(&stub_node, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let fallback = base.join("dist").join("bin.js");
+    std::fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+
+    let output = binary()
+        .args(["remove", "lodash"])
+        .current_dir(&project)
+        .env("VIS_NODE", &stub_node)
+        .env("VIS_FALLBACK_ENTRY", &fallback)
+        .env_remove("npm_config_user_agent")
+        .output()
+        .expect("run binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    std::fs::remove_dir_all(&base).ok();
+
+    // Delegated to Node (honors the config-pinned backend), not run via pnpm.
+    assert!(output.status.success(), "config delegate failed: {:?}", output);
+    assert!(stdout.contains("NODE:"), "stdout: {stdout}");
+    assert!(stdout.contains("remove lodash"), "stdout: {stdout}");
+}
+
 /// An ancestor `packageManager` pin makes Node run through Corepack, so a plain config stays with Node.
 #[cfg(unix)]
 #[test]
