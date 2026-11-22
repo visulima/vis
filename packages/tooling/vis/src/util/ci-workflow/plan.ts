@@ -27,6 +27,8 @@ export interface CiWorkflowTarget {
     /** Environment variables from the target's object form in `ci.workflow.targets`. */
     env: Record<string, string> | undefined;
     name: string;
+    /** Project query from the target's object form; every `vis` call for the target passes it as `--query`. */
+    query?: string;
     /** Number of `--partition` shards; 1 means unpartitioned. */
     shards: number;
 }
@@ -214,9 +216,9 @@ export const buildCiWorkflowPlan = ({
     }
 
     const targetNames = new Set(Object.values(projects).flatMap((project) => Object.keys(project.targets ?? {})));
-    const configuredTargets = (settings.targets ?? []).map((target) => (typeof target === "string" ? { env: undefined, name: target } : target));
+    const configuredTargets = (settings.targets ?? []).map((target) => (typeof target === "string" ? { env: undefined, name: target, query: undefined } : target));
     const targets = settings.targets === undefined ? DEFAULT_CI_TARGETS.filter((target) => targetNames.has(target)) : configuredTargets.map(({ name }) => name);
-    const targetEnv = new Map(configuredTargets.map(({ env, name }) => [name, env]));
+    const targetSettings = new Map(configuredTargets.map((target) => [target.name, target]));
     const duplicate = targets.find((target, index) => targets.indexOf(target) !== index);
 
     if (duplicate !== undefined) {
@@ -281,7 +283,7 @@ export const buildCiWorkflowPlan = ({
             ecosystems,
             github,
             gitlab: settings.gitlab ?? {},
-            layers: layerTargets(targets, edges).map((layer) => layer.map((name) => { return { env: targetEnv.get(name), name, shards: partitions[name] ?? 1 }; })),
+            layers: layerTargets(targets, edges).map((layer) => layer.map((name) => { return { env: targetSettings.get(name)?.env, name, query: targetSettings.get(name)?.query, shards: partitions[name] ?? 1 }; })),
             nodeVersion: settings.nodeVersion ?? toolchainPins.node ?? "22",
             packageManager,
             providers: [...providers].toSorted(),
@@ -312,9 +314,9 @@ export const visDriftCheckCommand = (plan: CiWorkflowPlan): string => `${visComm
 /** Installs vis on its own, for a workspace without a JS package manager. */
 export const visInstallCommand = (plan: CiWorkflowPlan): string => `npm install --global @visulima/vis@${plan.visVersion}`;
 
-export const visTargetCommand = (plan: CiWorkflowPlan, target: string, flags: ReadonlyArray<string>): string => {
+export const visTargetCommand = (plan: CiWorkflowPlan, { name, query }: Pick<CiWorkflowTarget, "name" | "query">, flags: ReadonlyArray<string>): string => {
     const vis = visCommand(plan);
-    const base = plan.affected ? `${vis} ci ${shellWord(target)} --no-install` : `${vis} run ${shellWord(target)}`;
+    const base = plan.affected ? `${vis} ci ${shellWord(name)} --no-install` : `${vis} run ${shellWord(name)}`;
 
-    return [base, ...flags, "--if-present"].join(" ");
+    return [base, ...flags, ...(query === undefined ? [] : [`--query=${shellWord(query)}`]), "--if-present"].join(" ");
 };

@@ -141,7 +141,7 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
     let previous: string[] = [];
 
     for (const layer of plan.layers) {
-        for (const { env, name, shards } of layer) {
+        for (const { env, name, query, shards } of layer) {
             if (shards > MAX_PARALLEL_JOBS) {
                 throw new VisUserError(`ci.workflow.partitions.${name} is ${shards}, but GitLab runs at most ${MAX_PARALLEL_JOBS} parallel jobs. Lower it.`);
             }
@@ -157,7 +157,7 @@ ${yamlString(jobName(name))}:
     extends: ".vis-ci-base"
     needs: [${previous.map((job) => yamlString(job)).join(", ")}]
 ${shards === 1 ? "" : `    parallel: ${shards}\n`}${env === undefined ? "" : `${yamlEntry("variables", env, "    ").join("\n")}\n`}    script:
-        - ${yamlString(visTargetCommand(plan, name, flags))}
+        - ${yamlString(visTargetCommand(plan, { name, query }, flags))}
 `;
         }
 

@@ -221,19 +221,19 @@ const setupSteps = (plan: CiWorkflowPlan): RunStep[] => {
 
 const targetSteps = (plan: CiWorkflowPlan): Step[] =>
     plan.layers.map((layer) => {
-        const steps: RunStep[] = layer.flatMap(({ env, name, shards }) => {
+        const steps: RunStep[] = layer.flatMap(({ env, name, query, shards }) => {
             // No --skip-toolchain: the deps step already installed any pinned tool, so each step
             // only activates it (a pinned Node.js must be on PATH in this process too).
             const flags = ["--skip-deps"];
 
             if (shards === 1) {
-                return [{ env, name, run: visTargetCommand(plan, name, flags) }];
+                return [{ env, name, run: visTargetCommand(plan, { name, query }, flags) }];
             }
 
             return Array.from({ length: shards }, (_, index) => {
                 const partition = `${index + 1}/${shards}`;
 
-                return { env, name: `${name} (${partition})`, run: visTargetCommand(plan, name, [...flags, `--partition=${partition}`]) };
+                return { env, name: `${name} (${partition})`, run: visTargetCommand(plan, { name, query }, [...flags, `--partition=${partition}`]) };
             });
         });
 
@@ -263,7 +263,7 @@ export const renderGithubCiWorkflow = (plan: CiWorkflowPlan): string => {
             name: "Build dependencies",
             run: `${plan.layers
                 .flat()
-                .map(({ name }) => visTargetCommand(plan, name, ["--deps-only"]))
+                .map((target) => visTargetCommand(plan, target, ["--deps-only"]))
                 .join("\n")}\n`,
         },
         ...targetSteps(plan),

@@ -113,20 +113,22 @@ describe(buildCiWorkflowPlan, () => {
 
         expect(result.branches).toStrictEqual(["trunk"]);
         expect(result.layers).toStrictEqual([
-            [{ env: undefined, name: "build", shards: 1 }],
+            [{ env: undefined, name: "build", query: undefined, shards: 1 }],
             [
-                { env: undefined, name: "lint", shards: 1 },
-                { env: undefined, name: "test", shards: 2 },
+                { env: undefined, name: "lint", query: undefined, shards: 1 },
+                { env: undefined, name: "test", query: undefined, shards: 2 },
             ],
         ]);
     });
 
-    it("keeps the env of a target given in object form", () => {
-        expect.assertions(1);
+    it("keeps the env and query of a target given in object form", () => {
+        expect.assertions(2);
 
-        const { plan: result } = build({ targets: ["lint", { env: { CI_SHARD: "1" }, name: "test" }] });
+        const { plan: result } = build({ targets: ["lint", { env: { CI_SHARD: "1" }, name: "test", query: "tag=type:package" }] });
+        const test = result.layers.flat().find(({ name }) => name === "test");
 
-        expect(result.layers.flat().find(({ name }) => name === "test")?.env).toStrictEqual({ CI_SHARD: "1" });
+        expect(test?.env).toStrictEqual({ CI_SHARD: "1" });
+        expect(test?.query).toBe("tag=type:package");
     });
 
     it("rejects partitioning a target that reaches itself through another target", () => {
@@ -192,6 +194,16 @@ describe(renderGithubCiWorkflow, () => {
         expect(github.indexOf("Setup Node.js")).toBeLessThan(github.indexOf("npm install -g @endevco/aube"));
         expect(gitlab.indexOf("npm install -g @endevco/aube")).toBeLessThan(gitlab.indexOf("aube install --frozen-lockfile"));
         expect(`${github}${gitlab}`).not.toContain("corepack");
+    });
+
+    it("passes a target's project query to its dependency build and every step", () => {
+        expect.assertions(3);
+
+        const yaml = renderGithubCiWorkflow(plan({ layers: [[{ env: undefined, name: "test", query: "tag=type:package", shards: 2 }]] }));
+
+        expect(yaml).toContain("pnpm exec vis ci test --no-install --deps-only --query='tag=type:package' --if-present");
+        expect(yaml).toContain("run: \"pnpm exec vis ci test --no-install --skip-deps --partition=1/2 --query='tag=type:package' --if-present\"");
+        expect(renderGitlabCiWorkflow(plan({ layers: [[{ env: undefined, name: "test", query: "tag=a && tag=b", shards: 1 }]] }))).toContain("--query='tag=a && tag=b' --if-present");
     });
 
     it("caches the configured task cache directory", () => {
