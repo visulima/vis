@@ -700,7 +700,8 @@ class TaskOrchestrator {
         // The declared hash, when the lookup computed it (see the declared-fallback branch below).
         let declaredKey: string | undefined;
         // The predecessor's key for a segment (see #chainKeyFor). `null` means the segment cannot be keyed this run.
-        const chainKey = this.#chainKeyFor(task);
+        // A satisfied dependency with no key leaves the task unkeyed too: its fingerprint cannot vouch for that dependency.
+        const chainKey = this.#hasUnkeyedSatisfiedDependency(task) ? null : this.#chainKeyFor(task);
 
         if (!this.#skipCache && task.cache !== false && chainKey !== null) {
             const cachedResult = await this.#cache.getByTaskId(task.id);

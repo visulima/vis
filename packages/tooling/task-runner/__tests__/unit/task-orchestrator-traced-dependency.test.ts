@@ -35,8 +35,11 @@ describe("a declared task that depends on a traced task", () => {
     let executed: string[];
 
     // A fresh orchestrator per run, as every `vis run` invocation is: only the on-disk cache carries over.
-    const run = async (satisfied = false): Promise<Map<string, TaskResult>> => {
-        const tasks = [{ ...generate, ...(satisfied ? { satisfied: true } : {}) }, { ...consume }];
+    const run = async (satisfied = false, tracedConsumer = false): Promise<Map<string, TaskResult>> => {
+        const tasks = [
+            { ...generate, ...(satisfied ? { satisfied: true } : {}) },
+            { ...consume, ...(tracedConsumer ? { declaresInputs: true, hashMode: "trace" as const } : {}) },
+        ];
         const taskGraph: TaskGraph = {
             dependencies: { "app:consume": ["lib:generate"], "lib:generate": [] },
             roots: ["lib:generate"],
@@ -138,6 +141,25 @@ describe("a declared task that depends on a traced task", () => {
         await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 3;");
 
         const third = await run(true);
+
+        expect(second.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
+        // Without a key for the dependency, the second run's result must not be served for `a = 3`.
+        expect(third.get("app:consume")?.terminalOutput).toBe("export const a = 3;");
+        expect(third.get("app:consume")?.status).toBe("success");
+    });
+
+    it("neither serves nor stores a traced dependent whose satisfied traced dependency has no valid entry", async () => {
+        expect.assertions(3);
+
+        await run(false, true);
+        // The dependency's input changed after the run that was meant to key it, so its entry no longer matches.
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 2;");
+
+        const second = await run(true, true);
+
+        await writeFile(join(workspaceRoot, "packages/lib/src/a.ts"), "export const a = 3;");
+
+        const third = await run(true, true);
 
         expect(second.get("app:consume")?.terminalOutput).toBe("export const a = 2;");
         // Without a key for the dependency, the second run's result must not be served for `a = 3`.
