@@ -409,7 +409,10 @@ describe(renderGitlabCiWorkflow, () => {
     it("rejects more parallel jobs or needs than GitLab accepts, and allows the limits themselves", () => {
         expect.assertions(4);
 
-        const layer = (count: number): CiWorkflowPlan["layers"][number] => Array.from({ length: count }, (_, index) => ({ env: undefined, name: `t${index}`, shards: 1 }));
+        const layer = (count: number): CiWorkflowPlan["layers"][number] =>
+            Array.from({ length: count }, (_, index) => {
+                return { env: undefined, name: `t${index}`, shards: 1 };
+            });
         const target = (shards: number): CiWorkflowPlan["layers"] => [[{ env: undefined, name: "test", shards }]];
 
         expect(() => renderGitlabCiWorkflow(plan({ layers: target(201) }))).toThrow("at most 200 parallel jobs");
