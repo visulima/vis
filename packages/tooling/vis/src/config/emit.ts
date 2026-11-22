@@ -108,7 +108,7 @@ interface Tracker {
     uncacheable: Set<string>;
 }
 
-/** `stat` results carry the size and times of a file, so a file's contents are tracked and anything else only its existence. */
+/** `stat` results carry the size, times and mode of a file, which no digest covers: see where `stat` is handled. */
 const FS_PATH_FIRST: Record<string, TrackedKind | "stat"> = {
     access: "exists",
     accessSync: "exists",
@@ -227,7 +227,17 @@ const startTracking = (): Tracker => {
             patch(target, name, (inner) => function wrapped(this: unknown, ...arguments_: unknown[]) {
                 const path = toPath(arguments_[0]);
 
-                record(path, kind === "stat" ? (path !== undefined && original.statSync(path, { throwIfNoEntry: false })?.isFile() ? "file" : "exists") : kind);
+                if (kind === "stat") {
+                    // The size, times and mode a `stat` returns are not part of any digest: only a path that is
+                    // not there (so only its existence can be read) stays reusable.
+                    if (path !== undefined && original.statSync(path, { throwIfNoEntry: false }) !== undefined) {
+                        uncacheable.add("reads file metadata");
+                    }
+
+                    record(path, "exists");
+                } else {
+                    record(path, kind);
+                }
 
                 if (DIRECTORY_LISTINGS.has(name) && (arguments_[1] as { recursive?: boolean } | undefined)?.recursive === true) {
                     uncacheable.add("lists a directory recursively");
