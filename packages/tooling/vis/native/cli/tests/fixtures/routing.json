@@ -77,6 +77,46 @@
         { "args": ["list"], "launcher": "node", "binary": "node" },
         { "args": ["list"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "interactive": true },
         { "args": ["list", "--help"], "launcher": "native", "binary": "native" },
+        { "args": ["cache", "list", "--help"], "launcher": "native", "binary": "native" },
+        { "args": ["cache", "size", "--help"], "launcher": "native", "binary": "native" },
+        { "args": ["cache", "list", "--format", "json"], "launcher": "native", "binary": "native", "env": { "CI": "1" } },
+        { "args": ["cache", "list", "--format=json", "--scope", "all"], "launcher": "native", "binary": "native", "env": { "CI": "1" } },
+        { "args": ["cache", "size", "--type", "task", "--format=json"], "launcher": "native", "binary": "native", "env": { "CI": "1" } },
+        {
+            "args": ["cache", "size", "--format", "json"],
+            "launcher": "native",
+            "binary": "node",
+            "env": { "CI": "1" },
+            "note": "the per-user stores need a HOME, which this run does not have"
+        },
+        {
+            "args": ["cache", "list"],
+            "launcher": "native",
+            "binary": "node",
+            "env": { "CI": "1" },
+            "note": "a missing cache directory is a pail line, which the binary leaves to Node"
+        },
+        { "args": ["cache", "list", "--scope", "bogus"], "launcher": "native", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["cache", "list", "--format", "json", "--no-color"], "launcher": "native", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["cache", "list", "--format", "json"], "launcher": "node", "binary": "node" },
+        { "args": ["cache", "list", "--format", "json"], "launcher": "node", "env": { "CI": "1" }, "interactive": true },
+        { "args": ["cache", "clean"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        {
+            "args": ["cache", "list", "--format", "json"],
+            "launcher": "native",
+            "binary": "node",
+            "env": { "CI": "1" },
+            "files": { "vis.config.ts": "export default { taskRunner: { cacheDirectory: [\"a\"].join(\"\") } };\n" },
+            "note": "a config that has to be evaluated is Node's"
+        },
+        {
+            "args": ["cache", "list", "--format", "json"],
+            "launcher": "native",
+            "binary": "native",
+            "env": { "CI": "1" },
+            "files": { "vis.config.ts": "export default { taskRunner: { cacheDirectory: \"custom\" }, branchScopedCache: false };\n" },
+            "note": "a literal config is read natively"
+        },
         { "args": ["clean"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["clean", "--dry-run"], "launcher": "native", "binary": "native", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["clean", "--other"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
@@ -135,6 +175,9 @@
         { "args": ["--version"], "launcher": "native", "platform": "win32" },
         { "args": ["hook", "run", "pre-commit"], "launcher": "native", "platform": "win32" },
         { "args": ["clean", "--dry-run"], "launcher": "node", "env": { "CI": "1", "COLUMNS": "80" }, "platform": "win32" },
-        { "args": ["list"], "launcher": "node", "platform": "win32" }
+        { "args": ["list"], "launcher": "node", "platform": "win32" },
+        { "args": ["cache", "list", "--help"], "launcher": "native", "platform": "win32" },
+        { "args": ["cache", "list", "--format", "json"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
+        { "args": ["cache", "size"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" }
     ]
 }

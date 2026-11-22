@@ -161,6 +161,11 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
     return LIST_NATIVE_SHAPES.some((shape) => shape.length === flags.length && shape.every((flag, index) => flags[index] === flag));
 };
 
+// Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
+// re-checks everything, including the flags, the root and the config; this only skips the extra process
+// when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context.
+const cacheMayRunNatively = (platform, environment, interactive) => platform !== "win32" && !interactive && inCi(environment);
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -203,6 +208,12 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
     // run would be delegated by the binary, which costs a second Node boot.
     if (command === "list") {
         return helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive));
+    }
+
+    // `cache list` and `cache size` are native for their plain shapes in a CI context
+    // (`native/cli/src/cache.rs`); the binary hands every other shape to Node itself.
+    if (command === "cache" && (subcommand === "list" || subcommand === "size")) {
+        return helpOrNative(args, () => cacheMayRunNatively(platform, environment, interactive));
     }
 
     // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
