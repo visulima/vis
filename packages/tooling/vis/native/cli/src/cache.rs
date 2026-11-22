@@ -501,13 +501,15 @@ fn sum_directory_size(directory: &Path) -> Option<u64> {
             break;
         };
 
-        if has_backslash(&entry.file_name()) {
+        let name = entry.file_name();
+
+        if has_backslash(&name) {
             return None;
         }
 
         // Node reads the name as UTF-8 with replacement characters, so a path it builds from a name
         // that is not UTF-8 names nothing: the directory below it reads as empty and a file fails.
-        let utf8 = entry.file_name().to_str().is_some();
+        let utf8 = name.to_str().is_some();
 
         if kind.is_dir() {
             if utf8 {
