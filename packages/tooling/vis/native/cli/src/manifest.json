@@ -2308,7 +2308,7 @@
       "examples": [
         [
           "vis fmt",
-          "Apply formatting in place using every detected formatter"
+          "Apply formatting in place (bundled oxfmt unless biome, dprint or ruff is in use)"
         ],
         [
           "vis fmt --check",
@@ -2348,7 +2348,7 @@
         ],
         [
           "vis fmt --watch",
-          "Re-run formatters when watched files change (cache makes incremental --check near-free)"
+          "Re-run the formatter when watched files change"
         ],
         [
           "vis fmt --check --format sarif --output fmt.sarif",

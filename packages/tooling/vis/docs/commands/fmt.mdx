@@ -5,9 +5,9 @@ description: "Orchestrate detected formatters (prettier, …) across the workspa
 
 # vis fmt
 
-Runs every detected formatter against the workspace. Defaults to write mode (`--fix`); pass `--check` for a dry-run that lists files that would change without modifying them. Designed to add more formatters over time without changing the command surface.
+Formats the workspace. Defaults to write mode; pass `--check` for a dry-run that lists files that would change without modifying them.
 
-Ships with adapters for **oxfmt**, **biome**, **dprint**, **Prettier**, and **ruff format** (Python). The orchestrator runs each one that's present in the workspace; when multiple are present, files are routed by extension.
+`vis fmt` ships with a formatter: the [oxfmt](https://oxc.rs/docs/guide/usage/formatter) bundled as a vis dependency. A workspace needs no setup, and the formatting options live in `vis.config` (or in a config file oxfmt or Prettier already reads, see [Where the options come from](#where-the-options-come-from)). When a workspace uses **biome**, **dprint** or **ruff format**, `vis fmt` keeps its adapter orchestration instead and runs each detected formatter, routing files by extension.
 
 ## Usage
 
@@ -15,12 +15,12 @@ Ships with adapters for **oxfmt**, **biome**, **dprint**, **Prettier**, and **ru
 vis fmt [files…] [options]
 ```
 
-With no files, each adapter runs against `.` so its native ignore semantics apply. Pass file paths to format a specific subset; each file is routed to the adapter that owns its extension.
+With no files, the formatter runs against `.` so its native ignore semantics apply. Pass file paths to format a specific subset. The bundled oxfmt receives every path as given and skips the ones it does not format; with the adapter orchestration each file is routed to the adapter that owns its extension.
 
 ## Examples
 
 ```bash
-# Apply formatting in place using every detected formatter
+# Apply formatting in place (bundled oxfmt unless biome, dprint or ruff is in use)
 vis fmt
 
 # Report files that would change without writing (CI-friendly)
@@ -38,7 +38,7 @@ vis fmt --quiet
 # Only format files changed vs the main branch
 vis fmt --since main
 
-# Re-run formatters whenever watched files change
+# Re-run the formatter whenever watched files change
 vis fmt --watch
 
 # Write a SARIF report to a file instead of stdout
@@ -89,9 +89,73 @@ export default defineConfig({
 
 `vis init` scaffolds exactly this block when pre-commit hooks are enabled; `vis hook install` then wires `.vis/hooks/pre-commit` to invoke `vis staged`. For CI gating that fails on unformatted files, run `vis fmt --check` (optionally `--since <base>`) as a separate target alongside lint.
 
+## Which engine runs
+
+| `fmt.engine`       | What runs                                                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `"auto"` (default) | The bundled oxfmt when nothing, Prettier or oxfmt is detected. The adapter orchestration when biome, dprint or ruff format is detected. |
+| `"oxfmt"`          | Always the bundled oxfmt, and no other formatter.                                                                                       |
+| `"prettier"`       | The adapter orchestration, with Prettier staying in charge.                                                                             |
+
+When the bundled oxfmt runs it is the only formatter that runs, so no file is formatted twice. That includes a project that declares `oxfmt` itself: its own config is discovered and used, but the oxfmt that formats is the bundled one.
+
+`fmt.adapters.oxfmt.builtin: false` keeps today's behaviour for a project's own `oxfmt` (the adapter orchestration, through the project's package manager). `fmt.adapters.oxfmt.enabled: false` turns oxfmt off, bundled or not; combining either `builtin: false` or `enabled: false` with `fmt.engine: "oxfmt"` is an error.
+
+`--check`, `--staged`, `--since`, `--watch`, `--format` and the exit codes behave the same with either engine. An error from oxfmt itself (a syntax error in a file, an invalid config) is printed as oxfmt reports it and fails the run, in write mode too.
+
+## Where the options come from
+
+The bundled oxfmt takes its options from the **first** source that exists, used whole. Sources are never merged: an `.oxfmtrc.json` that leaves out `printWidth` means oxfmt's default, not the value a Prettier config sets.
+
+1. `fmt.options` (with `fmt.overrides` and `fmt.ignorePatterns`) in `vis.config`.
+2. An `.oxfmtrc.json`, `.oxfmtrc.jsonc`, `oxfmt.config.ts` or `oxfmt.config.mts` in the workspace root. oxfmt reads it itself, so nested configs and TypeScript configs work as in oxfmt.
+3. The root Prettier config, mapped to oxfmt options (see below).
+4. Defaults. oxfmt's own, or, when Prettier is declared in the workspace but has no config, Prettier's: the same mapping as an empty Prettier config, so the print width stays 80 (and `package.json` stays unsorted) instead of becoming oxfmt's 100. `.editorconfig` is honoured by oxfmt in every case.
+
+`vis fmt` prints which source it used. When a lower source exists and is ignored (say a `vis.config` `fmt.options` next to a `.prettierrc.json`), it prints one warning naming both.
+
+```ts
+import { defineConfig } from "@visulima/vis/config";
+
+export default defineConfig({
+    fmt: {
+        options: { printWidth: 100, singleQuote: true, sortPackageJson: false },
+        overrides: [{ files: ["*.md"], options: { proseWrap: "always" } }],
+        ignorePatterns: ["generated/**"],
+    },
+});
+```
+
+`fmt.options` takes oxfmt's own option names: `printWidth`, `tabWidth`, `useTabs`, `semi`, `singleQuote`, `jsxSingleQuote`, `quoteProps`, `trailingComma`, `bracketSpacing`, `bracketSameLine`, `arrowParens`, `endOfLine`, `objectWrap`, `proseWrap`, `htmlWhitespaceSensitivity`, `embeddedLanguageFormatting`, `singleAttributePerLine`, `vueIndentScriptAndStyle`, `insertFinalNewline`, `experimentalOperatorPosition`, plus `sortImports`, `sortPackageJson`, `sortTailwindcss`, `jsdoc`, `svelte` and `astro`. `ignorePatterns` and the globs in `overrides` are relative to the workspace root and a pattern containing `..` is rejected with an error naming it. The generated `schemas/vis-config.schema.json` lists every option with its documentation.
+
+When the options come from `vis.config` or a Prettier config, vis writes them to a temporary `.vis-fmt-<pid>-<id>.json` in the workspace root (the config directory has to be the root so `ignorePatterns` and override globs keep their meaning), passes it to oxfmt, and removes it when the run ends, including on failure and on SIGINT / SIGTERM. The file lists itself in `ignorePatterns`, and the next run deletes any such file whose process is gone (and never reports one as a file to format), so one left behind by a killed process does no harm; add `.vis-fmt-*.json` to `.gitignore` to keep it out of `git status` (vis prints this hint when it is not ignored yet). The first source above that exists decides whether a file is written at all: with an `.oxfmtrc` or oxfmt's defaults, nothing is.
+
+### `printWidth`: 80 or 100
+
+oxfmt's default `printWidth` is **100**; Prettier's is **80**. A Prettier config that does not set `printWidth` therefore maps to an explicit `80`, so the line width of a migrated repository does not change. The same applies to a `max_line_length` in a `[*]` section of `.editorconfig`, which Prettier reads: it becomes the `printWidth`. A `max_line_length` set only for a glob section is not mapped; vis warns. With no config at all, oxfmt's 100 applies.
+
+### Reading the Prettier config
+
+Only the root Prettier config is read; Prettier configs in subdirectories are not, and `vis fmt` warns when it finds one (whether or not there is a root config). Every format Prettier accepts at the root works: `package.json#prettier` (an object, or the name of a shared-config package), `.prettierrc` (JSON or YAML), `.prettierrc.json|yaml|yml|json5|toml`, and `prettier.config.*` / `.prettierrc.*` as `js|cjs|mjs|ts|mts|cts`. A JavaScript config is evaluated once, so logic in it is not preserved. `.prettierignore` lines become `ignorePatterns`.
+
+The mapping is the one `oxfmt --migrate prettier` applies, checked by a test that runs it on the same fixtures:
+
+- Options with the same name are copied. `printWidth` is pinned to 80 when unset (see above) and `sortPackageJson` to `false`.
+- `prettier-plugin-packagejson` turns `sortPackageJson` on. The `tailwind*` options of `prettier-plugin-tailwindcss` become `sortTailwindcss`, and those of `prettier-plugin-svelte` and `prettier-plugin-astro` become `svelte` and `astro`.
+- `overrides` map to oxfmt `overrides`; an override's `parser` becomes an `associations` entry.
+- Dropped with one warning each: `endOfLine: "auto"`, `experimentalTernaries`, `insertPragma`, `requirePragma`, plugins oxfmt does not have, unknown options, and regular expressions in `tailwindFunctions` / `tailwindAttributes`.
+
+Output can differ from Prettier's. When `vis fmt` replaces Prettier it warns once.
+
+## Opting out
+
+- Keep running Prettier: `fmt: { engine: "prettier" }`.
+- Keep a project's own `oxfmt` on the adapter orchestration: `fmt: { adapters: { oxfmt: { builtin: false } } }`.
+- Skip oxfmt entirely: `fmt: { adapters: { oxfmt: { enabled: false } } }`.
+
 ## Caching
 
-`vis fmt --check` runs cache their results under `<workspaceRoot>/.vis/cache/lint-fmt/<adapter>/` keyed by the adapter's config fingerprint plus a SHA-256 of every input file's bytes. A subsequent `--check` with the same inputs replays the stored result without spawning the formatter.
+With the adapter orchestration, `vis fmt --check` runs cache their results under `<workspaceRoot>/.vis/cache/lint-fmt/<adapter>/` keyed by the adapter's config fingerprint plus a SHA-256 of every input file's bytes. A subsequent `--check` with the same inputs replays the stored result without spawning the formatter.
 
 The cache is skipped for:
 
@@ -99,11 +163,11 @@ The cache is skipped for:
 - workspace-wide runs that pass `.` (the file vector is unbounded)
 - runs where `VIS_NO_CACHE=1` is set
 
-Failed or killed processes are never stored. Clear the cache with `vis cache clean` or by removing the directory directly.
+Failed or killed processes are never stored. Clear the cache with `vis cache clean` or by removing the directory directly. The bundled oxfmt is not cached.
 
 ## Detection
 
-The orchestrator probes each adapter against the workspace root and runs the ones that report themselves present. An adapter opts in when **either** a tool-native config file exists **or** the tool is declared in `package.json`.
+The engine choice above starts from what is detected. The orchestrator probes each adapter against the workspace root and runs the ones that report themselves present. An adapter opts in when **either** a tool-native config file exists **or** the tool is declared in `package.json`.
 
 | Adapter  | Config files probed                                                                               | package.json key          |
 | -------- | ------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -113,11 +177,11 @@ The orchestrator probes each adapter against the workspace root and runs the one
 | prettier | `.prettierrc`, `.prettierrc.{json,yaml,yml,js,cjs,mjs,ts}`, `prettier.config.{js,cjs,mjs,mts,ts}` | `prettier`                |
 | ruff-fmt | `ruff.toml`, `.ruff.toml`, `pyproject.toml` with `[tool.ruff]`                                    | `ruff`, `@astral-sh/ruff` |
 
-When multiple fmt adapters are detected, files are routed by extension via the registry's `routeFilesByExtension` helper. The default precedence inside the registry favours Rust-native formatters (`oxfmt` → `biome` → `dprint` → `prettier`) so a `.ts` file owned by both oxfmt and prettier goes to oxfmt. Override per-extension routing through `fmt.extensionOverrides` in `vis.config.ts` (e.g. send `.md` to `dprint` even when `prettier` also handles it).
+When the adapter orchestration runs and multiple fmt adapters are detected, files are routed by extension via the registry's `routeFilesByExtension` helper. The default precedence inside the registry favours Rust-native formatters (`oxfmt` → `biome` → `dprint` → `prettier`) so a `.ts` file owned by both oxfmt and prettier goes to oxfmt. Override per-extension routing through `fmt.extensionOverrides` in `vis.config.ts` (e.g. send `.md` to `dprint` even when `prettier` also handles it).
 
 ## Configuration
 
-`vis.config.ts` exposes a `fmt` block for workspace-wide tuning. CLI flags always win over config.
+`vis.config.ts` exposes a `fmt` block for workspace-wide tuning. CLI flags always win over config. `engine`, `options`, `overrides` and `ignorePatterns` are described above; `order`, `extensionOverrides` and `adapters` tune the adapter orchestration (`adapters.oxfmt.extraArgs` is also passed to the bundled oxfmt).
 
 ```ts
 import { defineConfig } from "@visulima/vis/config";

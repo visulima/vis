@@ -83,6 +83,44 @@ export const oxfmtAdapter: ToolAdapter = {
     },
 };
 
+/**
+ * Every extension the bundled oxfmt formats. Only `--watch` filters on this list: explicit
+ * files go to oxfmt unfiltered, since it skips a path it does not format.
+ */
+export const BUNDLED_OXFMT_EXTENSIONS: ReadonlyArray<string> = [
+    "astro",
+    "cjs",
+    "css",
+    "cts",
+    "gql",
+    "graphql",
+    "handlebars",
+    "hbs",
+    "htm",
+    "html",
+    "js",
+    "json",
+    "json5",
+    "jsonc",
+    "jsx",
+    "less",
+    "markdown",
+    "md",
+    "mdx",
+    "mjs",
+    "mts",
+    "pcss",
+    "postcss",
+    "scss",
+    "svelte",
+    "toml",
+    "ts",
+    "tsx",
+    "vue",
+    "yaml",
+    "yml",
+];
+
 const buildArgs = (files: ReadonlyArray<string>, options: AdapterRunOptions, mode: "check" | "fix"): string[] => {
     const args = mode === "fix" ? ["--write"] : ["--list-different"];
 

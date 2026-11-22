@@ -18,3 +18,14 @@ export interface LintFmtAdapterOverride {
      */
     extraArgs?: string[];
 }
+
+/**
+ * `fmt.adapters.oxfmt`: the shared overrides plus the switch for the oxfmt that ships with vis.
+ */
+export interface OxfmtAdapterOverride extends LintFmtAdapterOverride {
+    /**
+     * Set to `false` to keep running the project's own `oxfmt` through the adapter orchestration
+     * instead of the bundled one. Defaults to `true`.
+     */
+    builtin?: boolean;
+}

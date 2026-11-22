@@ -20,6 +20,8 @@ import { startWatcher } from "../watch/watch";
 export interface WatchLoopOptions {
     /** Lowercase extensions (no leading dot) the loop will react to. */
     readonly extensions: ReadonlyArray<string>;
+    /** Paths the loop must not react to, even when their extension matches (e.g. a file the run itself writes). */
+    readonly ignore?: (path: string) => boolean;
     /** Absolute paths driving the initial run (undefined = workspace-wide). */
     readonly initialFiles: string[] | undefined;
     readonly label: "fmt" | "lint";
@@ -61,7 +63,7 @@ const hasMatchingExtension = (path: string, extensions: Set<string>): boolean =>
  * command's lifecycle in watch mode.
  */
 export const runWatchLoop = async (options: WatchLoopOptions): Promise<void> => {
-    const { extensions, initialFiles, label, log, runCycle, workspaceRoot } = options;
+    const { extensions, ignore, initialFiles, label, log, runCycle, workspaceRoot } = options;
     const print
         = log
             ?? ((message: string): void => {
@@ -98,7 +100,7 @@ export const runWatchLoop = async (options: WatchLoopOptions): Promise<void> => 
         // Drop events for files no adapter cares about — node:fs.watch
         // is recursive, so we'd otherwise fire on every file in the
         // workspace.
-        filter: (path) => hasMatchingExtension(path, extensionSet),
+        filter: (path) => hasMatchingExtension(path, extensionSet) && !ignore?.(path),
         onChange: async (changedRelative) => {
             for (const path of changedRelative) {
                 pendingFiles.add(isAbsolute(path) ? path : join(workspaceRoot, path));

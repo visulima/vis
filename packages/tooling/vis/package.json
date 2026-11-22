@@ -162,6 +162,7 @@
         "graphology": "0.26.0",
         "module-replacements": "^3.4.0",
         "module-replacements-codemods": "^2.0.2",
+        "oxfmt": "catalog:prod",
         "react": "catalog:frontend",
         "react-reconciler": ">=0.33.0",
         "sigma": "4.0.3"
