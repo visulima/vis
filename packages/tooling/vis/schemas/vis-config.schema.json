@@ -291,7 +291,7 @@
                     "description": "Files the bundled oxfmt skips, relative to the workspace root. Same shape as oxfmt's `ignorePatterns`. A pattern containing `..` is rejected."
                 },
                 "options": {
-                    "$ref": "#/$defs/FmtOptions",
+                    "$ref": "#/$defs/OxfmtOptions",
                     "description": "Formatting options for the bundled oxfmt, in oxfmt's own names (`printWidth`, `semi`, `singleQuote`, `sortImports`, ...). Used instead of any `.oxfmtrc` or Prettier config."
                 },
                 "order": {
@@ -4072,7 +4072,7 @@
             ],
             "description": "Adapter IDs that can format (adapter `kind` is `\"fmt\"` or `\"both\"`)."
         },
-        "FmtOptions": {
+        "OxfmtOptions": {
             "type": "object",
             "properties": {
                 "arrowParens": {

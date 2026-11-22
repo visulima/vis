@@ -1,6 +1,6 @@
 import type { ConstraintsConfig, NamedInputs, TaskRunnerOptions } from "@visulima/task-runner";
 
-import type { FmtEngine, FmtOptions, FmtOverride } from "../fmt/options";
+import type { FmtEngine, FmtOverride, OxfmtOptions } from "../fmt/options";
 import type { FmtAdapterId, LintAdapterId } from "../lint-fmt/config-types";
 import type { VisReleaseConfig } from "../release/types";
 import type { RuntimeId } from "../runtime/adapters/types";
@@ -309,7 +309,7 @@ export interface VisConfig {
          * Formatting options for the bundled oxfmt, in oxfmt's own names (`printWidth`, `semi`,
          * `singleQuote`, `sortImports`, ...). Used instead of any `.oxfmtrc` or Prettier config.
          */
-        options?: FmtOptions;
+        options?: OxfmtOptions;
 
         /**
          * Override the adapter precedence order. Adapters omitted from

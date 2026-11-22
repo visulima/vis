@@ -1,7 +1,7 @@
 import type { FormatConfig, OxfmtOverrideConfig, Oxfmtrc } from "oxfmt";
 
 /** Formatting options accepted by oxfmt, as declared by the `oxfmt` package. */
-export type FmtOptions = FormatConfig;
+export type OxfmtOptions = FormatConfig;
 
 /** A per-glob options override, in oxfmt's own shape. */
 export type FmtOverride = OxfmtOverrideConfig;
