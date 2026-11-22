@@ -244,6 +244,15 @@ describe(renderGithubCiWorkflow, () => {
         expect(yaml).not.toContain("Swift");
     });
 
+    it("pins .NET from a global.json in a project root when the workspace root has none", () => {
+        expect.assertions(2);
+
+        const yaml = renderGithubCiWorkflow(plan({ ecosystems: [{ manifests: ["services/api/Api.csproj", "services/api/global.json"], name: "dotnet" }] }));
+
+        expect(yaml).toContain("global-json-file: \"services/api/global.json\"");
+        expect(yaml).not.toContain("dotnet-version");
+    });
+
     it("adds the configured env, permissions, services and steps", () => {
         expect.assertions(8);
 

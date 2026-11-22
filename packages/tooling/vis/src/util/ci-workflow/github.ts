@@ -93,7 +93,10 @@ const ecosystemStep = (plan: CiWorkflowPlan, { manifests, name }: DetectedEcosys
             return { name: "Setup Dart", uses: GITHUB_ACTIONS.setupDart, with: { sdk: "stable" } };
         }
         case "dotnet": {
-            return { name: "Setup .NET", uses: GITHUB_ACTIONS.setupDotnet, with: has("global.json") ? { "global-json-file": "global.json" } : { "dotnet-version": "8.0.x" } };
+            // A global.json in the workspace root wins; otherwise the first one found in a project root.
+            const globalJson = has("global.json") ? "global.json" : manifests.find((manifest) => manifest.endsWith("/global.json"));
+
+            return { name: "Setup .NET", uses: GITHUB_ACTIONS.setupDotnet, with: globalJson === undefined ? { "dotnet-version": "8.0.x" } : { "global-json-file": globalJson } };
         }
         case "elixir": {
             return {
