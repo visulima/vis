@@ -10,7 +10,7 @@
 
 import type { TargetDependencyConfig } from "@visulima/task-runner";
 
-import type { CiGithubWorkflowConfig, CiGitlabWorkflowConfig, CiWorkflowConfig } from "../../config/types/ci";
+import type { CiGithubWorkflowConfig, CiGitlabWorkflowConfig, CiWorkflowConfig, CiWorkflowProvider } from "../../config/types/ci";
 import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { LockfilePackageManager } from "../../preflight/lockfile";
@@ -51,6 +51,8 @@ export interface CiWorkflowPlan {
     nodeVersion: string;
     /** The JavaScript package manager; `undefined` when the workspace has no JS lockfile and vis is installed on its own. */
     packageManager: LockfilePackageManager | undefined;
+    /** Providers the files are generated for, sorted. The drift check passes them to `--provider` so it checks exactly these files. */
+    providers: CiWorkflowProvider[];
     /** Names of the files in the workspace root, for version files such as `.python-version` or `global.json`. */
     rootFiles: ReadonlySet<string>;
     runsOn: string;
@@ -184,6 +186,7 @@ export const buildCiWorkflowPlan = ({
     ecosystems = [],
     packageManager,
     projects,
+    providers,
     rootFiles = new Set(),
     settings,
     targetDefaults,
@@ -195,6 +198,7 @@ export const buildCiWorkflowPlan = ({
     ecosystems?: DetectedEcosystem[];
     packageManager: LockfilePackageManager | undefined;
     projects: Record<string, { targets?: Record<string, TargetLike> }>;
+    providers: ReadonlyArray<CiWorkflowProvider>;
     rootFiles?: ReadonlySet<string>;
     settings: CiWorkflowConfig;
     targetDefaults?: Record<string, TargetLike | undefined>;
@@ -280,6 +284,7 @@ export const buildCiWorkflowPlan = ({
             layers: layerTargets(targets, edges).map((layer) => layer.map((name) => { return { env: targetEnv.get(name), name, shards: partitions[name] ?? 1 }; })),
             nodeVersion: settings.nodeVersion ?? toolchainPins.node ?? "22",
             packageManager,
+            providers: [...providers].toSorted(),
             rootFiles,
             runsOn: settings.runsOn ?? "ubuntu-latest",
             timeoutMinutes: settings.timeoutMinutes ?? 60,
@@ -300,6 +305,9 @@ const shellWord = (value: string): string => (/^[\w.:@/+-]+$/u.test(value) ? val
 /** How the workflow runs vis: through the JS package manager, or the globally installed `vis`. */
 export const visCommand = (plan: CiWorkflowPlan): string =>
     (plan.packageManager === undefined ? "vis" : `${CI_PACKAGE_MANAGER_COMMANDS[plan.packageManager].exec} vis`);
+
+/** The drift check, limited to the providers the files were generated for. */
+export const visDriftCheckCommand = (plan: CiWorkflowPlan): string => `${visCommand(plan)} sync ci-workflow --check --provider=${plan.providers.join(",")}`;
 
 /** Installs vis on its own, for a workspace without a JS package manager. */
 export const visInstallCommand = (plan: CiWorkflowPlan): string => `npm install --global @visulima/vis@${plan.visVersion}`;

@@ -23,7 +23,7 @@ import type { GithubAction } from "../github-actions";
 import { GITHUB_ACTIONS } from "../github-actions";
 import type { DetectedEcosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand } from "./plan";
+import { GENERATED_NOTE, visDriftCheckCommand, visInstallCommand, visTargetCommand } from "./plan";
 import { yamlEntry, yamlString } from "./yaml";
 
 /** GitHub runs at most 10 background steps of a job at once; more would queue. */
@@ -212,7 +212,7 @@ const setupSteps = (plan: CiWorkflowPlan): RunStep[] => {
         steps.push({
             comment: "Fails when vis.config.ts or the workspace changed without regenerating this file.",
             name: "Check the workflow is up to date",
-            run: `${visCommand(plan)} sync ci-workflow --check`,
+            run: visDriftCheckCommand(plan),
         });
     }
 

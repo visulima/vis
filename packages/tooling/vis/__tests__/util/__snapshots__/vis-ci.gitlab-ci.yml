@@ -32,7 +32,7 @@
     extends: ".vis-ci-base"
     needs: []
     script:
-        - "pnpm exec vis sync ci-workflow --check"
+        - "pnpm exec vis sync ci-workflow --check --provider=github,gitlab"
 
 "vis:lint":
     extends: ".vis-ci-base"

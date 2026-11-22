@@ -414,6 +414,7 @@ const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: ws
         ecosystems: detectEcosystems(directories),
         packageManager: detectPackageManager(root)?.manager,
         projects: workspace.projects,
+        providers,
         rootFiles,
         settings,
         targetDefaults: config.tasks,
@@ -437,7 +438,7 @@ const runCiWorkflow = async ({ fs, logger, options, visConfig, workspaceRoot: ws
         logger.info(`▸ Running build before ${buildFirstOrdered.join(", ")} (ci.workflow.buildFirst; set it to false if dependsOn already says what needs build).`);
     }
 
-    const { stale } = await syncGeneratedFiles(renderCiWorkflows(plan, providers), {
+    const { stale } = await syncGeneratedFiles(renderCiWorkflows(plan), {
         fs,
         isCurrent: sameYaml,
         logger,

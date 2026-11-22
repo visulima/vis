@@ -52,7 +52,7 @@ jobs:
 
             # Fails when vis.config.ts or the workspace changed without regenerating this file.
             - name: "Check the workflow is up to date"
-              run: "pnpm exec vis sync ci-workflow --check"
+              run: "pnpm exec vis sync ci-workflow --check --provider=github,gitlab"
 
             # Builds what the targets below depend on once, so the parallel steps
             # never build or restore the same outputs at the same time.

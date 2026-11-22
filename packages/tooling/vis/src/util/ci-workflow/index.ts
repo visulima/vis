@@ -15,7 +15,7 @@ const CI_WORKFLOW_RENDERERS: Record<CiWorkflowProvider, { path: string; render: 
 
 export const isCiWorkflowProvider = (value: string): value is CiWorkflowProvider => Object.hasOwn(CI_WORKFLOW_RENDERERS, value);
 
-export const renderCiWorkflows = (plan: CiWorkflowPlan, providers: ReadonlyArray<CiWorkflowProvider>): GeneratedFile[] =>
-    providers.map((provider) => {
+export const renderCiWorkflows = (plan: CiWorkflowPlan): GeneratedFile[] =>
+    plan.providers.map((provider) => {
         return { content: CI_WORKFLOW_RENDERERS[provider].render(plan), path: CI_WORKFLOW_RENDERERS[provider].path };
     });

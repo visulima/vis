@@ -14,7 +14,7 @@ import { VisUserError } from "../../errors/vis-user-error";
 import { CI_PACKAGE_MANAGER_COMMANDS } from "../../pm/ci-commands";
 import type { Ecosystem } from "./ecosystems";
 import type { CiWorkflowPlan } from "./plan";
-import { GENERATED_NOTE, visCommand, visInstallCommand, visTargetCommand } from "./plan";
+import { GENERATED_NOTE, visDriftCheckCommand, visInstallCommand, visTargetCommand } from "./plan";
 import { yamlEntry, yamlString } from "./yaml";
 
 export const GITLAB_CI_WORKFLOW_PATH = ".gitlab/vis-ci.gitlab-ci.yml";
@@ -130,7 +130,7 @@ export const renderGitlabCiWorkflow = (plan: CiWorkflowPlan): string => {
     extends: ".vis-ci-base"
     needs: []
     script:
-        - ${yamlString(`${visCommand(plan)} sync ci-workflow --check`)}
+        - ${yamlString(visDriftCheckCommand(plan))}
 `
         : "";
     let previous: string[] = [];

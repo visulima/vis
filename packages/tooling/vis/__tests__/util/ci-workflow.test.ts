@@ -20,6 +20,7 @@ const plan = (overrides: Partial<CiWorkflowPlan> = {}, shards: Record<string, nu
         layers: [["lint", "build"], ["test"]].map((layer) => layer.map((name) => { return { env: undefined, name, shards: shards[name] ?? 1 }; })),
         nodeVersion: "22",
         packageManager: "pnpm",
+        providers: ["github", "gitlab"],
         rootFiles: new Set(),
         runsOn: "ubuntu-latest",
         timeoutMinutes: 60,
@@ -103,7 +104,7 @@ describe(layerTargets, () => {
 describe(buildCiWorkflowPlan, () => {
     const projects = { app: { targets: { build: { dependsOn: ["^build"] }, lint: {}, test: { dependsOn: ["build"] } } } };
     const build = (settings: Parameters<typeof buildCiWorkflowPlan>[0]["settings"]): ReturnType<typeof buildCiWorkflowPlan> =>
-        buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects, settings, visVersion: "1.2.3" });
+        buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects, providers: ["github"], settings, visVersion: "1.2.3" });
 
     it("defaults the targets, branches and shards", () => {
         expect.assertions(2);
@@ -134,7 +135,7 @@ describe(buildCiWorkflowPlan, () => {
         const chained = { app: { targets: { build: { dependsOn: ["^test"] }, test: { dependsOn: ["build"] } } } };
 
         expect(() =>
-            buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects: chained, settings: { partitions: { test: 2 } }, visVersion: "1.2.3" }),
+            buildCiWorkflowPlan({ cacheDirectory: undefined, defaultBase: "trunk", packageManager: "pnpm", projects: chained, providers: ["github"], settings: { partitions: { test: 2 } }, visVersion: "1.2.3" }),
         ).toThrow("directly or through other targets");
     });
 
@@ -202,8 +203,15 @@ describe(renderGithubCiWorkflow, () => {
         const yaml = renderGithubCiWorkflow(plan({ timeoutMinutes: 45 }));
 
         expect(yaml).toContain("        timeout-minutes: 45\n");
-        expect(yaml).toContain("run: \"pnpm exec vis sync ci-workflow --check\"");
+        expect(yaml).toContain("run: \"pnpm exec vis sync ci-workflow --check --provider=github,gitlab\"");
         expect(renderGithubCiWorkflow(plan({ checkDrift: false }))).not.toContain("sync ci-workflow --check");
+    });
+
+    it("limits the drift check to the providers the file was generated for", () => {
+        expect.assertions(2);
+
+        expect(renderGithubCiWorkflow(plan({ providers: ["github"] }))).toContain("sync ci-workflow --check --provider=github\"");
+        expect(renderGitlabCiWorkflow(plan({ providers: ["gitlab"] }))).toContain("sync ci-workflow --check --provider=gitlab\"");
     });
 
     it("installs vis on its own when the workspace has no JS package manager", () => {
@@ -372,7 +380,7 @@ describe(renderGitlabCiWorkflow, () => {
 
         const yaml = renderGitlabCiWorkflow(plan());
 
-        expect(yaml).toContain("\"vis:workflow\":\n    extends: \".vis-ci-base\"\n    needs: []\n    script:\n        - \"pnpm exec vis sync ci-workflow --check\"");
+        expect(yaml).toContain("\"vis:workflow\":\n    extends: \".vis-ci-base\"\n    needs: []\n    script:\n        - \"pnpm exec vis sync ci-workflow --check --provider=github,gitlab\"");
         expect(yaml).toContain('    timeout: "60m"');
     });
 
