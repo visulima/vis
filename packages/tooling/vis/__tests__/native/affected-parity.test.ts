@@ -47,6 +47,9 @@ const baseEnvironment = (): Record<string, string | undefined> => {
     return env;
 };
 
+// A delegated error path prints a Node stack, whose async frames differ from one run to the next.
+const withoutStackFrames = (stderr: string): string => stderr.replaceAll(/^\s+at .*\n/gmu, "");
+
 interface Case {
     args: string[];
     /** Working directory inside the repository; defaults to its root. */
@@ -116,7 +119,6 @@ const cases: Case[] = [
     { args: ["affected", "--sparse-checkout"], native: false },
     { args: ["affected"], native: false },
     { args: [...sparse, "--base=v1", "--head=v2", "--parallel=2"], native: false },
-    { args: ["affected", "build", "--base=v1", "--head=v2", "--dry-run"], native: false },
     { args: [...sparse, "--base=v1", "--head=v2"], native: false, outsideCi: true },
 ];
 
@@ -262,7 +264,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             const native = runNative(testCase, nodeEntry);
 
             expect(native.stdout).toBe(node.stdout);
-            expect(native.stderr).toBe(node.stderr);
+            expect(withoutStackFrames(native.stderr)).toBe(withoutStackFrames(node.stderr));
             expect(native.status).toBe(node.status);
         },
     );

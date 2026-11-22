@@ -480,11 +480,9 @@ fn answer(args: &[String]) -> Option<String> {
         return None;
     };
 
-    // No project directory may be the root itself, and every project must be free of the inference
-    // that could add inputs (the gate `list` applies to its targets).
-    if graph.directories.values().any(|directory| directory == "." || directory.is_empty() || !directory.is_ascii())
-        || !crate::list::inference_free(&root, &graph)
-    {
+    // Every project must be free of the inference that could add inputs. The gate also leaves a
+    // project at the root directory and a non-ASCII directory to Node.
+    if !crate::list::inference_free(&root, &graph) {
         return None;
     }
 
