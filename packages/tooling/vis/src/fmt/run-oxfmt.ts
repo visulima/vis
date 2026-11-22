@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { basename, dirname, join } from "@visulima/path";
@@ -10,6 +10,9 @@ import type { OxfmtConfig } from "./options";
 
 /** Prefix of the transient config a run writes into the workspace root. */
 export const TRANSIENT_CONFIG_PREFIX = ".vis-fmt-";
+
+/** Where a config without globs is kept, relative to the workspace root. oxfmt skips `node_modules`, so the file is never formatted. */
+const CACHED_CONFIG_DIRECTORY = "node_modules/.cache/vis/fmt";
 
 /** Glob matching every transient config, including one a crashed run left behind. */
 export const TRANSIENT_CONFIG_PATTERN = `${TRANSIENT_CONFIG_PREFIX}*.json`;
@@ -58,8 +61,9 @@ export interface RunOxfmtOptions {
     binPath?: string;
 
     /**
-     * Config to hand to oxfmt through a transient file in `root`. Leave unset when oxfmt should
-     * discover its own config (or use its defaults).
+     * Config to hand to oxfmt. A config with `ignorePatterns` or `overrides` goes through a transient file
+     * in `root`, because oxfmt reads those globs relative to the config's directory; any other config is
+     * kept in the vis cache. Leave unset when oxfmt should discover its own config (or use its defaults).
      */
     config?: OxfmtConfig;
     extraArgs?: ReadonlyArray<string>;
@@ -72,6 +76,34 @@ export interface RunOxfmtOptions {
 }
 
 const SIGNALS: ReadonlyArray<NodeJS.Signals> = ["SIGINT", "SIGTERM"];
+
+/** Whether oxfmt reads a glob from the config relative to the config's own directory. */
+const hasGlobs = (config: OxfmtConfig): boolean => (config.ignorePatterns?.length ?? 0) > 0 || (config.overrides?.length ?? 0) > 0;
+
+/**
+ * Keeps a config without globs in the vis cache, named by a hash of its content: a run with the same
+ * config reuses the file, concurrent runs write identical content, and nothing is removed afterwards.
+ * @param root Workspace root.
+ * @param config Config without `ignorePatterns` or `overrides`.
+ * @returns Path of the file, relative to `root`.
+ */
+const writeCachedConfig = (root: string, config: OxfmtConfig): string => {
+    const content = `${JSON.stringify(config, null, 2)}\n`;
+    const relativePath = join(CACHED_CONFIG_DIRECTORY, `${createHash("sha256").update(content).digest("hex").slice(0, 16)}.json`);
+    const path = join(root, relativePath);
+
+    if (!existsSync(path)) {
+        mkdirSync(dirname(path), { recursive: true });
+
+        // Written under a private name and renamed, so a concurrent run never reads a half-written file.
+        const pending = `${path}.${String(process.pid)}.tmp`;
+
+        writeFileSync(pending, content);
+        renameSync(pending, path);
+    }
+
+    return relativePath;
+};
 
 const writeTransientConfig = (root: string, config: OxfmtConfig): string => {
     const path = join(root, `${TRANSIENT_CONFIG_PREFIX}${String(process.pid)}-${randomBytes(3).toString("hex")}.json`);
@@ -130,9 +162,9 @@ const removeStaleTransientConfigs = (root: string): void => {
 };
 
 /**
- * Runs the bundled oxfmt. When `config` is given it is written to a transient file in the workspace
- * root (so `ignorePatterns` and override globs keep their meaning), and removed when the run ends:
- * on success, on failure, on a spawn error, and on SIGINT / SIGTERM.
+ * Runs the bundled oxfmt. When `config` is given with `ignorePatterns` or `overrides` it is written to a
+ * transient file in the workspace root (so those globs keep their meaning), and removed when the run ends:
+ * on success, on failure, on a spawn error, and on SIGINT / SIGTERM. Any other config is kept in the vis cache.
  * @param options What to run and with which config.
  * @returns Exit code, output and duration; `exitCode` is `null` when the process could not start.
  */
@@ -140,6 +172,7 @@ export const runOxfmt = async (options: RunOxfmtOptions): Promise<RunResult> => 
     const { binPath = resolveOxfmtBin(), config, extraArgs, files, mode, reRaiseSignal, root } = options;
     const start = Date.now();
     let transientPath: string | undefined;
+    let configPath: string | undefined;
 
     const cleanup = (): void => {
         if (transientPath !== undefined) {
@@ -150,11 +183,18 @@ export const runOxfmt = async (options: RunOxfmtOptions): Promise<RunResult> => 
     removeStaleTransientConfigs(root);
 
     try {
-        transientPath = config === undefined ? undefined : writeTransientConfig(root, config);
+        if (config !== undefined) {
+            if (hasGlobs(config)) {
+                transientPath = writeTransientConfig(root, config);
+                configPath = basename(transientPath);
+            } else {
+                configPath = writeCachedConfig(root, config);
+            }
+        }
 
         // Relative to `root` (the child's cwd): oxfmt matches `ignorePatterns` against a canonical cwd, so an
         // absolute path through a symlinked root (macOS `/var` -> `/private/var`) would stop the config ignoring itself.
-        const args = buildOxfmtArgs({ configPath: transientPath === undefined ? undefined : basename(transientPath), extraArgs, files, mode });
+        const args = buildOxfmtArgs({ configPath, extraArgs, files, mode });
 
         return await new Promise<RunResult>((resolve) => {
             const child = spawn(process.execPath, [binPath, ...args], { cwd: root, windowsHide: true });
