@@ -125,9 +125,6 @@ const resolveCommittedStaticNode = (root: DOMElement): DOMElement | undefined =>
 // Nodes already cleaned up, so a tree is never freed twice.
 const releasedNodes = new WeakSet<DOMNode>();
 
-// Nodes created while rendering that have not been seen attached to their root by a commit yet.
-const uncommittedNodes = new WeakMap<DOMElement, Set<DOMElement>>();
-
 /**
  * Recursively clean up a node tree, freeing Yoga nodes, clearing
  * resize observers, and resetting references to prevent memory leaks.
@@ -172,7 +169,7 @@ const cleanupNodeTree = (node?: DOMNode): void => {
  * is still detached belongs to such a render.
  */
 const releaseAbandonedNodes = (root: DOMElement): void => {
-    const pending = uncommittedNodes.get(root);
+    const pending = root.internal_uncommittedNodes;
 
     if (!pending) {
         return;
@@ -374,14 +371,8 @@ const reconcilerInstance: ReturnType<typeof createReconciler> = createReconciler
         const node = createNode(type);
 
         if (node.yogaNode) {
-            let pending = uncommittedNodes.get(rootNode);
-
-            if (!pending) {
-                pending = new Set();
-                uncommittedNodes.set(rootNode, pending);
-            }
-
-            pending.add(node);
+            rootNode.internal_uncommittedNodes ??= new Set();
+            rootNode.internal_uncommittedNodes.add(node);
         }
 
         for (const [key, value] of Object.entries(newProps)) {

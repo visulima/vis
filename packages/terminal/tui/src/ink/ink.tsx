@@ -16,6 +16,7 @@ import { accessibilityContext as AccessibilityContext } from "../components/acce
 import App from "../components/app";
 import type { TerminalSuspension } from "../components/app-context";
 import { composeBackbufferSlice } from "./backbuffer";
+import { trackBeforeExit, untrackBeforeExit } from "./before-exit";
 import * as dom from "./dom";
 import instances from "./instances";
 import type { KittyFlagName, KittyKeyboardOptions } from "./kitty-keyboard";
@@ -48,31 +49,6 @@ if (!(console as any).Console) {
 }
 
 const noop = () => {};
-
-// Instances waiting for the event loop to drain share one process listener, so many live instances do not trip the max-listeners warning.
-type ExitWaiter = { unmount: () => void };
-
-const beforeExitWaiters = new Set<ExitWaiter>();
-
-const onBeforeExit = (): void => {
-    for (const waiter of beforeExitWaiters) {
-        waiter.unmount();
-    }
-};
-
-const trackBeforeExit = (waiter: ExitWaiter): void => {
-    if (beforeExitWaiters.size === 0) {
-        process.on("beforeExit", onBeforeExit);
-    }
-
-    beforeExitWaiters.add(waiter);
-};
-
-const untrackBeforeExit = (waiter: ExitWaiter): void => {
-    if (beforeExitWaiters.delete(waiter) && beforeExitWaiters.size === 0) {
-        process.off("beforeExit", onBeforeExit);
-    }
-};
 
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
 const countLines = (text: string): number => {
@@ -356,6 +332,9 @@ export default class Ink {
 
     // <Static> output produced while suspendTerminal() holds the terminal, written with the first frame after resume.
     private suspendedStaticOutput = "";
+
+    // Whether a frame was skipped while suspended, so unmounting before resume still draws the final one.
+    private hasWithheldFrame = false;
 
     // The single scrollable node with `overflowToBackbuffer` enabled, detected
     // during the layout/scroll walk. Only one such region is supported.
@@ -961,6 +940,14 @@ export default class Ink {
         });
         const renderTime = performance.now() - renderStart;
 
+        // The child process owns the terminal: keep <Static> output for the first frame after resume and draw nothing.
+        if (this.activeSuspension && this.interactive && !this.isUnmounting) {
+            this.suspendedStaticOutput += renderResult.staticOutput;
+            this.hasWithheldFrame = true;
+
+            return;
+        }
+
         this.commitFrame(renderResult);
 
         // Reported after the frame is written, so the callback can rely on what it observes on stdout.
@@ -968,17 +955,11 @@ export default class Ink {
     };
 
     private commitFrame(renderResult: ReturnType<typeof render>): void {
-        // The child process owns the terminal, so <Static> output waits for the frame drawn on resume.
-        if (this.activeSuspension && this.interactive && !this.isUnmounting) {
-            this.suspendedStaticOutput += renderResult.staticOutput;
-
-            return;
-        }
-
         const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth } = renderResult;
         const staticOutput = this.suspendedStaticOutput + renderResult.staticOutput;
 
         this.suspendedStaticOutput = "";
+        this.hasWithheldFrame = false;
 
         this.renderedCursorRequested = cursorRequested;
         this.renderedCursorPosition = cursorPosition;
@@ -1347,9 +1328,8 @@ export default class Ink {
             // primary screen buffer.
             && !this.alternateScreen
         ) {
-            const hasUnwrittenStatic = this.suspendedStaticOutput !== "";
             const shouldRenderFinalFrame
-                = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten) || hasUnwrittenStatic) && !this.isFrameCleared;
+                = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten) || this.hasWithheldFrame) && !this.isFrameCleared;
 
             if (shouldRenderFinalFrame) {
                 this.calculateLayout();

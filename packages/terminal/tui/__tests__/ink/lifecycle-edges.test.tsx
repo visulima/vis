@@ -25,6 +25,44 @@ const count = (text: string, needle: string): number => text.split(needle).lengt
 
 const writtenText = (stdout: ReturnType<typeof createStdout>): string => stripVTControlCharacters(stdout.getWrites().join(""));
 
+const createGate = (): { Gate: () => React.ReactNode; release: () => void } => {
+    let resolved = false;
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        resolveGate = resolve;
+    });
+
+    const Gate = (): React.ReactNode => {
+        if (!resolved) {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- React Suspense throws a thenable
+            throw gate;
+        }
+
+        return null;
+    };
+
+    return {
+        Gate,
+        release: () => {
+            resolved = true;
+            resolveGate();
+        },
+    };
+};
+
+let suspendTerminal!: AppContextProps["suspendTerminal"];
+
+const StaticWhileSuspended = ({ items, label = "Dynamic" }: { readonly items: string[]; readonly label?: string }): React.ReactNode => {
+    ({ suspendTerminal } = useApp());
+
+    return (
+        <>
+            <Static items={items}>{(item: string) => <Text key={item}>{item}</Text>}</Static>
+            <Text>{label}</Text>
+        </>
+    );
+};
+
 afterEach(() => {
     vi.restoreAllMocks();
 });
@@ -159,39 +197,29 @@ describe("<Static> output edges", () => {
             expect(count(output, "B")).toBe(1);
         });
     }
+});
 
-    it("writes <Static> items added while the terminal is suspended once, after resume", async () => {
-        expect.hasAssertions();
-
-        type SuspendTerminal = AppContextProps["suspendTerminal"];
-
-        let suspendTerminal!: SuspendTerminal;
-
-        const Example = ({ items }: { readonly items: string[] }): React.ReactNode => {
-            ({ suspendTerminal } = useApp());
-
-            return (
-                <>
-                    <Static items={items}>{(item: string) => <Text key={item}>{item}</Text>}</Static>
-                    <Text>Dynamic</Text>
-                </>
-            );
-        };
-
+describe("while the terminal is suspended", () => {
+    const start = async (): Promise<{ instance: ReturnType<typeof render>; stdout: ReturnType<typeof createStdout> }> => {
         const stdout = createStdout();
-        const instance = render(<Example items={["first"]} />, { interactive: true, patchConsole: false, stdin: createStdin(), stdout });
+        const instance = render(<StaticWhileSuspended items={["first"]} />, { interactive: true, patchConsole: false, stdin: createStdin(), stdout });
 
         await instance.waitUntilRenderFlush();
 
+        return { instance, stdout };
+    };
+
+    it("writes <Static> items added meanwhile once, after resume", async () => {
+        expect.hasAssertions();
+
+        const { instance, stdout } = await start();
         const suspension = await suspendTerminal();
         const writesAtSuspend = stdout.getWrites().length;
 
-        instance.rerender(<Example items={["first", "second"]} />);
+        instance.rerender(<StaticWhileSuspended items={["first", "second"]} />);
         await instance.waitUntilRenderFlush();
 
-        const whileSuspended = stripVTControlCharacters(stdout.getWrites().slice(writesAtSuspend).join(""));
-
-        expect(whileSuspended).not.toContain("second");
+        expect(stripVTControlCharacters(stdout.getWrites().slice(writesAtSuspend).join(""))).not.toContain("second");
 
         await suspension.resume();
         await instance.waitUntilRenderFlush();
@@ -203,32 +231,14 @@ describe("<Static> output edges", () => {
 
         instance.unmount();
     });
-});
 
-describe("<Static> output when unmounting while suspended", () => {
-    it("is not lost", async () => {
+    it("keeps <Static> items added meanwhile when the instance unmounts before resume", async () => {
         expect.hasAssertions();
 
-        let suspendTerminal!: AppContextProps["suspendTerminal"];
+        const { instance, stdout } = await start();
 
-        const Example = ({ items }: { readonly items: string[] }): React.ReactNode => {
-            ({ suspendTerminal } = useApp());
-
-            return (
-                <>
-                    <Static items={items}>{(item: string) => <Text key={item}>{item}</Text>}</Static>
-                    <Text>Dynamic</Text>
-                </>
-            );
-        };
-
-        const stdout = createStdout();
-        const instance = render(<Example items={["first"]} />, { interactive: true, patchConsole: false, stdin: createStdin(), stdout });
-
-        await instance.waitUntilRenderFlush();
         await suspendTerminal();
-
-        instance.rerender(<Example items={["first", "second"]} />);
+        instance.rerender(<StaticWhileSuspended items={["first", "second"]} />);
         await instance.waitUntilRenderFlush();
         instance.unmount();
         await instance.waitUntilExit();
@@ -237,6 +247,23 @@ describe("<Static> output when unmounting while suspended", () => {
 
         expect(count(output, "first")).toBe(1);
         expect(count(output, "second")).toBe(1);
+    });
+
+    it("draws the final frame when the instance unmounts before resume", async () => {
+        expect.hasAssertions();
+
+        const { instance, stdout } = await start();
+
+        await suspendTerminal();
+
+        const writesAtSuspend = stdout.getWrites().length;
+
+        instance.rerender(<StaticWhileSuspended items={["first"]} label="Changed" />);
+        await instance.waitUntilRenderFlush();
+        instance.unmount();
+        await instance.waitUntilExit();
+
+        expect(stripVTControlCharacters(stdout.getWrites().slice(writesAtSuspend).join(""))).toContain("Changed");
     });
 });
 
@@ -263,23 +290,7 @@ describe("yoga node lifetime", () => {
             return node;
         });
 
-        let release!: () => void;
-        let resolved = false;
-        const gate = new Promise<void>((resolve) => {
-            release = () => {
-                resolved = true;
-                resolve();
-            };
-        });
-
-        const Gate = (): React.ReactNode => {
-            if (!resolved) {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- React Suspense throws a thenable
-                throw gate;
-            }
-
-            return <Text>ready</Text>;
-        };
+        const { Gate, release } = createGate();
 
         let setStep!: (step: number) => void;
 
@@ -290,16 +301,10 @@ describe("yoga node lifetime", () => {
 
             return (
                 <Box flexDirection="column">
-                    <Text>
-step
-{step}
-                    </Text>
+                    <Text>{`step ${step}`}</Text>
                     <Suspense fallback={<Text>loading</Text>}>
                         <Box>
-                            <Text>
-inside
-{step}
-                            </Text>
+                            <Text>{`inside ${step}`}</Text>
                             {step > 0 && <Gate />}
                         </Box>
                     </Suspense>
@@ -327,31 +332,6 @@ inside
 });
 
 describe("useBoxMetrics in hidden subtrees", () => {
-    const createGate = (): { Gate: () => React.ReactNode; release: () => void } => {
-        let resolved = false;
-        let resolveGate!: () => void;
-        const gate = new Promise<void>((resolve) => {
-            resolveGate = resolve;
-        });
-
-        const Gate = (): React.ReactNode => {
-            if (!resolved) {
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- React Suspense throws a thenable
-                throw gate;
-            }
-
-            return null;
-        };
-
-        return {
-            Gate,
-            release: () => {
-                resolved = true;
-                resolveGate();
-            },
-        };
-    };
-
     const createMetrics = (hidden?: boolean): { latest: () => ReturnType<typeof useBoxMetrics>; Metrics: () => React.ReactNode } => {
         let latest!: ReturnType<typeof useBoxMetrics>;
 
