@@ -30,16 +30,17 @@ const cases = readdirSync(fixtureRoot, { withFileTypes: true })
     .map((entry) => entry.name)
     .toSorted();
 
-const nativeCases = cases.filter((name) => readExpected(join(fixtureRoot, name)).native !== undefined);
+const nativeCases = cases.flatMap((name): [string, NonNullable<ExpectedGraph["native"]>][] => {
+    const expected = readExpected(join(fixtureRoot, name)).native;
+
+    return expected === undefined ? [] : [[name, expected]];
+});
 
 describe("native project graph parity", () => {
-    it.each(nativeCases)("%s matches the native names and edges", (name) => {
-        const caseRoot = join(fixtureRoot, name);
-        const expected = readExpected(caseRoot).native;
+    it.each(nativeCases)("%s matches the native names and edges", (name, expected) => {
+        expect.assertions(2);
 
-        if (expected === undefined) {
-            throw new Error(`${name} has no native expectation`);
-        }
+        const caseRoot = join(fixtureRoot, name);
 
         const { packageJsons, workspace } = discoverWorkspace(caseRoot);
         const graph = buildProjectGraph(caseRoot, workspace, packageJsons);
@@ -70,6 +71,8 @@ describe("native project graph parity", () => {
     });
 
     it("keeps the delegate fixtures out of the native comparison", () => {
+        expect.assertions(2);
+
         const delegating = cases.filter((name) => readExpected(join(fixtureRoot, name)).delegate === true);
 
         expect(delegating.length).toBeGreaterThan(0);

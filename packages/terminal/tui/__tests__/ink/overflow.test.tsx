@@ -664,21 +664,12 @@ describe("overflow", () => {
         expect(output).toBe("AA\nBB\nXXXX\nYYYY\n");
     });
 
-    it("out of bounds writes do not crash", () => {
+    it("out of bounds writes are clipped at the output width", () => {
         expect.assertions(1);
 
         const output = renderToString(<Box borderStyle="round" height={10} width={12} />, { columns: 10 });
 
-        const expected = boxen("", {
-            borderStyle: "round",
-            height: 10,
-            width: 12,
-        })
-            .split("\n")
-            .map((line, index) => (index === 0 || index === 9 ? line : `${line.slice(0, 10)}${line[11] ?? ""}`))
-            .join("\n");
-
-        expect(output).toBe(expected);
+        expect(output).toBe(["╭─────────", ...Array.from({ length: 8 }).fill("│"), "╰─────────"].join("\n"));
     });
 
     it("overflowX - single text node in a box inside overflow container - concurrent", async () => {

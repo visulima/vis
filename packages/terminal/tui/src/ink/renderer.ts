@@ -196,6 +196,7 @@ const getReusableOutput = ({ caches, height, node, outputs, width }: ReusableOut
     if (!output) {
         output = new Output({
             caches,
+            clipToWidth: true,
             height,
             width,
         });
@@ -257,10 +258,13 @@ const renderInteractiveStaticOutput = (node: DOMElement): string => {
             + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_BOTTOM),
         node,
         outputs: staticOutputs,
-        width:
+        // Capped at the root width: static rows are written to the terminal as they are, so a wider row would wrap.
+        width: Math.min(
+            node.yogaNode.getComputedWidth(),
             node.staticNode.yogaNode.getComputedLeft()
             + node.staticNode.yogaNode.getComputedWidth()
             + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_RIGHT),
+        ),
     });
 
     renderNodeToOutput(node.staticNode, staticOutput, {
