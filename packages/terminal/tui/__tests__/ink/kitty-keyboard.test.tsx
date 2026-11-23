@@ -1,10 +1,14 @@
 import EventEmitter from "node:events";
 
+import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Text } from "../../src/components/index";
+import { useApp } from "../../src/ink/hooks/use-app";
+import useInput from "../../src/ink/hooks/use-input";
 import { render } from "../../src/ink/index";
 import parseKeypress from "../../src/ink/parse-keypress";
+import waitFor from "../helpers/wait-for";
 
 // Helper to create kitty protocol CSI u sequences
 const kittyKey = (codepoint: number, modifiers?: number, eventType?: number, textCodepoints?: number[]): string => {
@@ -438,20 +442,26 @@ describe("kitty-keyboard", () => {
         (stdin as Record<string, unknown>).read = () => undefined;
         vi.spyOn(stdin, "setRawMode").mockImplementation(() => stdin);
         stdin.setEncoding = () => stdin;
-        vi.spyOn(stdin, "read").mockImplementation();
+        vi.spyOn(stdin, "read").mockReturnValue(null);
 
         return stdin;
     };
 
     const getWrittenStrings = (write: ReturnType<typeof vi.fn>): string[] => write.mock.calls.map((args: any) => args[0] as string);
 
-    it("kitty protocol - writes enable sequence on init when mode is enabled", () => {
+    const InputConsumer = (): React.ReactNode => {
+        useInput(() => {});
+
+        return <Text>Hello</Text>;
+    };
+
+    it("kitty protocol - writes enable sequence once input is read when mode is enabled", () => {
         expect.assertions(1);
 
         const { stdout, write } = createFakeStdout();
         const stdin = createFakeStdin();
 
-        const { unmount } = render(<Text>Hello</Text>, {
+        const { unmount } = render(<InputConsumer />, {
             kittyKeyboard: { mode: "enabled" },
             stdin,
             stdout,
@@ -468,7 +478,7 @@ describe("kitty-keyboard", () => {
         const { stdout, write } = createFakeStdout();
         const stdin = createFakeStdin();
 
-        const { unmount } = render(<Text>Hello</Text>, {
+        const { unmount } = render(<InputConsumer />, {
             kittyKeyboard: { mode: "enabled" },
             stdin,
             stdout,
@@ -487,7 +497,7 @@ describe("kitty-keyboard", () => {
 
         stdin.isTTY = false;
 
-        const { unmount } = render(<Text>Hello</Text>, {
+        const { unmount } = render(<InputConsumer />, {
             kittyKeyboard: { mode: "enabled" },
             stdin,
             stdout,
@@ -506,7 +516,7 @@ describe("kitty-keyboard", () => {
         stdout.isTTY = false;
         const stdin = createFakeStdin();
 
-        const { unmount } = render(<Text>Hello</Text>, {
+        const { unmount } = render(<InputConsumer />, {
             kittyKeyboard: { mode: "enabled" },
             stdin,
             stdout,
@@ -515,5 +525,255 @@ describe("kitty-keyboard", () => {
         expect(getWrittenStrings(write)).not.toContain("\u001B[>1u");
 
         unmount();
+    });
+
+    describe("negotiation only while raw mode is on", () => {
+        const QUERY = "\u001B[?u";
+        const PUSH = "\u001B[>1u";
+        const POP = "\u001B[<u";
+
+        const count = (write: ReturnType<typeof vi.fn>, sequence: string): number => getWrittenStrings(write).filter((w) => w === sequence).length;
+
+        const Toggle = ({ active }: { readonly active: boolean }): React.ReactNode => {
+            useInput(() => {}, { isActive: active });
+
+            return <Text>Hello</Text>;
+        };
+
+        const waitForRawModeOff = async (stdin: NodeJS.ReadStream): Promise<void> => {
+            await waitFor(() => (stdin.setRawMode as ReturnType<typeof vi.fn>).mock.calls.some((call) => call[0] === false));
+        };
+
+        it("auto mode - never queries when nothing enables raw mode", async () => {
+            expect.assertions(1);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { unmount } = render(<Text>Hello</Text>, { interactive: true, kittyKeyboard: { mode: "auto" }, stdin, stdout });
+
+            await new Promise((resolve) => {
+                setTimeout(resolve, 260);
+            });
+
+            expect(count(write, QUERY)).toBe(0);
+
+            unmount();
+        });
+
+        it("auto mode - queries once raw mode is on and pushes flags when the terminal answers", async () => {
+            expect.assertions(3);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { rerender, unmount } = render(<Toggle active={false} />, { interactive: true, kittyKeyboard: { mode: "auto" }, stdin, stdout });
+
+            expect(count(write, QUERY)).toBe(0);
+
+            rerender(<Toggle active />);
+
+            await waitFor(() => count(write, QUERY) === 1);
+
+            (stdin.read as ReturnType<typeof vi.fn>).mockReturnValueOnce("\u001B[?1u");
+            stdin.emit("readable");
+
+            await waitFor(() => count(write, PUSH) === 1);
+
+            expect(count(write, QUERY)).toBe(1);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(1);
+        });
+
+        it("auto mode - a query that times out leaves the protocol off", async () => {
+            expect.assertions(2);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { unmount } = render(<Toggle active />, { interactive: true, kittyKeyboard: { mode: "auto" }, stdin, stdout });
+
+            await waitFor(() => count(write, QUERY) === 1);
+            await new Promise((resolve) => {
+                setTimeout(resolve, 260);
+            });
+
+            expect(count(write, PUSH)).toBe(0);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(0);
+        });
+
+        it("enabled mode - writes nothing while raw mode is off", () => {
+            expect.assertions(2);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { unmount } = render(<Text>Hello</Text>, { kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+
+            expect(count(write, PUSH)).toBe(0);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(0);
+        });
+
+        it("enabled mode - pops when the last consumer goes away and pushes again when one returns", async () => {
+            expect.assertions(5);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { rerender, unmount } = render(<Toggle active />, { kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+
+            expect(count(write, PUSH)).toBe(1);
+
+            rerender(<Toggle active={false} />);
+            await waitForRawModeOff(stdin);
+
+            expect(count(write, POP)).toBe(1);
+
+            rerender(<Toggle active />);
+
+            expect(count(write, PUSH)).toBe(2);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(2);
+            expect(getWrittenStrings(write).filter((w) => w === POP || w === PUSH)).toStrictEqual([PUSH, POP, PUSH, POP]);
+        });
+
+        it("enabled mode - pops exactly once when the app exits through useApp().exit()", async () => {
+            expect.assertions(1);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const Quitter = (): React.ReactNode => {
+                const { exit } = useApp();
+
+                useInput((input) => {
+                    if (input === "q") {
+                        exit();
+                    }
+                });
+
+                return <Text>Hello</Text>;
+            };
+
+            const { waitUntilExit } = render(<Quitter />, { kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+
+            (stdin.read as ReturnType<typeof vi.fn>).mockReturnValueOnce("q");
+            stdin.emit("readable");
+
+            await waitUntilExit();
+
+            expect(count(write, POP)).toBe(1);
+        });
+
+        it("enabled mode - pops while suspended and pushes again once on resume", async () => {
+            expect.assertions(3);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+            const state: { suspend?: ReturnType<typeof useApp>["suspendTerminal"] } = {};
+
+            const App = (): React.ReactNode => {
+                state.suspend = useApp().suspendTerminal;
+                useInput(() => {});
+
+                return <Text>Hello</Text>;
+            };
+
+            const { unmount } = render(<App />, { interactive: true, kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+            const sequences = (): string[] => getWrittenStrings(write).filter((w) => w === POP || w === PUSH);
+
+            expect(sequences()).toStrictEqual([PUSH]);
+
+            await state.suspend?.(() => {
+                expect(sequences()).toStrictEqual([PUSH, POP]);
+            });
+
+            expect(sequences()).toStrictEqual([PUSH, POP, PUSH]);
+
+            unmount();
+        });
+
+        it("enabled mode - stays off after resume when the last consumer left in the same commit as the suspend", async () => {
+            expect.assertions(1);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+            const state: { resume?: () => Promise<void> } = {};
+
+            const Editor = ({ active }: { readonly active: boolean }): React.ReactNode => {
+                const { suspendTerminal } = useApp();
+
+                useInput(() => {}, { isActive: active });
+
+                React.useEffect(() => {
+                    if (!active) {
+                        void suspendTerminal().then((suspension) => {
+                            state.resume = suspension.resume;
+                        });
+                    }
+                }, [active, suspendTerminal]);
+
+                return <Text>Hello</Text>;
+            };
+
+            const { rerender, unmount } = render(<Editor active />, { interactive: true, kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+
+            rerender(<Editor active={false} />);
+
+            await waitFor(() => state.resume !== undefined);
+            await state.resume?.();
+
+            unmount();
+
+            expect(getWrittenStrings(write).filter((w) => w === POP || w === PUSH)).toStrictEqual([PUSH, POP]);
+        });
+
+        it("enabled mode - keeps the protocol off for a consumer that only mounts while suspended", async () => {
+            expect.assertions(3);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+            const state: { resume?: () => Promise<void> } = {};
+
+            const Probe = ({ active }: { readonly active: boolean }): React.ReactNode => {
+                const { suspendTerminal } = useApp();
+
+                React.useEffect(() => {
+                    void suspendTerminal().then((suspension) => {
+                        state.resume = suspension.resume;
+                    });
+                }, [suspendTerminal]);
+
+                useInput(() => {}, { isActive: active });
+
+                return <Text>Hello</Text>;
+            };
+
+            const { rerender, unmount } = render(<Probe active={false} />, { interactive: true, kittyKeyboard: { mode: "enabled" }, stdin, stdout });
+
+            await waitFor(() => state.resume !== undefined);
+
+            rerender(<Probe active />);
+
+            expect(count(write, PUSH)).toBe(0);
+
+            await state.resume?.();
+
+            expect(count(write, PUSH)).toBe(1);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(1);
+        });
     });
 });

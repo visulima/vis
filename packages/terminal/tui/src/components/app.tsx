@@ -54,6 +54,9 @@ type Props = {
      * `suspendTerminal()` can hand raw mode + bracketed paste to a child process.
      */
     readonly onKittyQueryResponse?: () => void;
+
+    /** Reports whether any component currently owns raw mode, so keyboard-protocol negotiation can follow it. */
+    readonly onRawModeChange?: (isEnabled: boolean) => void;
     readonly onRegisterInputControl: (pauseInput: () => void, resumeInput: () => void) => void;
     readonly onSuspendTerminal: AppContextProps["suspendTerminal"];
     readonly onWaitUntilRenderFlush: () => Promise<void>;
@@ -112,6 +115,7 @@ const App = ({
     interactive,
     onExit,
     onKittyQueryResponse,
+    onRawModeChange,
     onRegisterInputControl,
     onSuspendTerminal,
     onWaitUntilRenderFlush,
@@ -307,7 +311,8 @@ const App = ({
         stdin.unref?.();
         rawModeEnabledCount.current = 0;
         clearInputState();
-    }, [stdin, isRawModeSupported, clearInputState]);
+        onRawModeChange?.(false);
+    }, [stdin, isRawModeSupported, clearInputState, onRawModeChange]);
 
     const handleExit = useCallback(
         (errorOrResult?: unknown): void => {
@@ -466,6 +471,10 @@ const App = ({
 
                 rawModeEnabledCount.current++;
 
+                if (rawModeEnabledCount.current === 1) {
+                    onRawModeChange?.(true);
+                }
+
                 return;
             }
 
@@ -476,6 +485,8 @@ const App = ({
             if (--rawModeEnabledCount.current === 0) {
                 // Nothing to release while suspended: pauseInput already did.
                 if (isInputPausedRef.current) {
+                    onRawModeChange?.(false);
+
                     return;
                 }
 
@@ -495,7 +506,7 @@ const App = ({
                 });
             }
         },
-        [isRawModeSupported, stdin, attachReadableListener, clearInputState, disableRawMode],
+        [isRawModeSupported, stdin, attachReadableListener, clearInputState, disableRawMode, onRawModeChange],
     );
 
     const handleSetBracketedPasteMode = useCallback(
@@ -536,12 +547,18 @@ const App = ({
 
         if (isRawModeSupported && (rawModeEnabledCount.current > 0 || pendingDisableRawModeRef.current)) {
             // Hand raw mode + input listeners back to the terminal. Cancel any queued deferred disable so it can't fire mid-suspension.
+            const hasOwners = rawModeEnabledCount.current > 0;
+
             pendingDisableRawModeRef.current = false;
             clearInputState();
             stdin.setRawMode(false);
             stdin.unref?.();
+
+            if (!hasOwners) {
+                onRawModeChange?.(false);
+            }
         }
-    }, [isRawModeSupported, stdout, stdin, clearInputState]);
+    }, [isRawModeSupported, stdout, stdin, clearInputState, onRawModeChange]);
 
     const resumeInput = useCallback((): void => {
         isInputPausedRef.current = false;
