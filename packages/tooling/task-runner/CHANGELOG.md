@@ -1,3 +1,9 @@
+## @visulima/task-runner [3.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.1...@visulima/task-runner@3.1.0-next.2) (2026-11-23)
+
+### Features
+
+* **task-runner:** compute task keys and look up cache entries in the core crate ([#191](https://github.com/visulima/vis/issues/191)) ([b132a61](https://github.com/visulima/vis/commit/b132a61fbc9bddb857bec1582ea103ae94fc2cf6))
+
 ## @visulima/task-runner [3.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.0.5-next.1...@visulima/task-runner@3.1.0-next.1) (2026-11-22)
 
 ### Features
