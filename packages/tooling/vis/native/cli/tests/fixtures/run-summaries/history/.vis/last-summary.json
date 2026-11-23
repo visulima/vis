@@ -1,0 +1,472 @@
+{
+  "duration": 3600125,
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "2026-01-03T00-00-00-000Z_3333",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 2,
+    "failed": 0,
+    "skipped": 1,
+    "succeeded": 14,
+    "total": 17
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:build": [],
+      "app:same": [],
+      "app:first": [],
+      "app:layout": [],
+      "app:trace": [],
+      "app:trace-hit": [],
+      "app:trace-empty": [],
+      "app:fallback": [],
+      "app:nohash": [],
+      "app:deps": [],
+      "app:cmd": [],
+      "app:unicode": [],
+      "app:proto": [],
+      "app:numeric": [],
+      "app:bad-reason": [],
+      "app:nullhash": [],
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production": []
+    },
+    "roots": [
+      "app:build",
+      "app:same",
+      "app:first",
+      "app:layout",
+      "app:trace",
+      "app:trace-hit",
+      "app:trace-empty",
+      "app:fallback",
+      "app:nohash",
+      "app:deps",
+      "app:cmd",
+      "app:unicode",
+      "app:proto",
+      "app:numeric",
+      "app:bad-reason",
+      "app:nullhash",
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 1125,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "build"
+      },
+      "taskId": "app:build",
+      "hash": "7a6f150b83091ce20c89368641f9a137",
+      "hashDetails": {
+        "command": "0a3d72134fb3d6c024db4c510bc1605b",
+        "implicitDeps": {
+          "__global__": "0120a4f9196a5f9eb9f523f31f914da7"
+        },
+        "layout": 2,
+        "nodes": {
+          "src/index.ts": "a58f5d324cd6cc79762f72fe68b9a0b3",
+          "src/Index.test.ts": "a6bbc91ae73dd21c0533f735470a9cd0",
+          "src/new.ts": "4443aee183b279f76a95c13c7f5bca0d",
+          "src/a_b.ts": "ed23e9d533a3992b2bfeef6f8601a945",
+          "src/A.ts": "8eb6d8747175919f27472673a32b3eca"
+        },
+        "runtime": {
+          "node": "2783fe87cecc57e454ec164ba4089e69",
+          "pnpm": "45c48cce2e2d7fbdea1afc51c7c6ad26"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 1005,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "same"
+      },
+      "taskId": "app:same",
+      "hash": "c0828e0381730befd1f7a025057c74fb",
+      "hashDetails": {
+        "command": "95cc64dd2825f9df13ec4ad683ecf339",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b",
+          "b.ts": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 999,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "first"
+      },
+      "taskId": "app:first",
+      "hash": "1779cf3aa50c413afc7e05adb7e1b0de",
+      "hashDetails": {
+        "command": "4e29342d9904d64e9e25fd3b92558e2f",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 1375,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "layout"
+      },
+      "taskId": "app:layout",
+      "hash": "745e9cdc76ffef9a8c1ae15e3f2e8cf9",
+      "hashDetails": {
+        "command": "6c9cf9c6bf855361248784276a56d886",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 125000,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace"
+      },
+      "taskId": "app:trace",
+      "hash": "0b8854ad38f0a6c65807928d28195609",
+      "cacheMissReasons": [
+        {
+          "currentHash": "c1",
+          "detail": "src/index.ts",
+          "previousHash": "p1",
+          "type": "file-changed"
+        },
+        {
+          "detail": "src/new.ts",
+          "type": "file-created"
+        },
+        {
+          "detail": "src/old.ts",
+          "type": "file-deleted"
+        },
+        {
+          "detail": "src/dir",
+          "type": "directory-changed"
+        },
+        {
+          "detail": "NODE_ENV",
+          "type": "env-changed"
+        },
+        {
+          "detail": "",
+          "type": "args-changed"
+        },
+        {
+          "detail": "",
+          "type": "declared-changed"
+        },
+        {
+          "detail": "strace -> landlock",
+          "type": "tracker-changed"
+        },
+        {
+          "detail": "",
+          "type": "chain-changed"
+        },
+        {
+          "detail": "",
+          "type": "no-fingerprint"
+        },
+        {
+          "detail": "x",
+          "type": "something-new"
+        }
+      ]
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 0,
+      "outputs": [],
+      "target": {
+        "project": "app",
+        "target": "trace-hit"
+      },
+      "taskId": "app:trace-hit",
+      "hash": "1fdc0f893412ce55f0d2811821b84d3b"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace-empty"
+      },
+      "taskId": "app:trace-empty",
+      "hash": "569ef72642be0fadd711d6a468d68ee1",
+      "cacheMissReasons": []
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 1625,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "fallback"
+      },
+      "taskId": "app:fallback",
+      "hash": "35ce1d4eb0f666cd136987d34f64aedc",
+      "hashDetails": {
+        "command": "18a87474c42cf78430affe62fcfd1907",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      },
+      "hashSource": "declared-fallback"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "SKIPPED",
+      "dependencies": [],
+      "outputs": [],
+      "target": {
+        "project": "app",
+        "target": "nohash"
+      },
+      "taskId": "app:nohash"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "REMOTE_HIT",
+      "dependencies": [
+        "app:build",
+        "app:same"
+      ],
+      "duration": 1875,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "deps"
+      },
+      "taskId": "app:deps",
+      "hash": "e53125275854402400f74fd6ab3f7659",
+      "hashDetails": {
+        "command": "6865aeb3a9ed28f9a79ec454b259e5d0",
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "cmd"
+      },
+      "taskId": "app:cmd",
+      "hash": "9678f7a7939f457fa0d9353761e189c7",
+      "hashDetails": {
+        "command": "c66cf8d4469428acde40b7a3e9c68e77"
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "unicode"
+      },
+      "taskId": "app:unicode",
+      "hash": "532a7b8e0328a8d05a8e6258b28b9a36",
+      "hashDetails": {
+        "command": "a4dbfd6aef3b4045fe61aa0146debdf8",
+        "layout": 2,
+        "nodes": {
+          "src/ünï.ts": "c4ca4238a0b923820dcc509a6f75849b",
+          "src/😀.ts": "c81e728d9d4c2f636f067f89cc14862c",
+          "src/.ts": "eccbc87e4b5ce2fe28308fd9f2a7baf3"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "proto"
+      },
+      "taskId": "app:proto",
+      "hash": "7bc3ca68769437ce986455407dab2a1f",
+      "hashDetails": {
+        "command": "9c95319bf274672d6eae7eb97c3dfda5",
+        "layout": 2,
+        "nodes": {
+          "toString": "c4ca4238a0b923820dcc509a6f75849b",
+          "a": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "numeric"
+      },
+      "taskId": "app:numeric",
+      "hash": "4443aee183b279f76a95c13c7f5bca0d",
+      "hashDetails": {
+        "command": "7efdfc94655a25dcea3ec85e9bb703fa",
+        "layout": 2,
+        "nodes": {
+          "1": "c4ca4238a0b923820dcc509a6f75849b",
+          "a": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "bad-reason"
+      },
+      "taskId": "app:bad-reason",
+      "hash": "dc634e2072827fe0b5be9a2063390544",
+      "cacheMissReasons": [
+        {
+          "detail": "a",
+          "type": "file-changed",
+          "extra": "x"
+        }
+      ]
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "nullhash"
+      },
+      "taskId": "app:nullhash",
+      "hash": "86e41e046990daf7e850f49eb2d5a64d",
+      "cacheMissReasons": null
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "@scope/pkg-with-a-very-long-name-for-wrapping",
+        "target": "build:production"
+      },
+      "taskId": "@scope/pkg-with-a-very-long-name-for-wrapping:build:production",
+      "hash": "0f5264038205edfb1ac05fbb0e8c5e94",
+      "hashDetails": {
+        "command": "161747ec4dc9f55f1760195593742232",
+        "layout": 2,
+        "nodes": {
+          "a": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    }
+  ]
+}

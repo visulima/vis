@@ -378,12 +378,14 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["ignore", ["ignore"], { CI: "1" }],
             ["install", ["install"], { CI: "1" }],
             ["cache hash", ["cache", "hash", "app:build"], { CI: "1" }],
+            ["cache why", ["cache", "why", "app:build"], { CI: "1" }],
+            ["replay", ["replay"], { CI: "1" }],
             ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
             ["sync ci-workflow", ["sync", "ci-workflow", "--provider=github"], { CI: "1" }],
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
-        const PRINTS_PAIL_LINES = new Set(["cache hash", "clean", "install", "secrets"]);
+        const PRINTS_PAIL_LINES = new Set(["cache hash", "cache why", "clean", "install", "replay", "secrets"]);
 
         const ANSWERED: Record<string, string>[] = [
             { GITHUB_ACTIONS: "true" },

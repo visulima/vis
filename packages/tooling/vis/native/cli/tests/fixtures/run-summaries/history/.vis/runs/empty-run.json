@@ -1,0 +1,22 @@
+{
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "empty-run",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 0,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 0
+  },
+  "taskGraph": {
+    "dependencies": {},
+    "roots": []
+  },
+  "tasks": []
+}

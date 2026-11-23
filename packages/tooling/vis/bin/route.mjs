@@ -208,6 +208,22 @@ const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
     return cacheHashAsksForJson(flags) || pailOutputIsDecidable(environment, args);
 };
 
+// Whether `vis replay` can pass the binary's native gate (`parse` and `native` in `replay.rs`): `--format`, `--run` and
+// `--task` with a value, `--failed` and `--list`, in a CI context off a terminal. The binary re-checks everything, so
+// this only skips the extra process for a call it would delegate anyway: another flag, or a table in a colour context
+// the binary cannot decide (the JSON is written raw, so colour does not matter there). Windows stays in Node.
+const REPLAY_FLAG = /^--(?:format|run|task)(?:=.*)?$|^--(?:failed|list)$/;
+
+const replayMayRunNatively = (platform, environment, args, interactive) => {
+    const flags = args.slice(1);
+
+    if (platform === "win32" || interactive || !inCi(environment) || !flags.every((token) => !token.startsWith("-") || REPLAY_FLAG.test(token))) {
+        return false;
+    }
+
+    return cacheHashAsksForJson(flags) || pailOutputIsDecidable(environment, args);
+};
+
 // A version `vis self-update` hands to npm natively: `x.y.z` with an optional `-pre` and `+build` part. Same
 // shape as `is_plain_version` in `native/cli/src/self_update.rs`.
 const SELF_UPDATE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Z.-]+)?(?:\+[0-9A-Z.-]+)?$/i;
@@ -246,14 +262,14 @@ const selfUpdateMayRunNatively = (platform, environment, args, interactive) => {
     return true;
 };
 
-const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size"]);
+const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size", "why"]);
 
 // Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
 // re-checks everything, including the flags, the root and the config; this only skips the extra process
-// when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context. `hash` has
-// its own, stricter gate above.
+// when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context. `hash` and
+// `why` (`cache_why.rs`, the same flags) have their own, stricter gate above.
 const cacheMayRunNatively = (subcommand, platform, environment, args, interactive) => {
-    if (subcommand === "hash") {
+    if (subcommand === "hash" || subcommand === "why") {
         return cacheHashMayRunNatively(platform, environment, args, interactive);
     }
 
@@ -607,7 +623,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
-    // `cache list`, `cache size` (`cache.rs`) and `cache hash` (`cache_hash.rs`); the binary hands every other shape to Node itself.
+    // `cache list`, `cache size` (`cache.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
         ({ args, environment, interactive, platform, subcommand }) => {
@@ -624,6 +640,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
+    // A recorded run, a task of it, or the list of runs.
+    ["replay", ({ args, environment, interactive, platform }) => helpOrNative(args, () => replayMayRunNatively(platform, environment, args, interactive))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.

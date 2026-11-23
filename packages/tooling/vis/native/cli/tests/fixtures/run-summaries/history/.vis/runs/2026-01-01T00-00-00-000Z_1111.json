@@ -1,0 +1,88 @@
+{
+  "duration": 0,
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "2026-01-01T00-00-00-000Z_1111",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 0,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 2,
+    "total": 2
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:build": [],
+      "app:same": []
+    },
+    "roots": [
+      "app:build",
+      "app:same"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "build"
+      },
+      "taskId": "app:build",
+      "hash": "fbfba2e45c2045dc5cab22a5afe83d9d",
+      "hashDetails": {
+        "command": "9ab62b5ef34a985438bfdf7ee0102229",
+        "implicitDeps": {
+          "__global__": "0120a4f9196a5f9eb9f523f31f914da7",
+          "lock": "377fd569971eedeba8fbea28434a390a"
+        },
+        "layout": 2,
+        "nodes": {
+          "src/index.ts": "c82561ec215a6e31807ceedf3b3bd25e",
+          "src/Index.test.ts": "a6bbc91ae73dd21c0533f735470a9cd0",
+          "src/gone.ts": "b555773768bc1a672947d7f41f9c247f",
+          "src/a_b.ts": "ed23e9d533a3992b2bfeef6f8601a945"
+        },
+        "runtime": {
+          "node": "8286e09aa759584d6fd8292ccdc241cc",
+          "pnpm": "45c48cce2e2d7fbdea1afc51c7c6ad26"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "same"
+      },
+      "taskId": "app:same",
+      "hash": "fac989447cad2edbc89fbcba70003b36",
+      "hashDetails": {
+        "command": "95cc64dd2825f9df13ec4ad683ecf339",
+        "layout": 2,
+        "nodes": {
+          "b.ts": "c81e728d9d4c2f636f067f89cc14862c",
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    }
+  ]
+}

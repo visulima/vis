@@ -443,14 +443,14 @@ struct Entry {
 
 /// `Stats.mtimeMs`: seconds and nanoseconds combined in floating point.
 #[cfg(unix)]
-fn mtime_ms(metadata: &fs::Metadata) -> f64 {
+pub(crate) fn mtime_ms(metadata: &fs::Metadata) -> f64 {
     use std::os::unix::fs::MetadataExt;
 
     metadata.mtime() as f64 * 1000.0 + metadata.mtime_nsec() as f64 / 1e6
 }
 
 #[cfg(not(unix))]
-fn mtime_ms(metadata: &fs::Metadata) -> f64 {
+pub(crate) fn mtime_ms(metadata: &fs::Metadata) -> f64 {
     metadata
         .modified()
         .ok()
@@ -459,7 +459,7 @@ fn mtime_ms(metadata: &fs::Metadata) -> f64 {
 }
 
 /// Directory entries in the order `fs.readdir` returns them (libuv sorts by name, bytewise).
-fn sorted_entries(directory: &Path) -> Option<Vec<fs::DirEntry>> {
+pub(crate) fn sorted_entries(directory: &Path) -> Option<Vec<fs::DirEntry>> {
     let mut entries = fs::read_dir(directory).ok()?.collect::<Result<Vec<_>, _>>().ok()?;
 
     entries.sort_by(|a, b| a.file_name().as_encoded_bytes().cmp(b.file_name().as_encoded_bytes()));
@@ -677,7 +677,7 @@ fn format_bytes(bytes: u64) -> Option<String> {
 }
 
 /// `new Date(ms).toISOString()`, `None` outside the years Node prints without an extended form.
-fn iso(ms: f64) -> Option<String> {
+pub(crate) fn iso(ms: f64) -> Option<String> {
     let ms = ms.trunc();
 
     if !(0.0..=253_402_300_799_999.0).contains(&ms) {

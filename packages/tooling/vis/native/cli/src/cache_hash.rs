@@ -46,16 +46,16 @@ const KEY_COLUMN: usize = 40;
 
 /// What the user asked for.
 #[derive(Debug, PartialEq)]
-struct Request {
-    task_id: String,
-    json: bool,
-    run: Option<String>,
+pub(crate) struct Request {
+    pub(crate) task_id: String,
+    pub(crate) json: bool,
+    pub(crate) run: Option<String>,
 }
 
 /// Parses the arguments of `cache hash` (`args[0]` is `cache`, `args[1]` is `hash`) the way cerebro
 /// does for this command, or `None` for a shape that is Node's: one task id, and at most one each
 /// of `--format <json|table>` and `--run <id>`, in either spelling.
-fn parse(args: &[String]) -> Option<Request> {
+pub(crate) fn parse(args: &[String]) -> Option<Request> {
     let mut task_id: Option<&str> = None;
     let mut format: Option<&str> = None;
     let mut run: Option<&str> = None;
@@ -237,10 +237,10 @@ const FINGERPRINT: Schema = Schema {
 
 /// A JSON object that keeps the order its keys have in the file, because the JSON output prints
 /// them in that order.
-struct Record(Vec<(&'static str, Field)>);
+pub(crate) struct Record(Vec<(&'static str, Field)>);
 
 impl Record {
-    fn text(&self, name: &str) -> &str {
+    pub(crate) fn text(&self, name: &str) -> &str {
         self.0
             .iter()
             .find_map(|(key, field)| match field {
@@ -250,7 +250,7 @@ impl Record {
             .unwrap_or_default()
     }
 
-    fn bucket(&self, name: &str) -> &[(String, String)] {
+    pub(crate) fn bucket(&self, name: &str) -> &[(String, String)] {
         self.0
             .iter()
             .find_map(|(key, field)| match field {
@@ -260,7 +260,7 @@ impl Record {
             .unwrap_or_default()
     }
 
-    fn strings(&self, name: &str) -> &[String] {
+    pub(crate) fn strings(&self, name: &str) -> &[String] {
         self.0
             .iter()
             .find_map(|(key, field)| match field {
@@ -268,6 +268,13 @@ impl Record {
                 _ => None,
             })
             .unwrap_or_default()
+    }
+
+    pub(crate) fn number(&self, name: &str) -> Option<u32> {
+        self.0.iter().find_map(|(key, field)| match field {
+            Field::Number(number) if *key == name => Some(*number),
+            _ => None,
+        })
     }
 
     fn read<'de, A: MapAccess<'de>>(schema: &Schema, mut map: A) -> Result<Record, A::Error> {
@@ -334,7 +341,7 @@ impl Serialize for Lists {
 /// A [`Record`] read against one of the schemas above.
 macro_rules! record_type {
     ($name:ident, $schema:expr) => {
-        struct $name(Record);
+        pub(crate) struct $name(pub(crate) Record);
 
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -369,12 +376,12 @@ record_type!(Fingerprint, FINGERPRINT);
 
 /// The fields of a `TaskSummary` this command prints. A key of the wrong type, or a duplicate,
 /// is Node's: serde and `JSON.parse` disagree there, and an `undefined` prints differently.
-struct Task {
-    task_id: String,
-    cache_status: String,
-    hash: Option<String>,
-    details: Option<Details>,
-    hash_source: Option<String>,
+pub(crate) struct Task {
+    pub(crate) task_id: String,
+    pub(crate) cache_status: String,
+    pub(crate) hash: Option<String>,
+    pub(crate) details: Option<Details>,
+    pub(crate) hash_source: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for Task {
@@ -430,22 +437,22 @@ impl<'de> Deserialize<'de> for Task {
 /// The run summary. The tasks stay raw: only the one asked for is read strictly, so another task's
 /// unusual entry cannot send a lookup that does not involve it to Node.
 #[derive(Deserialize)]
-struct Summary {
-    id: String,
-    tasks: Vec<Box<RawValue>>,
+pub(crate) struct Summary {
+    pub(crate) id: String,
+    pub(crate) tasks: Vec<Box<RawValue>>,
 }
 
 /// The `taskId` of a task entry, when it is a string. Node compares with `===`, so a task without
 /// one, or with another type, is simply not the task asked for.
 #[derive(Deserialize)]
-struct Probe {
+pub(crate) struct Probe {
     #[serde(default, rename = "taskId")]
-    task_id: Option<ProbeId>,
+    pub(crate) task_id: Option<ProbeId>,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum ProbeId {
+pub(crate) enum ProbeId {
     Text(String),
     Other(IgnoredAny),
 }
@@ -471,7 +478,7 @@ impl Summary {
 }
 
 /// The summary file the request names.
-fn summary_path(root: &Path, run: Option<&str>) -> PathBuf {
+pub(crate) fn summary_path(root: &Path, run: Option<&str>) -> PathBuf {
     match run {
         None => root.join(".vis").join("last-summary.json"),
         Some(id) => root.join(".vis").join("runs").join(format!("{id}.json")),
@@ -479,7 +486,7 @@ fn summary_path(root: &Path, run: Option<&str>) -> PathBuf {
 }
 
 /// What reading the summary gave.
-enum Loaded {
+pub(crate) enum Loaded {
     Missing,
     Found(Summary),
 }
@@ -507,27 +514,27 @@ struct FoundJson<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FailureJson<'a> {
-    error: &'a str,
-    run_id: Option<&'a str>,
-    task_id: &'a str,
+pub(crate) struct FailureJson<'a> {
+    pub(crate) error: &'a str,
+    pub(crate) run_id: Option<&'a str>,
+    pub(crate) task_id: &'a str,
 }
 
 /// `JSON.stringify(value, undefined, 2)` plus the newline the handler writes.
-fn json_text(value: &impl Serialize) -> Option<String> {
+pub(crate) fn json_text(value: &impl Serialize) -> Option<String> {
     serde_json::to_string_pretty(value).ok().map(|text| text + "\n")
 }
 
 /// What one run prints, split the way pail splits it: error blocks go to stderr.
 #[derive(Default)]
-struct Output {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
+pub(crate) struct Output {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) exit_code: i32,
 }
 
 /// A string pail and `padEnd` handle exactly: printable ASCII, no space.
-fn plain(text: &str) -> bool {
+pub(crate) fn plain(text: &str) -> bool {
     text.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
@@ -610,7 +617,7 @@ fn render_bucket(out: &mut String, label: &str, entries: &[(String, String)]) ->
 }
 
 /// Printable ASCII, spaces included: the bytes `padEnd` and the slice treat as one unit each.
-fn printable(text: &str) -> bool {
+pub(crate) fn printable(text: &str) -> bool {
     text.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
 }
 
