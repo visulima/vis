@@ -2,6 +2,7 @@
 const escape = "\u001B";
 const pasteStart = "\u001B[200~";
 const pasteEnd = "\u001B[201~";
+const legacyMousePrefix = "\u001B[M";
 
 export type InputEvent = string | { readonly paste: string };
 
@@ -38,6 +39,27 @@ const parseCsiSequence = (input: string, startIndex: number, prefixLength: numbe
         // Preserve legacy terminal function-key sequences like ESC[[A and ESC[[5~.
         if (byte === 0x5b && index === csiPayloadStart) {
             continue;
+        }
+
+        // A bare `CSI M` introduces a legacy (X10/normal) mouse report: three raw bytes (button, x, y) follow
+        // and can be any character, so they are consumed as part of the sequence instead of read as input.
+        if (byte === 0x4d && index === csiPayloadStart && prefixLength === 1) {
+            let reportEnd = index + 1;
+
+            for (let coordinate = 0; coordinate < 3; coordinate++) {
+                const coordinateByte = input.codePointAt(reportEnd);
+
+                if (coordinateByte === undefined) {
+                    return "pending";
+                }
+
+                reportEnd += coordinateByte > 0xff_ff ? 2 : 1;
+            }
+
+            return {
+                nextIndex: reportEnd,
+                sequence: input.slice(startIndex, reportEnd),
+            };
         }
 
         // Shifted editing keys in rxvt end in $, which is normally a CSI intermediate byte.
@@ -234,8 +256,13 @@ const parseKeypresses = (input: string): ParsedInput => {
             continue;
         }
 
-        events.push(parsedEscapeSequence.sequence);
         index = parsedEscapeSequence.nextIndex;
+
+        if (parsedEscapeSequence.sequence.startsWith(legacyMousePrefix)) {
+            continue;
+        }
+
+        events.push(parsedEscapeSequence.sequence);
     }
 
     return {
@@ -263,6 +290,10 @@ export const createInputParser = (): InputParser => {
             const pendingEscape = pending;
 
             pending = "";
+
+            if (pendingEscape.startsWith(legacyMousePrefix)) {
+                return undefined;
+            }
 
             return pendingEscape;
         },
