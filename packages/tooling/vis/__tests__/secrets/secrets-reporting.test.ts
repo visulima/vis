@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Toolbox } from "@visulima/cerebro";
 import type { Finding, GitFinding } from "@visulima/secret-scanner";
 import { maskFinding } from "@visulima/secret-scanner";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import type { SecretsFlags } from "../../src/commands/secrets/flags";
 import { assertReportingFlags } from "../../src/commands/secrets/flags";
@@ -47,21 +47,15 @@ const finding = (overrides: Partial<GitFinding> = {}): Finding => {
     };
 };
 
-const dirs: string[] = [];
-
 const tempDir = (): string => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "vis-secrets-report-")));
 
-    dirs.push(dir);
+    onTestFinished(() => {
+        rmSync(dir, { force: true, recursive: true });
+    });
 
     return dir;
 };
-
-afterEach(() => {
-    for (const dir of dirs.splice(0)) {
-        rmSync(dir, { force: true, recursive: true });
-    }
-});
 
 describe("report emitters", () => {
     it("neutralises spreadsheet formulas and quotes CSV cells", () => {
