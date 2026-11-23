@@ -218,3 +218,61 @@ describe("terminal emulator: incremental rendering", () => {
         TIMEOUT * 2,
     );
 });
+
+type RendererMode = { env: Record<string, string>; name: string };
+
+const rendererModes: RendererMode[] = [
+    { env: {}, name: "whole-frame rewrite" },
+    { env: { FIXTURE_INCREMENTAL: "1" }, name: "incremental rendering" },
+    { env: { FIXTURE_NATIVE: "1" }, name: "native renderer" },
+];
+
+const frameLines = (count: number, marker = "a"): string[] =>
+    Array.from({ length: count }, (_, index) => (index === 1 ? `Frame line 2 ${marker}` : `Frame line ${String(index + 1)}`));
+
+describe("terminal emulator: rows growing", () => {
+    describe.each(rendererModes)("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "updates the right rows of a frame that filled the old viewport",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", { columns: 40, env: { ...env, FIXTURE_HISTORY: "3", FIXTURE_LINES: "7" }, rows: 8 });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual([...history(3), ...frameLines(7, "b")]);
+            },
+            TIMEOUT,
+        );
+
+        it.skipIf(!ptyAvailable)(
+            "updates the right rows of a frame taller than the old viewport that parks the cursor",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "3", FIXTURE_LINES: "12" },
+                    rows: 8,
+                });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text().slice(-12)).toEqual(frameLines(12, "b"));
+            },
+            TIMEOUT,
+        );
+    });
+});
+

@@ -30,6 +30,10 @@ export type FixtureSession = {
     reachStep: (name: string) => Promise<void>;
     /** Resizes the pty and the emulator together, after everything already emitted has been parsed. */
     resize: (columns: number, rows: number) => Promise<void>;
+    /** Resizes only the emulator, so the process still sees the old size until `resizePty` is called. */
+    resizeEmulator: (columns: number, rows: number) => Promise<void>;
+    /** Resizes only the pty, which delivers the resize event to the process. */
+    resizePty: (columns: number, rows: number) => void;
     /** Lines that contain anything, in order. */
     text: () => string[];
 };
@@ -108,6 +112,13 @@ export const startFixture = (fixture: string, { columns = 40, env = {}, rows = 1
         resize: async (nextColumns, nextRows) => {
             await drain();
             emulator.resize(nextColumns, nextRows);
+            ps.resize(nextColumns, nextRows);
+        },
+        resizeEmulator: async (nextColumns, nextRows) => {
+            await drain();
+            emulator.resize(nextColumns, nextRows);
+        },
+        resizePty: (nextColumns, nextRows) => {
             ps.resize(nextColumns, nextRows);
         },
         text: () => lines().filter((line) => line.trim() !== ""),
