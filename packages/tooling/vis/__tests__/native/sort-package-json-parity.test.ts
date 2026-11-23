@@ -334,20 +334,24 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(native.status).toBe(0);
             expect(snapshot(nativeRoot)).toStrictEqual(snapshot(nodeRoot));
         });
+    });
 
-        it("handles every flag set on a workspace that is already sorted", () => {
-            expect.hasAssertions();
+    // The files Node leaves after sorting them once: the flags then change what a sorted file looks like.
+    describe("a workspace that is already sorted", () => {
+        let sortedFiles: Files;
 
+        beforeAll(() => {
             const [sortedRoot] = pair(workspaceFiles(projects(ACCEPTED)));
 
             runNode([], sortedRoot);
 
-            const sorted = snapshot(sortedRoot);
-            const files: Files = Object.fromEntries(Object.entries(sorted).map(([name, hex]) => [name, Buffer.from(hex, "hex")]));
+            sortedFiles = Object.fromEntries(Object.entries(snapshot(sortedRoot)).map(([name, hex]) => [name, Buffer.from(hex, "hex")]));
+        });
 
-            for (const flags of FLAG_SETS) {
-                expectParity(files, flags);
-            }
+        it.each(FLAG_SETS)("`sort-package-json %s` writes and prints what Node does", (...flags: string[]) => {
+            expect.hasAssertions();
+
+            expectParity(sortedFiles, flags);
         });
     });
 
