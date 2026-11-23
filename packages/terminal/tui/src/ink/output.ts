@@ -20,6 +20,8 @@ import { styledLineToString } from "./styled-line-serializer";
 
 type Options = {
     caches?: OutputCaches;
+    /** Stop unclipped writes at the output width. Set it on outputs that go straight to the terminal. */
+    clipToWidth?: boolean;
     height: number;
     width: number;
 };
@@ -256,6 +258,8 @@ export default class Output {
 
     private readonly caches: OutputCaches;
 
+    private readonly clipToWidth: boolean;
+
     // Single flat grid — all writes go directly here, clipped by bounds.
     private grid: StyledLine[];
 
@@ -271,11 +275,12 @@ export default class Output {
     private memoizationProbeCountdown = 0;
 
     constructor(options: Options) {
-        const { caches, height, width } = options;
+        const { caches, clipToWidth = false, height, width } = options;
 
         this.width = Math.round(width);
         this.height = Math.round(height);
         this.caches = caches ?? new OutputCaches();
+        this.clipToWidth = clipToWidth;
         this.grid = this.createGrid(this.width, this.height);
     }
 
@@ -334,8 +339,10 @@ export default class Output {
             const parsed = this.caches.getStyledLine(line);
             let offsetX = x;
 
-            // The row is as wide as the output; anything past it would wrap onto an extra terminal row.
-            const maxX = clip ? Math.min(clip.x2!, row.length) : row.length;
+            // Rows that reach the terminal as they are must not exceed its width: the extra cells wrap onto another row.
+            // Other outputs may grow their rows when no clip is active.
+            const unclippedMaxX = this.clipToWidth ? row.length : Infinity;
+            const maxX = clip ? Math.min(clip.x2!, row.length) : unclippedMaxX;
 
             const parsedSpans = parsed.getSpans();
             let spanCursor = 0;
@@ -366,7 +373,7 @@ export default class Output {
 
                 // A wide character cut by an edge keeps its visible cell as a blank in its own style, so the
                 // columns after it stay where they are.
-                if (isFullWidth && (offsetX < 0 || cellEnd > row.length || (clip && (offsetX < clip.x1! || cellEnd > clip.x2!)))) {
+                if (isFullWidth && (offsetX < 0 || (this.clipToWidth && cellEnd > row.length) || (clip && (offsetX < clip.x1! || cellEnd > clip.x2!)))) {
                     const visibleStart = Math.max(offsetX, clip?.x1 ?? 0, 0);
                     const visibleEnd = Math.min(cellEnd, clip?.x2 ?? Infinity, row.length);
 
@@ -379,11 +386,21 @@ export default class Output {
                     continue;
                 }
 
+                // Grow row if writing beyond current length (no clip active)
+                if (offsetX >= row.length) {
+                    row.ensureWidth(offsetX + 2);
+                }
+
                 repairWideOverlap(row, offsetX, isFullWidth ? 2 : 1);
                 row.setCharFast(offsetX, parsed.getValue(i), flags, span?.fgColor, span?.bgColor, span?.link);
 
                 if (isFullWidth) {
                     offsetX++;
+
+                    if (offsetX >= row.length) {
+                        row.ensureWidth(offsetX + 1);
+                    }
+
                     row.setCharFast(offsetX, "", flags & ~FULL_WIDTH_MASK, span?.fgColor, span?.bgColor, span?.link);
                 }
 

@@ -186,3 +186,26 @@ describe("over-wide content: renderToString", () => {
         ).toBe("你".repeat(10));
     });
 });
+
+describe("content that fits the terminal but not its own box", () => {
+    it("keeps a sticky header wider than the box it sticks in", () => {
+        expect.assertions(1);
+
+        const rows = Array.from({ length: 20 }, (_, index) => `r${String(index)}`);
+        const output = renderToString(
+            <Box flexDirection="column" height={6} overflowY="scroll" scrollTop={5} width={20}>
+                <Box flexDirection="column" flexShrink={0} sticky>
+                    <Box flexShrink={0} width={30}>
+                        <Text>{`${"H".repeat(28)}ZZ`}</Text>
+                    </Box>
+                </Box>
+                <Box flexDirection="column" flexShrink={0}>
+                    <Text>{rows.join("\n")}</Text>
+                </Box>
+            </Box>,
+            { columns: 40 },
+        );
+
+        expect(output.split("\n")[0]).toBe(`${"H".repeat(28)}ZZ`);
+    });
+});

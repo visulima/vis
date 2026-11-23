@@ -196,6 +196,7 @@ const getReusableOutput = ({ caches, height, node, outputs, width }: ReusableOut
     if (!output) {
         output = new Output({
             caches,
+            clipToWidth: true,
             height,
             width,
         });
