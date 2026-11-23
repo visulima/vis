@@ -25,8 +25,34 @@ const isCsiIntermediateByte = (byte: number): boolean => byte >= 0x20 && byte <=
 
 const isCsiFinalByte = (byte: number): boolean => byte >= 0x40 && byte <= 0x7e;
 
+// A bare `CSI M` introduces a legacy (X10/normal) mouse report: three raw bytes (button, x, y) follow
+// and can be any character, so they are consumed as part of the sequence instead of read as input.
+const parseLegacyMouseReport = (input: string, startIndex: number, reportStart: number): ParsedSequence => {
+    let reportEnd = reportStart;
+
+    for (let coordinate = 0; coordinate < 3; coordinate++) {
+        const codePoint = input.codePointAt(reportEnd);
+
+        if (codePoint === undefined) {
+            return "pending";
+        }
+
+        reportEnd += codePoint > 0xff_ff ? 2 : 1;
+    }
+
+    return {
+        nextIndex: reportEnd,
+        sequence: input.slice(startIndex, reportEnd),
+    };
+};
+
 const parseCsiSequence = (input: string, startIndex: number, prefixLength: number): ParsedSequence => {
     const csiPayloadStart = startIndex + prefixLength + 1;
+
+    if (prefixLength === 1 && input[csiPayloadStart] === "M") {
+        return parseLegacyMouseReport(input, startIndex, csiPayloadStart + 1);
+    }
+
     let index = csiPayloadStart;
 
     for (; index < input.length; index++) {
@@ -39,27 +65,6 @@ const parseCsiSequence = (input: string, startIndex: number, prefixLength: numbe
         // Preserve legacy terminal function-key sequences like ESC[[A and ESC[[5~.
         if (byte === 0x5b && index === csiPayloadStart) {
             continue;
-        }
-
-        // A bare `CSI M` introduces a legacy (X10/normal) mouse report: three raw bytes (button, x, y) follow
-        // and can be any character, so they are consumed as part of the sequence instead of read as input.
-        if (byte === 0x4d && index === csiPayloadStart && prefixLength === 1) {
-            let reportEnd = index + 1;
-
-            for (let coordinate = 0; coordinate < 3; coordinate++) {
-                const coordinateByte = input.codePointAt(reportEnd);
-
-                if (coordinateByte === undefined) {
-                    return "pending";
-                }
-
-                reportEnd += coordinateByte > 0xff_ff ? 2 : 1;
-            }
-
-            return {
-                nextIndex: reportEnd,
-                sequence: input.slice(startIndex, reportEnd),
-            };
         }
 
         // Shifted editing keys in rxvt end in $, which is normally a CSI intermediate byte.

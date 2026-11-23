@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import React from "react";
 import { describe, expect, it } from "vitest";
 
@@ -6,13 +8,10 @@ import useInput from "../../src/ink/hooks/use-input";
 import { render } from "../../src/ink/index";
 import { createStdin, emitReadable } from "../helpers/ink-create-stdin";
 import createStdout from "../helpers/ink-create-stdout";
+import waitFor from "../helpers/wait-for";
 
-const sleep = (ms: number) =>
-    new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-    });
-
-const collectInput = async (...chunks: string[]): Promise<string[]> => {
+// Resolves with every key the handler saw once `sentinel`, sent after the chunks, has been delivered.
+const collectInput = async (sentinel: string, ...chunks: string[]): Promise<string[]> => {
     const received: string[] = [];
     const Probe = () => {
         useInput((input, key) => {
@@ -30,13 +29,13 @@ const collectInput = async (...chunks: string[]): Promise<string[]> => {
     const stdin = createStdin();
     const { unmount } = render(<Probe />, { debug: true, stdin, stdout: createStdout() });
 
-    await sleep(0);
+    await delay(0);
 
-    for (const chunk of chunks) {
+    for (const chunk of [...chunks, sentinel]) {
         emitReadable(stdin, chunk);
     }
 
-    await sleep(100);
+    await waitFor(() => received.includes(sentinel));
 
     unmount();
 
@@ -47,12 +46,12 @@ describe("useInput legacy mouse reports", () => {
     it("does not deliver the bytes of an X10 mouse report as typed input", async () => {
         expect.assertions(1);
 
-        await expect(collectInput("\u001B[M\r\tq", "\u001B[M !!", "x")).resolves.toStrictEqual(["x"]);
+        await expect(collectInput("x", "\u001B[M\r\tq", "\u001B[M !!")).resolves.toStrictEqual(["x"]);
     });
 
     it("does not deliver a report split across chunks, and keeps keys that follow it", async () => {
         expect.assertions(1);
 
-        await expect(collectInput("\u001B[M\r", "\tqy")).resolves.toStrictEqual(["y"]);
+        await expect(collectInput("y", "\u001B[M\r", "\tq")).resolves.toStrictEqual(["y"]);
     });
 });
