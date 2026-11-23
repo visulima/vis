@@ -135,6 +135,129 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis info` / `vis view` flag shapes (plan in info.rs)", () => {
+        const ci = { CI: "1", COLUMNS: "80" };
+
+        it.each([
+            [["info", "react"]],
+            [["view", "react", "version", "--json"]],
+            [["info", "--json", "@scope/pkg@^1.2.0", "dist.tarball", "dist-tags.latest"]],
+        ])("routes `vis %j` in CI", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+        });
+
+        it.each([
+            [["info"]],
+            [["info", "--json"]],
+            [["info", "react", "--json", "--json"]],
+            [["info", "react", "--registry=https://x.test"]],
+            [["info", "react", "--"]],
+            [["info", "react", "-x"]],
+            [["info", "react", "18"]],
+            [["info", "react", "true"]],
+            [["info", "react", ""]],
+            [["info", "-rf"]],
+            [["info", "./local"]],
+        ])("keeps `vis %j` in Node", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps the view in Node outside CI, on a terminal, on Windows and where output settings could change", () => {
+            expect.assertions(6);
+
+            const info = ["info", "react"];
+
+            expect(routesToNative(info, "linux", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(info, "linux", ci, "/work/app", true)).toBe(false);
+            expect(routesToNative(info, "win32", ci, "/work/app", false)).toBe(false);
+            expect(routesToNative(info, "linux", { ...ci, DEBUG: "*" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(info, "linux", { ...ci, VIS_INSTALLER: "npm" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(info, "linux", { ...ci, CEREBRO_OUTPUT_LEVEL: "1" }, "/work/app", false)).toBe(false);
+        });
+    });
+
+    describe("`vis dlx` flag shapes (plan in dlx.rs)", () => {
+        it.each([
+            [["dlx", "--no-info", "cowsay"]],
+            [["dlx", "--no-info", "cowsay", "hi", "--silent", "-y"]],
+            [["dlx", "--no-info", "-p", "lolcatjs", "-s", "cowsay"]],
+            [["dlx", "--no-info", "-p", "a", "-p", "b", "--shell-mode", "echo hi"]],
+            [["dlx", "--no-info", "--offline", "@scope/pkg@^1", "a", "b"]],
+            [["dlx", "-c", "echo hi"]],
+            [["dlx", "./local.js", "a"]],
+            [["dlx", "git+https://example.test/a.git"]],
+            [["dlx", "npm:cowsay@1"]],
+            [["dlx", "-p", "./local.tgz", "-c", "echo hi"]],
+        ])("routes `vis %j`, whatever the terminal and CI", (args: string[]) => {
+            expect.assertions(3);
+
+            expect(routesToNative(args, "linux", {}, "/work/app", false)).toBe(true);
+            expect(routesToNative(args, "linux", { CI: "1" }, "/work/app", true)).toBe(true);
+            expect(routesToNative(args, "linux", { COLUMNS: "20", FORCE_COLOR: "1" }, "/work/app", false)).toBe(true);
+        });
+
+        it.each([
+            // The first-run gate runs, which Node answers before any output.
+            [["dlx", "cowsay"]],
+            [["dlx", "--yes", "cowsay"]],
+            [["dlx", "--info", "cowsay"]],
+            [["dlx", "-p", "lolcatjs", "-c", "echo hi"]],
+            [["dlx", "-p", "lolcatjs", "-c", "./local.js"]],
+            // Shapes of the command line.
+            [["dlx"]],
+            [["dlx", "--no-info"]],
+            [["dlx", "--no-info", "cowsay", "--"]],
+            [["dlx", "--no-info", "cowsay", "--version"]],
+            [["dlx", "--no-info", "cowsay", "-x"]],
+            [["dlx", "--no-info", "-sc", "echo"]],
+            [["dlx", "--no-info", "cowsay", "-s", "-s"]],
+            [["dlx", "--no-info", "-p", "a", "b", "c"]],
+            [["dlx", "--no-info", "-p", "a", "cowsay"]],
+            [["dlx", "--no-info", "--package=a", "-c", "x"]],
+            [["dlx", "--no-info", "-p", "-c", "x"]],
+            [["dlx", "--no-info", "cowsay", "--yes=false"]],
+        ])("keeps `vis %j` in Node", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", {}, "/work/app", false)).toBe(false);
+        });
+
+        it("follows VIS_DLX_NO_INFO the way isTruthyEnv does, and leaves a non-ASCII value to Node", () => {
+            expect.assertions(11);
+
+            const dlx = ["dlx", "cowsay"];
+
+            for (const value of ["1", "true", "YES", " on ", "anything"]) {
+                expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: value }, "/work/app", false)).toBe(true);
+            }
+
+            for (const value of ["", "0", "false", "no", " No "]) {
+                expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: value }, "/work/app", false)).toBe(false);
+            }
+
+            expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: "\u00A01" }, "/work/app", false)).toBe(false);
+        });
+
+        it("keeps the dlx in Node on Windows and where the environment changes the installer or Node's output", () => {
+            expect.assertions(8);
+
+            const dlx = ["dlx", "--no-info", "cowsay"];
+
+            expect(routesToNative(dlx, "win32", {}, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { VIS_INSTALLER: "npm" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { VIS_RUNTIME: "bun" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { DEBUG: "*" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { CEREBRO_OUTPUT_LEVEL: "1" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { FORCE_COLOR: "1", NO_COLOR: "1" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(dlx, "linux", { FORCE_COLOR: "1", NODE_DISABLE_COLORS: "1" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(["dlx", "--help"], "win32", {}, "/work/app", false)).toBe(true);
+        });
+    });
+
     describe("`vis clean` flag shapes (plan in clean.rs)", () => {
         const ci = { CI: "1" };
 

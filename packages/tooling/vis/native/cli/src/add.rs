@@ -181,7 +181,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
 }
 
 /// Whether `bin` is an executable file in a directory of `PATH`, as `execvp` looks it up.
-fn on_path(bin: &str) -> bool {
+pub(crate) fn on_path(bin: &str) -> bool {
     #[cfg(unix)]
     fn executable(path: &Path) -> bool {
         use std::os::unix::fs::PermissionsExt;
