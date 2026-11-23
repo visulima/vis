@@ -1,3 +1,41 @@
+## @visulima/tui [5.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.2-next.1...@visulima/tui@5.1.0-next.1) (2026-11-23)
+
+### Features
+
+* **tui:** add instance.redraw() to clear and repaint the whole screen ([40890c7](https://github.com/visulima/vis/commit/40890c79c30d980ae76d441fd2d12c84baeb873a))
+
+### Bug Fixes
+
+* **tui:** ask the keyboard query again when raw mode left during it ([375a959](https://github.com/visulima/vis/commit/375a95927d7b636b3a78bf7c9f1193145b0f2b17))
+* **tui:** clip only outputs that reach the terminal as they are ([1a670a0](https://github.com/visulima/vis/commit/1a670a0cf89e5fc58cf64b6df78e8b679eea8394))
+* **tui:** clip rows wider than the output at the right edge ([57ceb40](https://github.com/visulima/vis/commit/57ceb403dd9bceb6a9e72124c4da3ee2851bf305))
+* **tui:** do not paint the frame from before a layout-effect state update ([d2f2a50](https://github.com/visulima/vis/commit/d2f2a50cb2ec7d2e5eaae6f933a163cf32013e7c))
+* **tui:** draw the final frame when unmounting while suspended, and tidy the sweep ([82385f2](https://github.com/visulima/vis/commit/82385f2e5212e9cd73570636268bb67cc3510d87))
+* **tui:** free yoga nodes of renders React abandons before committing ([df648aa](https://github.com/visulima/vis/commit/df648aa67bd2db98bc1c833d941c836c613c236b))
+* **tui:** hold <Static> output until the terminal is resumed ([f47c316](https://github.com/visulima/vis/commit/f47c316f5bcf4d9bb798ce9009db38723443ceb0))
+* **tui:** ignore rerender() after the instance is unmounted ([b6a71ee](https://github.com/visulima/vis/commit/b6a71eef828284c70a566c8da473c38708a5eace))
+* **tui:** keep scrolled-off rows when redraw() waits for a resume ([964aeef](https://github.com/visulima/vis/commit/964aeef13973bb6455d5216d97ee4ba8406d5350))
+* **tui:** narrow the root node before capping the static output width ([9106632](https://github.com/visulima/vis/commit/9106632480019287753c41447f1eefbaea1c670d))
+* **tui:** negotiate the keyboard protocol only while raw mode is on ([64dab96](https://github.com/visulima/vis/commit/64dab9676bcfc476ed1780ccbdff348e529319e0))
+* **tui:** only render well-formed OSC 8 hyperlinks ([7f1b923](https://github.com/visulima/vis/commit/7f1b923437de15274c930e868ffe795269a5031e))
+* **tui:** report the virtual terminal size to useWindowSize in renderToString ([01c4569](https://github.com/visulima/vis/commit/01c4569a1983ccce987f9f6328fd2e9feee23811))
+* **tui:** share one beforeExit listener across live instances ([6648ca8](https://github.com/visulima/vis/commit/6648ca8fe943357ecf5566fd9e305aa78fad822e))
+* **tui:** swallow legacy X10 mouse reports instead of delivering them to useInput ([1ebf297](https://github.com/visulima/vis/commit/1ebf297eb6ad133d6abef5d1fb8647a8c8045afa))
+* **tui:** write a replaced <Static> once and avoid a double clear on exit ([0dfeb2c](https://github.com/visulima/vis/commit/0dfeb2cca822a1ddd88d44acba5404dfbe39f735))
+
+### Code Refactoring
+
+* **tui:** drop non-null assertions from combining-mark attachment ([4a2fc72](https://github.com/visulima/vis/commit/4a2fc7222bc0eb24fc890097916e3dbea8d8ef63))
+* **tui:** keep the render timing around the render call only ([bce1924](https://github.com/visulima/vis/commit/bce1924f78f75983a109f3ec68d7c7b3c23e8a05))
+* **tui:** move legacy mouse report parsing into its own function ([2c7b9e5](https://github.com/visulima/vis/commit/2c7b9e59d7db04919eb2ab71d30be5ded9dbf70d))
+* **tui:** name the beforeExit waiter type ([56d9cd6](https://github.com/visulima/vis/commit/56d9cd6021264e397e8d853d5305621bd532c7a5))
+* **tui:** tidy hyperlink validation tests and mark attachment ([fc288e9](https://github.com/visulima/vis/commit/fc288e902f7eb8ff2aa70b7f2226216ae63e0029))
+
+### Tests
+
+* **tui:** cover lifecycle edges of exit, suspend, static output and hidden trees ([7707c17](https://github.com/visulima/vis/commit/7707c172b89c6481fe4f063dc67933ccf46e2d15))
+* **tui:** read input in the native kitty keyboard test ([41e51ac](https://github.com/visulima/vis/commit/41e51ac970fa5f7ad35f74b0704e6fa596c2abbb))
+
 ## @visulima/tui [5.0.2-next.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.1...@visulima/tui@5.0.2-next.1) (2026-11-22)
 
 ### Bug Fixes
