@@ -49,6 +49,9 @@ if (!(console as any).Console) {
 
 const noop = () => {};
 
+// Switching to the alternate screen keeps the cursor where it was, so home it: the first frame has to start at row 0.
+const enterAlternateScreen = ALT_SCREEN_ON + cursorTo(0, 0);
+
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
 const countLines = (text: string): number => {
     if (text === "") {
@@ -1553,7 +1556,7 @@ export default class Ink {
         this.alternateScreen = this.resolveAlternateScreenOption(enabled, this.interactive);
 
         if (this.alternateScreen) {
-            this.writeBestEffort(this.options.stdout, ALT_SCREEN_ON);
+            this.writeBestEffort(this.options.stdout, enterAlternateScreen);
             this.writeBestEffort(this.options.stdout, cursorHide);
         }
     }
@@ -1940,7 +1943,7 @@ export default class Ink {
         this.resumeInput?.();
 
         if (this.alternateScreen) {
-            this.writeBestEffort(this.options.stdout, ALT_SCREEN_ON);
+            this.writeBestEffort(this.options.stdout, enterAlternateScreen);
 
             // The alternate screen comes back blank, so <Static> output that was written before the
             // suspend has to be drawn again. The native frame writes it from home on its next commit instead.

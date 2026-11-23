@@ -276,3 +276,24 @@ describe("terminal emulator: rows growing", () => {
     });
 });
 
+describe("terminal emulator: entering the alternate screen", () => {
+    describe.each(rendererModes)("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "starts the first frame at the top row",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_ALT: "1", FIXTURE_HISTORY: "4", FIXTURE_LINES: "3" },
+                    rows: 12,
+                });
+
+                await session.reachStep("rendered");
+
+                expect(session.lines().slice(0, 3)).toEqual(frameLines(3));
+            },
+            TIMEOUT,
+        );
+    });
+});
