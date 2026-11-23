@@ -1,3 +1,4 @@
+import { clearScreenAndHomeCursor } from "@visulima/ansi";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { describe, expect, it } from "vitest";
 
@@ -22,6 +23,20 @@ const Measured = ({ step }: { readonly step: number }) => {
     }, [step]);
 
     return <Text>{`step ${step} measured ${measured}`}</Text>;
+};
+
+const createDriver = () => {
+    const handle = { setStep: (_step: number) => {} };
+
+    const Driver = () => {
+        const [step, set] = useState(1);
+
+        handle.setStep = set;
+
+        return <Measured step={step} />;
+    };
+
+    return { Driver, setStep: (step: number) => handle.setStep(step) };
 };
 
 const allRows = (writes: string[]) => {
@@ -71,15 +86,7 @@ describe("state update in useLayoutEffect", () => {
         expect.assertions(2);
 
         const stdout = createStdout(COLS, true, ROWS);
-        let setStep: (step: number) => void = () => {};
-
-        const Driver = () => {
-            const [step, set] = useState(1);
-
-            setStep = set;
-
-            return <Measured step={step} />;
-        };
+        const { Driver, setStep } = createDriver();
 
         const { unmount, waitUntilRenderFlush } = render(<Driver />, { interactive: true, stdout });
 
@@ -130,15 +137,7 @@ describe("state update in useLayoutEffect", () => {
         expect.assertions(1);
 
         const stdout = createStdout(COLS, true, ROWS);
-        let setStep: (step: number) => void = () => {};
-
-        const Driver = () => {
-            const [step, set] = useState(1);
-
-            setStep = set;
-
-            return <Measured step={step} />;
-        };
+        const { Driver, setStep } = createDriver();
 
         const { unmount, waitUntilRenderFlush } = render(<Driver />, { interactive: true, stdout });
 
@@ -200,6 +199,72 @@ describe("state update in useLayoutEffect", () => {
         expect(writtenText(stdout)).toContain("step 2 measured 2");
 
         unmount();
+    });
+
+    it("does not replay a <Static> that a layout effect replaced in the same commit cycle", async () => {
+        expect.assertions(3);
+
+        const stdout = createStdout(COLS, true, ROWS);
+
+        const SwapStatic = () => {
+            const [label, setLabel] = useState("old");
+
+            useLayoutEffect(() => {
+                setLabel("new");
+            }, []);
+
+            return (
+                <>
+                    <Static items={[label]} key={label}>
+                        {(item) => <Text key={item}>{item}</Text>}
+                    </Static>
+                    <Text>live</Text>
+                </>
+            );
+        };
+
+        const { unmount, waitUntilRenderFlush } = render(<SwapStatic />, { debug: true, stdout });
+
+        await waitUntilRenderFlush();
+
+        const writes = stdout.getWrites();
+
+        expect(writes[0]).toContain("old");
+        expect(writes.at(-1)).toContain("new");
+        expect(writes.at(-1)).not.toContain("old");
+
+        unmount();
+    });
+
+    it("clears a full-height frame once when the app exits from a layout effect after an update", async () => {
+        expect.assertions(1);
+
+        const stdout = createStdout(COLS, true, 5);
+
+        const ExitOnUpdate = ({ done }: { readonly done: boolean }) => {
+            const { exit } = useApp();
+
+            useLayoutEffect(() => {
+                if (done) {
+                    exit();
+                }
+            }, [done, exit]);
+
+            return (
+                <Box height={5}>
+                    <Text>{`done=${done}`}</Text>
+                </Box>
+            );
+        };
+
+        const { rerender, waitUntilExit, waitUntilRenderFlush } = render(<ExitOnUpdate done={false} />, { interactive: true, stdout });
+
+        await waitUntilRenderFlush();
+
+        rerender(<ExitOnUpdate done />);
+        await waitUntilExit();
+
+        expect(writtenText(stdout).split(clearScreenAndHomeCursor).length - 1).toBeLessThanOrEqual(1);
     });
 
     it("keeps the standardReactLayoutTiming option accepted", async () => {

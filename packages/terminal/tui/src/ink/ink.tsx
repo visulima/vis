@@ -339,7 +339,7 @@ export default class Ink {
 
     private isRenderScheduled = false;
 
-    private drawThrottled: () => void = () => {};
+    private drawFrame: () => void = () => {};
 
     // The single scrollable node with `overflowToBackbuffer` enabled, detected
     // during the layout/scroll walk. Only one such region is supported.
@@ -429,7 +429,7 @@ export default class Ink {
         // React runs layout effects after the host's commit hook, and a state update made there is flushed
         // synchronously before React returns to its caller. Drawing from the commit hook would paint the frame
         // from before that update, so the draw is requested here and happens once the flush has settled.
-        this.drawThrottled = baseOnRender;
+        this.drawFrame = baseOnRender;
         this.rootNode.onRender = () => {
             this.requestRender(false);
         };
@@ -842,6 +842,11 @@ export default class Ink {
 
     // Resets `fullStaticOutput` when the <Static> identity changes so stale items from a previous instance are not replayed on future rewrites.
     handleStaticChange = (): void => {
+        // Output read from the instance being replaced is written once, and must not enter the replay buffer reset below.
+        if (this.pendingStaticOutput !== "") {
+            this.drawRequestedFrame();
+        }
+
         this.fullStaticOutput = "";
         this.staticOutputWritten = false;
     };
@@ -937,7 +942,7 @@ export default class Ink {
         if (request === "immediate") {
             this.onRender();
         } else if (request === "throttled") {
-            this.drawThrottled();
+            this.drawFrame();
         }
     }
 
@@ -959,6 +964,7 @@ export default class Ink {
 
     onRender: () => void = () => {
         this.hasPendingThrottledRender = false;
+        this.renderRequest = "none";
 
         if (this.isUnmounted) {
             return;
@@ -1342,9 +1348,9 @@ export default class Ink {
             return;
         }
 
-        this.isUnmounting = true;
-
         this.drawRequestedFrame();
+
+        this.isUnmounting = true;
 
         if (this.beforeExitHandler) {
             process.off("beforeExit", this.beforeExitHandler);
