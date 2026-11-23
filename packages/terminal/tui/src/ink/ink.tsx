@@ -50,6 +50,9 @@ if (!(console as any).Console) {
 
 const noop = () => {};
 
+// Switching to the alternate screen keeps the cursor where it was, so home it: the first frame has to start at row 0.
+const enterAlternateScreen = ALT_SCREEN_ON + cursorTo(0, 0);
+
 const clearScreenAndScrollback = clearScreenAndHomeCursor + eraseScreenAndScrollback;
 
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
@@ -583,6 +586,11 @@ export default class Ink {
             this.lastOutput = "";
             this.lastOutputToRender = "";
             this.lastOutputHeight = 0;
+        } else if (this.alternateScreen && !this.nativeLog && currentRows > this.lastTerminalRows && this.lastOutputHeight > this.lastTerminalRows) {
+            // The alternate screen keeps no scrollback: rows cut off at the old height are gone, and an unchanged
+            // frame would not be written again. Clear the screen so the whole frame is drawn on the taller one.
+            this.options.stdout.write(clearScreenAndHomeCursor + this.fullStaticOutput);
+            this.forgetFrame();
         }
 
         // Clear styled line cache on resize — cached measurements may be
@@ -1108,7 +1116,7 @@ export default class Ink {
             }
 
             // Wrap before comparing so a terminal that changed width gets its output rewrapped.
-            const terminalWidth = getWindowSize(this.options.stdout).columns;
+            const { columns: terminalWidth, rows: terminalRows } = getWindowSize(this.options.stdout);
 
             const wrappedOutput = wordWrap(output, {
                 trim: false,
@@ -1118,7 +1126,7 @@ export default class Ink {
 
             if (hasStaticOutput) {
                 // We need to erase the main output before writing new static output
-                const erase = this.lastOutputHeight > 0 ? eraseLines(this.lastOutputHeight) : "";
+                const erase = this.lastOutputHeight > 0 ? eraseLines(Math.min(this.lastOutputHeight, terminalRows)) : "";
 
                 this.options.stdout.write(erase + staticOutput);
                 // After erasing, the last output is gone, so we should reset its height
@@ -1137,7 +1145,7 @@ export default class Ink {
             if (hasStaticOutput) {
                 this.options.stdout.write(wrappedOutput);
             } else {
-                const erase = this.lastOutputHeight > 0 ? eraseLines(this.lastOutputHeight) : "";
+                const erase = this.lastOutputHeight > 0 ? eraseLines(Math.min(this.lastOutputHeight, terminalRows)) : "";
 
                 this.options.stdout.write(erase + wrappedOutput);
             }
@@ -1669,7 +1677,7 @@ export default class Ink {
         this.alternateScreen = this.resolveAlternateScreenOption(enabled, this.interactive);
 
         if (this.alternateScreen) {
-            this.writeBestEffort(this.options.stdout, ALT_SCREEN_ON);
+            this.writeBestEffort(this.options.stdout, enterAlternateScreen);
             this.writeBestEffort(this.options.stdout, cursorHide);
         }
     }
@@ -2098,7 +2106,7 @@ export default class Ink {
         this.resumeInput?.();
 
         if (this.alternateScreen) {
-            this.writeBestEffort(this.options.stdout, ALT_SCREEN_ON);
+            this.writeBestEffort(this.options.stdout, enterAlternateScreen);
 
             // The alternate screen comes back blank, so <Static> output that was written before the
             // suspend has to be drawn again. The native frame writes it from home on its next commit instead.

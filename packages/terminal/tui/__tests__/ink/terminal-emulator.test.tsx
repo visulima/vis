@@ -30,6 +30,9 @@ const countOf = (lines: string[], line: string): number => lines.filter((candida
 
 const history = (count: number): string[] => Array.from({ length: count }, (_, index) => `history ${String(index + 1)}`);
 
+const frameLines = (count: number, marker = "a"): string[] =>
+    Array.from({ length: count }, (_, index) => (index === 1 ? `Frame line 2 ${marker}` : `Frame line ${String(index + 1)}`));
+
 describe("terminal emulator: clear()", () => {
     it.skipIf(!ptyAvailable)(
         "keeps the shell history and draws the frame once after clear()",
@@ -62,14 +65,14 @@ describe("terminal emulator: rows shrinking", () => {
         async () => {
             expect.assertions(1);
 
-            const session = start("terminal-shrink", { columns: 40, rows: 12 });
+            const session = start("terminal-rows-change", { columns: 40, env: { FIXTURE_HISTORY: "2" }, rows: 12 });
 
             await session.reachStep("rendered");
             await session.resize(40, 5);
             session.advance();
-            await session.reachStep("shrunk");
+            await session.reachStep("resized");
 
-            expect(session.text()).toEqual(["history 1", "history 2", "Frame line 1", "Frame line 2", "Frame line 3"]);
+            expect(session.text()).toEqual([...history(2), ...frameLines(3)]);
         },
         TIMEOUT,
     );
@@ -79,31 +82,14 @@ describe("terminal emulator: rows shrinking", () => {
         async () => {
             expect.assertions(1);
 
-            const session = start("terminal-shrink", { columns: 40, env: { FIXTURE_HISTORY: "8" }, rows: 12 });
+            const session = start("terminal-rows-change", { columns: 40, env: { FIXTURE_HISTORY: "8" }, rows: 12 });
 
             await session.reachStep("rendered");
             await session.resize(40, 6);
             session.advance();
-            await session.reachStep("shrunk");
+            await session.reachStep("resized");
 
-            expect(session.text()).toEqual([...history(8), "Frame line 1", "Frame line 2", "Frame line 3"]);
-        },
-        TIMEOUT,
-    );
-
-    it.skipIf(!ptyAvailable)(
-        "keeps the history above a frame with a parked cursor when rows shrink",
-        async () => {
-            expect.assertions(1);
-
-            const session = start("terminal-shrink", { columns: 40, env: { FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "8" }, rows: 12 });
-
-            await session.reachStep("rendered");
-            await session.resize(40, 6);
-            session.advance();
-            await session.reachStep("shrunk");
-
-            expect(session.text()).toEqual([...history(8), "Frame line 1", "Frame line 2", "Frame line 3"]);
+            expect(session.text()).toEqual([...history(8), ...frameLines(3)]);
         },
         TIMEOUT,
     );
@@ -217,6 +203,165 @@ describe("terminal emulator: incremental rendering", () => {
         },
         TIMEOUT * 2,
     );
+});
+
+type RendererMode = { env: Record<string, string>; name: string };
+
+const rendererModes: RendererMode[] = [
+    { env: {}, name: "whole-frame rewrite" },
+    { env: { FIXTURE_INCREMENTAL: "1" }, name: "incremental rendering" },
+    { env: { FIXTURE_NATIVE: "1" }, name: "native renderer" },
+];
+
+describe("terminal emulator: rows growing", () => {
+    describe.each(rendererModes)("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "updates the right rows of a frame that filled the old viewport",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", { columns: 40, env: { ...env, FIXTURE_HISTORY: "3", FIXTURE_LINES: "7" }, rows: 8 });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual([...history(3), ...frameLines(7, "b")]);
+            },
+            TIMEOUT,
+        );
+
+        it.skipIf(!ptyAvailable)(
+            "updates the right rows of a frame taller than the old viewport that parks the cursor",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "3", FIXTURE_LINES: "12" },
+                    rows: 8,
+                });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text().slice(-12)).toEqual(frameLines(12, "b"));
+            },
+            TIMEOUT,
+        );
+    });
+});
+
+describe("terminal emulator: alternate screen gaining rows", () => {
+    describe.each([...rendererModes, { env: { FIXTURE_SCREEN_READER: "1" }, name: "screen-reader frame" }])("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "redraws a frame that was cut off to the old row count",
+            async () => {
+                expect.assertions(2);
+
+                const session = start("terminal-rows-change", { columns: 40, env: { ...env, FIXTURE_ALT: "1", FIXTURE_LINES: "12" }, rows: 8 });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+
+                expect(session.text()).toEqual(frameLines(12));
+
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual(frameLines(12, "b"));
+            },
+            TIMEOUT,
+        );
+    });
+});
+
+describe("terminal emulator: rows shrinking with a parked cursor", () => {
+    describe.each(rendererModes)("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "keeps the history above a frame redrawn after the resize event",
+            async () => {
+                expect.assertions(2);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "8", FIXTURE_LINES: "3" },
+                    rows: 12,
+                });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 6);
+                session.advance();
+                await session.reachStep("resized");
+
+                expect(session.text()).toEqual([...history(8), ...frameLines(3)]);
+
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual([...history(8), ...frameLines(3, "b")]);
+            },
+            TIMEOUT,
+        );
+
+        it.skipIf(!ptyAvailable)(
+            "keeps the history when a render lands before the resize event",
+            async () => {
+                expect.assertions(2);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "8", FIXTURE_LINES: "3", FIXTURE_RENDER_BEFORE_RESIZE: "1" },
+                    rows: 12,
+                });
+
+                await session.reachStep("rendered");
+                await session.resizeEmulator(40, 6);
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual([...history(8), ...frameLines(3, "b")]);
+
+                session.resizePty(40, 6);
+                session.advance();
+                await session.reachStep("resized");
+
+                expect(session.text()).toEqual([...history(8), ...frameLines(3, "b")]);
+            },
+            TIMEOUT,
+        );
+    });
+});
+
+describe("terminal emulator: entering the alternate screen", () => {
+    describe.each(rendererModes)("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "starts the first frame at the top row",
+            async () => {
+                expect.assertions(1);
+
+                const session = start("terminal-rows-change", {
+                    columns: 40,
+                    env: { ...env, FIXTURE_ALT: "1", FIXTURE_HISTORY: "4", FIXTURE_LINES: "3" },
+                    rows: 12,
+                });
+
+                await session.reachStep("rendered");
+
+                expect(session.lines().slice(0, 3)).toEqual(frameLines(3));
+            },
+            TIMEOUT,
+        );
+    });
 });
 
 describe("terminal emulator: redraw()", () => {

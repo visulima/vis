@@ -7,6 +7,7 @@ import { render } from "../../src/ink/index";
 import { createNative } from "../../src/ink/log-update-native";
 import { createStdin } from "../helpers/ink-create-stdin";
 import createStdout from "../helpers/ink-create-stdout";
+import longestUpRun from "../helpers/ink-cursor-up";
 import { replay, visibleRows } from "../helpers/ink-screen";
 
 // The native renderer needs the compiled .node binding. Probe it once so CI without
@@ -680,6 +681,38 @@ describe("native renderer", () => {
         await waitUntilRenderFlush();
 
         expect(visibleRows(replay(stdout.getWrites(), ROWS, COLS))).toEqual(["error line", "hello native", "", "", "", ""]);
+
+        unmount();
+    });
+
+    it.skipIf(!nativeAvailable).each([
+        { alternateScreen: false, name: "inline" },
+        { alternateScreen: true, name: "alternate-screen" },
+    ])("never moves the cursor up past the top for a $name frame taller than the viewport", async ({ alternateScreen }) => {
+        expect.assertions(1);
+
+        const stdout = ttyStdout();
+        const Frame = ({ marker }: { marker: string }) => (
+            <Box flexDirection="column">
+                {Array.from({ length: 12 }, (_, index) => (
+                    <Text key={index}>{index === 1 ? marker : `Line ${String(index + 1)}`}</Text>
+                ))}
+                <Cursor />
+            </Box>
+        );
+
+        const { rerender, unmount, waitUntilRenderFlush } = render(<Frame marker="a" />, {
+            alternateScreen,
+            interactive: true,
+            stdout,
+            useNativeRenderer: true,
+        });
+
+        await waitUntilRenderFlush();
+        rerender(<Frame marker="b" />);
+        await waitUntilRenderFlush();
+
+        expect(longestUpRun(stdout.getWrites())).toBeLessThan(ROWS);
 
         unmount();
     });
