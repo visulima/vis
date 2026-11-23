@@ -201,10 +201,6 @@ fn lockfile_is_fresh(root: &Path) -> bool {
     let freshest =
         markers.iter().filter(|marker| marker.exists()).filter_map(|marker| modified_ms(marker)).reduce(f64::max);
 
-    if markers.iter().any(|marker| marker.exists()) && freshest.is_none() {
-        return false;
-    }
-
     let Some(freshest) = freshest else { return false };
 
     // Byte equality with the copy pnpm keeps proves the install matches, whatever the times say.
