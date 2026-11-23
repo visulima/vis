@@ -1,3 +1,20 @@
+## @visulima/tui [5.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/tui@5.1.0-next.1...@visulima/tui@5.1.0-next.2) (2026-11-23)
+
+### Bug Fixes
+
+* **tui:** home the cursor when entering the alternate screen ([efbe3fd](https://github.com/visulima/vis/commit/efbe3fdda095e851f456d3b49c4fe942aee1312d))
+* **tui:** keep the content above a parked-cursor frame when rows change ([cb59250](https://github.com/visulima/vis/commit/cb59250e7cb589173c072e77eaed24c6f0a7a177))
+* **tui:** redraw a cut-off alternate-screen frame when rows are added ([69f1272](https://github.com/visulima/vis/commit/69f12720fb7a0a4df8b97c2fb1cd9f9959da01bc))
+* **tui:** start the erase from the cursor's real row when it sits past the frame ([3365e31](https://github.com/visulima/vis/commit/3365e31752fba0930a3f8bf0b6defabe1fa2c619))
+
+### Code Refactoring
+
+* **tui:** spell out the parked-cursor shrink branch ([7e0761c](https://github.com/visulima/vis/commit/7e0761c233d8bd4df2d00cf9ed9c876fea7bb3dc))
+
+### Tests
+
+* **tui:** cover updates after the terminal gets taller ([eaffc4b](https://github.com/visulima/vis/commit/eaffc4bf282c3620e15821b799b8efeedcf6fd5c))
+
 ## @visulima/tui [5.1.0-next.1](https://github.com/visulima/vis/compare/@visulima/tui@5.0.2-next.1...@visulima/tui@5.1.0-next.1) (2026-11-23)
 
 ### Features
