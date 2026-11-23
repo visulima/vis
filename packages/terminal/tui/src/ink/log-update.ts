@@ -179,13 +179,15 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
     const isAtFrameTop = topPrefix !== "";
 
     if (visibleCount < previousVisible) {
-        buffer.push(
-            ...(isAtFrameTop
-                // Down to the first row that is no longer part of the frame, erase from there, and back up.
-                ? [cursorDown(visibleCount), eraseDown, moveUp(Math.min(visibleCount, viewportRows - 1))]
-                // Erases from the cursor row up to the first row that is no longer part of the frame.
-                : [eraseLines(Math.min(previousCursorRow - visibleCount + 1, viewportRows)), moveUp(Math.min(visibleCount, viewportRows - 1))]),
-        );
+        const keptRows = moveUp(Math.min(visibleCount, viewportRows - 1));
+
+        if (isAtFrameTop) {
+            // Down to the first row that is no longer part of the frame, erase from there, and back up.
+            buffer.push(cursorDown(visibleCount), eraseDown, keptRows);
+        } else {
+            // Erases from the cursor row up to the first row that is no longer part of the frame.
+            buffer.push(eraseLines(Math.min(previousCursorRow - visibleCount + 1, viewportRows)), keptRows);
+        }
     } else if (!isAtFrameTop) {
         buffer.push(moveUp(Math.min(previousCursorRow, viewportRows - 1)));
     }
