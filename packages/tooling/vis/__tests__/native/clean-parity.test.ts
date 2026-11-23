@@ -27,11 +27,11 @@ const fixturesRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "cl
 
 // Scratch space is created in `beforeAll`, which does not run when the suite is skipped, so a
 // skipped run leaves nothing behind.
-let scratch = "";
+let scratch: string;
 
 // A copy outside the package: a binary inside it reads its own location and hands declined
 // invocations to `dist/bin.js` itself, which would make the native path look like it answered.
-let nativeBinary = "";
+let nativeBinary: string;
 
 interface CaseConfig {
     /** The native path must decline this case, so the binary has to hand it to Node. */
@@ -53,7 +53,7 @@ const cases = readdirSync(fixturesRoot)
     .filter((name) => statSync(join(fixturesRoot, name)).isDirectory())
     .sort();
 
-let counter = 0;
+let counter: number;
 
 /** Read-only directories of the copies made so far, restored before the scratch space is removed. */
 const lockedDirectories: string[] = [];
@@ -115,6 +115,7 @@ const privileged = process.getuid?.() === 0;
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis clean: native vs Node", () => {
     beforeAll(() => {
+        counter = 0;
         scratch = mkdtempSync(join(tmpdir(), "vis-clean-parity-"));
         nativeBinary = join(scratch, "bin", "vis");
 
@@ -151,7 +152,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
             // Error blocks are written to stderr by pail, so the two streams are compared apart.
             expect(normalize(native.stderr, nativeRoot)).toBe(normalize(node.stderr, nodeRoot));
-            expect(removedBy(nativeRoot, nativeBefore)).toEqual(removedBy(nodeRoot, nodeBefore));
+            expect(removedBy(nativeRoot, nativeBefore)).toStrictEqual(removedBy(nodeRoot, nodeBefore));
             expect(node.status).toBe(native.status);
         });
     });
@@ -178,7 +179,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(native.status).toBe(node.status);
             expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
-            expect(removedBy(nativeRoot, nativeBefore)).toEqual(removedBy(nodeRoot, nodeBefore));
+            expect(removedBy(nativeRoot, nativeBefore)).toStrictEqual(removedBy(nodeRoot, nodeBefore));
         });
     });
 

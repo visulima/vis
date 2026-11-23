@@ -2,7 +2,7 @@
 import { Console as NodeConsole } from "node:console";
 import process from "node:process";
 
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, clearScreenAndHomeCursor, cursorHide, cursorShow, cursorTo, eraseDown, eraseLines, scrollUp } from "@visulima/ansi";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, clearScreenAndHomeCursor, cursorHide, cursorShow, cursorTo, eraseDown, eraseLines, eraseScreenAndScrollback, scrollUp } from "@visulima/ansi";
 import { wordWrap } from "@visulima/string";
 import isInCi from "is-in-ci";
 import patchConsole from "patch-console";
@@ -51,6 +51,8 @@ const noop = () => {};
 
 // Switching to the alternate screen keeps the cursor where it was, so home it: the first frame has to start at row 0.
 const enterAlternateScreen = ALT_SCREEN_ON + cursorTo(0, 0);
+
+const clearScreenAndScrollback = clearScreenAndHomeCursor + eraseScreenAndScrollback;
 
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
 const countLines = (text: string): number => {
@@ -319,6 +321,12 @@ export default class Ink {
     // Set when something outside the frame may have changed the screen (a resize or a resume), so the next native frame redraws all of it.
     private nativeScreenStale = false;
 
+    // Set by redraw(): the next frame clears the screen (and the scrollback, outside the alternate screen) and writes all <Static> output again.
+    private isFullRedraw = false;
+
+    // A redraw() that arrived while the terminal was suspended, applied when it resumes.
+    private isRedrawRequested = false;
+
     private readonly useNativeRenderer: boolean;
 
     private readonly container: FiberRoot;
@@ -356,9 +364,13 @@ export default class Ink {
 
     private kittyProtocolEnabled = false;
 
-    // Flags the kitty protocol was enabled with, remembered so suspendTerminal()
-    // can reinstate the exact same protocol on resume.
+    // Flags the protocol should run with (forced by "enabled" mode, or after a successful "auto" detection).
+    // They are only pushed while a component owns raw mode and the terminal is not suspended.
     private kittyFlags?: KittyFlagName[];
+
+    private rawModeActive = false;
+
+    private kittyDetectionStarted = false;
 
     // The suspension that currently owns the terminal, set while suspendTerminal() has handed it to a child process.
     private activeSuspension?: object;
@@ -372,8 +384,6 @@ export default class Ink {
     private finishKittyDetection?: (supported: boolean) => void;
 
     private nextRenderCommit?: { promise: Promise<void>; resolve: () => void };
-
-    private deferredInitDone = false;
 
     constructor(options: Options) {
         this.options = options;
@@ -546,11 +556,7 @@ export default class Ink {
             };
         }
 
-        // Kitty "enabled" mode runs immediately (just a stdout.write).
-        // "auto" mode detection is deferred to the first render frame via
-        // runDeferredInit() because the CSI ? u query sets up a stdin
-        // listener with a 200ms timeout.
-        this.initImmediateKittyKeyboard();
+        this.initEnabledKittyKeyboard();
 
         if (process.env["DEV"] === "true") {
             // @ts-expect-error outdated types
@@ -565,22 +571,6 @@ export default class Ink {
         // error but consumers never call waitUntilExit().
 
         void this.exitPromise.catch(noop);
-    }
-
-    /**
-     * Perform deferred initialization on the first render frame.
-     * Kitty keyboard auto-detection is deferred here because the CSI ? u
-     * query sets up a synchronous stdin listener with a 200ms timeout.
-     * "enabled" mode runs immediately in the constructor (it's just a write).
-     */
-    private runDeferredInit(): void {
-        if (this.deferredInitDone) {
-            return;
-        }
-
-        this.deferredInitDone = true;
-
-        this.initDeferredKittyKeyboard();
     }
 
     resized = (): void => {
@@ -598,10 +588,7 @@ export default class Ink {
             // The alternate screen keeps no scrollback: rows cut off at the old height are gone, and an unchanged
             // frame would not be written again. Clear the screen so the whole frame is drawn on the taller one.
             this.options.stdout.write(clearScreenAndHomeCursor + this.fullStaticOutput);
-            this.log.reset();
-            this.lastOutput = "";
-            this.lastOutputToRender = "";
-            this.lastOutputHeight = 0;
+            this.forgetFrame();
         }
 
         // Clear styled line cache on resize — cached measurements may be
@@ -931,10 +918,6 @@ export default class Ink {
             return;
         }
 
-        if (!this.deferredInitDone) {
-            this.runDeferredInit();
-        }
-
         if (this.nextRenderCommit) {
             this.nextRenderCommit.resolve();
             this.nextRenderCommit = undefined;
@@ -977,7 +960,10 @@ export default class Ink {
 
         // Native renderer path: write buffer directly via Rust diff engine
         if (this.useNativeRenderer && this.nativeLog && outputBuffer && outputWidth) {
+            const isRedraw = this.isFullRedraw;
+
             this.isFrameCleared = false;
+            this.isFullRedraw = false;
 
             if (staticOutput) {
                 this.fullStaticOutput += staticOutput;
@@ -1008,10 +994,13 @@ export default class Ink {
 
                 this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix, rowOffset: this.nativeRowOffset });
             } else {
-                // Inline frames are anchored at the cursor, so nothing is redrawn from home. New <Static> output and
+                // Inline frames are anchored at the cursor, so nothing is redrawn from home, except by redraw(). New <Static> output and
                 // scrolled-off lines are written above the frame; the renderer erases the old frame first.
                 this.nativeScreenStale = false;
-                this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix: staticOutput + backbufferOutput });
+
+                const prefix = isRedraw ? clearScreenAndScrollback + this.fullStaticOutput + backbufferOutput : staticOutput + backbufferOutput;
+
+                this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix });
             }
 
             this.lastOutputHeight = outputHeight;
@@ -1137,6 +1126,7 @@ export default class Ink {
                     interactive={this.interactive}
                     onExit={this.handleAppExit}
                     onKittyQueryResponse={this.handleKittyQueryResponse}
+                    onRawModeChange={this.handleRawModeChange}
                     onRegisterInputControl={this.registerInputControl}
                     onSuspendTerminal={this.suspendTerminal}
                     onWaitUntilRenderFlush={this.waitUntilRenderFlush}
@@ -1356,10 +1346,7 @@ export default class Ink {
             this.finishKittyDetection?.(false);
 
             if (canWriteToStdout) {
-                if (this.kittyProtocolEnabled) {
-                    this.writeBestEffort(this.options.stdout, "\u{1B}[<u");
-                    this.kittyProtocolEnabled = false;
-                }
+                this.syncKittyProtocol();
 
                 // Alternate-screen content is disposable by design. We intentionally
                 // leave it active until React cleanup finishes, then restore the
@@ -1540,6 +1527,57 @@ export default class Ink {
         this.isFrameCleared = true;
     }
 
+    /**
+     * Clears the screen and the scrollback, then draws the current tree again at the current terminal size, with the output of the mounted `Static` written again.
+     * Does nothing after unmount, without an interactive TTY, or in debug and screen reader mode;
+     * while the terminal is suspended it is applied on resume.
+     */
+    redraw(): void {
+        if (
+            !this.interactive
+            || !this.options.stdout.isTTY
+            || this.options.debug
+            || this.isScreenReaderEnabled
+            || this.isUnmounted
+            || this.isUnmounting
+        ) {
+            return;
+        }
+
+        if (this.activeSuspension) {
+            this.isRedrawRequested = true;
+
+            return;
+        }
+
+        this.forgetFrame();
+        this.requestFullRedraw();
+
+        clearStyledLineCache();
+        this.calculateLayout();
+        dom.emitLayoutListeners(this.rootNode);
+        this.onRender();
+    }
+
+    // The next frame clears the scrollback too, so rows that scrolled off an overflowToBackbuffer region are written again with it.
+    private requestFullRedraw(): void {
+        this.isFullRedraw = true;
+
+        if (this.backbufferNode) {
+            this.backbufferNode.internal_maxPushedScrollTop = 0;
+        }
+    }
+
+    // Drops what is known about the frame on screen, so the next frame is drawn in full instead of diffed against it.
+    private forgetFrame(): void {
+        this.lastOutput = "";
+        this.lastOutputToRender = "";
+        this.lastOutputHeight = 0;
+        this.log.reset();
+        this.nativeLog?.destroy();
+        this.nativeScreenStale = true;
+    }
+
     patchConsole(): void {
         if (this.options.debug) {
             return;
@@ -1619,9 +1657,10 @@ export default class Ink {
     }
 
     private renderInteractiveFrame(output: string, outputHeight: number, staticOutput: string, backbufferOutput = ""): void {
-        const { isFrameCleared } = this;
+        const { isFrameCleared, isFullRedraw } = this;
 
         this.isFrameCleared = false;
+        this.isFullRedraw = false;
 
         // Both <Static> output and scrolled-off backbuffer lines ride the same
         // "above the live region" channel. backbufferOutput is intentionally
@@ -1655,13 +1694,13 @@ export default class Ink {
             viewportRows,
         });
 
-        if (shouldClearTerminal) {
+        if (shouldClearTerminal || isFullRedraw) {
             // Skip clearTerminal in incremental mode to avoid erase-then-redraw flicker.
             // Instead, fall through to the normal incremental update path below so that
             // static output is still handled and the log-update diffing takes care of it.
             // Exception: Windows fullscreen redraws must perform a real clear because
             // the incremental eraseLines path is broken there (see ink#971).
-            if (this.options.incrementalRendering && !isWindowsFullscreenRedraw) {
+            if (this.options.incrementalRendering && !isWindowsFullscreenRedraw && !isFullRedraw) {
                 if (hasPrepend) {
                     this.log.clear();
                     this.options.stdout.write(prepend);
@@ -1680,7 +1719,7 @@ export default class Ink {
 
             // A throttled trailing render can arrive with the frame already on screen. Clearing again would push
             // that copy into scrollback, so skip it unless something changed. The final frame on unmount is still drawn.
-            if (output === this.lastOutput && !hasPrepend && !isFrameCleared && !this.log.isCursorDirty() && !this.isUnmounting) {
+            if (output === this.lastOutput && !hasPrepend && !isFrameCleared && !isFullRedraw && !this.log.isCursorDirty() && !this.isUnmounting) {
                 return;
             }
 
@@ -1696,6 +1735,7 @@ export default class Ink {
             // Microsoft Terminal, WezTerm, Alacritty, Kitty, Ghostty, etc.), destroying
             // the user's history. See vadimdemedes/ink#935 and the upstream fix in
             // vadimdemedes/ink#936.
+            // Only redraw() erases the scrollback, because the app asked for that.
             // backbufferOutput sits above the live output for this frame only;
             // it is deliberately excluded from this.fullStaticOutput so it is
             // not replayed (and duplicated) on subsequent clear/redraw cycles.
@@ -1711,8 +1751,9 @@ export default class Ink {
             // in this frame has not been written anywhere yet, so it is always written.
             const isStaticOnScreen = this.lastOutputHeight < viewportRows;
             const staticToWrite = isStaticOnScreen ? this.fullStaticOutput : staticOutput;
+            const clearSequence = isFullRedraw && !this.alternateScreen ? clearScreenAndScrollback : clearScreenAndHomeCursor;
 
-            this.options.stdout.write(clearScreenAndHomeCursor + staticToWrite + backbufferOutput + outputToRender);
+            this.options.stdout.write(clearSequence + staticToWrite + backbufferOutput + outputToRender);
             this.lastOutput = output;
             this.lastOutputToRender = outputToRender;
             this.lastOutputHeight = outputHeight;
@@ -1752,68 +1793,106 @@ export default class Ink {
     }
 
     /**
-     * Handle kitty keyboard "enabled" mode immediately (just a stdout.write).
-     * Called from the constructor.
+     * Kitty keyboard "enabled" mode: remember the flags to push. They reach the
+     * terminal only while a component owns raw mode (see syncKittyProtocol).
      */
-    private initImmediateKittyKeyboard(): void {
-        if (!this.options.kittyKeyboard) {
-            return;
-        }
-
+    private initEnabledKittyKeyboard(): void {
         const options = this.options.kittyKeyboard;
-        const mode = options.mode ?? "auto";
 
-        if (mode !== "enabled") {
+        if (!options || (options.mode ?? "auto") !== "enabled") {
             return;
         }
-
-        const flags: KittyFlagName[] = options.flags ?? ["disambiguateEscapeCodes"];
 
         // 'enabled' force-enables the protocol as long as both streams are TTYs,
         // regardless of the interactive setting (e.g. even in CI).
         if (this.options.stdin.isTTY && this.options.stdout.isTTY) {
-            this.enableKittyProtocol(flags);
+            this.requestKittyProtocol(options.flags ?? ["disambiguateEscapeCodes"]);
         }
     }
 
     /**
-     * Handle kitty keyboard "auto" mode detection. Deferred to first render
-     * because the CSI ? u query sets up a stdin listener with a 200ms timeout.
+     * Kitty keyboard "auto" mode: query the terminal once raw mode is on, so the
+     * reply is read as input instead of being echoed by a cooked-mode terminal.
+     * The CSI ? u query is safe to send to any terminal: unsupporting terminals
+     * simply don't respond and the 200ms timeout handles that.
      */
-    private initDeferredKittyKeyboard(): void {
-        if (!this.options.kittyKeyboard) {
-            return;
-        }
-
+    private startKittyDetection(): void {
         const options = this.options.kittyKeyboard;
-        const mode = options.mode ?? "auto";
 
-        if (mode !== "auto") {
+        if (
+            !options
+            || (options.mode ?? "auto") !== "auto"
+            || this.kittyDetectionStarted
+            || !this.ownsTerminalInput
+            || !this.interactive
+            || !this.options.stdin.isTTY
+            || !this.options.stdout.isTTY
+        ) {
             return;
         }
 
-        const flags: KittyFlagName[] = options.flags ?? ["disambiguateEscapeCodes"];
+        this.kittyDetectionStarted = true;
 
-        // Auto mode: require interactive + TTY
-        if (!this.interactive || !this.options.stdin.isTTY || !this.options.stdout.isTTY) {
-            return;
-        }
+        const flags = options.flags ?? ["disambiguateEscapeCodes"];
 
-        // Auto mode: query the terminal for kitty keyboard protocol support.
-        // The CSI ? u query is safe to send to any terminal — unsupporting
-        // terminals simply won't respond, and the 200ms timeout handles that.
-        this.confirmKittySupport(flags);
-    }
-
-    private confirmKittySupport(flags: KittyFlagName[]): void {
         // Serialized against the OSC palette query, which reads the same stdin. Concurrent probes
         // mistake each other's answers for user input: this one's stripper does not know about OSC
         // replies, so it would unshift the palette's answer into the input pipeline.
         void runExclusiveProbe(this.options.stdin, async () => this.runKittySupportQuery(flags));
     }
 
-    private async runKittySupportQuery(flags: KittyFlagName[]): Promise<void> {
+    private requestKittyProtocol(flags: KittyFlagName[]): void {
+        this.kittyFlags = flags;
+        this.syncKittyProtocol();
+    }
+
+    private get ownsTerminalInput(): boolean {
+        return this.rawModeActive && !this.activeSuspension && !this.isUnmounting && !this.isUnmounted;
+    }
+
+    // Pushes the flags while raw mode is on and the terminal is ours, pops them otherwise.
+    private syncKittyProtocol(): void {
+        const flags = this.kittyFlags;
+        const shouldBeEnabled = flags !== undefined && this.ownsTerminalInput;
+
+        if (shouldBeEnabled === this.kittyProtocolEnabled) {
+            return;
+        }
+
         const { stdout } = this.options;
+
+        this.kittyProtocolEnabled = shouldBeEnabled;
+
+        if (shouldBeEnabled) {
+            this.writeBestEffort(stdout, `\u{1B}[>${resolveFlags(flags)}u`);
+        } else if (!stdout.destroyed && !stdout.writableEnded) {
+            this.writeBestEffort(stdout, "\u{1B}[<u");
+        }
+    }
+
+    // Must stay referentially stable across `render()` calls, for the same reason as handleKittyQueryResponse.
+    handleRawModeChange = (isEnabled: boolean): void => {
+        this.rawModeActive = isEnabled;
+
+        // A query cut short by raw mode going away was never answered, so it is asked again when raw mode returns.
+        if (!isEnabled && this.finishKittyDetection) {
+            this.finishKittyDetection(false);
+            this.kittyDetectionStarted = false;
+        }
+
+        this.startKittyDetection();
+        this.syncKittyProtocol();
+    };
+
+    private runKittySupportQuery(flags: KittyFlagName[]): Promise<void> {
+        const { stdout } = this.options;
+
+        // Raw mode may have gone away while this probe waited for its turn.
+        if (!this.ownsTerminalInput) {
+            this.kittyDetectionStarted = false;
+
+            return Promise.resolve();
+        }
 
         // The reply reaches us through App's input pipeline (see onKittyQueryResponse), so it is never read twice.
         // Resolves when the reply arrives, when the window closes, or when suspension cancels the probe.
@@ -1827,7 +1906,7 @@ export default class Ink {
                 this.finishKittyDetection = undefined;
 
                 if (supported && !this.isUnmounted) {
-                    this.enableKittyProtocol(flags);
+                    this.requestKittyProtocol(flags);
                 }
 
                 resolve();
@@ -1895,6 +1974,7 @@ export default class Ink {
 
         // A reply that arrives while the child owns the terminal must not enable the protocol.
         this.finishKittyDetection?.(false);
+        this.syncKittyProtocol();
 
         if (!this.interactive || this.isUnmounted || this.isUnmounting) {
             return suspension;
@@ -1905,11 +1985,6 @@ export default class Ink {
             this.eraseFrame();
             this.log.done();
             this.nativeLog?.done();
-
-            if (this.kittyProtocolEnabled) {
-                this.writeBestEffort(this.options.stdout, "[<u");
-                this.kittyProtocolEnabled = false;
-            }
 
             if (this.alternateScreen) {
                 this.writeBestEffort(this.options.stdout, ALT_SCREEN_OFF);
@@ -1922,6 +1997,7 @@ export default class Ink {
             // If handing over the terminal fails partway, don't strand the app
             // suspended with no way back: reclaim input, clear the flag, rethrow.
             this.activeSuspension = undefined;
+            this.syncKittyProtocol();
 
             try {
                 this.resumeInput?.();
@@ -1944,6 +2020,8 @@ export default class Ink {
         this.activeSuspension = undefined;
 
         if (!this.interactive || this.isUnmounted || this.isUnmounting) {
+            this.syncKittyProtocol();
+
             return;
         }
 
@@ -1960,20 +2038,17 @@ export default class Ink {
             }
         }
 
-        if (this.kittyFlags) {
-            this.writeBestEffort(this.options.stdout, `\u{1B}[>${resolveFlags(this.kittyFlags)}u`);
-            this.kittyProtocolEnabled = true;
-        }
+        this.syncKittyProtocol();
+        this.startKittyDetection();
 
-        // Force a full redraw instead of diffing against the stale pre-suspension
-        // frame, which the child process may have overwritten.
-        this.lastOutput = "";
-        this.lastOutputToRender = "";
-        this.lastOutputHeight = 0;
-        this.log.reset();
-        // Whatever the child left on screen is not ours to erase, so the frame is forgotten and drawn again at the cursor.
-        this.nativeLog?.destroy();
-        this.nativeScreenStale = true;
+        // Force a full redraw instead of diffing against the stale pre-suspension frame, which the child process may have
+        // overwritten. Whatever the child left on screen is not ours to erase, so the frame is forgotten and drawn again at the cursor.
+        this.forgetFrame();
+
+        if (this.isRedrawRequested) {
+            this.isRedrawRequested = false;
+            this.requestFullRedraw();
+        }
 
         try {
             this.calculateLayout();
@@ -1982,11 +2057,5 @@ export default class Ink {
         } catch {
             // best effort — must not mask a callback error in the caller's finally
         }
-    }
-
-    private enableKittyProtocol(flags: KittyFlagName[]): void {
-        this.kittyFlags = flags;
-        this.options.stdout.write(`\u{1B}[>${resolveFlags(flags)}u`);
-        this.kittyProtocolEnabled = true;
     }
 }

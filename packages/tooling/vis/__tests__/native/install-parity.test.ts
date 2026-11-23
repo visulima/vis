@@ -58,9 +58,9 @@ const FIXTURES: Record<string, { files: Record<string, string>; kind: Kind }> = 
     "yarn-single": { files: { "package.json": JSON.stringify(PACKAGE), "yarn.lock": "# yarn lockfile\n" }, kind: "yarn" },
 };
 
-let scratch = "";
-let nativeBinary = "";
-let counter = 0;
+let scratch: string;
+let nativeBinary: string;
+let counter: number;
 
 const STUBS = ["bun", "npm", "pnpm", "yarn"] as const;
 
@@ -334,6 +334,7 @@ const DELEGATED_CASES: DelegatedCase[] = [
 
 describe.skipIf(!ready)("vis install: native vs Node", () => {
     beforeAll(() => {
+        counter = 0;
         scratch = realpathSync(mkdtempSync(join(tmpdir(), "vis-install-parity-")));
         nativeBinary = join(scratch, "vis");
 

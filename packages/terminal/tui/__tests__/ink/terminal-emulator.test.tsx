@@ -363,3 +363,59 @@ describe("terminal emulator: entering the alternate screen", () => {
         );
     });
 });
+
+describe("terminal emulator: redraw()", () => {
+    const widthCycle = async (fixture: string, options: StartFixtureOptions): Promise<FixtureSession> => {
+        const session = start(fixture, options);
+
+        await session.reachStep("rendered");
+        await session.resize(20, options.rows ?? 12);
+        session.advance();
+        await session.reachStep("narrow");
+        await session.resize(options.columns ?? 40, options.rows ?? 12);
+        session.advance();
+        await session.reachStep("wide");
+
+        return session;
+    };
+
+    it.skipIf(!ptyAvailable)(
+        "shows the same screen as a fresh render at the wide size after narrow, wide, redraw()",
+        async () => {
+            expect.assertions(2);
+
+            const fresh = start("terminal-redraw", { columns: 40, rows: 12 });
+
+            await fresh.reachStep("rendered");
+
+            const session = await widthCycle("terminal-redraw", { columns: 40, rows: 12 });
+
+            session.advance();
+            await session.reachStep("redrawn");
+
+            expect(session.text()).toEqual(fresh.text());
+            expect(session.text()).toEqual(["static-1", "static-2", "alpha bravo charlie delta echo", "live 1", "live 2"]);
+        },
+        TIMEOUT,
+    );
+
+    it.skipIf(!ptyAvailable)(
+        "matches a fresh render when the live region is taller than the viewport",
+        async () => {
+            expect.assertions(1);
+
+            const env = { FIXTURE_LINES: "14" };
+            const fresh = start("terminal-redraw", { columns: 40, env, rows: 8 });
+
+            await fresh.reachStep("rendered");
+
+            const session = await widthCycle("terminal-redraw", { columns: 40, env, rows: 8 });
+
+            session.advance();
+            await session.reachStep("redrawn");
+
+            expect(session.text()).toEqual(fresh.text());
+        },
+        TIMEOUT,
+    );
+});
