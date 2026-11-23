@@ -72,10 +72,10 @@ const VERBS: [string[], (napi: Napi, pm: string) => { args: string[]; bin: strin
     ],
 ];
 
-let scratch = "";
-let nativeBinary = "";
+let scratch: string;
+let nativeBinary: string;
 let napi: Napi | undefined;
-let counter = 0;
+let counter: number;
 
 /** A lerna workspace pinned to `backend`, with a bin directory holding a stub for each manager and a stub Node. */
 const workspaceFor = (backend: Backend): { bindir: string; cwd: string } => {
@@ -115,6 +115,7 @@ const runNative = (args: string[], cwd: string, bindir: string) =>
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(addonPath))("pinned package manager: native vs Node resolver", () => {
     beforeAll(async () => {
+        counter = 0;
         scratch = mkdtempSync(join(tmpdir(), "vis-pm-pin-parity-"));
         nativeBinary = join(scratch, "vis");
 
@@ -130,27 +131,30 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(addonPath
     // Node's security-enforcement plugin reports configuration problems for these two, so they stay with Node.
     const NODE_CHECKED = new Set(["dedupe", "remove"]);
 
-    for (const backend of BACKENDS) {
-        for (const argv of [["remove", "lodash"], ["dedupe"]]) {
-            it(`${backend} pin: vis ${argv.join(" ")} is left to Node`, () => {
-                const { bindir, cwd } = workspaceFor(backend);
-                const native = runNative(argv, cwd, bindir);
+    const leftToNode = BACKENDS.flatMap((backend) => [["remove", "lodash"], ["dedupe"]].map((argv): [Backend, string, string[]] => [backend, argv.join(" "), argv]));
+    const pinned = BACKENDS.flatMap((backend) =>
+        VERBS.filter(([verbArgv]) => !NODE_CHECKED.has(verbArgv[0] as string)).map(([argv, expected]): [Backend, string, string[], (typeof VERBS)[number][1]] => [backend, argv.join(" "), argv, expected]),
+    );
 
-                expect(native.stdout).toContain("NODE-MARKER");
-            });
-        }
+    it.each(leftToNode)("%s pin: vis %s is left to Node", (backend, _command, argv) => {
+        expect.assertions(1);
 
-        for (const [argv, expected] of VERBS.filter(([verbArgv]) => !NODE_CHECKED.has(verbArgv[0] as string))) {
-            it(`${backend} pin: vis ${argv.join(" ")} runs the pinned manager with Node's arguments`, () => {
-                const { bindir, cwd } = workspaceFor(backend);
-                const native = runNative(argv, cwd, bindir);
-                const want = expected(napi as Napi, backend);
+        const { bindir, cwd } = workspaceFor(backend);
+        const native = runNative(argv, cwd, bindir);
 
-                expect(native.status).toBe(0);
-                expect(native.stdout).not.toContain("NODE-MARKER");
-                // Node's resolver may name another binary for the verb (pnpm global remove runs npm).
-                expect(native.stdout.trim()).toBe(`${want.bin.toUpperCase()}:${want.args.join(" ")}`);
-            });
-        }
-    }
+        expect(native.stdout).toContain("NODE-MARKER");
+    });
+
+    it.each(pinned)("%s pin: vis %s runs the pinned manager with Node's arguments", (backend, _command, argv, expected) => {
+        expect.assertions(3);
+
+        const { bindir, cwd } = workspaceFor(backend);
+        const native = runNative(argv, cwd, bindir);
+        const want = expected(napi as Napi, backend);
+
+        expect(native.status).toBe(0);
+        expect(native.stdout).not.toContain("NODE-MARKER");
+        // Node's resolver may name another binary for the verb (pnpm global remove runs npm).
+        expect(native.stdout.trim()).toBe(`${want.bin.toUpperCase()}:${want.args.join(" ")}`);
+    });
 });

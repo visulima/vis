@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 
@@ -45,7 +45,7 @@ const IGNORE_FILES = [".dockerignore", ".npmignore", ".slugignore", ".verceligno
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "vis-ignore-parity-")));
 
-let counter = 0;
+let counter: number;
 
 /** A fresh copy of `fixture` in the scratch directory. */
 const copyFixture = (fixture: string): string => {
@@ -89,12 +89,16 @@ const nativeRun = (args: string[], cwd: string, extraEnv: Record<string, string>
 const fixtures = existsSync(fixturesRoot) ? readdirSync(fixturesRoot).sort() : [];
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis ignore: native vs Node", () => {
+    beforeAll(() => {
+        counter = 0;
+    });
+
     afterAll(() => {
         rmSync(scratch, { force: true, recursive: true });
     });
 
     it.each(fixtures)("prints the same output and writes the same files for %s", (fixture) => {
-        expect.assertions(VARIANTS.length * 3);
+        expect.assertions(24);
 
         for (const variant of VARIANTS) {
             const nativeDirectory = copyFixture(fixture);

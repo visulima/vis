@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { isProjectCandidate } from "../../src/config/cargo-projects";
 import type { PackageJson } from "../../src/config/types";
@@ -21,14 +21,6 @@ import { readPnpmWorkspacePatterns, resolveWorkspacePatterns, validateWorkspaces
  */
 
 const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "native", "cli", "tests", "fixtures", "workspace");
-
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-    for (const directory of temporaryDirectories.splice(0)) {
-        rmSync(directory, { force: true, recursive: true });
-    }
-});
 
 const discover = (root: string): string[] => {
     const yamlPatterns = readPnpmWorkspacePatterns(root);
@@ -70,6 +62,8 @@ describe("native workspace membership parity", () => {
         .toSorted();
 
     it.each(cases.filter((name) => readExpected(join(fixtureRoot, name)).native !== undefined))("%s matches the native list", (name) => {
+        expect.assertions(1);
+
         const caseRoot = join(fixtureRoot, name);
         const expected = readExpected(caseRoot).native ?? [];
 
@@ -77,15 +71,21 @@ describe("native workspace membership parity", () => {
     });
 
     it("keeps the delegate fixtures out of the native comparison", () => {
+        expect.assertions(1);
+
         const delegating = cases.filter((name) => readExpected(join(fixtureRoot, name)).delegate === true);
 
         expect(delegating.length).toBeGreaterThan(0);
     });
 
     it("matches the root .gitignore literal rules", () => {
+        expect.assertions(1);
+
         const root = mkdtempSync(join(tmpdir(), "vis-workspace-gitignore-"));
 
-        temporaryDirectories.push(root);
+        onTestFinished(() => {
+            rmSync(root, { force: true, recursive: true });
+        });
 
         const files: Record<string, string> = {
             ".gitignore": "skipped\n/root-skip\nnested/hidden\nUpper\n# comment\n",
