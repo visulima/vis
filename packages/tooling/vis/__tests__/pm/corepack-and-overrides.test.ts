@@ -306,7 +306,7 @@ describe(spawnResolved, () => {
     });
 
     it("hands the child the parent's own stdin, stdout and stderr", () => {
-        expect.assertions(1);
+        expect.assertions(2);
 
         const directory = mkdtempSync(join(tmpdir(), "vis-spawn-resolved-"));
         const report = join(directory, "stdio.json");
@@ -323,7 +323,8 @@ describe(spawnResolved, () => {
                 return `${dev}:${ino}:${rdev}`;
             });
 
-            expect(code === 0 ? (JSON.parse(readFileSync(report, "utf8")) as string[]) : code).toStrictEqual(parent);
+            expect(code).toBe(0);
+            expect(JSON.parse(readFileSync(report, "utf8"))).toStrictEqual(parent);
         } finally {
             rmSync(directory, { force: true, recursive: true });
         }

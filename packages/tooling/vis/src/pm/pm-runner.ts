@@ -334,9 +334,9 @@ interface RunOverrides {
 /**
  * Execute a resolved command with the terminal's stdio, merging an optional per-call env into `process.env`.
  *
- * This is Node's `spawnSync` for every call. The native `execPmCommandInteractive` is not used here: on
- * macOS the child it starts gets `/dev/null` for stdin, stdout and stderr whatever the parent's stdio is, so
- * the package manager's output, and its prompts, were lost.
+ * Always Node's `spawnSync`, not the native `execPmCommandInteractive`: on macOS the child that one starts
+ * gets `/dev/null` for stdin, stdout and stderr whatever the parent's stdio is, which loses the package
+ * manager's output and prompts.
  */
 const spawnResolved = (resolved: ResolvedCommand, cwd: string, env?: Record<string, string>): number => {
     // Caller's `env` overrides inherited `process.env` (last-write-wins
