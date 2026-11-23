@@ -29,7 +29,7 @@ import { clearStyledLineCache } from "./measure-text";
 import runExclusiveProbe from "./probe-terminal";
 import reconciler from "./reconciler";
 import { renderToStatic } from "./render-node-to-output";
-import render from "./renderer";
+import render, { renderStaticOutput } from "./renderer";
 import type ResizeObserver from "./resize-observer";
 import type { ResizeObserverEntry } from "./resize-observer";
 import { measureAndExtractObservers } from "./resize-observer";
@@ -338,11 +338,20 @@ export default class Ink {
     // Whether <Static> output has been written since the last identity change, on any render path.
     private staticOutputWritten = false;
 
-    // <Static> output produced while suspendTerminal() holds the terminal, written with the first frame after resume.
-    private suspendedStaticOutput = "";
-
     // Whether a frame was skipped while suspended, so unmounting before resume still draws the final one.
     private hasWithheldFrame = false;
+
+    // <Static> output read at commit time that the next frame still has to write.
+    private pendingStaticOutput = "";
+
+    // Set while this instance drives a synchronous React flush; the frame is drawn when the flush returns.
+    private isFlushingSync = false;
+
+    private renderRequest: "immediate" | "none" | "throttled" = "none";
+
+    private isRenderScheduled = false;
+
+    private drawFrame: () => void = () => {};
 
     // The single scrollable node with `overflowToBackbuffer` enabled, detected
     // during the layout/scroll walk. Only one such region is supported.
@@ -429,30 +438,18 @@ export default class Ink {
             // throttledOnRender already set above
         }
 
-        // When standardReactLayoutTiming is enabled, coalesce render calls
-        // via queueMicrotask so multiple React state updates in the same tick
-        // produce a single frame, and useLayoutEffect hooks complete before the
-        // frame is written to the terminal.
-        if (options.standardReactLayoutTiming) {
-            let isRenderScheduled = false;
-            const deferredRender = () => {
-                if (isRenderScheduled) {
-                    return;
-                }
-
-                isRenderScheduled = true;
-                queueMicrotask(() => {
-                    isRenderScheduled = false;
-                    this.onRender();
-                });
-            };
-
-            this.rootNode.onRender = deferredRender;
-            this.rootNode.onImmediateRender = deferredRender;
-        } else {
-            this.rootNode.onRender = baseOnRender;
-            this.rootNode.onImmediateRender = this.onRender;
-        }
+        // React runs layout effects after the host's commit hook, and a state update made there is flushed
+        // synchronously before React returns to its caller. Drawing from the commit hook would paint the frame
+        // from before that update, so the draw is requested here and happens once the flush has settled.
+        this.drawFrame = baseOnRender;
+        this.rootNode.onRender = () => {
+            this.requestRender(false);
+        };
+        this.rootNode.onImmediateRender = () => {
+            // A <Static> empties itself in a layout effect, so its output is read at this commit.
+            this.pendingStaticOutput += renderStaticOutput(this.rootNode, this.isScreenReaderEnabled);
+            this.requestRender(true);
+        };
 
         this.rootNode.onStaticChange = this.handleStaticChange;
 
@@ -837,6 +834,11 @@ export default class Ink {
 
     // Resets `fullStaticOutput` when the <Static> identity changes so stale items from a previous instance are not replayed on future rewrites.
     handleStaticChange = (): void => {
+        // Output read from the instance being replaced is written once, and must not enter the replay buffer reset below.
+        if (this.pendingStaticOutput !== "") {
+            this.drawRequestedFrame();
+        }
+
         this.fullStaticOutput = "";
         this.staticOutputWritten = false;
     };
@@ -908,8 +910,53 @@ export default class Ink {
         return `${slice}[0m\n`;
     }
 
+    private requestRender(immediate: boolean): void {
+        if (immediate || this.renderRequest === "none") {
+            this.renderRequest = immediate ? "immediate" : "throttled";
+        }
+
+        if (this.isFlushingSync || this.isRenderScheduled) {
+            return;
+        }
+
+        this.isRenderScheduled = true;
+        queueMicrotask(() => {
+            this.isRenderScheduled = false;
+            this.drawRequestedFrame();
+        });
+    }
+
+    private drawRequestedFrame(): void {
+        const request = this.renderRequest;
+
+        this.renderRequest = "none";
+
+        if (request === "immediate") {
+            this.onRender();
+        } else if (request === "throttled") {
+            this.drawFrame();
+        }
+    }
+
+    private flushSync(update: () => void): void {
+        const wasFlushingSync = this.isFlushingSync;
+
+        this.isFlushingSync = true;
+
+        try {
+            update();
+        } finally {
+            this.isFlushingSync = wasFlushingSync;
+        }
+
+        if (!wasFlushingSync) {
+            this.drawRequestedFrame();
+        }
+    }
+
     onRender: () => void = () => {
         this.hasPendingThrottledRender = false;
+        this.renderRequest = "none";
 
         if (this.isUnmounted) {
             return;
@@ -920,19 +967,22 @@ export default class Ink {
             this.nextRenderCommit = undefined;
         }
 
-        const renderStart = performance.now();
-        const renderResult = render(this.rootNode, this.isScreenReaderEnabled, {
-            useNativeRenderer: this.useNativeRenderer,
-        });
-        const renderTime = performance.now() - renderStart;
-
-        // The child process owns the terminal: keep <Static> output for the first frame after resume and draw nothing.
+        // The child process owns the terminal: draw nothing, and keep the pending <Static> output for the first frame after resume.
         if (this.activeSuspension && this.interactive && !this.isUnmounting) {
-            this.suspendedStaticOutput += renderResult.staticOutput;
             this.hasWithheldFrame = true;
 
             return;
         }
+
+        const renderStart = performance.now();
+        const renderResult = render(this.rootNode, this.isScreenReaderEnabled, {
+            skipStatic: true,
+            useNativeRenderer: this.useNativeRenderer,
+        });
+        const renderTime = performance.now() - renderStart;
+
+        renderResult.staticOutput = this.pendingStaticOutput;
+        this.pendingStaticOutput = "";
 
         this.commitFrame(renderResult);
 
@@ -941,10 +991,8 @@ export default class Ink {
     };
 
     private commitFrame(renderResult: ReturnType<typeof render>): void {
-        const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth } = renderResult;
-        const staticOutput = this.suspendedStaticOutput + renderResult.staticOutput;
+        const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth, staticOutput } = renderResult;
 
-        this.suspendedStaticOutput = "";
         this.hasWithheldFrame = false;
 
         this.renderedCursorRequested = cursorRequested;
@@ -1159,8 +1207,10 @@ export default class Ink {
         if (this.options.concurrent) {
             reconciler.updateContainer(tree, this.container, null, noop);
         } else {
-            reconciler.updateContainerSync(tree, this.container, null, noop);
-            reconciler.flushSyncWork();
+            this.flushSync(() => {
+                reconciler.updateContainerSync(tree, this.container, null, noop);
+                reconciler.flushSyncWork();
+            });
         }
 
         // A commit with no host changes skips the layout hook, so a cleared frame would stay
@@ -1218,6 +1268,9 @@ export default class Ink {
             return;
         }
 
+        // A passive effect of a synchronous flush runs before its frame is drawn; the write must land after that frame.
+        this.drawRequestedFrame();
+
         if (this.options.debug) {
             this.options.stdout.write(data + this.fullStaticOutput + this.lastOutput);
 
@@ -1256,6 +1309,8 @@ export default class Ink {
         if (this.isUnmounted) {
             return;
         }
+
+        this.drawRequestedFrame();
 
         if (this.options.debug) {
             this.options.stderr.write(data);
@@ -1300,6 +1355,8 @@ export default class Ink {
         if (this.isUnmounted || this.isUnmounting) {
             return;
         }
+
+        this.drawRequestedFrame();
 
         this.isUnmounting = true;
 
@@ -1492,7 +1549,9 @@ export default class Ink {
             }
         }
 
-        reconciler.flushSyncWork();
+        this.flushSync(() => {
+            reconciler.flushSyncWork();
+        });
 
         const stdout = this.options.stdout as MaybeWritableStream;
         const { canWriteToStdout, hasWritableState } = getWritableStreamState(stdout);
@@ -1529,6 +1588,7 @@ export default class Ink {
             return;
         }
 
+        this.drawRequestedFrame();
         this.log.clear();
         this.nativeLog?.clear();
         this.isFrameCleared = true;
@@ -1973,6 +2033,8 @@ export default class Ink {
         if (this.activeSuspension) {
             throw new Error("The terminal is already suspended. Resume the current suspension before suspending again.");
         }
+
+        this.drawRequestedFrame();
 
         // Identifies this suspension, so a handle from an earlier one cannot resume a later one.
         const suspension = {};
