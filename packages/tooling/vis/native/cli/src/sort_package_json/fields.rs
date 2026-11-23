@@ -142,16 +142,10 @@ fn sort_exports(value: &mut Json) {
     };
 
     for (_, child) in entries.iter_mut() {
-        sort_exports_children(child);
+        sort_exports(child);
     }
 
     order_conditions(entries);
-}
-
-fn sort_exports_children(value: &mut Json) {
-    if matches!(value, Json::Object(_)) {
-        sort_exports(value);
-    }
 }
 
 fn order_conditions(entries: &mut Vec<(String, Json)>) {
