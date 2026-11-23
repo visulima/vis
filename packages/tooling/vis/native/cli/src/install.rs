@@ -77,7 +77,7 @@ struct Flags {
 
 /// Where Node finds the workspace root, as far as the native path needs to know.
 #[derive(Debug, PartialEq, Eq)]
-enum Root {
+pub(crate) enum Root {
     /// Node finds no monorepo root: it loads no config, runs no plugin, and installs in the working directory.
     None,
     /// The working directory is the monorepo root: Node loads the config there and its plugins run.
@@ -225,14 +225,24 @@ fn has_peer_dependency_warnings(output: &[u8]) -> bool {
     peer_patterns().iter().any(|pattern| pattern.is_match(output))
 }
 
-/// The plan for this invocation, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
+/// What the gates settle for a native run, before the command's own flags and arguments come in.
+pub(crate) struct Setup {
+    pub(crate) cwd: PathBuf,
+    /// The manager Node would pick for `cwd`, and its version (`latest` when unknown).
+    pub(crate) manager: String,
+    pub(crate) version: String,
+    pub(crate) root: Root,
+    pub(crate) width: usize,
+}
+
+/// The gates `install` and `add` share: a unix platform, valid UTF-8 arguments, a CI context, a working
+/// directory that is no root or the only root, a config the native path can read, and a manager Node would
+/// pick the same way. `None` delegates.
+pub(crate) fn setup(raw: &[OsString]) -> Option<Setup> {
     // Windows keeps the Node path: it runs the package manager through a shell there.
     if !cfg!(unix) || raw.iter().any(|argument| argument.to_str().is_none()) {
         return None;
     }
-
-    let flags = parse(args)?;
 
     if !context_allows_native() {
         return None;
@@ -260,12 +270,8 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         return None;
     }
 
-    if typosquat_scan(&cwd) != Scan::Clean {
-        return None;
-    }
-
     let detected = detect_package_manager(&cwd.to_string_lossy(), Some(DetectPackageManagerOptions::default()));
-    let manager = detected.name.as_str();
+    let manager = detected.name;
 
     // Node runs bun when the nearest lockfile is bun's, whatever else names the manager.
     if has_bun_lockfile(&cwd) && manager != "bun" {
@@ -273,16 +279,29 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     }
 
     let version = detected.version.filter(|version| !version.is_empty()).unwrap_or_else(|| "latest".to_owned());
+
+    Some(Setup { cwd, manager, version, root, width })
+}
+
+/// The plan for this invocation, or `None` to delegate.
+fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
+    let flags = parse(args)?;
+    let setup = setup(raw)?;
+
+    if typosquat_scan(&setup.cwd) != Scan::Clean {
+        return None;
+    }
+
     let mut notices = Vec::new();
 
     // The security-enforcement plugin acts on the typed command name `install`, not on its alias.
-    if root == Root::Here && !flags.alias {
-        notices.extend(security_notices(manager, &cwd)?);
+    if setup.root == Root::Here && !flags.alias {
+        notices.extend(security_notices(&setup.manager, &setup.cwd)?);
     }
 
     let resolved = resolve_install(
-        manager,
-        &version,
+        &setup.manager,
+        &setup.version,
         InstallOptions {
             dev: flags.dev,
             filter: flags.filter.clone(),
@@ -306,11 +325,11 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     Some(Plan {
         args: resolved.args,
         bin: resolved.bin,
-        cwd: cwd.clone(),
+        cwd: setup.cwd.clone(),
         notices,
-        root: (root == Root::Here).then_some(cwd),
+        root: (setup.root == Root::Here).then_some(setup.cwd),
         silent: flags.silent,
-        width,
+        width: setup.width,
     })
 }
 
@@ -407,7 +426,7 @@ fn parse(args: &[String]) -> Option<Flags> {
 }
 
 /// A `--filter` value: a non-empty word that is no flag.
-fn filter_value(value: &str) -> Option<String> {
+pub(crate) fn filter_value(value: &str) -> Option<String> {
     (!value.is_empty() && !value.starts_with('-')).then(|| value.to_owned())
 }
 
@@ -521,7 +540,7 @@ fn typosquat_scan(cwd: &Path) -> Scan {
 /// (`enforceScriptSecurity` in `src/security/enforcement.ts`, with no allow list: the config has no
 /// `security` key). `None` for the cases whose text depends on a regex over a file the native path
 /// does not read.
-fn security_notices(manager: &str, root: &Path) -> Option<Vec<String>> {
+pub(crate) fn security_notices(manager: &str, root: &Path) -> Option<Vec<String>> {
     let message = match manager {
         "pnpm" => {
             "pnpm blocks build scripts by default. Run 'vis approve-builds' to review packages that need scripts."

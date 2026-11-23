@@ -387,26 +387,96 @@ const installShapeIsNative = (flags) => {
     return !(named("-D", "--dev") && named("-P", "--prod")) && !(named("--frozen-lockfile") && named("--no-frozen-lockfile"));
 };
 
-// Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in a CI
-// context, with no terminal, no colour and none of the variables that change which installer Node picks or what its
-// output looks like. The binary re-checks everything, including the workspace root, the config and `package.json`;
-// this only skips the extra process when it would delegate anyway. It stays in Node on Windows, where Node runs the
-// package manager through a shell.
-const installMayRunNatively = (platform, environment, args, interactive) => {
+// Whether the context lets `vis install` and `vis add` pass the binary's native gate (`install::setup` in
+// `install.rs`): a CI context with no terminal, no colour and none of the variables that change which installer Node
+// picks or what its output looks like. It stays in Node on Windows, where Node runs the package manager through a shell.
+const installContextIsNative = (platform, environment, interactive) => {
     if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
         return false;
     }
 
-    if (
+    return !(
         ["debug", "test"].includes(environment.NODE_ENV)
         || ["DEBUG", "PAIL_LOG_LEVEL", "VIS_INSTALLER", "VIS_MONOREPO_ROOT", "VIS_RUNTIME", "VIS_SECURITY_WARNINGS"].some((key) => environment[key] !== undefined)
         || Object.keys(environment).some((key) => key.startsWith("CEREBRO_") || key.startsWith("MARSHALL_"))
-    ) {
-        return false;
+    );
+};
+
+// Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in that
+// context. The binary re-checks everything, including the workspace root, the config and `package.json`; this only
+// skips the extra process when it would delegate anyway.
+const installMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && installShapeIsNative(args.slice(1));
+
+// The flags `vis add` takes natively (`parse` in `add.rs`): each at most once, none of them with a value except
+// `--filter`. `--no-marshall-check` is required: without it Node looks the packages up in the registry first.
+const ADD_FLAGS = [
+    ["-D", "--save-dev"],
+    ["-E", "--exact"],
+    ["-O", "--save-optional"],
+    ["-P", "--save-peer"],
+    ["-g", "--global"],
+    ["-w", "--workspace-root"],
+    ["--workspace"],
+    ["--run-scripts"],
+    ["--no-marshall-check"],
+    ["--no-socket-check"],
+    ["--no-typosquat-check"],
+];
+
+// A package argument of the plain `name[@spec]` or `@scope/name[@spec]` shape (`parse_package_argument` in `add.rs`).
+const ADD_PACKAGE = /^(?:@[a-z0-9][\w.~-]*\/)?[a-z0-9][\w.~-]*(?:@[\w.^~<>=*|+:/#,@-]+)?$/i;
+
+// Whether the arguments after `add` are a shape the binary answers: plain packages first, then the flags above and
+// `--filter` with a value, and `--no-marshall-check` among them.
+const addShapeIsNative = (rest) => {
+    const seen = new Set();
+    let packages = 0;
+    let filtered = false;
+    let index = 0;
+
+    while (index < rest.length) {
+        const next = afterFilter(rest, index);
+
+        if (next === -1) {
+            return false;
+        }
+
+        if (next !== undefined) {
+            filtered = true;
+            index = next;
+
+            continue;
+        }
+
+        const flag = rest[index];
+        const group = ADD_FLAGS.find((names) => names.includes(flag));
+
+        if (group === undefined) {
+            // Node reads every word after `--filter` as another filter, so a package after one is no package.
+            if (filtered || flag.startsWith("-") || !ADD_PACKAGE.test(flag)) {
+                return false;
+            }
+
+            packages += 1;
+            index += 1;
+
+            continue;
+        }
+
+        if (seen.has(group)) {
+            return false;
+        }
+
+        seen.add(group);
+        index += 1;
     }
 
-    return installShapeIsNative(args.slice(1));
+    return packages > 0 && rest.includes("--no-marshall-check");
 };
+
+// Whether `vis add` can pass the binary's native gate (`plan` in `add.rs`). The binary re-checks everything,
+// including the packages against the typosquat blocklist; this only skips the extra process when it would delegate anyway.
+const addMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && addShapeIsNative(args.slice(1));
 
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
@@ -470,6 +540,48 @@ const helpOrNative = (args, mayRunNatively) => {
 const alwaysNative = (command, subcommand, args) =>
     NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
 
+// The commands with a native shape, by the name they are typed with, each with the gate that decides it. A gate
+// answers `undefined` for a subcommand that is not one of them; the binary re-checks everything, so a gate only
+// skips the extra process when the binary would delegate anyway, and any other run is delegated by the binary,
+// which costs a second Node boot. The notes name the binary's module for each command.
+const NATIVE_SHAPE_GATES = new Map([
+    ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
+    // `affected <target> --sparse-checkout`.
+    ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
+    // `cache list`, `cache size` (`cache.rs`) and `cache hash` (`cache_hash.rs`); the binary hands every other shape to Node itself.
+    [
+        "cache",
+        ({ args, environment, interactive, platform, subcommand }) => {
+            if (!CACHE_NATIVE_SUBCOMMANDS.has(subcommand)) {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
+        },
+    ],
+    // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
+    ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
+    ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
+    ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker))],
+    ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
+    ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
+    // The plain working-tree scan.
+    ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
+    ["self-update", ({ args, environment, interactive, platform }) => helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive))],
+    // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
+    [
+        "sync",
+        ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
+            if (subcommand !== "ci-workflow") {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+        },
+    ],
+]);
+
 // The routing of a bare command group and of `complete`: `true` or `false` when they decide,
 // `undefined` when the command is neither.
 const routesListingOrCompletionToNative = (args, command, subcommand) => {
@@ -499,61 +611,10 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return true;
     }
 
-    // `ignore` is native for its plain shapes in a CI context (`native/cli/src/ignore.rs`); any
-    // other run would be delegated by the binary, which costs a second Node boot.
-    if (command === "ignore") {
-        return helpOrNative(args, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker));
-    }
+    const gated = NATIVE_SHAPE_GATES.get(command)?.({ args, cwd, environment, holdsMarker, interactive, platform, subcommand });
 
-    // `list` is native for the plain listing in a CI context (`native/cli/src/list.rs`); any other
-    // run would be delegated by the binary, which costs a second Node boot.
-    if (command === "list") {
-        return helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive));
-    }
-
-    // `cache list`, `cache size` (`native/cli/src/cache.rs`) and `cache hash` (`native/cli/src/cache_hash.rs`)
-    // are native for their plain shapes in a CI context; the binary hands every other shape to Node itself.
-    if (command === "cache" && CACHE_NATIVE_SUBCOMMANDS.has(subcommand)) {
-        return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
-    }
-
-    // `affected <target> --sparse-checkout` is native in a CI context (`native/cli/src/affected.rs`); any
-    // other run would be delegated by the binary, which costs a second Node boot.
-    if (command === "affected") {
-        return helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive));
-    }
-
-    // `clean` (no flags, `--dry-run`, `--lockfile`) is answered natively; the binary hands every
-    // other shape to Node itself. A terminal
-    // stdout stays in Node: pail colours its output there, and the binary does not.
-    if (command === "clean") {
-        return helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive));
-    }
-
-    // `secrets` is native for the plain working-tree scan (`native/cli/src/secrets.rs`); any other
-    // run would be delegated by the binary, which costs a second Node boot.
-    if (command === "secrets") {
-        return helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
-    }
-
-    // `install` (alias `i`) with no packages is native in a CI context (`native/cli/src/install.rs`); any other
-    // run would be delegated by the binary, which costs a second Node boot.
-    if (command === "install" || command === "i") {
-        return helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive));
-    }
-
-    // `sync ci-workflow` is native for the generator and its `--check` (`native/cli/src/ci_workflow/`); any
-    // other run would be delegated by the binary, which costs a second Node boot. The other `sync` kinds
-    // are Node's and follow the help rule below.
-    if (command === "sync" && subcommand === "ci-workflow") {
-        return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
-    }
-
-    // `self-update` is native for its plain shapes in a CI context (`native/cli/src/self_update.rs`), which
-    // answers `--check` and the up-to-date verdicts and hands an install to Node before printing anything; any
-    // other run would be delegated by the binary, which costs a second Node boot.
-    if (command === "self-update") {
-        return helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive));
+    if (gated !== undefined) {
+        return gated;
     }
 
     return routesListingOrCompletionToNative(args, command, subcommand);
