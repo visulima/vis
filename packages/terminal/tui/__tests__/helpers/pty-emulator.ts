@@ -83,6 +83,11 @@ export const startFixture = (fixture: string, { columns = 40, env = {}, rows = 1
             emulator.write("", resolve);
         });
 
+    const resizeEmulator = async (nextColumns: number, nextRows: number): Promise<void> => {
+        await drain();
+        emulator.resize(nextColumns, nextRows);
+    };
+
     let isDisposed = false;
 
     return {
@@ -110,14 +115,10 @@ export const startFixture = (fixture: string, { columns = 40, env = {}, rows = 1
             }
         },
         resize: async (nextColumns, nextRows) => {
-            await drain();
-            emulator.resize(nextColumns, nextRows);
+            await resizeEmulator(nextColumns, nextRows);
             ps.resize(nextColumns, nextRows);
         },
-        resizeEmulator: async (nextColumns, nextRows) => {
-            await drain();
-            emulator.resize(nextColumns, nextRows);
-        },
+        resizeEmulator,
         resizePty: (nextColumns, nextRows) => {
             ps.resize(nextColumns, nextRows);
         },

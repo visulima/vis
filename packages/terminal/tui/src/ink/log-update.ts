@@ -93,6 +93,15 @@ const clampToViewport = (lineCount: number, stream: Writable): number => Math.mi
 const clampCursorRow = (row: number, cursor: CursorPosition | undefined, stream: Writable): number =>
     (cursor ? Math.min(row, cursor.y + getViewportRows(stream) - 1) : row);
 
+const cursorSuffixFor = (lines: string[], cursor: CursorPosition | undefined, stream: Writable): string =>
+    buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(lines), cursor, stream), cursor);
+
+// Erases the previous frame and leaves the cursor on its top row. A parked cursor is erased from the frame top: the
+// row below the frame is gone when the terminal shrank, so a move down to it would stop short and the erase would
+// reach into the content above.
+const erasePreviousFrame = (topPrefix: string, previousLineCount: number, stream: Writable): string =>
+    (topPrefix === "" ? eraseLines(clampToViewport(previousLineCount, stream)) : topPrefix + eraseDown);
+
 /**
  * Everything a frame writer needs to emit one changed frame.
  *
@@ -135,12 +144,8 @@ type WriteFrame = (frame: Frame, stream: Writable) => void;
  */
 const writeFullFrame: WriteFrame = (frame, stream) => {
     const { activeCursor, content, contentLines, previousLines, shapeDelta, topPrefix } = frame;
-    const cursorSuffix = buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(contentLines), activeCursor, stream), activeCursor);
-    // A parked cursor is erased from the frame top: the row below the frame is gone when the terminal shrank, so a
-    // move down to it would stop short and the erase would reach into the content above.
-    const erase = topPrefix === "" ? eraseLines(clampToViewport(previousLines.length, stream)) : topPrefix + eraseDown;
 
-    stream.write(shapeDelta + erase + content + cursorSuffix);
+    stream.write(shapeDelta + erasePreviousFrame(topPrefix, previousLines.length, stream) + content + cursorSuffixFor(contentLines, activeCursor, stream));
 };
 
 /**
@@ -220,7 +225,7 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
         );
     }
 
-    buffer.push(buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(contentLines), activeCursor, stream), activeCursor));
+    buffer.push(cursorSuffixFor(contentLines, activeCursor, stream));
 
     stream.write(buffer.join(""));
 };
@@ -325,7 +330,7 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
                 previous: previousOutput,
                 previousLines,
                 shapeDelta,
-                topPrefix: buildReturnToTopPrefix(isCursorWasShown, previousCursorPosition, getViewportRows(stream)),
+                topPrefix: buildReturnToTopPrefix(isCursorWasShown, previousLines.length, previousCursorPosition, getViewportRows(stream)),
             },
             stream,
         );
@@ -339,13 +344,7 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
     };
 
     render.clear = () => {
-        if (isCursorWasShown && previousCursorPosition) {
-            // A parked cursor marks a row inside the frame, so erase down from the frame top. Returning to the row below
-            // the frame first can clamp at the viewport bottom once the terminal has trimmed that row on resize.
-            stream.write(buildReturnToTopPrefix(true, previousCursorPosition, getViewportRows(stream)) + eraseDown);
-        } else {
-            stream.write(eraseLines(clampToViewport(previousLines.length, stream)));
-        }
+        stream.write(erasePreviousFrame(buildReturnToTopPrefix(isCursorWasShown, previousLines.length, previousCursorPosition, getViewportRows(stream)), previousLines.length, stream));
 
         forgetFrame();
     };
@@ -401,7 +400,7 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
         }
 
         if (activeCursor) {
-            stream.write(buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(lines), activeCursor, stream), activeCursor));
+            stream.write(cursorSuffixFor(lines, activeCursor, stream));
         }
 
         commitCursor(activeCursor);

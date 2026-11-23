@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import logUpdate from "../../src/ink/log-update";
 import createStdout from "../helpers/ink-create-stdout";
 import longestUpRun from "../helpers/ink-cursor-up";
+import { replayAfterPrompt, visibleRows } from "../helpers/ink-screen";
 
 describe("log-update", () => {
     it("standard rendering - renders and updates output", () => {
@@ -581,6 +582,20 @@ describe("log-update", () => {
         render.sync("Fresh\n");
 
         expect(stdout.getWrites().join("")).toContain(decscusrSequence(4));
+    });
+
+    it.each(renderingModes)("$name - keeps the shell output above a frame whose cursor sits past its last row", ({ incremental }) => {
+        expect.assertions(1);
+
+        const stdout = createStdout(40, true, 12);
+        const render = logUpdate.create(stdout, { incremental, showCursor: true });
+
+        render.setCursorPosition({ x: 0, y: 4 });
+        render("Frame A\nFrame B\n");
+        render.setCursorPosition({ x: 0, y: 4 });
+        render("Frame A\nFrame C\n");
+
+        expect(visibleRows(replayAfterPrompt(stdout.getWrites(), 12)).filter((row) => row !== "")).toEqual(["$ prompt", "Frame A", "Frame C"]);
     });
 
     describe("frames taller than the viewport", () => {

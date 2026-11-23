@@ -30,6 +30,9 @@ const countOf = (lines: string[], line: string): number => lines.filter((candida
 
 const history = (count: number): string[] => Array.from({ length: count }, (_, index) => `history ${String(index + 1)}`);
 
+const frameLines = (count: number, marker = "a"): string[] =>
+    Array.from({ length: count }, (_, index) => (index === 1 ? `Frame line 2 ${marker}` : `Frame line ${String(index + 1)}`));
+
 describe("terminal emulator: clear()", () => {
     it.skipIf(!ptyAvailable)(
         "keeps the shell history and draws the frame once after clear()",
@@ -62,14 +65,14 @@ describe("terminal emulator: rows shrinking", () => {
         async () => {
             expect.assertions(1);
 
-            const session = start("terminal-shrink", { columns: 40, rows: 12 });
+            const session = start("terminal-rows-change", { columns: 40, env: { FIXTURE_HISTORY: "2" }, rows: 12 });
 
             await session.reachStep("rendered");
             await session.resize(40, 5);
             session.advance();
-            await session.reachStep("shrunk");
+            await session.reachStep("resized");
 
-            expect(session.text()).toEqual(["history 1", "history 2", "Frame line 1", "Frame line 2", "Frame line 3"]);
+            expect(session.text()).toEqual([...history(2), ...frameLines(3)]);
         },
         TIMEOUT,
     );
@@ -79,31 +82,14 @@ describe("terminal emulator: rows shrinking", () => {
         async () => {
             expect.assertions(1);
 
-            const session = start("terminal-shrink", { columns: 40, env: { FIXTURE_HISTORY: "8" }, rows: 12 });
+            const session = start("terminal-rows-change", { columns: 40, env: { FIXTURE_HISTORY: "8" }, rows: 12 });
 
             await session.reachStep("rendered");
             await session.resize(40, 6);
             session.advance();
-            await session.reachStep("shrunk");
+            await session.reachStep("resized");
 
-            expect(session.text()).toEqual([...history(8), "Frame line 1", "Frame line 2", "Frame line 3"]);
-        },
-        TIMEOUT,
-    );
-
-    it.skipIf(!ptyAvailable)(
-        "keeps the history above a frame with a parked cursor when rows shrink",
-        async () => {
-            expect.assertions(1);
-
-            const session = start("terminal-shrink", { columns: 40, env: { FIXTURE_CURSOR: "1", FIXTURE_HISTORY: "8" }, rows: 12 });
-
-            await session.reachStep("rendered");
-            await session.resize(40, 6);
-            session.advance();
-            await session.reachStep("shrunk");
-
-            expect(session.text()).toEqual([...history(8), "Frame line 1", "Frame line 2", "Frame line 3"]);
+            expect(session.text()).toEqual([...history(8), ...frameLines(3)]);
         },
         TIMEOUT,
     );
@@ -226,9 +212,6 @@ const rendererModes: RendererMode[] = [
     { env: { FIXTURE_INCREMENTAL: "1" }, name: "incremental rendering" },
     { env: { FIXTURE_NATIVE: "1" }, name: "native renderer" },
 ];
-
-const frameLines = (count: number, marker = "a"): string[] =>
-    Array.from({ length: count }, (_, index) => (index === 1 ? `Frame line 2 ${marker}` : `Frame line ${String(index + 1)}`));
 
 describe("terminal emulator: rows growing", () => {
     describe.each(rendererModes)("with $name", ({ env }) => {
