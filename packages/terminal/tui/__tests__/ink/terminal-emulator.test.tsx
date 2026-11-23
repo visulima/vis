@@ -297,3 +297,29 @@ describe("terminal emulator: entering the alternate screen", () => {
         );
     });
 });
+describe("terminal emulator: alternate screen gaining rows", () => {
+    describe.each([...rendererModes, { env: { FIXTURE_SCREEN_READER: "1" }, name: "screen-reader frame" }])("with $name", ({ env }) => {
+        it.skipIf(!ptyAvailable)(
+            "redraws a frame that was cut off to the old row count",
+            async () => {
+                expect.assertions(2);
+
+                const session = start("terminal-rows-change", { columns: 40, env: { ...env, FIXTURE_ALT: "1", FIXTURE_LINES: "12" }, rows: 8 });
+
+                await session.reachStep("rendered");
+                await session.resize(40, 16);
+                session.advance();
+                await session.reachStep("resized");
+
+                expect(session.text()).toEqual(frameLines(12));
+
+                session.advance();
+                await session.reachStep("updated");
+
+                expect(session.text()).toEqual(frameLines(12, "b"));
+            },
+            TIMEOUT,
+        );
+    });
+});
+

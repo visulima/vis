@@ -594,6 +594,14 @@ export default class Ink {
             this.lastOutput = "";
             this.lastOutputToRender = "";
             this.lastOutputHeight = 0;
+        } else if (this.alternateScreen && !this.nativeLog && currentRows > this.lastTerminalRows && this.lastOutputHeight > this.lastTerminalRows) {
+            // The alternate screen keeps no scrollback: rows cut off at the old height are gone, and an unchanged
+            // frame would not be written again. Clear the screen so the whole frame is drawn on the taller one.
+            this.options.stdout.write(clearScreenAndHomeCursor + this.fullStaticOutput);
+            this.log.reset();
+            this.lastOutput = "";
+            this.lastOutputToRender = "";
+            this.lastOutputHeight = 0;
         }
 
         // Clear styled line cache on resize — cached measurements may be
