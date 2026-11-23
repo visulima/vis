@@ -5,7 +5,7 @@
  * which we exercise against a known-safe `node` subprocess).
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { fstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -286,10 +286,9 @@ describe(applyDlxOffline, () => {
 });
 
 describe(spawnResolved, () => {
-    it("inherits process.env when env is undefined (native fast path)", () => {
+    it("inherits process.env when env is undefined", () => {
         expect.assertions(1);
 
-        // node -e exits 0 successfully under the native NAPI path.
         const code = spawnResolved(RESOLVED("node", ["-e", "process.exit(0)"]), process.cwd());
 
         expect(code).toBe(0);
@@ -304,5 +303,29 @@ describe(spawnResolved, () => {
         const code = spawnResolved(RESOLVED("node", ["-e", "process.exit(parseInt(process.env.VIS_TEST_ENV, 10))"]), process.cwd(), { VIS_TEST_ENV: "7" });
 
         expect(code).toBe(7);
+    });
+
+    it("hands the child the parent's own stdin, stdout and stderr", () => {
+        expect.assertions(1);
+
+        const directory = mkdtempSync(join(tmpdir(), "vis-spawn-resolved-"));
+        const report = join(directory, "stdio.json");
+        const identify = "const fs = require('fs'); const id = (fd) => { const s = fs.fstatSync(fd); return `${s.dev}:${s.ino}:${s.rdev}`; };";
+
+        try {
+            // The child records which file each of its standard streams is. They must be the ones
+            // the parent has: a child that gets /dev/null (as the native exec gave on macOS) would lose
+            // what the package manager prints and every prompt.
+            const code = spawnResolved(RESOLVED("node", ["-e", `${identify} fs.writeFileSync(${JSON.stringify(report)}, JSON.stringify([0, 1, 2].map(id)));`]), process.cwd());
+            const parent = [0, 1, 2].map((fd) => {
+                const { dev, ino, rdev } = fstatSync(fd);
+
+                return `${dev}:${ino}:${rdev}`;
+            });
+
+            expect(code === 0 ? (JSON.parse(readFileSync(report, "utf8")) as string[]) : code).toStrictEqual(parent);
+        } finally {
+            rmSync(directory, { force: true, recursive: true });
+        }
     });
 });
