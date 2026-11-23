@@ -30,6 +30,7 @@ mod advisories;
 mod affected;
 mod cache;
 mod cache_hash;
+mod cache_why;
 mod ci_workflow;
 mod clean;
 mod complete;
@@ -48,8 +49,10 @@ mod pail;
 mod pm;
 mod pm_family;
 mod pm_shim;
+mod replay;
 mod secrets;
 mod self_update;
+mod summary;
 mod surface;
 mod table;
 // Not routed to any command yet; the command ports call it.
@@ -138,6 +141,14 @@ fn main() {
         "cache" if args.get(1).map(String::as_str) == Some("hash") && !surface::asks_for_help(&args) => {
             cache_hash::run(&args, &raw_args)
         }
+        // `vis cache why <task>` — diffs the recorded hash inputs against the previous run; the shapes and
+        // contexts it cannot reproduce exactly are delegated inside `cache_why::run`.
+        "cache" if args.get(1).map(String::as_str) == Some("why") && !surface::asks_for_help(&args) => {
+            cache_why::run(&args, &raw_args)
+        }
+        // `vis replay` — shows a recorded run (or lists the recorded runs); delegated inside `replay::run` for
+        // every shape and context it cannot reproduce exactly.
+        "replay" if !surface::asks_for_help(&args) => replay::run(&args, &raw_args),
         // `vis affected <target> --sparse-checkout` — the affected project roots. Every other shape
         // forwards to `vis run --affected` and is delegated inside `affected::run`.
         "affected" if !surface::asks_for_help(&args) => affected::run(&args, &raw_args),

@@ -1,0 +1,104 @@
+{
+  "duration": 30,
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "failed-run",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 1,
+    "failed": 2,
+    "skipped": 0,
+    "succeeded": 1,
+    "total": 4
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:build": [],
+      "app:test": [],
+      "app:lint": [],
+      "app:crash": []
+    },
+    "roots": [
+      "app:build",
+      "app:test",
+      "app:lint",
+      "app:crash"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 1500,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 1,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "build"
+      },
+      "taskId": "app:build",
+      "hash": "35ce1d4eb0f666cd136987d34f64aedc",
+      "hashDetails": {
+        "command": "4e29342d9904d64e9e25fd3b92558e2f",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 20,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "test"
+      },
+      "taskId": "app:test",
+      "hash": "49af3b640275c9b552a5f3f3d96a6062"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 0,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "lint"
+      },
+      "taskId": "app:lint",
+      "hash": "3d296788f2a7e19ffbd912521d94a5f4"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 7,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": -1,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "crash"
+      },
+      "taskId": "app:crash"
+    }
+  ]
+}

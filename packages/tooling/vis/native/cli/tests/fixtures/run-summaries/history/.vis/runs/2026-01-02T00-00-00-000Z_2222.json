@@ -1,0 +1,303 @@
+{
+  "duration": 12345,
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "2026-01-02T00-00-00-000Z_2222",
+  "startTime": "2026-01-02T00:00:00.000Z",
+  "stats": {
+    "cached": 0,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 11,
+    "total": 11
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:build": [],
+      "app:same": [],
+      "app:layout": [],
+      "app:trace": [],
+      "app:fallback": [],
+      "app:deps": [],
+      "app:cmd": [],
+      "app:unicode": [],
+      "app:proto": [],
+      "app:numeric": [],
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production": []
+    },
+    "roots": [
+      "app:build",
+      "app:same",
+      "app:layout",
+      "app:trace",
+      "app:fallback",
+      "app:deps",
+      "app:cmd",
+      "app:unicode",
+      "app:proto",
+      "app:numeric",
+      "@scope/pkg-with-a-very-long-name-for-wrapping:build:production"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "build"
+      },
+      "taskId": "app:build",
+      "hash": "fbfba2e45c2045dc5cab22a5afe83d9d",
+      "hashDetails": {
+        "command": "9ab62b5ef34a985438bfdf7ee0102229",
+        "implicitDeps": {
+          "__global__": "0120a4f9196a5f9eb9f523f31f914da7",
+          "lock": "377fd569971eedeba8fbea28434a390a"
+        },
+        "layout": 2,
+        "nodes": {
+          "src/index.ts": "c82561ec215a6e31807ceedf3b3bd25e",
+          "src/Index.test.ts": "a6bbc91ae73dd21c0533f735470a9cd0",
+          "src/gone.ts": "b555773768bc1a672947d7f41f9c247f",
+          "src/a_b.ts": "ed23e9d533a3992b2bfeef6f8601a945"
+        },
+        "runtime": {
+          "node": "8286e09aa759584d6fd8292ccdc241cc",
+          "pnpm": "45c48cce2e2d7fbdea1afc51c7c6ad26"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "same"
+      },
+      "taskId": "app:same",
+      "hash": "fac989447cad2edbc89fbcba70003b36",
+      "hashDetails": {
+        "command": "95cc64dd2825f9df13ec4ad683ecf339",
+        "layout": 2,
+        "nodes": {
+          "b.ts": "c81e728d9d4c2f636f067f89cc14862c",
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "layout"
+      },
+      "taskId": "app:layout",
+      "hash": "bec25675775e9e0a0d783a5018b463e3",
+      "hashDetails": {
+        "command": "1787003ad7f0f7b13d5f37332ef72a31",
+        "layout": 3,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "trace"
+      },
+      "taskId": "app:trace",
+      "hash": "0f826a89cf68c399c5f4cf320c1a5842"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "fallback"
+      },
+      "taskId": "app:fallback",
+      "hash": "05c0472b2bc8e7d110020d4ac73f0e20",
+      "hashDetails": {
+        "command": "18a87474c42cf78430affe62fcfd1907",
+        "layout": 2,
+        "nodes": {
+          "a.ts": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "deps"
+      },
+      "taskId": "app:deps",
+      "hash": "b25b0651e4b6e887e5194135d3692631",
+      "hashDetails": {
+        "command": "6865aeb3a9ed28f9a79ec454b259e5d0",
+        "nodes": {
+          "a.ts": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "cmd"
+      },
+      "taskId": "app:cmd",
+      "hashDetails": {
+        "command": "f428f1a02e3c02fbbf10a91d2c9971da"
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "unicode"
+      },
+      "taskId": "app:unicode",
+      "hash": "270c1b084f3f146eb5787075158d9c53",
+      "hashDetails": {
+        "command": "a4dbfd6aef3b4045fe61aa0146debdf8",
+        "layout": 2,
+        "nodes": {
+          "src/ünï.ts": "cfcd208495d565ef66e7dff9f98764da",
+          "src/.ts": "eccbc87e4b5ce2fe28308fd9f2a7baf3",
+          "src/gone-é.ts": "eccbc87e4b5ce2fe28308fd9f2a7baf3"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "proto"
+      },
+      "taskId": "app:proto",
+      "hash": "1d665b9b1467944c128a5575119d1cfd",
+      "hashDetails": {
+        "command": "9c95319bf274672d6eae7eb97c3dfda5",
+        "layout": 2,
+        "nodes": {
+          "a": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "numeric"
+      },
+      "taskId": "app:numeric",
+      "hash": "a6bbc91ae73dd21c0533f735470a9cd0",
+      "hashDetails": {
+        "command": "7efdfc94655a25dcea3ec85e9bb703fa",
+        "layout": 2,
+        "nodes": {
+          "a": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "@scope/pkg-with-a-very-long-name-for-wrapping",
+        "target": "build:production"
+      },
+      "taskId": "@scope/pkg-with-a-very-long-name-for-wrapping:build:production",
+      "hash": "e69af867c1f9295a2975257271edf458",
+      "hashDetails": {
+        "command": "161747ec4dc9f55f1760195593742232",
+        "layout": 2,
+        "nodes": {
+          "a": "c81e728d9d4c2f636f067f89cc14862c",
+          "b": "c4ca4238a0b923820dcc509a6f75849b"
+        }
+      }
+    }
+  ]
+}
