@@ -38,6 +38,37 @@ interface NativeTaskGraph {
     task_ids: string[];
 }
 
+interface NativeRunDependency {
+    /** `static`, `dev` or `peer`. */
+    kind: string;
+    project: string;
+}
+
+interface NativeRunProject {
+    cache?: boolean;
+    dependencies?: NativeRunDependency[];
+    name: string;
+    outputs?: string[];
+    /** Workspace-relative project directory. */
+    root: string;
+    /** The project's script text for the run target; absent when it has none. */
+    script?: string;
+}
+
+interface NativeRunTaskKeys {
+    keys: { dependencies: string[]; hash: string; id: string; keyed: boolean }[];
+    /** Why the keys cannot be reproduced; absent when they were computed. */
+    notReproducible?: string;
+    roots: string[];
+}
+
+interface NativeRunCacheLookup {
+    code?: number;
+    notReproducible?: string;
+    status: "hit" | "miss" | "not-reproducible";
+    terminalOutput?: string;
+}
+
 interface NativeCycleResult {
     cycle: string[];
     has_cycle: boolean;
@@ -111,6 +142,14 @@ interface NativeBindings {
     hashString: (input: string) => string;
     hashStrings: (inputs: string[]) => string;
     isLinkedWorktree: (workspaceRoot: string) => boolean;
+
+    /**
+     * Inspection probes of the key and cache-lookup code shared with the native
+     * `vis` CLI (`task-runner-core`). The engine never calls them, so there is no
+     * JS fallback; the parity tests assert they equal this package's own keys.
+     */
+    nativeRunLookupEntry?: (cacheDir: string, hash: string) => NativeRunCacheLookup;
+    nativeRunTaskKeys?: (workspaceRoot: string, target: string, projects: NativeRunProject[], dependsOnDependencies: boolean) => NativeRunTaskKeys;
 
     resetWorktreeCache: () => void;
     // Concurrent process runner
@@ -284,6 +323,10 @@ export type {
     NativeCycleResult,
     NativeFileHash,
     NativeProcessEvent,
+    NativeRunCacheLookup,
+    NativeRunDependency,
+    NativeRunProject,
+    NativeRunTaskKeys,
     NativeSeccompFileAccess,
     NativeSeccompSpawnOptions,
     NativeSeccompTrackingResult,
