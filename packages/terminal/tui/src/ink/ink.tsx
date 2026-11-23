@@ -50,7 +50,9 @@ if (!(console as any).Console) {
 const noop = () => {};
 
 // Instances waiting for the event loop to drain share one process listener, so many live instances do not trip the max-listeners warning.
-const beforeExitWaiters = new Set<{ unmount: () => void }>();
+type ExitWaiter = { unmount: () => void };
+
+const beforeExitWaiters = new Set<ExitWaiter>();
 
 const onBeforeExit = (): void => {
     for (const waiter of beforeExitWaiters) {
@@ -58,7 +60,7 @@ const onBeforeExit = (): void => {
     }
 };
 
-const trackBeforeExit = (waiter: { unmount: () => void }): void => {
+const trackBeforeExit = (waiter: ExitWaiter): void => {
     if (beforeExitWaiters.size === 0) {
         process.on("beforeExit", onBeforeExit);
     }
@@ -66,7 +68,7 @@ const trackBeforeExit = (waiter: { unmount: () => void }): void => {
     beforeExitWaiters.add(waiter);
 };
 
-const untrackBeforeExit = (waiter: { unmount: () => void }): void => {
+const untrackBeforeExit = (waiter: ExitWaiter): void => {
     if (beforeExitWaiters.delete(waiter) && beforeExitWaiters.size === 0) {
         process.off("beforeExit", onBeforeExit);
     }
