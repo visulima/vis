@@ -7,4 +7,5 @@
 
 pub mod clean;
 pub mod detect;
+pub mod editorconfig;
 pub mod resolve;

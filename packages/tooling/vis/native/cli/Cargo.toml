@@ -42,6 +42,9 @@ regex = { version = "1", default-features = false, features = [
   "std",
   "perf"
 ] }
+# `vis sort-package-json`: the same sorter crate the addon runs for the Node command, so both order a file
+# identically (it adds no package to the lockfile: serde and serde_json are already there).
+sort-package-json = "1"
 # Content digests for the evaluated-config cache (src/config_cache.rs); the addon pins the same major.
 blake3 = { version = "1", default-features = false }
 # `vis secrets`: the scanner engine itself, linked as a plain crate (no napi, no addon), and the

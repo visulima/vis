@@ -2197,6 +2197,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sort-package-json",
  "task-runner-core",
  "terminal_size",
  "vis-core",
@@ -2207,6 +2208,7 @@ dependencies = [
 name = "vis-core"
 version = "0.1.0"
 dependencies = [
+ "ec4rs",
  "secret-scanner-core",
  "serde_json",
  "task-runner-core",
@@ -2218,7 +2220,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "codspeed-criterion-compat",
- "ec4rs",
  "napi",
  "napi-build",
  "napi-derive",

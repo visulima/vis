@@ -3,7 +3,7 @@
 # the `vis-native` napi addon wraps it (`src/pm_detect.rs`, `src/pm_resolve.rs`),
 # so there is one implementation of each.
 #
-# Pure std + serde_json only — no napi, so the lean CLI build stays fast.
+# Pure std + serde_json (+ the dependency-free ec4rs) only — no napi, so the lean CLI build stays fast.
 [package]
 name = "vis-core"
 version = "0.1.0"
@@ -16,6 +16,8 @@ crate-type = [ "rlib" ]
 
 [dependencies]
 serde_json = "1"
+# `.editorconfig` lookup shared by the addon and the CLI, so both resolve the same indent and line ending.
+ec4rs = "1"
 
 # Proves the engine crates of the other native packages link into the CLI's
 # napi-free dependency graph (see tests/engines.rs). Dev-only: the `vis` binary does

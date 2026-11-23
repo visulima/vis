@@ -52,9 +52,9 @@ impl Level {
         }
     }
 
-    /// pail prints the error level on stderr and every other level on stdout.
+    /// pail prints the warning and error levels on stderr and every other level on stdout.
     pub(crate) fn to_stderr(self) -> bool {
-        self == Self::Error
+        matches!(self, Self::Error | Self::Warning)
     }
 }
 
@@ -365,8 +365,8 @@ mod tests {
     }
 
     #[test]
-    fn only_the_error_level_goes_to_stderr() {
-        assert!(Level::Error.to_stderr());
-        assert!(!Level::Info.to_stderr() && !Level::Success.to_stderr() && !Level::Warning.to_stderr());
+    fn only_the_warning_and_error_levels_go_to_stderr() {
+        assert!(Level::Error.to_stderr() && Level::Warning.to_stderr());
+        assert!(!Level::Info.to_stderr() && !Level::Success.to_stderr() && !Level::Notice.to_stderr());
     }
 }
