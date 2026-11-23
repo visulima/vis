@@ -26,19 +26,16 @@ const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "
 const PROVIDER_ENVIRONMENT = /^(?:BUILD_|BUILDKITE|CI$|CI_|CIRCLE|CONTINUOUS_INTEGRATION$|GIT_|GITHUB_|GITLAB_CI$|SYSTEM_|TF_BUILD$)/u;
 
 const baseEnvironment = (): Record<string, string | undefined> => {
-    const env: Record<string, string | undefined> = {
+    const withOverrides: Record<string, string | undefined> = {
         ...process.env,
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_CONFIG_NOSYSTEM: "1",
         VIS_CLI_TEST: "1",
         VIS_NO_UPDATE_CHECK: "1",
     };
-
-    for (const key of Object.keys(env)) {
-        if (PROVIDER_ENVIRONMENT.test(key) && key !== "GIT_CONFIG_GLOBAL" && key !== "GIT_CONFIG_NOSYSTEM") {
-            delete env[key];
-        }
-    }
+    const env: Record<string, string | undefined> = Object.fromEntries(
+        Object.entries(withOverrides).filter(([key]) => key === "GIT_CONFIG_GLOBAL" || key === "GIT_CONFIG_NOSYSTEM" || !PROVIDER_ENVIRONMENT.test(key)),
+    );
 
     delete env["VIS_FALLBACK_ENTRY"];
     delete env["VIS_FALLBACK_ENTRY_OVERRIDE"];

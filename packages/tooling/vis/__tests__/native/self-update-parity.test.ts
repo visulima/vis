@@ -58,9 +58,9 @@ interface Case {
     stub?: Stub;
 }
 
-let scratch = "";
-let nativeBinary = "";
-let counter = 0;
+let scratch: string;
+let nativeBinary: string;
+let counter: number;
 
 const STUB_NPM = `#!/bin/sh
 echo "$*" >> "$STUB_LOG"
@@ -159,6 +159,7 @@ const withoutStack = (text: string): string =>
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry) || !hasAddon)("vis self-update: native vs Node", () => {
     beforeAll(() => {
+        counter = 0;
         scratch = mkdtempSync(join(tmpdir(), "vis-self-update-parity-"));
         mkdirSync(join(scratch, "no-npm"));
         nativeBinary = join(scratch, "vis");
@@ -183,18 +184,16 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["the registry answers with a newer version", { args: ["--check"], current: "9.9.9", stub: { latest: "10.0.0-next.3" } }],
     ];
 
-    for (const [label, test] of NATIVE) {
-        it(`${label}: vis self-update ${test.args.join(" ")}`, { timeout: 30_000 }, () => {
-            const native = runNative(test);
-            const node = runNode(test);
+    it.each(NATIVE.map(([label, test]): [string, Case] => [`${label}: vis self-update ${test.args.join(" ")}`, test]))("%s", { timeout: 30_000 }, (_title, test) => {
+        const native = runNative(test);
+        const node = runNode(test);
 
-            expect(native.stdout).not.toContain(marker);
-            expect(native.stdout).toBe(node.stdout);
-            expect(native.stderr).toBe(node.stderr);
-            expect(native.status).toBe(node.status);
-            expect(native.calls).toBe(node.calls);
-        });
-    }
+        expect(native.stdout).not.toContain(marker);
+        expect(native.stdout).toBe(node.stdout);
+        expect(native.stderr).toBe(node.stderr);
+        expect(native.status).toBe(node.status);
+        expect(native.calls).toBe(node.calls);
+    });
 
     it("shows what the stub does: Node's own output for an update", { timeout: 30_000 }, () => {
         const node = runNode({ args: [], current: "1.0.0" });
@@ -212,8 +211,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a warning on the query's stderr", { args: [], current: "1.0.0", stub: { warn: "npm warn something" } }],
     ];
 
-    for (const [label, test] of INSTALLS) {
-        it(`delegates an install before printing, and Node's run is the whole output: ${label}`, { timeout: 30_000 }, () => {
+    it.each(INSTALLS.map(([label, test]): [string, Case] => [`delegates an install before printing, and Node's run is the whole output: ${label}`, test]))(
+        "%s",
+        { timeout: 30_000 },
+        (_title, test) => {
             const native = runNative(test);
             const delegated = runNative(test, { realEntry: true });
             const node = runNode(test);
@@ -226,8 +227,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             // The native query, then Node's own query and the one install.
             expect(delegated.calls).toBe(`view @visulima/vis version\n${node.calls}`);
             expect(delegated.calls.match(/^install /gm)).toHaveLength(1);
-        });
-    }
+        },
+    );
 
     /** Shapes and contexts the native path hands to Node: before npm is run at all, and with the marker shown. */
     const DELEGATED: [label: string, test: Case, extra?: Record<string, string | undefined>, prepare?: (cwd: string) => void][] = [
@@ -248,14 +249,12 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a Deno file", { args: ["--check"] }, {}, (cwd) => { writeFileSync(join(cwd, "deno.json"), "{}\n"); }],
     ];
 
-    for (const [label, test, extra, prepare] of DELEGATED) {
-        it(`delegates ${label} before npm is run`, { timeout: 30_000 }, () => {
-            const native = runNative(test, { extra, prepare });
+    it.each(DELEGATED.map(([label, ...rest]): [string, ...typeof rest] => [`delegates ${label} before npm is run`, ...rest]))("%s", { timeout: 30_000 }, (_title, test, extra, prepare) => {
+        const native = runNative(test, { extra, prepare });
 
-            expect(native.stdout).toContain(marker);
-            expect(native.calls).toBe("");
-        });
-    }
+        expect(native.stdout).toContain(marker);
+        expect(native.calls).toBe("");
+    });
 
     it("delegates a failing query, and Node then reports the same error", { timeout: 30_000 }, () => {
         const test: Case = { args: ["--check"], current: "1.0.0", stub: { viewStatus: 1 } };
