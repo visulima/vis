@@ -22,10 +22,10 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 
-let scratch = "";
-let nativeBinary = "";
-let workspace = "";
-let log = "";
+let scratch: string;
+let nativeBinary: string;
+let workspace: string;
+let log: string;
 
 const environment = (): Record<string, string> => {
     return {

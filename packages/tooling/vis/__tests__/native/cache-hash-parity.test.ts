@@ -26,11 +26,11 @@ const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const fixturesRoot = join(packageRoot, "native", "cli", "tests", "fixtures", "cache-hash");
 
-let scratch = "";
+let scratch: string;
 // A copy outside the package: a binary inside it reads its own location and hands declined
 // invocations to `dist/bin.js` itself, which would make the native path look like it answered.
-let nativeBinary = "";
-let counter = 0;
+let nativeBinary: string;
+let counter: number;
 
 /** The cache entries a fixture ships (`node_modules` is gitignored) go where `vis run` would have stored them. */
 const placeCacheEntries = (root: string): void => {
@@ -164,6 +164,7 @@ const nodeAddonLoads = (): boolean => {
 
 describe.skipIf(process.platform === "win32" || !nodeAddonLoads())("vis cache hash: native vs Node", () => {
     beforeAll(() => {
+        counter = 0;
         scratch = mkdtempSync(join(tmpdir(), "vis-cache-hash-parity-"));
         nativeBinary = join(scratch, "bin", "vis");
 

@@ -364,4 +364,52 @@ describe("sanitize-ansi", () => {
         expect(output).not.toContain("evil");
         expect(stripAnsi(output)).toBe("AB");
     });
+
+    describe("osc 8 validation", () => {
+        it.each([
+            ["a C0 control in the URI", "\u001B]8;;https://exa\u0001mple.com\u001B\\"],
+            ["DEL in the URI", "\u001B]8;;https://exa\u007Fmple.com\u001B\\"],
+            ["a C1 control in the URI", "\u001B]8;;https://exa\u0085mple.com\u001B\\"],
+            ["a control character in the params", "\u001B]8;id=\u0002a;https://example.com\u001B\\"],
+            ["an escaped ESC in the URI", "\u001B]8;;https://example.com/\u001B\u001Bevil\u001B\\"],
+            ["a missing separator", "\u001B]8;https://example.com\u001B\\"],
+            ["a missing separator and no URI", "\u001B]8;\u0007"],
+            ["a C1 introducer with a missing separator", "\u009D8;https://example.com\u009C"],
+        ])("drops an OSC 8 sequence with %s", (_name, sequence) => {
+            expect.assertions(1);
+
+            expect(sanitizeAnsi(`A${sequence}link\u001B]8;;\u001B\\B`)).toBe("Alink\u001B]8;;\u001B\\B");
+        });
+
+        it("drops an OSC 8 sequence whose payload hides a CSI escape", () => {
+            expect.assertions(1);
+
+            expect(sanitizeAnsi("A\u001B]8;;https://example.com\u001B[2Jb\u0007C")).toBe("AC");
+        });
+
+        it("ends a hyperlink at the first terminator and keeps the rest as plain text", () => {
+            expect.assertions(1);
+
+            expect(sanitizeAnsi("\u001B]8;;https://example.com/\u0007evil\u001B\\")).toBe("\u001B]8;;https://example.com/\u0007evil");
+        });
+
+        it("keeps visible text between a dropped open and a valid close", () => {
+            expect.assertions(1);
+
+            expect(sanitizeAnsi("\u001B]8;https://example.com\u0007text\u001B]8;;\u0007")).toBe("text\u001B]8;;\u0007");
+        });
+
+        it.each([
+            ["id params", "\u001B]8;id=abc;https://example.com\u001B\\"],
+            ["multiple params", "\u001B]8;id=abc:foo=bar;https://example.com\u0007"],
+            ["a semicolon inside the URI", "\u001B]8;;https://example.com/a;b\u0007"],
+            ["an empty URI (link close)", "\u001B]8;;\u001B\\"],
+            ["an empty URI with params", "\u001B]8;id=abc;\u0007"],
+            ["a C1 introducer and C1 ST", "\u009D8;;https://example.com\u009C"],
+        ])("keeps a well-formed OSC 8 sequence with %s", (_name, sequence) => {
+            expect.assertions(1);
+
+            expect(sanitizeAnsi(`A${sequence}link${sequence}B`)).toBe(`A${sequence}link${sequence}B`);
+        });
+    });
 });
