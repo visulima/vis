@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -223,6 +223,21 @@ interface DelegatedCase {
 
 const labelOf = (parity: { args: string[]; fixture: string; label?: string }): string => `${parity.fixture}: ${parity.label ?? `vis ${parity.args.join(" ")}`}`;
 
+/** Every file under a side's project and home, so that what one side writes the other must write too. */
+const tree = (setup: Setup): string[] => [...readdirSync(dirname(setup.cwd), { recursive: true }).map(String)].filter((path) => !path.startsWith("bin")).toSorted();
+
+const sameFilesAsNode = (fixture: string, args: string[], ci: boolean): [string[], string[], string[]] => {
+    // Each side in a project and a home of its own, so one cannot see what the other wrote.
+    const nodeSide = project(fixture);
+    const nativeSide = project(fixture);
+    const before = tree(nodeSide);
+
+    runNode(nodeSide, args, { VIS_NO_UPDATE_CHECK: UNSET }, ci);
+    runNative(nativeSide, args, { VIS_NO_UPDATE_CHECK: UNSET }, ci);
+
+    return [tree(nativeSide), tree(nodeSide), before];
+};
+
 /** Both sides run the same call in a project of their own. */
 const compare = (parity: ParityCase): { native: Run; node: Run } => {
     const setup = project(parity.fixture, parity.files, parity.directory);
@@ -403,6 +418,15 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
             expect(runNative(setup, ["info", "react"]).stdout).toContain(marker);
         });
 
+        it.each(["npm-root", "pnpm-root", "pnpm-single"])("%s: leaves the same files behind as Node, in the project and in HOME", (fixture: string) => {
+            expect.assertions(2);
+
+            const [native, node, before] = sameFilesAsNode(fixture, ["info", "react", "version"], true);
+
+            expect(native).toStrictEqual(node);
+            expect(node).toStrictEqual(before);
+        });
+
         it("hands the manager the real stdout, stderr and exit code", () => {
             expect.assertions(3);
 
@@ -489,8 +513,8 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
         { args: ["dlx", "--no-info", "cowsay"], files: { ".yarnrc.yml": "nodeLinker: node-modules\n" }, fixture: "pnpm-bare", label: "a yarn config file and no lockfile" },
         { args: ["dlx", "--no-info", "cowsay"], files: { "bunfig.toml": "" }, fixture: "pnpm-bare", label: "a bunfig.toml and no lockfile" },
         // A terminal-less run outside CI is the same run.
-        ...["pnpm-single", "npm-single", "bun-single"].map((fixture) => { return { args: ["dlx", "--no-info", "cowsay", "hi"], ci: false, fixture, label: "outside CI" }; }),
-        { args: ["dlx", "./local.js"], ci: false, fixture: "pnpm-single", label: "a path outside CI" },
+        ...["pnpm-single", "npm-single", "bun-single"].map((fixture) => { return { args: ["dlx", "--no-info", "cowsay", "hi"], ci: false, env: { VIS_NO_UPDATE_CHECK: UNSET }, fixture, label: "outside CI, with the update check on" }; }),
+        { args: ["dlx", "./local.js"], ci: false, env: { VIS_NO_UPDATE_CHECK: UNSET }, fixture: "pnpm-single", label: "a path outside CI, with the update check on" },
         // A user agent in the environment names a manager without a version; neither side lets it pick the manager.
         { args: ["dlx", "--no-info", "cowsay"], env: { npm_config_user_agent: "yarn/1.22.19 npm/? node/v22.23.4 darwin arm64" }, fixture: "yarn-single", label: "a yarn user agent" },
         { args: ["dlx", "--no-info", "cowsay"], env: { npm_config_user_agent: "npm/10.0.0 node/v22.23.4 darwin arm64" }, fixture: "pnpm-single", label: "an npm user agent" },
@@ -602,6 +626,15 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
             rmSync(join(setup.bindir, "pnpm"));
 
             expect(runNative(setup, ["dlx", "--no-info", "cowsay"]).stdout).toContain(marker);
+        });
+
+        it.each([true, false])("leaves the same files behind as Node, in the project and in HOME (CI: %s)", (ci: boolean) => {
+            expect.assertions(2);
+
+            const [native, node, before] = sameFilesAsNode("pnpm-single", ["dlx", "--no-info", "cowsay", "hi"], ci);
+
+            expect(native).toStrictEqual(node);
+            expect(node).toStrictEqual(before);
         });
 
         it("hands the manager the real stdin, stdout, stderr and exit code", () => {
