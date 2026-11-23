@@ -245,7 +245,7 @@ const renderScreenReaderStaticOutput = (node: DOMElement): string => {
 };
 
 const renderInteractiveStaticOutput = (node: DOMElement): string => {
-    if (!node.staticNode?.yogaNode) {
+    if (!node.yogaNode || !node.staticNode?.yogaNode) {
         return "";
     }
 
