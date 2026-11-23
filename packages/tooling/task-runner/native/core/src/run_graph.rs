@@ -135,7 +135,8 @@ pub struct RunTask {
     pub root: String,
     /// The script text, which Node runs and hashes.
     pub command: String,
-    /// Ids of the tasks this one depends on, in project-graph order, without repeats.
+    /// Ids of the tasks this one depends on: one per project-graph edge, in project-graph order. A project reached
+    /// by two edges (a `dependencies` and a `devDependencies` entry) is listed twice, as Node lists it.
     pub dependencies: Vec<String>,
 }
 
@@ -273,11 +274,7 @@ pub fn build_task_graph(
                     continue;
                 }
 
-                let dependency_id = format!("{}:{target}", dependency.project);
-
-                if !dependencies.contains(&dependency_id) {
-                    dependencies.push(dependency_id);
-                }
+                dependencies.push(format!("{}:{target}", dependency.project));
             }
         }
 
@@ -395,11 +392,13 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_edge_is_listed_once() {
+    fn a_project_reached_by_two_edges_is_listed_twice_as_node_does() {
         let projects = [project("a", Some("x"), &[]), project("b", Some("x"), &[("a", Static), ("a", Dev)])];
         let graph = build_task_graph("build", &projects, DependsOn::DependenciesSameTarget).unwrap();
 
-        assert_eq!(deps(&graph, "b:build"), ["a:build"]);
+        assert_eq!(deps(&graph, "b:build"), ["a:build", "a:build"]);
+        assert_eq!(graph.roots, ["b:build"]);
+        assert_eq!(graph.execution_order().unwrap().len(), 2);
     }
 
     #[test]

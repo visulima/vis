@@ -148,7 +148,7 @@ fn project_nodes(workspace_root: &str, task: &RunTask) -> Result<Vec<Vec<String>
     Ok(nodes)
 }
 
-/// Computes the key of every task of `run <target>`.
+/// Computes the key of every task of `run <target>`. Windows is not reproduced.
 ///
 /// `workspace_root` is the absolute workspace directory, `projects` the workspace
 /// in project order. See [`build_task_graph`] for the supported shape and
@@ -214,7 +214,7 @@ pub fn compute_task_keys(
     Ok(TaskKeys { graph, keys })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
     use crate::run_graph::{DependencyKind, ProjectDependency};
@@ -400,5 +400,18 @@ mod tests {
                 Err(NotReproducible::UnsafeWorkspaceRoot(_))
             ));
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn windows_is_handed_to_node() {
+        assert_eq!(
+            compute_task_keys("C:/ws", "build", &[], DependsOn::Nothing).unwrap_err(),
+            NotReproducible::UnsupportedPlatform
+        );
     }
 }

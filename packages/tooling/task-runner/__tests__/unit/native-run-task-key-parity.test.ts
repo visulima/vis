@@ -11,23 +11,25 @@ import { dirname, join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import type { NativeRunProject } from "../../index";
+import { nativeRunLookupEntry, nativeRunTaskKeys } from "../../index.js";
 import { Cache } from "../../src/cache";
 import { EmptyLifeCycle } from "../../src/life-cycle";
 import type { NativeRunProject } from "../../src/native-binding";
-import { loadNativeBindings } from "../../src/native-binding";
 import { createTaskGraph } from "../../src/task-graph";
 import { InProcessTaskHasher } from "../../src/task-hasher";
 import { TaskOrchestrator } from "../../src/task-orchestrator";
 import { TaskScheduler } from "../../src/task-scheduler";
 import type { DependencyType, ProjectConfiguration, ProjectGraph, TargetConfiguration, Task, TaskExecutor, TaskGraph } from "../../src/types";
 
-const native = loadNativeBindings();
-
-if (typeof native?.nativeRunTaskKeys !== "function" || typeof native.nativeRunLookupEntry !== "function") {
+// The probes come straight from the generated loader: nothing in the engine calls them, so `native-binding.ts` does
+// not wrap them. A stale binary without them must fail this suite, not skip it.
+if (typeof nativeRunTaskKeys !== "function" || typeof nativeRunLookupEntry !== "function") {
     throw new TypeError("the loaded addon has no nativeRunTaskKeys / nativeRunLookupEntry: rebuild it with `pnpm build:native:debug`");
 }
 
-const { nativeRunLookupEntry, nativeRunTaskKeys } = native;
+// The native run answers POSIX workspaces only; Windows is handed to Node.
+const isWindows = process.platform === "win32";
 
 const TARGET = "build";
 
@@ -238,13 +240,13 @@ const chain: ProjectSpec[] = [
 ];
 
 const diamond: ProjectSpec[] = [
-    { dependencies: [{ project: "b" }, { kind: "dev", project: "c" }], name: "d", script: "node build.js" },
+    { dependencies: [{ project: "b" }, { kind: "dev", project: "c" }, { project: "c" }], name: "d", script: "node build.js" },
     { dependencies: [{ project: "a" }], name: "b", script: "node build.js" },
     { dependencies: [{ project: "a" }], name: "c", script: "node build.js" },
     { name: "a", script: "node build.js" },
 ];
 
-describe("native run task keys equal the orchestrator's keys", () => {
+describe.skipIf(isWindows)("native run task keys equal the orchestrator's keys", () => {
     it.each([
         ["chain", chain],
         ["diamond", diamond],
@@ -432,7 +434,7 @@ describe("native run task keys equal the orchestrator's keys", () => {
     });
 });
 
-describe("what the native run does not reproduce", () => {
+describe.skipIf(isWindows)("what the native run does not reproduce", () => {
     it.each([
         ["a task that disables the cache", [{ cache: false, name: "a", script: "tsc" }], /disables the cache/],
         ["a task with declared outputs", [{ name: "a", outputs: ["{projectRoot}/dist"], script: "tsc" }], /declares outputs/],
