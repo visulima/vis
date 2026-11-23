@@ -49,6 +49,29 @@ if (!(console as any).Console) {
 
 const noop = () => {};
 
+// Instances waiting for the event loop to drain share one process listener, so many live instances do not trip the max-listeners warning.
+const beforeExitWaiters = new Set<{ unmount: () => void }>();
+
+const onBeforeExit = (): void => {
+    for (const waiter of beforeExitWaiters) {
+        waiter.unmount();
+    }
+};
+
+const trackBeforeExit = (waiter: { unmount: () => void }): void => {
+    if (beforeExitWaiters.size === 0) {
+        process.on("beforeExit", onBeforeExit);
+    }
+
+    beforeExitWaiters.add(waiter);
+};
+
+const untrackBeforeExit = (waiter: { unmount: () => void }): void => {
+    if (beforeExitWaiters.delete(waiter) && beforeExitWaiters.size === 0) {
+        process.off("beforeExit", onBeforeExit);
+    }
+};
+
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
 const countLines = (text: string): number => {
     if (text === "") {
@@ -340,8 +363,6 @@ export default class Ink {
     private readonly exitPromise!: Promise<unknown>;
 
     private exitResult: unknown;
-
-    private beforeExitHandler?: () => void;
 
     private restoreConsole?: () => void;
 
@@ -1289,10 +1310,7 @@ export default class Ink {
 
         this.isUnmounting = true;
 
-        if (this.beforeExitHandler) {
-            process.off("beforeExit", this.beforeExitHandler);
-            this.beforeExitHandler = undefined;
-        }
+        untrackBeforeExit(this);
 
         const stdout = this.options.stdout as MaybeWritableStream;
         const { canWriteToStdout, hasWritableState } = getWritableStreamState(stdout);
@@ -1446,12 +1464,8 @@ export default class Ink {
         // PTY), the event loop drains naturally and beforeExit triggers a
         // clean unmount.
         // After (or during) unmount nothing would ever remove the listener again.
-        if (!this.beforeExitHandler && !this.isUnmounted && !this.isUnmounting) {
-            this.beforeExitHandler = () => {
-                this.unmount();
-            };
-
-            process.on("beforeExit", this.beforeExitHandler);
+        if (!this.isUnmounted && !this.isUnmounting) {
+            trackBeforeExit(this);
         }
 
         return this.exitPromise;
