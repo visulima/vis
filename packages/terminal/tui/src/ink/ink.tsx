@@ -1151,6 +1151,10 @@ export default class Ink {
     private accessibilityContextValue: { isScreenReaderEnabled: boolean } | undefined;
 
     render(node: ReactNode): void {
+        if (this.isUnmounted || this.isUnmounting) {
+            return;
+        }
+
         this.accessibilityContextValue ??= { isScreenReaderEnabled: this.isScreenReaderEnabled };
 
         const tree = (
