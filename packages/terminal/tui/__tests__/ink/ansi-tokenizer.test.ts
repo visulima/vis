@@ -404,14 +404,16 @@ describe("ansi-tokenizer", () => {
     });
 
     describe(parseOsc8Uri, () => {
-        it.each(["\u001B]8;;https://example.com\u001B\\", "\u001B]8;id=a;https://example.com\u0007", "\u001B]8;;\u0007", "\u009D8;;https://example.com\u009C"])(
-            "accepts %j",
-            (value) => {
-                expect.assertions(1);
+        it.each([
+            ["\u001B]8;;https://example.com\u001B\\", "https://example.com"],
+            ["\u001B]8;id=a:b=c;https://example.com/x;y\u0007", "https://example.com/x;y"],
+            ["\u001B]8;;\u0007", ""],
+            ["\u009D8;;https://example.com\u009C", "https://example.com"],
+        ])("accepts %j", (value, uri) => {
+            expect.assertions(1);
 
-                expect(parseOsc8Uri(value)).toBeDefined();
-            },
-        );
+            expect(parseOsc8Uri(value)).toBe(uri);
+        });
 
         it.each([
             "\u001B]8;https://example.com\u0007",
@@ -426,15 +428,6 @@ describe("ansi-tokenizer", () => {
             expect.assertions(1);
 
             expect(parseOsc8Uri(value)).toBeUndefined();
-        });
-    });
-
-    describe("parseOsc8Uri result", () => {
-        it("returns the URI, including semicolons, and an empty string for a link close", () => {
-            expect.assertions(2);
-
-            expect(parseOsc8Uri("\u001B]8;id=a:b=c;https://example.com/x;y\u001B\\")).toBe("https://example.com/x;y");
-            expect(parseOsc8Uri("\u001B]8;;\u0007")).toBe("");
         });
     });
 });

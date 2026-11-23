@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { styledLineWidth } from "../../src/ink/measure-text";
 import { textToStyledLine } from "../../src/ink/styled-line-factory";
 
-describe("textToStyledLine hyperlinks", () => {
+describe(textToStyledLine, () => {
     it("attaches a well-formed link to the text it wraps", () => {
         expect.assertions(3);
 
@@ -46,20 +46,20 @@ describe("textToStyledLine hyperlinks", () => {
     it("keeps a combining mark after a hyperlink sequence in its base cell", () => {
         expect.assertions(3);
 
-        const line = textToStyledLine("\u001B]8;;https://example.com\u0007e\u001B]8;;\u0007́x");
+        const line = textToStyledLine("\u001B]8;;https://example.com\u0007e\u001B]8;;\u0007\u0301x");
 
         expect(line).toHaveLength(2);
-        expect(line.getValue(0)).toBe("é");
+        expect(line.getValue(0)).toBe("e\u0301");
         expect(line.getValue(1)).toBe("x");
     });
 
     it("keeps a combining mark after an SGR sequence in its base cell", () => {
         expect.assertions(2);
 
-        const line = textToStyledLine("e\u001B[1ḿx");
+        const line = textToStyledLine("e\u001B[1m\u0301x");
 
         expect(line).toHaveLength(2);
-        expect(line.getValue(0)).toBe("é");
+        expect(line.getValue(0)).toBe("e\u0301");
     });
 
     it("measures a combining mark after a hyperlink sequence as zero width", () => {
