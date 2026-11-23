@@ -6,7 +6,7 @@
 //! toolchain pin, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
 //! does it write `.vis/last-summary.json` and print what the Node static renderer prints for such a run.
 //!
-//! What the answer covers (see the notes of plan 010 for the effect-by-effect table):
+//! What the answer covers:
 //!
 //! * the invocation `run <target>` and nothing else: no flag, no further argument;
 //! * a CI context (`CI` set, stderr and stdout not terminals, plain colour level 0, no CI log grouping),
@@ -73,7 +73,8 @@ const TOOLCHAIN_FILES: [&str; 6] =
     [".nvmrc", ".node-version", ".tool-versions", ".prototools", ".mise.toml", "mise.toml"];
 
 /// Lockfiles of the other package managers; the lockfile preflight looks at the first one it finds.
-const OTHER_LOCKFILES: [&str; 5] = ["aube-lock.yaml", "bun.lock", "bun.lockb", "package-lock.json", "yarn.lock"];
+const OTHER_LOCKFILES: [&str; 6] =
+    ["aube-lock.yaml", "bun.lock", "bun.lockb", "npm-shrinkwrap.json", "package-lock.json", "yarn.lock"];
 
 /// `MTIME_SKEW_MS` of the lockfile preflight.
 const MTIME_SKEW_MS: f64 = 1000.0;
@@ -99,6 +100,13 @@ fn plain(text: &str) -> bool {
     !text.is_empty() && !text.starts_with('-') && text.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
+/// `CI` itself is set to something other than `0`, `false` or nothing. Parts of the Node run read
+/// `process.env.CI` directly while the CI check (`is-in-ci`) also accepts `CONTINUOUS_INTEGRATION`, so
+/// only the case where both agree is answered here.
+fn ci_variable() -> bool {
+    env::var("CI").is_ok_and(|value| !value.is_empty() && value != "0" && value != "false")
+}
+
 fn variable_set(name: &str) -> bool {
     env::var_os(name).is_some()
 }
@@ -106,7 +114,7 @@ fn variable_set(name: &str) -> bool {
 /// The part of the context only the process knows: where the output goes, which variables are set,
 /// who started the binary. The workspace is looked at later.
 fn environment_is_plain(args: &[String]) -> bool {
-    if !in_ci() || std::io::stdout().is_terminal() || std::io::stderr().is_terminal() {
+    if !in_ci() || !ci_variable() || std::io::stdout().is_terminal() || std::io::stderr().is_terminal() {
         return false;
     }
 
@@ -699,14 +707,26 @@ fn write_summary(answer: &Answer) -> Option<()> {
     fs::write(directory.join("last-summary.json"), answer.summary()).ok()
 }
 
+/// Leaves the run to Node, with nothing printed or written. A binary started by the JS launcher, which is
+/// already a Node process, gets the run back instead of starting a second Node: the launcher names a status in
+/// `VIS_HANDBACK_STATUS` and runs the Node CLI in its own process when the binary exits with it. Started any
+/// other way, the binary starts Node itself.
+fn leave_to_node(raw_args: &[OsString]) -> ! {
+    if let Some(status) = env::var("VIS_HANDBACK_STATUS").ok().and_then(|text| text.parse::<i32>().ok()) {
+        exit(status);
+    }
+
+    crate::delegate(raw_args)
+}
+
 /// Answers `vis run <target>` natively when every task hits, or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some(answer) = attempt(args) else { crate::delegate(raw_args) };
+    let Some(answer) = attempt(args) else { leave_to_node(raw_args) };
 
     // The summary comes first: if it cannot be written, Node reports that (on stderr) and this run
     // has printed nothing.
     if write_summary(&answer).is_none() {
-        crate::delegate(raw_args);
+        leave_to_node(raw_args);
     }
 
     let mut stdout = std::io::stdout().lock();

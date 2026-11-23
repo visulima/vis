@@ -27,6 +27,10 @@ const marker = "NATIVE-DELEGATED";
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 interface Shape {
+    /** Every third package lives under `apps/` (a second workspace pattern) instead of `packages/`. */
+    apps?: boolean;
+    /** Many files per package, created in an order that is not the sorted one, with mixed case, `_`, `-`, digits and non-ASCII names. */
+    busy?: boolean;
     /** Every package depends on the one before it. */
     chain?: boolean;
     packages: number;
@@ -38,6 +42,11 @@ interface Shape {
 
 const packageName = (shape: Shape, index: number): string => (shape.scoped ? `@acme/p${index}` : `p${index}`);
 
+const directoryOf = (shape: Shape, index: number): string => (shape.apps && index % 3 === 0 ? `apps/p${index}` : `packages/p${index}`);
+
+/** Not in sorted order on purpose: the key order of `hashDetails.nodes` is part of what is compared. */
+const BUSY_FILES = ["src/b.ts", "src/Bb.ts", "src/_private.ts", "src/10.ts", "src/2.ts", "src/a-b.ts", "src/a_b.ts", "src/a.b.ts", "src/Zed/inner.ts", "src/yed/inner.ts", "src/\u00FCn\u00EF.ts", "z.md", "A.md"];
+
 const write = (root: string, file: string, content: string): void => {
     mkdirSync(dirname(join(root, file)), { recursive: true });
     writeFileSync(join(root, file), content);
@@ -46,7 +55,7 @@ const write = (root: string, file: string, content: string): void => {
 /** A pnpm workspace the native path accepts: lockfile, a fresh install marker, scripts only, no config. */
 const generate = (root: string, shape: Shape): void => {
     write(root, "package.json", JSON.stringify({ name: "root", private: true, scripts: { build: "echo root-build" } }, undefined, 2));
-    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "pnpm-workspace.yaml", `packages:\n  - "packages/*"\n${shape.apps ? '  - "apps/*"\n' : ""}`);
     write(root, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
     write(root, "node_modules/.modules.yaml", "layoutVersion: 5\n");
 
@@ -62,13 +71,15 @@ const generate = (root: string, shape: Shape): void => {
 
     for (let index = 1; index <= shape.packages; index += 1) {
         const name = packageName(shape, index);
-        const directory = `packages/p${index}`;
+        const directory = directoryOf(shape, index);
         const scripts: Record<string, string> = { test: "true" };
 
         if (!shape.withoutScript?.includes(index)) {
             // Half of the tasks print something, so the stored output is replayed for them.
             scripts["build"] = index % 2 === 0 ? `echo built-${index}` : "true";
         }
+
+        const hasScripts = !shape.noScripts?.includes(index);
 
         write(
             root,
@@ -77,7 +88,7 @@ const generate = (root: string, shape: Shape): void => {
                 {
                     dependencies: shape.chain && index > 1 ? { [packageName(shape, index - 1)]: "workspace:*" } : undefined,
                     name,
-                    scripts,
+                    scripts: shape.emptyScripts?.includes(index) ? {} : hasScripts ? scripts : undefined,
                     version: "1.0.0",
                 },
                 undefined,
@@ -86,6 +97,10 @@ const generate = (root: string, shape: Shape): void => {
         );
         write(root, `${directory}/src/index.ts`, `export const value${index} = ${index};\n`);
         write(root, `${directory}/src/nested/util.ts`, `export const util${index} = ${index};\n`);
+
+        for (const file of shape.busy ? BUSY_FILES : []) {
+            write(root, `${directory}/${file}`, `export const file${index} = ${JSON.stringify(file)};\n`);
+        }
     }
 };
 
@@ -137,6 +152,10 @@ const runNative = (cwd: string, args: string[], stub: string, env: Record<string
             ...(handoff ? { VIS_HANDOFF: "launcher", VIS_NODE_VERSION: process.version } : {}),
         },
     });
+
+/** `node bin/vis.mjs`, the way `vis` starts when the native executable is not installed at `bin/vis`. */
+const runLauncher = (cwd: string, args: string[], stub: string, env: Record<string, string> = baseEnvironment()) =>
+    spawnSync(process.execPath, [join(packageRoot, "bin", "vis.mjs"), ...args], { cwd, encoding: "utf8", env: { ...env, VIS_FALLBACK_ENTRY_OVERRIDE: stub } });
 
 const mask = (text: string): string =>
     text
@@ -238,6 +257,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a project without the script", { packages: 6, withoutScript: [2, 5] }],
         ["scoped names", { chain: true, packages: 4, scoped: true }],
         ["a global tsconfig.json", { packages: 5, tsconfig: true }],
+        ["many files and two workspace patterns", { apps: true, busy: true, chain: true, packages: 9 }],
+        ["projects with no scripts", { emptyScripts: [4], noScripts: [2], packages: 6 }],
     ];
 
     describe.each(shapes)("%s", (name, shape) => {
@@ -476,8 +497,19 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("there is no lockfile", (root) => {
             rmSync(join(root, "pnpm-lock.yaml"));
         });
-        delegated("another package manager's lockfile exists", (root) => {
-            write(root, "package-lock.json", "{}\n");
+        it.each(["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb", "aube-lock.yaml"])("delegates when %s exists", (lockfile) => {
+            expect.assertions(3);
+
+            const root = fresh(base.root);
+
+            write(root, lockfile, "{}\n");
+
+            const before = snapshot(root);
+            const native = runNative(root, ["run", "build"], paths.stub);
+
+            expect(native.stdout).toBe(`${marker}\n`);
+            expect(native.status).toBe(99);
+            expect(snapshot(root)).toStrictEqual(before);
         });
         delegated("the lockfile is newer than the install", (root) => {
             const later = Date.now() / 1000 + 600;
@@ -505,11 +537,17 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("a script uses a ${ token", (root) => {
             write(root, "packages/p2/package.json", JSON.stringify({ name: "p2", scripts: { build: "echo ${affected.files}" } }));
         });
+        delegated("a package has an inference marker (tsconfig.json)", (root) => {
+            write(root, "packages/p2/tsconfig.json", "{}\n");
+        });
         delegated("a package has an inference marker (vite.config.ts)", (root) => {
             write(root, "packages/p2/vite.config.ts", "export default {};\n");
         });
         delegated("a package's script target is missing in every project", () => undefined, undefined, ["run", "nothing-defines-this"]);
         delegated("not in CI", () => undefined, baseEnvironment({}, false));
+        delegated("only CONTINUOUS_INTEGRATION is set", () => undefined, baseEnvironment({ CONTINUOUS_INTEGRATION: "1" }, false));
+        delegated("CI is empty", () => undefined, baseEnvironment({ CI: "" }, false));
+        delegated("CI is false", () => undefined, baseEnvironment({ CI: "false" }, false));
         delegated("the process was not started by the launcher", () => undefined, undefined, ["run", "build"], false);
         delegated("a flag is given", () => undefined, undefined, ["run", "build", "--no-cache"]);
         delegated("--parallel is given", () => undefined, undefined, ["run", "build", "--parallel=2"]);
@@ -541,6 +579,51 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(native.stdout).not.toContain(marker);
             expect(native.status).toBe(0);
+        });
+
+        it("through the launcher, answers a hit natively and runs Node in the same process for a miss", () => {
+            expect.assertions(7);
+
+            const hit = fresh(base.root);
+            const answered = runLauncher(hit, ["run", "build"], paths.stub);
+
+            expect(answered.stdout).not.toContain(marker);
+            expect(answered.status).toBe(0);
+
+            const missed = fresh(base.root);
+
+            write(missed, "packages/p3/src/index.ts", "export const changed = true;\n");
+
+            const before = snapshot(missed);
+            const handed = runLauncher(missed, ["run", "build"], paths.stub);
+
+            // The marker once: the binary handed the run back, and the launcher's own Node CLI printed it.
+            expect(handed.stdout).toBe(`${marker}\n`);
+            expect(handed.stderr).toBe("");
+            expect(handed.status).toBe(99);
+            expect(snapshot(missed)).toStrictEqual(before);
+            expect(runLauncher(missed, ["run", "build", "--no-cache"], paths.stub).stdout).toBe(`${marker}\n`);
+        });
+
+        it("hands a run it cannot answer back with the launcher's status, and only for a launcher start", () => {
+            expect.assertions(5);
+
+            const root = fresh(base.root);
+
+            write(root, "packages/p3/src/index.ts", "export const changed = true;\n");
+
+            const env = baseEnvironment({ VIS_HANDBACK_STATUS: "75" });
+            const handedBack = runNative(root, ["run", "build"], paths.stub, env);
+
+            expect(handedBack.status).toBe(75);
+            expect(handedBack.stdout).toBe("");
+
+            // A stale status from a parent process is dropped without the hand-off marker.
+            const standalone = runNative(root, ["run", "build"], paths.stub, env, false);
+
+            expect(standalone.status).toBe(99);
+            expect(standalone.stdout).toBe(`${marker}\n`);
+            expect(standalone.stderr).toBe("");
         });
 
         it("delegates when the working directory is not the workspace root", () => {

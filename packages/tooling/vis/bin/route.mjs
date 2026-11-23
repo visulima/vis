@@ -221,6 +221,11 @@ const runMayRunNatively = (platform, environment, args, cwd, interactive, holdsM
         return false;
     }
 
+    // `CI` itself, not just `CONTINUOUS_INTEGRATION`: parts of the Node run read `process.env.CI` directly.
+    if (!environment.CI || environment.CI === "0" || environment.CI === "false") {
+        return false;
+    }
+
     if (
         RUN_NODE_ONLY_VARIABLES.some((key) => environment[key] !== undefined)
         || ["debug", "test"].includes(environment.NODE_ENV)

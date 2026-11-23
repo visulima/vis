@@ -34,10 +34,12 @@ pub fn init() {
 
     env::remove_var("VIS_HANDOFF");
 
-    // `process.version` of the launcher's Node. Only the launcher knows it, so a start without one drops
-    // whatever a parent process left behind: `vis run` answers natively only with a version it can trust.
+    // What only the launcher can vouch for: `process.version` of its Node, and the status it wants a run it
+    // cannot answer handed back with. A start without the hand-off drops whatever a parent process left behind,
+    // so `vis run` answers natively only with a version it can trust and never exits with a stale status.
     if !handoff {
         env::remove_var("VIS_NODE_VERSION");
+        env::remove_var("VIS_HANDBACK_STATUS");
     }
 
     let exe = env::current_exe().and_then(fs::canonicalize).ok();
