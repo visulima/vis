@@ -118,6 +118,17 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
 
     let setup = install::setup(args, raw)?;
 
+    // Its output has only been compared with Node's where no colour is on and `TERM` leaves the terminal unknown.
+    let plain_term = env::var("TERM").map_or(true, |term| {
+        let term = term.to_lowercase();
+
+        term.contains("dumb") || term.contains("mono")
+    });
+
+    if setup.layout.colour || !plain_term {
+        return None;
+    }
+
     if !flags.no_typosquat_check && flags.packages.iter().any(|package| is_typosquat(package)) {
         return None;
     }

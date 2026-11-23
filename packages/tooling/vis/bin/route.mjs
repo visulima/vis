@@ -505,7 +505,37 @@ const addShapeIsNative = (rest) => {
 
 // Whether `vis add` can pass the binary's native gate (`plan` in `add.rs`). The binary re-checks everything,
 // including the packages against the typosquat blocklist; this only skips the extra process when it would delegate anyway.
-const addMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, args, interactive) && addShapeIsNative(args.slice(1));
+// The native `add` has only been compared with Node's output where no colour is on, so any variable that can turn
+// colour on keeps it in Node (the binary re-checks the colour level it finds).
+const ADD_COLOUR_ENVIRONMENT = [
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERMINAL_EMULATOR",
+    "TEAMCITY_VERSION",
+    "TF_BUILD",
+    "PM2_HOME",
+    "GITEA_ACTIONS",
+    "CIRCLECI",
+    "GITHUB_WORKFLOW",
+    "GITHUB_ACTIONS",
+    "TRAVIS",
+    "APPVEYOR",
+    "GITLAB_CI",
+    "BUILDKITE",
+    "DRONE",
+    "CI_NAME",
+];
+
+const addColourIsPlain = (environment) => {
+    const term = environment.TERM?.toLowerCase();
+
+    return !ADD_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && (term === undefined || term.includes("dumb") || term.includes("mono"));
+};
+
+const addMayRunNatively = (platform, environment, args, interactive) =>
+    installContextIsNative(platform, environment, args, interactive) && addColourIsPlain(environment) && addShapeIsNative(args.slice(1));
 
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
