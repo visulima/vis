@@ -98,3 +98,22 @@ export const buildReturnToBottomPrefix = (cursorWasShown: boolean, previousLineC
 
     return cursorHide + buildReturnToBottom(previousLineCount, previousCursorPosition);
 };
+
+/**
+ * Build the prefix that hides cursor and moves it from its parked row to the top of the frame.
+ * Unlike returning to the bottom, it never targets the row below the frame, which a terminal drops when its rows shrink.
+ * Returns empty string if cursor was not shown.
+ */
+export const buildReturnToTopPrefix = (
+    cursorWasShown: boolean,
+    previousCursorPosition: CursorPosition | undefined,
+    viewportRows = Number.POSITIVE_INFINITY,
+): string => {
+    if (!cursorWasShown || !previousCursorPosition) {
+        return "";
+    }
+
+    const up = Math.min(previousCursorPosition.y, viewportRows - 1);
+
+    return cursorHide + (up > 0 ? cursorUp(up) : "") + cursorTo(0);
+};

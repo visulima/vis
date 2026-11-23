@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import logUpdate from "../../src/ink/log-update";
 import createStdout from "../helpers/ink-create-stdout";
+import longestUpRun from "../helpers/ink-cursor-up";
 
 describe("log-update", () => {
     it("standard rendering - renders and updates output", () => {
@@ -156,7 +157,7 @@ describe("log-update", () => {
 
         const thirdCall = stdout.get();
 
-        expect(thirdCall).toBe(eraseLines(2) + cursorUp(1) + cursorNextLine());
+        expect(thirdCall).toBe(`${eraseLines(2)}${cursorUp(1)}\n`);
     });
 
     it("incremental rendering - clear() fully resets incremental state", () => {
@@ -407,7 +408,7 @@ describe("log-update", () => {
         expect(secondCall.endsWith(cursorTo(3) + showCursorEscape)).toBe(true);
     });
 
-    it("standard rendering - returns to bottom before erase when cursor was positioned", () => {
+    it("standard rendering - erases from the frame top when cursor was positioned", () => {
         expect.assertions(3);
 
         const stdout = createStdout();
@@ -422,7 +423,7 @@ describe("log-update", () => {
         const secondCall = (stdout.write as any).mock.calls[1][0] as string;
 
         expect(secondCall.startsWith(hideCursorEscape)).toBe(true);
-        expect(secondCall).toContain(cursorDown(3));
+        expect(secondCall).toContain(eraseDown);
         expect(secondCall).toContain("Line A");
     });
 
@@ -580,5 +581,27 @@ describe("log-update", () => {
         render.sync("Fresh\n");
 
         expect(stdout.getWrites().join("")).toContain(decscusrSequence(4));
+    });
+
+    describe("frames taller than the viewport", () => {
+        const tallFrame = `${Array.from({ length: 30 }, (_, index) => `Line ${String(index + 1)}`).join("\n")}\n`;
+        const viewportRows = 10;
+
+        it.each(renderingModes)("$name - never moves the cursor up past the top of the viewport", ({ incremental }) => {
+            expect.assertions(1);
+
+            const stdout = createStdout(80, true, viewportRows);
+            const render = logUpdate.create(stdout, { incremental, showCursor: true });
+
+            render.setCursorPosition({ x: 2, y: 3 });
+            render(tallFrame);
+            render.setCursorPosition({ x: 2, y: 3 });
+            render(tallFrame.replace("Line 5\n", "Line five\n"));
+            render.setCursorPosition({ x: 2, y: 3 });
+            render(`${tallFrame.split("\n").slice(0, 24).join("\n")}\n`);
+            render.clear();
+
+            expect(longestUpRun(stdout.getWrites())).toBeLessThan(viewportRows);
+        });
     });
 });

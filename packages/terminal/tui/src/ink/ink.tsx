@@ -1062,7 +1062,7 @@ export default class Ink {
             }
 
             // Wrap before comparing so a terminal that changed width gets its output rewrapped.
-            const terminalWidth = getWindowSize(this.options.stdout).columns;
+            const { columns: terminalWidth, rows: terminalRows } = getWindowSize(this.options.stdout);
 
             const wrappedOutput = wordWrap(output, {
                 trim: false,
@@ -1072,7 +1072,7 @@ export default class Ink {
 
             if (hasStaticOutput) {
                 // We need to erase the main output before writing new static output
-                const erase = this.lastOutputHeight > 0 ? eraseLines(this.lastOutputHeight) : "";
+                const erase = this.lastOutputHeight > 0 ? eraseLines(Math.min(this.lastOutputHeight, terminalRows)) : "";
 
                 this.options.stdout.write(erase + staticOutput);
                 // After erasing, the last output is gone, so we should reset its height
@@ -1091,7 +1091,7 @@ export default class Ink {
             if (hasStaticOutput) {
                 this.options.stdout.write(wrappedOutput);
             } else {
-                const erase = this.lastOutputHeight > 0 ? eraseLines(this.lastOutputHeight) : "";
+                const erase = this.lastOutputHeight > 0 ? eraseLines(Math.min(this.lastOutputHeight, terminalRows)) : "";
 
                 this.options.stdout.write(erase + wrappedOutput);
             }

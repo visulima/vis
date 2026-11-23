@@ -7,6 +7,7 @@ import { useWindowSize } from "../../src/ink/hooks/use-window-size";
 import { render } from "../../src/ink/index";
 import type { FakeStdout } from "../helpers/ink-create-stdout";
 import createStdout from "../helpers/ink-create-stdout";
+import longestUpRun from "../helpers/ink-cursor-up";
 import waitFor from "../helpers/wait-for";
 
 const getWriteContents = (stdout: FakeStdout): string[] => stdout.getWrites().filter((w) => !w.startsWith("\u001B[?25") && !w.startsWith("\u001B[?2026"));
@@ -247,5 +248,27 @@ x
         await waitFor(() => stripAnsi(getWriteContents(stdout).at(-1) ?? "").includes("Updated Content"));
 
         expect(stripAnsi(getWriteContents(stdout).at(-1)!)).toContain("Updated Content");
+    });
+
+    it("does not move the cursor up past the top when a screen-reader frame is taller than the viewport", async () => {
+        expect.assertions(1);
+
+        const rows = 5;
+        const stdout = createStdout(100, true, rows);
+        const Frame = ({ marker }: { marker: string }) => (
+            <Box flexDirection="column">
+                {Array.from({ length: 12 }, (_, index) => (
+                    <Text key={index}>{index === 1 ? marker : `Line ${String(index + 1)}`}</Text>
+                ))}
+            </Box>
+        );
+
+        const { rerender, waitUntilRenderFlush } = render(<Frame marker="a" />, { interactive: true, isScreenReaderEnabled: true, stdout });
+
+        await waitUntilRenderFlush();
+        rerender(<Frame marker="b" />);
+        await waitUntilRenderFlush();
+
+        expect(longestUpRun(stdout.getWrites())).toBeLessThan(rows);
     });
 });

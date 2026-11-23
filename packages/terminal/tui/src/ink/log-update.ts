@@ -1,10 +1,10 @@
 /* eslint-disable @stylistic/no-extra-parens */
 import type { Writable } from "node:stream";
 
-import { cursorHide, cursorNextLine, cursorShow, cursorTo, cursorUp, eraseDown, eraseLineEnd, eraseLines } from "@visulima/ansi";
+import { cursorDown, cursorHide, cursorNextLine, cursorShow, cursorUp, eraseDown, eraseLineEnd, eraseLines } from "@visulima/ansi";
 
 import type { CursorPosition, CursorShape } from "./cursor-helpers";
-import { buildCursorOnlySequence, buildCursorShapeSequence, buildCursorSuffix, buildReturnToBottom, buildReturnToBottomPrefix, cursorPositionChanged } from "./cursor-helpers";
+import { buildCursorOnlySequence, buildCursorShapeSequence, buildCursorSuffix, buildReturnToBottom, buildReturnToTopPrefix, cursorPositionChanged } from "./cursor-helpers";
 import { changedLineUpdate } from "./line-update";
 
 export type { CursorPosition, CursorShape } from "./cursor-helpers";
@@ -89,6 +89,10 @@ const getColumns = (stream: Writable): number | undefined => (stream as NodeJS.W
 // scrolled into terminal scrollback and cannot be erased.
 const clampToViewport = (lineCount: number, stream: Writable): number => Math.min(lineCount, getViewportRows(stream));
 
+// The row count `buildCursorSuffix` moves up from, limited so the move never reaches above the viewport.
+const clampCursorRow = (row: number, cursor: CursorPosition | undefined, stream: Writable): number =>
+    (cursor ? Math.min(row, cursor.y + getViewportRows(stream) - 1) : row);
+
 /**
  * Everything a frame writer needs to emit one changed frame.
  *
@@ -111,11 +115,11 @@ type Frame = {
 
     previousLines: string[];
 
-    /** Cursor motion back to the bottom of the previous frame. Goes first. */
-    returnPrefix: string;
-
     /** Pending DECSCUSR change. Goes before any cursor motion or erase. */
     shapeDelta: string;
+
+    /** Cursor motion up to the top of the previous frame, empty unless a &lt;Cursor> is parked inside it. Goes first. */
+    topPrefix: string;
 };
 
 /** Emits one changed frame to the stream. */
@@ -130,10 +134,13 @@ type WriteFrame = (frame: Frame, stream: Writable) => void;
  * @param stream The stream to write it to.
  */
 const writeFullFrame: WriteFrame = (frame, stream) => {
-    const { activeCursor, content, contentLines, previousLines, returnPrefix, shapeDelta } = frame;
-    const cursorSuffix = buildCursorSuffix(cursorRowAfterWrite(contentLines), activeCursor);
+    const { activeCursor, content, contentLines, previousLines, shapeDelta, topPrefix } = frame;
+    const cursorSuffix = buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(contentLines), activeCursor, stream), activeCursor);
+    // A parked cursor is erased from the frame top: the row below the frame is gone when the terminal shrank, so a
+    // move down to it would stop short and the erase would reach into the content above.
+    const erase = topPrefix === "" ? eraseLines(clampToViewport(previousLines.length, stream)) : topPrefix + eraseDown;
 
-    stream.write(shapeDelta + returnPrefix + eraseLines(clampToViewport(previousLines.length, stream)) + content + cursorSuffix);
+    stream.write(shapeDelta + erase + content + cursorSuffix);
 };
 
 /**
@@ -145,7 +152,7 @@ const writeFullFrame: WriteFrame = (frame, stream) => {
  */
 
 const writeIncrementalFrame: WriteFrame = (frame, stream) => {
-    const { activeCursor, columns, content, contentLines, previous, previousLines, returnPrefix, shapeDelta } = frame;
+    const { activeCursor, columns, content, contentLines, previous, previousLines, shapeDelta, topPrefix } = frame;
     const visibleCount = visibleLineCount(contentLines, content);
 
     // Nothing to diff against, or a bare newline: fall back to a full redraw.
@@ -160,7 +167,7 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
 
     // We aggregate all chunks for incremental rendering into a buffer, and then write them to stdout at the end.
     // Shape delta is prepended so DECSCUSR lands before any cursor motion/erase from this frame.
-    const buffer: string[] = [shapeDelta, returnPrefix];
+    const buffer: string[] = [shapeDelta, topPrefix];
 
     const previousCursorRow = cursorRowAfterWrite(previousLines);
     // `CSI 0 A` moves one row in terminals, so a zero-row move must not be emitted.
@@ -169,10 +176,17 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
     // Clear extra lines if the current content's line count is lower than the previous.
     const viewportRows = getViewportRows(stream);
 
+    const isAtFrameTop = topPrefix !== "";
+
     if (visibleCount < previousVisible) {
-        // Erases from the cursor row up to the first row that is no longer part of the frame.
-        buffer.push(eraseLines(Math.min(previousCursorRow - visibleCount + 1, viewportRows)), moveUp(Math.min(visibleCount, viewportRows - 1)));
-    } else {
+        buffer.push(
+            ...(isAtFrameTop
+                // Down to the first row that is no longer part of the frame, erase from there, and back up.
+                ? [cursorDown(visibleCount), eraseDown, moveUp(Math.min(visibleCount, viewportRows - 1))]
+                // Erases from the cursor row up to the first row that is no longer part of the frame.
+                : [eraseLines(Math.min(previousCursorRow - visibleCount + 1, viewportRows)), moveUp(Math.min(visibleCount, viewportRows - 1))]),
+        );
+    } else if (!isAtFrameTop) {
         buffer.push(moveUp(Math.min(previousCursorRow, viewportRows - 1)));
     }
 
@@ -183,10 +197,13 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
         // Rows past the previous frame have no previous content to match, so they are always written;
         // skipping them would leave the cursor short of the row a new blank line should move it to.
         if (index < previousVisible && contentLines[index] === previousLines[index]) {
-            // Don't move past the last line when there's no trailing newline,
-            // otherwise the cursor overshoots the rendered block.
-            if (!isLastLine || hasTrailingNewline) {
+            // Don't move past the last line when there's no trailing newline, otherwise the cursor overshoots the
+            // rendered block. The last line moves with a newline, not a cursor move: at the bottom of a terminal that
+            // dropped the row below the frame on resize, only a newline scrolls and brings that row back.
+            if (!isLastLine) {
                 buffer.push(cursorNextLine());
+            } else if (hasTrailingNewline) {
+                buffer.push("\n");
             }
 
             continue;
@@ -201,7 +218,7 @@ const writeIncrementalFrame: WriteFrame = (frame, stream) => {
         );
     }
 
-    buffer.push(buildCursorSuffix(cursorRowAfterWrite(contentLines), activeCursor));
+    buffer.push(buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(contentLines), activeCursor, stream), activeCursor));
 
     stream.write(buffer.join(""));
 };
@@ -280,7 +297,7 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
                     cursorWasShown: isCursorWasShown,
                     previousCursorPosition,
                     previousLineCount: previousLines.length,
-                    visibleLineCount: cursorRowAfterWrite(nextLines),
+                    visibleLineCount: clampCursorRow(cursorRowAfterWrite(nextLines), activeCursor, stream),
                 }),
             );
             commitCursor(activeCursor);
@@ -305,8 +322,8 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
                 contentLines: nextLines,
                 previous: previousOutput,
                 previousLines,
-                returnPrefix: buildReturnToBottomPrefix(isCursorWasShown, previousLines.length, previousCursorPosition),
                 shapeDelta,
+                topPrefix: buildReturnToTopPrefix(isCursorWasShown, previousCursorPosition, getViewportRows(stream)),
             },
             stream,
         );
@@ -321,11 +338,9 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
 
     render.clear = () => {
         if (isCursorWasShown && previousCursorPosition) {
-            // A parked cursor marks a row inside the frame, so erase up from that row. Returning to the row below
+            // A parked cursor marks a row inside the frame, so erase down from the frame top. Returning to the row below
             // the frame first can clamp at the viewport bottom once the terminal has trimmed that row on resize.
-            const { y } = previousCursorPosition;
-
-            stream.write(cursorHide + (y > 0 ? cursorUp(y) : "") + cursorTo(0) + eraseDown);
+            stream.write(buildReturnToTopPrefix(true, previousCursorPosition, getViewportRows(stream)) + eraseDown);
         } else {
             stream.write(eraseLines(clampToViewport(previousLines.length, stream)));
         }
@@ -384,7 +399,7 @@ const createLogUpdate = (stream: Writable, { showCursor = false }: { showCursor?
         }
 
         if (activeCursor) {
-            stream.write(buildCursorSuffix(cursorRowAfterWrite(lines), activeCursor));
+            stream.write(buildCursorSuffix(clampCursorRow(cursorRowAfterWrite(lines), activeCursor, stream), activeCursor));
         }
 
         commitCursor(activeCursor);
