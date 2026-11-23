@@ -110,14 +110,10 @@ export type RenderOptions = {
     patchConsole?: boolean;
 
     /**
-     * If true, Ink defers frame output until after React's commit phase completes,
-     * ensuring `useLayoutEffect` hooks run before the frame is written to the terminal.
-     *
-     * This eliminates the one-frame flicker when components measure layout
-     * (e.g., scroll position, element size) in `useLayoutEffect` and adjust state.
-     *
-     * **Warning:** Incompatible with the `&lt;Static>` component, which relies on
-     * immediate render timing to append output.
+     * Has no effect. A frame is never written between a commit and the state updates its `useLayoutEffect` hooks
+     * make, and `&lt;Static>` output is read at the commit that mounts it, so layout-measuring components no longer
+     * flicker and `&lt;Static>` keeps working without this option.
+     * @deprecated Accepted so existing callers keep compiling; remove it.
      * @default false
      */
     standardReactLayoutTiming?: boolean;

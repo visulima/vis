@@ -230,11 +230,64 @@ const serializeStaticOutput = (staticNode: DOMElement | undefined, staticOutput:
     return height > 0 ? `${output}\n` : "";
 };
 
+// Static output is rendered from its own subtree, so a hidden ancestor must be checked explicitly.
+const renderScreenReaderStaticOutput = (node: DOMElement): string => {
+    const staticNode = getVisibleStaticNode(node.staticNode);
+
+    if (!staticNode) {
+        return "";
+    }
+
+    const staticOutput = renderNodeToScreenReaderOutput(staticNode, { skipStaticElements: false });
+
+    return staticOutput ? `${staticOutput}\n` : "";
+};
+
+const renderInteractiveStaticOutput = (node: DOMElement): string => {
+    if (!node.staticNode?.yogaNode) {
+        return "";
+    }
+
+    const staticOutput = getReusableOutput({
+        caches: staticOutputCaches,
+        // Include the offset and margins, or static rows that start below the top or end inside a margin get clipped.
+        height:
+            node.staticNode.yogaNode.getComputedTop()
+            + node.staticNode.yogaNode.getComputedHeight()
+            + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_BOTTOM),
+        node,
+        outputs: staticOutputs,
+        width:
+            node.staticNode.yogaNode.getComputedLeft()
+            + node.staticNode.yogaNode.getComputedWidth()
+            + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_RIGHT),
+    });
+
+    renderNodeToOutput(node.staticNode, staticOutput, {
+        skipStaticElements: false,
+    });
+
+    return serializeStaticOutput(node.staticNode, staticOutput);
+};
+
+/**
+ * Renders only the `&lt;Static>` block of the committed tree. A `&lt;Static>` empties itself in a layout effect right
+ * after the commit that mounted its items, so a caller that draws later than the commit has to read it here first.
+ */
+export const renderStaticOutput = (node: DOMElement, isScreenReaderEnabled: boolean): string => {
+    if (!node.yogaNode) {
+        return "";
+    }
+
+    return isScreenReaderEnabled ? renderScreenReaderStaticOutput(node) : renderInteractiveStaticOutput(node);
+};
+
 const renderer = (
     node: DOMElement,
     isScreenReaderEnabled: boolean,
     options?: {
         selection?: Selection;
+        skipStatic?: boolean;
         useNativeRenderer?: boolean;
     },
 ): Result => {
@@ -246,24 +299,13 @@ const renderer = (
 
             const outputHeight = output === "" ? 0 : output.split("\n").length;
 
-            let staticOutput = "";
-
-            // Static output is rendered from its own subtree, so a hidden ancestor must be checked explicitly.
-            const staticNode = getVisibleStaticNode(node.staticNode);
-
-            if (staticNode) {
-                staticOutput = renderNodeToScreenReaderOutput(staticNode, {
-                    skipStaticElements: false,
-                });
-            }
-
             return {
                 cursorPosition: undefined,
                 cursorRequested: false,
                 cursorShape: undefined,
                 output,
                 outputHeight,
-                staticOutput: staticOutput ? `${staticOutput}\n` : "",
+                staticOutput: options?.skipStatic ? "" : renderScreenReaderStaticOutput(node),
             };
         }
 
@@ -290,28 +332,7 @@ const renderer = (
             skipStaticElements: true,
         });
 
-        let staticOutput;
-
-        if (node.staticNode?.yogaNode) {
-            staticOutput = getReusableOutput({
-                caches: staticOutputCaches,
-                // Include the offset and margins, or static rows that start below the top or end inside a margin get clipped.
-                height:
-                    node.staticNode.yogaNode.getComputedTop()
-                    + node.staticNode.yogaNode.getComputedHeight()
-                    + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_BOTTOM),
-                node,
-                outputs: staticOutputs,
-                width:
-                    node.staticNode.yogaNode.getComputedLeft()
-                    + node.staticNode.yogaNode.getComputedWidth()
-                    + node.staticNode.yogaNode.getComputedMargin(Yoga.EDGE_RIGHT),
-            });
-
-            renderNodeToOutput(node.staticNode, staticOutput, {
-                skipStaticElements: false,
-            });
-        }
+        const staticOutput = options?.skipStatic ? "" : renderInteractiveStaticOutput(node);
 
         // When native renderer is requested, produce a Uint32Array buffer
         // alongside the string output (string is still needed for static output)
@@ -326,7 +347,7 @@ const renderer = (
                 outputBuffer,
                 outputHeight,
                 outputWidth: output.width,
-                staticOutput: serializeStaticOutput(node.staticNode, staticOutput),
+                staticOutput,
             };
         }
 
@@ -340,7 +361,7 @@ const renderer = (
             outputHeight,
             // Newline at the end is needed, because static output doesn't have one, so
             // interactive output will override last line of static output
-            staticOutput: serializeStaticOutput(node.staticNode, staticOutput),
+            staticOutput,
         };
     }
 
