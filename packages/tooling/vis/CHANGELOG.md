@@ -1,3 +1,47 @@
+## @visulima/vis [7.1.0-next.8](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.7...@visulima/vis@7.1.0-next.8) (2026-11-23)
+
+### Features
+
+* **vis:** add a Prettier step to `vis migrate` ([4efbc32](https://github.com/visulima/vis/commit/4efbc32dcf7b4081e5c1910484008a33064c8da0))
+* **vis:** answer `vis sync ci-workflow` natively ([8c3512e](https://github.com/visulima/vis/commit/8c3512eb52a49d0605c6d70bb45ad5a67fe0c582))
+* **vis:** answer vis self-update natively in a CI context ([ed8e121](https://github.com/visulima/vis/commit/ed8e121d2552d7d65139833b1339759b58eb0fd3))
+* **vis:** build the shared dependencies of a generated workflow in one command ([0e105bc](https://github.com/visulima/vis/commit/0e105bc6b66d3597008f8096d9c6d75e10954917))
+* **vis:** fmt --doctor, Vite fmt key as a config source, .editorconfig coverage ([#169](https://github.com/visulima/vis/issues/169)) ([8af8ac1](https://github.com/visulima/vis/commit/8af8ac1456a29b644c49be7857b63d8b4383a53e))
+* **vis:** run a plain vis install natively in a CI context ([027ce83](https://github.com/visulima/vis/commit/027ce834299a5cb8689ec6e835be27e5ab3bc992))
+* **vis:** run several targets as one dependency step with vis run a,b --deps-only ([#170](https://github.com/visulima/vis/issues/170)) ([d48b452](https://github.com/visulima/vis/commit/d48b45239682edd40ceda3c040eb84199fd3a3dc))
+
+### Bug Fixes
+
+* **vis:** depend on the released task-runner and relock ([#173](https://github.com/visulima/vis/issues/173)) ([21a7646](https://github.com/visulima/vis/commit/21a7646dfa787ca62c355bf22245e1116cb13286))
+* **vis:** hand the whole self-update install to Node before printing anything ([e5dddd9](https://github.com/visulima/vis/commit/e5dddd93c5c0853dd3cf7711d33c413caa24eff3))
+* **vis:** keep the native CI workflow's log lines in Node's order and refuse lone surrogates ([f15db88](https://github.com/visulima/vis/commit/f15db889a9a0c0b21d1ca7b2c86a53f4fd555ca8))
+* **vis:** make the Prettier migration's script rewrite and precedence checks stricter ([a1ba1fa](https://github.com/visulima/vis/commit/a1ba1fa97b232b63c0f3cabc639e47b05fadf603))
+* **vis:** split the group-listing and complete routing out of routesCommandToNative ([5b43593](https://github.com/visulima/vis/commit/5b435930e2893ac20064c5b2354bb61f53cfece6))
+
+### Documentation
+
+* **vis:** describe the stricter Prettier script rewrite and precedence ([56b0876](https://github.com/visulima/vis/commit/56b0876ed4fa78d7d525d7ab88e75f695bdbceba))
+
+### Code Refactoring
+
+* **vis:** drop a config clone and a function-local import in native install ([a9ac53c](https://github.com/visulima/vis/commit/a9ac53cbda95708c1a6a84f69b05261ad26c8c67))
+* **vis:** drop the empty-target handling of the dependency step ([54ee46b](https://github.com/visulima/vis/commit/54ee46b1db40f0271d178c5e412bf8d28ee8fa97))
+* **vis:** let the self-update verdict produce its lines instead of an unreachable arm ([e6e625e](https://github.com/visulima/vis/commit/e6e625e5ed41275a6811d91f760fd1dc360c6ea1))
+
+### Tests
+
+* **vis:** add the migrate prettier row to the golden help captures ([c1f70b5](https://github.com/visulima/vis/commit/c1f70b5617e63bd4fa7c68c7f89e4c0c8ff55ae3))
+* **vis:** clear the vitest lint warnings in the native and secrets reporting tests ([511f774](https://github.com/visulima/vis/commit/511f7749dcc48d2686a717dbbc66a91f97c16d9d))
+* **vis:** cover config imports, files written and the aube case for native install ([4bb148b](https://github.com/visulima/vis/commit/4bb148bedca8c209552dbb9326f61806238a5df6))
+* **vis:** import mkdirSync at the top of the Prettier migration test ([36a3f4c](https://github.com/visulima/vis/commit/36a3f4c4037aefd49cdd9cc77de7edadf36cdc30))
+* **vis:** name the unknown-steps-position config case after what it checks ([43beafd](https://github.com/visulima/vis/commit/43beafdc5bb9db3e6fa36fc2d1d70031aed998e2))
+* **vis:** simplify the it.each tables and env filter after review ([4c34b1f](https://github.com/visulima/vis/commit/4c34b1f8504289912e3af8cd1f97593dbe92972b))
+
+
+### Dependencies
+
+* **@visulima/tui:** upgraded to 5.1.0-next.1
+
 ## @visulima/vis [7.1.0-next.7](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.6...@visulima/vis@7.1.0-next.7) (2026-11-22)
 
 ### Features
