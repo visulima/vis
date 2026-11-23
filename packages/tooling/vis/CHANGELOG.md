@@ -1,3 +1,13 @@
+## @visulima/vis [7.1.0-next.9](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.8...@visulima/vis@7.1.0-next.9) (2026-11-23)
+
+### Features
+
+* **vis:** run vis add --no-marshall-check natively in a CI context ([911f4a3](https://github.com/visulima/vis/commit/911f4a3d7c1f825703e2e2981190db898fa14613))
+
+### Miscellaneous Chores
+
+* **deps:** align the vis tui range and the lockfile with the released prereleases ([#189](https://github.com/visulima/vis/issues/189)) ([10b027d](https://github.com/visulima/vis/commit/10b027d83c5d1bcbfa3f0a4768284eb10f39053d))
+
 ## @visulima/vis [7.1.0-next.8](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.7...@visulima/vis@7.1.0-next.8) (2026-11-23)
 
 ### Features
