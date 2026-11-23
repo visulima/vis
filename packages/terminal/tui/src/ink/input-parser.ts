@@ -2,6 +2,7 @@
 const escape = "\u001B";
 const pasteStart = "\u001B[200~";
 const pasteEnd = "\u001B[201~";
+const legacyMousePrefix = "\u001B[M";
 
 export type InputEvent = string | { readonly paste: string };
 
@@ -24,8 +25,34 @@ const isCsiIntermediateByte = (byte: number): boolean => byte >= 0x20 && byte <=
 
 const isCsiFinalByte = (byte: number): boolean => byte >= 0x40 && byte <= 0x7e;
 
+// A bare `CSI M` introduces a legacy (X10/normal) mouse report: three raw bytes (button, x, y) follow
+// and can be any character, so they are consumed as part of the sequence instead of read as input.
+const parseLegacyMouseReport = (input: string, startIndex: number, reportStart: number): ParsedSequence => {
+    let reportEnd = reportStart;
+
+    for (let coordinate = 0; coordinate < 3; coordinate++) {
+        const codePoint = input.codePointAt(reportEnd);
+
+        if (codePoint === undefined) {
+            return "pending";
+        }
+
+        reportEnd += codePoint > 0xff_ff ? 2 : 1;
+    }
+
+    return {
+        nextIndex: reportEnd,
+        sequence: input.slice(startIndex, reportEnd),
+    };
+};
+
 const parseCsiSequence = (input: string, startIndex: number, prefixLength: number): ParsedSequence => {
     const csiPayloadStart = startIndex + prefixLength + 1;
+
+    if (prefixLength === 1 && input[csiPayloadStart] === "M") {
+        return parseLegacyMouseReport(input, startIndex, csiPayloadStart + 1);
+    }
+
     let index = csiPayloadStart;
 
     for (; index < input.length; index++) {
@@ -234,8 +261,13 @@ const parseKeypresses = (input: string): ParsedInput => {
             continue;
         }
 
-        events.push(parsedEscapeSequence.sequence);
         index = parsedEscapeSequence.nextIndex;
+
+        if (parsedEscapeSequence.sequence.startsWith(legacyMousePrefix)) {
+            continue;
+        }
+
+        events.push(parsedEscapeSequence.sequence);
     }
 
     return {
@@ -263,6 +295,10 @@ export const createInputParser = (): InputParser => {
             const pendingEscape = pending;
 
             pending = "";
+
+            if (pendingEscape.startsWith(legacyMousePrefix)) {
+                return undefined;
+            }
 
             return pendingEscape;
         },

@@ -431,4 +431,74 @@ describe("input-parser", () => {
 
         expect(parseChunks(["\u001B[200~\u007F\u0008\u007F\u001B[201~"])).toStrictEqual([{ paste: "\u007F\u0008\u007F" }]);
     });
+
+    describe("legacy mouse reports", () => {
+        it.each([
+            ["printable coordinates", "\u001B[M !!"],
+            ["carriage return and tab coordinates", "\u001B[M\r\t\r"],
+            ["letters", "\u001B[MCab"],
+            ["bytes above 0x7f", "\u001B[M`\u00FF\u00A0"],
+            ["a nested escape byte", "\u001B[M \u001B!"],
+        ])("drops a complete report with %s", (_name, report) => {
+            expect.assertions(1);
+
+            expect(parseChunks([report])).toStrictEqual([]);
+        });
+
+        it("keeps keystrokes before and after a report", () => {
+            expect.assertions(1);
+
+            expect(parseChunks(["a\u001B[M !!b\u001B[A"])).toStrictEqual(["a", "b", "\u001B[A"]);
+        });
+
+        it("drops back-to-back reports", () => {
+            expect.assertions(1);
+
+            expect(parseChunks(["\u001B[M !!\u001B[M#\r\t"])).toStrictEqual([]);
+        });
+
+        it.each([2, 3, 4, 5])("drops a report split after %i characters", (splitAt) => {
+            expect.assertions(2);
+
+            const report = "\u001B[M\r\tq";
+            const parser = createInputParser();
+
+            expect(parser.push(report.slice(0, splitAt))).toStrictEqual([]);
+            expect(parser.push(`${report.slice(splitAt)}z`)).toStrictEqual(["z"]);
+        });
+
+        it("reports a partial report as pending so it is not flushed as text", () => {
+            expect.assertions(2);
+
+            const parser = createInputParser();
+
+            parser.push("\u001B[M\r");
+
+            expect(parser.hasPendingEscape()).toBe(true);
+            expect(parser.push("\t\r")).toStrictEqual([]);
+        });
+
+        it("discards a report that never completes instead of flushing its bytes as text", () => {
+            expect.assertions(2);
+
+            const parser = createInputParser();
+
+            parser.push("\u001B[M\r\t");
+
+            expect(parser.flushPendingEscape()).toBeUndefined();
+            expect(parser.push("a")).toStrictEqual(["a"]);
+        });
+
+        it("does not treat parameterised CSI M sequences as mouse reports", () => {
+            expect.assertions(1);
+
+            expect(parseChunks(["\u001B[1;5Mabc"])).toStrictEqual(["\u001B[1;5M", "abc"]);
+        });
+
+        it("leaves SGR mouse sequences intact", () => {
+            expect.assertions(1);
+
+            expect(parseChunks(["\u001B[<0;10;5M\u001B[<0;10;5m"])).toStrictEqual(["\u001B[<0;10;5M", "\u001B[<0;10;5m"]);
+        });
+    });
 });

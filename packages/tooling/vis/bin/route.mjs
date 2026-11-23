@@ -470,6 +470,26 @@ const helpOrNative = (args, mayRunNatively) => {
 const alwaysNative = (command, subcommand, args) =>
     NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
 
+// The routing of a bare command group and of `complete`: `true` or `false` when they decide,
+// `undefined` when the command is neither.
+const routesListingOrCompletionToNative = (args, command, subcommand) => {
+    // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
+    // other shape is Node's, which prints the same listing). The binary enables virtual-terminal
+    // processing, so Windows answers it natively too.
+    if (GROUP_LISTINGS.includes(command) && args.length === 1) {
+        return true;
+    }
+
+    // `complete --` is the dynamic endpoint the generated completion scripts call on
+    // every <TAB>; any other `complete` shape is not a native command, so it stays
+    // in-process (script generation is `vis completion --shell=<shell>`, Node's too).
+    if (command === "complete") {
+        return subcommand === "--";
+    }
+
+    return undefined;
+};
+
 // The routing of the commands that have their own native shapes: `true` or `false` when the
 // command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
 const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker) => {
@@ -536,25 +556,7 @@ const routesCommandToNative = (args, platform, environment, cwd, interactive, ho
         return helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive));
     }
 
-    // A bare command group lists its subcommands, which the binary answers like `<group> --help` (any
-    // other shape is Node's, which prints the same listing). The binary enables virtual-terminal
-    // processing, so Windows answers it natively too.
-    if (GROUP_LISTINGS.includes(command) && args.length === 1) {
-        return true;
-    }
-
-    // `complete --` is the dynamic endpoint the generated completion scripts call on
-    // every <TAB>; any other `complete` shape is not a native command, so it stays
-    // in-process (script generation is `vis completion --shell=<shell>`, Node's too).
-    if (command === "complete" && subcommand === "--") {
-        return true;
-    }
-
-    if (command === "complete") {
-        return false;
-    }
-
-    return undefined;
+    return routesListingOrCompletionToNative(args, command, subcommand);
 };
 
 // Whether the binary should get this invocation: `args` is `process.argv.slice(2)`. The other

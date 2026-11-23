@@ -449,6 +449,19 @@ describe("components", () => {
         expect(output).toBe("[0: {0: test}]");
     });
 
+    it("do not link text after a malformed hyperlink returned from a root-level transform", () => {
+        expect.assertions(2);
+
+        const output = renderToString(
+            <Transform transform={(string: string) => `\u001B]8;;https://exa\u0001mple.com\u0007${string}\u001B]8;;\u0007`}>
+                <Text>test</Text>
+            </Transform>,
+        );
+
+        expect(output).toBe("test");
+        expect(output).not.toContain("\u001B]8;");
+    });
+
     it("squash multiple text nodes", () => {
         expect.assertions(1);
 
