@@ -978,10 +978,10 @@ export default class Ink {
             skipStatic: true,
             useNativeRenderer: this.useNativeRenderer,
         });
+        const renderTime = performance.now() - renderStart;
 
         renderResult.staticOutput = this.pendingStaticOutput;
         this.pendingStaticOutput = "";
-        const renderTime = performance.now() - renderStart;
 
         this.commitFrame(renderResult);
 
