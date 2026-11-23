@@ -80,7 +80,7 @@ impl<'de> Deserialize<'de> for JsInt {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = i64::deserialize(deserializer)?;
 
-        if value.abs() > MAX_SAFE_INTEGER {
+        if value.unsigned_abs() > MAX_SAFE_INTEGER as u64 {
             return Err(de::Error::custom("integer outside the exact range of a JavaScript number"));
         }
 
@@ -324,6 +324,7 @@ mod tests {
     fn integers_outside_the_exact_range_are_left_to_node() {
         assert!(serde_json::from_str::<JsInt>("9007199254740991").is_ok());
         assert!(serde_json::from_str::<JsInt>("9007199254740992").is_err());
+        assert!(serde_json::from_str::<JsInt>("-9223372036854775808").is_err());
         assert!(serde_json::from_str::<JsInt>("1.0").is_err());
         assert!(serde_json::from_str::<JsInt>("1e3").is_err());
         assert!(serde_json::from_str::<JsInt>("null").is_err());

@@ -146,8 +146,10 @@ const cases: Case[] = [
     why(["app:trace"], { env: { COLUMNS: "45" } }),
     why(["app:missing"], { env: { COLUMNS: "45" } }),
     why([LONG_TASK], { env: { COLUMNS: "60" } }),
-    // The "first time" message holds a dash that pail measures in characters: native only where it fits one line.
-    why(["app:first"], { env: { COLUMNS: "71" } }),
+    // The "first time" message holds a dash that pail measures differently from the native wrap: native only where it fits one line.
+    why(["app:first"], { env: { COLUMNS: "73" } }),
+    why(["app:first"], { delegates: true, env: { COLUMNS: "72" } }),
+    why(["app:first"], { delegates: true, env: { COLUMNS: "71" } }),
     why(["app:first"], { delegates: true, env: { COLUMNS: "70" } }),
     why(["app:first", "--format", "json"], { env: { COLUMNS: "45" } }),
     // `--run` loads another file; the previous run is the newest file other than the one named by the loaded run's `id`.
@@ -179,6 +181,9 @@ const cases: Case[] = [
     why(["app:build"], { workspace: "empty" }),
     why(["app:build", "--format", "json"], { workspace: "empty" }),
     why(["app:build", "--run", RUN_2], { workspace: "empty" }),
+    // A task without an id is listed as nothing, and an empty list reads "(none)".
+    why(["app:build", "--run", "empty-id"], { workspace: "odd" }),
+    why(["app:build", "--run", "empty-id", "--format", "json"], { workspace: "odd" }),
     why(["app:build"], { delegates: true, workspace: "unreadable" }),
     why(["app:build", "--format", "json"], { delegates: true, workspace: "unreadable" }),
     why(["app:build"], { delegates: true, workspace: "broken-previous" }),

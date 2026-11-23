@@ -45,10 +45,10 @@ const PROTOTYPE_KEYS: [&str; 12] = [
     "valueOf",
 ];
 
-/// The message of the "first run" block holds an em dash, which pail counts as one unit and the
-/// byte-counting wrap here as three, so it is only printed where it fits on one line (68 characters).
+/// The message of the "first run" block holds an em dash, which pail's wrap measures differently from the
+/// byte-counting wrap here (it fits one line at a width where this one would wrap), so it is only printed
+/// where both agree: the whole message fits within the wrap limit even counted in bytes.
 const FIRST_TIME: &str = "No previous run to diff against — first time this task was recorded.";
-const FIRST_TIME_WIDTH: usize = 68;
 
 /// One entry of `cacheMissReasons`: string fields in file order, with at least `type` and `detail`.
 struct Reason(Ordered<String>);
@@ -320,7 +320,7 @@ fn table(
     }
 
     if previous_task.is_none() {
-        if layout.width < FIRST_TIME_WIDTH + 3 {
+        if layout.width.saturating_sub(3) < FIRST_TIME.len() {
             return None;
         }
 
@@ -439,7 +439,9 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
         out.stderr =
             layout.block(Level::Error, &format!("Task \"{}\" was not part of run {}.", request.task_id, summary.id));
 
-        let listed = if ids.is_empty() { "(none)".to_owned() } else { ids.join(", ") };
+        // `join(", ") || "(none)"`: an empty joined string falls back as well.
+        let joined = ids.join(", ");
+        let listed = if joined.is_empty() { "(none)" } else { joined.as_str() };
 
         out.stdout = layout.block(Level::Info, &format!("Tasks in this run: {listed}"));
 
