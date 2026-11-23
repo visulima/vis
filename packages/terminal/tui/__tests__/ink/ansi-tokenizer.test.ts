@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { tokenizeAnsi } from "../../src/ink/ansi-tokenizer";
+import { parseOsc8Uri, tokenizeAnsi } from "../../src/ink/ansi-tokenizer";
 
 describe("ansi-tokenizer", () => {
     it("tokenize plain text", () => {
@@ -401,5 +401,33 @@ describe("ansi-tokenizer", () => {
 
         expect(c1Token1.value).toBe("\u0085");
         expect(c1Token2.value).toBe("\u008E");
+    });
+
+    describe(parseOsc8Uri, () => {
+        it.each([
+            ["\u001B]8;;https://example.com\u001B\\", "https://example.com"],
+            ["\u001B]8;id=a:b=c;https://example.com/x;y\u0007", "https://example.com/x;y"],
+            ["\u001B]8;;\u0007", ""],
+            ["\u009D8;;https://example.com\u009C", "https://example.com"],
+        ])("accepts %j", (value, uri) => {
+            expect.assertions(1);
+
+            expect(parseOsc8Uri(value)).toBe(uri);
+        });
+
+        it.each([
+            "\u001B]8;https://example.com\u0007",
+            "\u001B]8;;https://exa\u0001mple.com\u0007",
+            "\u001B]8;;https://example.com/\u001B\u001Bx\u001B\\",
+            "\u001B]8;;https://example.com/\u0007evil\u0007",
+            "\u001B]8;;https://example.com/\u009Cevil\u009C",
+            "\u001B]80;;https://example.com\u0007",
+            "\u001B]52;c;8;;\u0007",
+            "\u001B]8;;https://example.com",
+        ])("rejects %j", (value) => {
+            expect.assertions(1);
+
+            expect(parseOsc8Uri(value)).toBeUndefined();
+        });
     });
 });
