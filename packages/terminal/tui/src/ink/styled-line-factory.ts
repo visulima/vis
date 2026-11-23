@@ -382,14 +382,16 @@ const attachLeadingMarks = (tokens: AnsiToken[]): void => {
             continue;
         }
 
-        const marks = previousTextIndex === undefined ? undefined : leadingMarksRegex.exec(token.value)?.[0];
+        let { value } = token;
+        const marks = previousTextIndex === undefined ? undefined : leadingMarksRegex.exec(value)?.[0];
 
-        if (marks !== undefined) {
-            tokens[previousTextIndex!] = { type: "text", value: tokens[previousTextIndex!]!.value + marks };
-            tokens[index] = { type: "text", value: token.value.slice(marks.length) };
+        if (previousTextIndex !== undefined && marks !== undefined) {
+            tokens[previousTextIndex] = { type: "text", value: tokens[previousTextIndex]!.value + marks };
+            value = value.slice(marks.length);
+            tokens[index] = { type: "text", value };
         }
 
-        if (tokens[index]!.value !== "") {
+        if (value !== "") {
             previousTextIndex = index;
         }
     }
