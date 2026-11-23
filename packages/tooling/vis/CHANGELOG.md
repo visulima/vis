@@ -1,3 +1,23 @@
+## @visulima/vis [7.1.0-next.10](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.9...@visulima/vis@7.1.0-next.10) (2026-11-23)
+
+### Features
+
+* **vis:** answer the native commands where the CI system colours the log lines ([4408b3a](https://github.com/visulima/vis/commit/4408b3a6a72516d3b999b5ed0f04719794e86d95))
+
+### Bug Fixes
+
+* **vis:** keep the native add out of environments that can turn colour on ([cb6f031](https://github.com/visulima/vis/commit/cb6f0319628a037ab297239f313e8617df324d28))
+
+### Tests
+
+* **vis:** compare native and Node output in every colour environment ([9c139cc](https://github.com/visulima/vis/commit/9c139cc9c547e6f1da0d3fb7afc6c2642f249151))
+* **vis:** point the entry at a missing file for the declined-run colour cases ([7fad066](https://github.com/visulima/vis/commit/7fad066a49b132af6c1e7ab2d3a9f82b39fca746))
+
+
+### Dependencies
+
+* **@visulima/tui:** upgraded to 5.1.0-next.2
+
 ## @visulima/vis [7.1.0-next.9](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.8...@visulima/vis@7.1.0-next.9) (2026-11-23)
 
 ### Features
