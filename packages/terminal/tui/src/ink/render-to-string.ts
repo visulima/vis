@@ -1,9 +1,13 @@
 /* eslint-disable @stylistic/no-tabs, @stylistic/no-trailing-spaces, @typescript-eslint/no-unsafe-assignment, jsdoc/require-asterisk-prefix, jsdoc/tag-lines, jsdoc/text-escaping, sonarjs/no-tab, unicorn/no-null */
 
+import { EventEmitter } from "node:events";
+
 import type { ReactNode } from "react";
+import { createElement } from "react";
 import { LegacyRoot } from "react-reconciler/constants";
 import Yoga from "yoga-layout";
 
+import StdoutContext from "../components/stdout-context";
 import type { DOMElement } from "./dom";
 import { createNode } from "./dom";
 import reconciler from "./reconciler";
@@ -18,6 +22,8 @@ export type RenderToStringOptions = {
      */
     columns?: number;
 };
+
+const defaultRows = 24;
 
 /**
  * Render a React element to a string synchronously. Unlike `render()`, this function does not write to stdout, does not set up any terminal event listeners, and returns the rendered output as a string.
@@ -50,6 +56,10 @@ console.log(output);
  */
 const renderToString = (node: ReactNode, options?: RenderToStringOptions): string => {
     const columns = options?.columns ?? 80;
+
+    // Hooks such as useWindowSize() read the stream from context; give them the virtual terminal instead of the real one.
+    const stdout = Object.assign(new EventEmitter(), { columns, isTTY: false, rows: defaultRows, write: () => true }) as unknown as NodeJS.WritableStream;
+    const tree = createElement(StdoutContext.Provider, { value: { stdout, write() {} } }, node);
 
     // Create a standalone root node — no stdout, stdin, or terminal bindings
     const rootNode: DOMElement = createNode("ink-root");
@@ -132,7 +142,7 @@ const renderToString = (node: ReactNode, options?: RenderToStringOptions): strin
 
         try {
             // Synchronously render the React tree into the container
-            reconciler.updateContainerSync(node, container, null, () => {});
+            reconciler.updateContainerSync(tree, container, null, () => {});
             reconciler.flushSyncWork();
 
             // Yoga layout has already been calculated by onComputeLayout during commit.

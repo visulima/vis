@@ -16,6 +16,7 @@ import { accessibilityContext as AccessibilityContext } from "../components/acce
 import App from "../components/app";
 import type { TerminalSuspension } from "../components/app-context";
 import { composeBackbufferSlice } from "./backbuffer";
+import { trackBeforeExit, untrackBeforeExit } from "./before-exit";
 import * as dom from "./dom";
 import instances from "./instances";
 import type { KittyFlagName, KittyKeyboardOptions } from "./kitty-keyboard";
@@ -337,6 +338,9 @@ export default class Ink {
     // Whether <Static> output has been written since the last identity change, on any render path.
     private staticOutputWritten = false;
 
+    // Whether a frame was skipped while suspended, so unmounting before resume still draws the final one.
+    private hasWithheldFrame = false;
+
     // <Static> output read at commit time that the next frame still has to write.
     private pendingStaticOutput = "";
 
@@ -360,8 +364,6 @@ export default class Ink {
     private readonly exitPromise!: Promise<unknown>;
 
     private exitResult: unknown;
-
-    private beforeExitHandler?: () => void;
 
     private restoreConsole?: () => void;
 
@@ -965,6 +967,13 @@ export default class Ink {
             this.nextRenderCommit = undefined;
         }
 
+        // The child process owns the terminal: draw nothing, and keep the pending <Static> output for the first frame after resume.
+        if (this.activeSuspension && this.interactive && !this.isUnmounting) {
+            this.hasWithheldFrame = true;
+
+            return;
+        }
+
         const renderStart = performance.now();
         const renderResult = render(this.rootNode, this.isScreenReaderEnabled, {
             skipStatic: true,
@@ -983,6 +992,8 @@ export default class Ink {
 
     private commitFrame(renderResult: ReturnType<typeof render>): void {
         const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth, staticOutput } = renderResult;
+
+        this.hasWithheldFrame = false;
 
         this.renderedCursorRequested = cursorRequested;
         this.renderedCursorPosition = cursorPosition;
@@ -1163,6 +1174,10 @@ export default class Ink {
     private accessibilityContextValue: { isScreenReaderEnabled: boolean } | undefined;
 
     render(node: ReactNode): void {
+        if (this.isUnmounted || this.isUnmounting) {
+            return;
+        }
+
         this.accessibilityContextValue ??= { isScreenReaderEnabled: this.isScreenReaderEnabled };
 
         const tree = (
@@ -1345,10 +1360,7 @@ export default class Ink {
 
         this.isUnmounting = true;
 
-        if (this.beforeExitHandler) {
-            process.off("beforeExit", this.beforeExitHandler);
-            this.beforeExitHandler = undefined;
-        }
+        untrackBeforeExit(this);
 
         const stdout = this.options.stdout as MaybeWritableStream;
         const { canWriteToStdout, hasWritableState } = getWritableStreamState(stdout);
@@ -1366,7 +1378,8 @@ export default class Ink {
             // primary screen buffer.
             && !this.alternateScreen
         ) {
-            const shouldRenderFinalFrame = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten)) && !this.isFrameCleared;
+            const shouldRenderFinalFrame
+                = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten) || this.hasWithheldFrame) && !this.isFrameCleared;
 
             if (shouldRenderFinalFrame) {
                 this.calculateLayout();
@@ -1499,12 +1512,8 @@ export default class Ink {
         // PTY), the event loop drains naturally and beforeExit triggers a
         // clean unmount.
         // After (or during) unmount nothing would ever remove the listener again.
-        if (!this.beforeExitHandler && !this.isUnmounted && !this.isUnmounting) {
-            this.beforeExitHandler = () => {
-                this.unmount();
-            };
-
-            process.on("beforeExit", this.beforeExitHandler);
+        if (!this.isUnmounted && !this.isUnmounting) {
+            trackBeforeExit(this);
         }
 
         return this.exitPromise;

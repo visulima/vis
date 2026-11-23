@@ -208,6 +208,11 @@ export type DOMElement = InkNode & {
 
     internal_transform?: OutputTransformer;
 
+    /**
+     * Host nodes created while rendering that no commit has attached to this root yet, so the ones left detached by an abandoned render can be freed.
+     */
+    internal_uncommittedNodes?: Set<DOMElement>;
+
     // Internal properties
     isStaticDirty?: boolean;
 
