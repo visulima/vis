@@ -75,6 +75,10 @@ Use data slicing instead:
 const visible = items.slice(scroll.offset, scroll.offset + viewportHeight);
 ```
 
+## Output Stays Narrow After the Terminal Was Resized
+
+Output that was written while the terminal was narrow stays at that width when the terminal grows again. Call `redraw()` on the instance returned by `render()` to clear the screen and scrollback and draw everything at the current size. See [`render()` Options and Return Value](./quickstart-react.mdx#render-options-and-return-value).
+
 ## Text Wraps Unexpectedly
 
 Text currently wraps to available layout width. There is no `Text wrap="..."` API in `@visulima/tui`.

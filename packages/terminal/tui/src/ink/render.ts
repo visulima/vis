@@ -164,6 +164,17 @@ export type Instance = {
     clear: () => void;
 
     /**
+     * Clear the screen and the terminal scrollback, then draw the current tree again at the current terminal size, writing the output of the mounted `Static` again.
+     *
+     * Use it after the terminal was resized (for example narrower and then wider again), when earlier output was written at the old width and stays that way.
+     * `Static` output is written again as it was first rendered; it is not laid out again, and the output of a `Static` that was replaced by a different one is not written again. The scrollback is erased too, including whatever the shell printed before the app started and output written with `console.log`.
+     *
+     * It does nothing after unmount, when output is not an interactive terminal, in debug mode and with a screen reader enabled.
+     * While the terminal is suspended, it is applied on resume.
+     */
+    redraw: () => void;
+
+    /**
      * Replace the previous root node with a new one or update props of the current root node.
      */
     rerender: Ink["render"];
@@ -240,6 +251,9 @@ const render = (node: ReactNode, options?: NodeJS.WritableStream | RenderOptions
         },
         clear() {
             instance.clear();
+        },
+        redraw() {
+            instance.redraw();
         },
         rerender(n: ReactNode) {
             instance.render(n);

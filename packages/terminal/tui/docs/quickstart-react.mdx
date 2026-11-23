@@ -128,6 +128,17 @@ unmount();
 await waitUntilExit();
 ```
 
+`clear()` erases the current frame. `redraw()` clears the screen and the terminal scrollback, then draws the current tree again at the current terminal size, writing the output of the mounted `<Static>` again:
+
+```tsx
+const { redraw } = render(<App />);
+
+// A host terminal was resized narrower and then wider again; earlier output is still at the narrow width.
+redraw();
+```
+
+`<Static>` output is written again as it was first rendered, so lines that were wrapped at a narrow width stay wrapped. Output of a `<Static>` that was replaced by a different one is not written again. The scrollback erase also removes what the shell printed before the app started and anything written with `console.log` while the app ran. `redraw()` does nothing after unmount, when output is not an interactive terminal, in debug mode and with a screen reader enabled, and is applied on resume while the terminal is suspended.
+
 ## `renderToString` for Tests
 
 ```tsx
