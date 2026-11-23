@@ -306,6 +306,46 @@ const malformedFromIndex = (tokens: AnsiToken[], text: string, textStartIndex: n
     return tokens;
 };
 
+// eslint-disable-next-line no-control-regex
+const controlCharacterRegex = /[\u0000-\u001F\u007F-\u009F]/;
+
+/**
+ * Return the URI of an OSC 8 token (empty for the link-close form), or `undefined` unless it is a well-formed
+ * `OSC 8 ; params ; URI ST`. The parameters and the URI must not contain any C0, DEL or C1
+ * control character, which also rules out an ESC or terminator hidden inside the payload.
+ */
+export const parseOsc8Uri = (value: string): string | undefined => {
+    let body: string;
+
+    if (value.startsWith(`${escapeCharacter}]`)) {
+        body = value.slice(2);
+    } else if (value.startsWith(oscCharacter)) {
+        body = value.slice(1);
+    } else {
+        return undefined;
+    }
+
+    if (body.endsWith(`${escapeCharacter}\\`)) {
+        body = body.slice(0, -2);
+    } else if (body.endsWith(bellCharacter) || body.endsWith(stringTerminatorCharacter)) {
+        body = body.slice(0, -1);
+    } else {
+        return undefined;
+    }
+
+    if (!body.startsWith("8;") || controlCharacterRegex.test(body)) {
+        return undefined;
+    }
+
+    const separatorIndex = body.indexOf(";", 2);
+
+    if (separatorIndex === -1) {
+        return undefined;
+    }
+
+    return body.slice(separatorIndex + 1);
+};
+
 export const tokenizeAnsi = (text: string): AnsiToken[] => {
     if (!hasAnsiControlCharacters(text)) {
         return [{ type: "text", value: text }];

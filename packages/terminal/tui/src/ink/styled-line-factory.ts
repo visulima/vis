@@ -16,7 +16,7 @@
 import { isFullwidthCodePoint } from "@visulima/string";
 
 import type { AnsiToken } from "./ansi-tokenizer";
-import { tokenizeAnsi } from "./ansi-tokenizer";
+import { parseOsc8Uri, tokenizeAnsi } from "./ansi-tokenizer";
 import { ansi256ToColorName } from "./color-utils";
 import { BOLD_MASK, DIM_MASK, FULL_WIDTH_MASK, HIDDEN_MASK, INVERSE_MASK, ITALIC_MASK, STRIKETHROUGH_MASK, UNDERLINE_MASK } from "./style-flags";
 import { StyledLine } from "./styled-line";
@@ -271,30 +271,6 @@ const isFullwidthGrapheme = (grapheme: string, codePoint: number): boolean => {
     return false;
 };
 
-// ── OSC Hyperlink Parsing ────────────────────────────────────────────
-
-// Matches both ESC-based (\x1B]8;...) and C1-based (\x9D8;...) OSC hyperlinks
-// eslint-disable-next-line no-control-regex, sonarjs/no-control-regex, regexp/no-unused-capturing-group -- ANSI escape sequences require control characters; capturing group aids debugging
-const oscHyperlinkRegex = /(?:\u001B\]|\u009D)8;([^;]*);(.*?)(?:\u001B\\|\u0007|\u009C)/;
-
-const parseOscHyperlink = (oscValue: string): string | undefined => {
-    const match = oscHyperlinkRegex.exec(oscValue);
-
-    if (!match?.[2]) {
-        return undefined;
-    }
-
-    // Empty URL means "close link"
-    if (match[2].length === 0) {
-        return undefined;
-    }
-
-    // Preserve the terminator format
-    const usesST = oscValue.endsWith("\u001B\\");
-
-    return usesST ? `ST:${match[2]}` : match[2];
-};
-
 // ── Core Pipeline ────────────────────────────────────────────────────
 
 const defaultIgnorableRegex = /^\p{Default_Ignorable_Code_Point}+$/u;
@@ -391,6 +367,34 @@ const processTextToken = (text: string, line: StyledLine, state: SgrState): void
     }
 };
 
+const leadingMarksRegex = /^\p{Mark}+/u;
+
+/**
+ * A combining mark that follows an escape sequence arrives as the start of a new text token and
+ * would become a cell of its own. Move it back onto the end of the previous text token so it
+ * joins its base character.
+ */
+const attachLeadingMarks = (tokens: AnsiToken[]): void => {
+    let previousTextIndex: number | undefined;
+
+    for (const [index, token] of tokens.entries()) {
+        if (token.type !== "text") {
+            continue;
+        }
+
+        const marks = previousTextIndex === undefined ? undefined : leadingMarksRegex.exec(token.value)?.[0];
+
+        if (marks !== undefined) {
+            tokens[previousTextIndex!] = { type: "text", value: tokens[previousTextIndex!]!.value + marks };
+            tokens[index] = { type: "text", value: token.value.slice(marks.length) };
+        }
+
+        if (tokens[index]!.value !== "") {
+            previousTextIndex = index;
+        }
+    }
+};
+
 /**
  * Convert an ANSI-styled text string directly to a StyledLine.
  *
@@ -403,6 +407,9 @@ export const textToStyledLine = (text: string): StyledLine => {
     }
 
     const tokens: AnsiToken[] = tokenizeAnsi(text);
+
+    attachLeadingMarks(tokens);
+
     const line = new StyledLine();
     let sgrState = createSgrState();
 
@@ -419,14 +426,13 @@ export const textToStyledLine = (text: string): StyledLine => {
             }
 
             case "osc": {
-                // Check for hyperlink OSC 8
-                const link = parseOscHyperlink(token.value);
+                const uri = parseOsc8Uri(token.value);
 
-                if (link !== undefined) {
-                    sgrState = { ...sgrState, link };
-                } else if (token.value.includes("8;")) {
-                    // Close-link OSC (empty URL) — covers both ESC and C1 forms
-                    sgrState = { ...sgrState, link: undefined };
+                if (uri !== undefined) {
+                    // The ST prefix preserves the terminator format; an empty URI closes the link.
+                    const prefix = token.value.endsWith("\u001B\\") ? "ST:" : "";
+
+                    sgrState = { ...sgrState, link: uri === "" ? undefined : `${prefix}${uri}` };
                 }
 
                 break;
