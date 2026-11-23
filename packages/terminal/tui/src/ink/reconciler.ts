@@ -80,6 +80,16 @@ const diff = (before: AnyObject, after: AnyObject): AnyObject | undefined => {
     return isChanged ? changed : undefined;
 };
 
+const isAttachedTo = (node: DOMElement, root: DOMElement): boolean => {
+    let current = node;
+
+    while (current.parentNode) {
+        current = current.parentNode;
+    }
+
+    return current === root;
+};
+
 /**
  * Returns the &lt;Static> node that is part of `root`'s tree. A render can create a &lt;Static> and then be
  * abandoned before it commits, and a removed &lt;Static> leaves the tree too; in both cases `root.staticNode`
@@ -87,17 +97,7 @@ const diff = (before: AnyObject, after: AnyObject): AnyObject | undefined => {
  * searching the tree instead.
  */
 const resolveCommittedStaticNode = (root: DOMElement): DOMElement | undefined => {
-    const isAttached = (node: DOMElement): boolean => {
-        let current = node;
-
-        while (current.parentNode) {
-            current = current.parentNode;
-        }
-
-        return current === root;
-    };
-
-    if (!root.staticNode || isAttached(root.staticNode)) {
+    if (!root.staticNode || isAttachedTo(root.staticNode, root)) {
         return root.staticNode;
     }
 
@@ -122,6 +122,9 @@ const resolveCommittedStaticNode = (root: DOMElement): DOMElement | undefined =>
     return search(root);
 };
 
+// Nodes already cleaned up, so a tree is never freed twice.
+const releasedNodes = new WeakSet<DOMNode>();
+
 /**
  * Recursively clean up a node tree, freeing Yoga nodes, clearing
  * resize observers, and resetting references to prevent memory leaks.
@@ -129,9 +132,11 @@ const resolveCommittedStaticNode = (root: DOMElement): DOMElement | undefined =>
  * Ported from jacob314/ink fork (Google LLC, Apache-2.0).
  */
 const cleanupNodeTree = (node?: DOMNode): void => {
-    if (!node) {
+    if (!node || releasedNodes.has(node)) {
         return;
     }
+
+    releasedNodes.add(node);
 
     node.yogaNode?.unsetMeasureFunc();
 
@@ -156,6 +161,27 @@ const cleanupNodeTree = (node?: DOMNode): void => {
     }
 
     node.parentNode = undefined;
+};
+
+/**
+ * React never reports instances of a render it threw away (suspended or interrupted before it committed), so their
+ * Yoga nodes would stay allocated. Once a commit has attached everything it renders, whatever created for this root
+ * is still detached belongs to such a render.
+ */
+const releaseAbandonedNodes = (root: DOMElement): void => {
+    const pending = root.internal_uncommittedNodes;
+
+    if (!pending) {
+        return;
+    }
+
+    for (const node of pending) {
+        if (!isAttachedTo(node, root)) {
+            cleanupNodeTree(node);
+        }
+    }
+
+    pending.clear();
 };
 
 type Props = Record<string, unknown>;
@@ -344,6 +370,11 @@ const reconcilerInstance: ReturnType<typeof createReconciler> = createReconciler
 
         const node = createNode(type);
 
+        if (node.yogaNode) {
+            rootNode.internal_uncommittedNodes ??= new Set();
+            rootNode.internal_uncommittedNodes.add(node);
+        }
+
         for (const [key, value] of Object.entries(newProps)) {
             if (key === "children") {
                 continue;
@@ -494,6 +525,8 @@ const reconcilerInstance: ReturnType<typeof createReconciler> = createReconciler
     rendererVersion: packageInfo.version,
     requestPostPaintCallback() {},
     resetAfterCommit(rootNode) {
+        releaseAbandonedNodes(rootNode);
+
         if (typeof rootNode.onComputeLayout === "function") {
             rootNode.onComputeLayout();
         }
