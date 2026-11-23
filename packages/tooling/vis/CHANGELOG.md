@@ -1,3 +1,22 @@
+## @visulima/vis [7.1.0-next.11](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.10...@visulima/vis@7.1.0-next.11) (2026-11-23)
+
+### Features
+
+* **vis:** answer cache why and replay natively ([2b42f65](https://github.com/visulima/vis/commit/2b42f6560be55339b18d39c05769d5bb5f890058))
+
+### Bug Fixes
+
+* **vis:** show the package manager's output when vis runs it ([246daab](https://github.com/visulima/vis/commit/246daab1d0f26ec96280030a1ba4ffa1afd21d54))
+
+### Code Refactoring
+
+* **vis:** tighten the stdio test and comment of the package-manager spawn ([2d3bd6c](https://github.com/visulima/vis/commit/2d3bd6cd362e494ae333a570e69261a37e7de3f9))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 3.1.0-next.2
+
 ## @visulima/vis [7.1.0-next.10](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.9...@visulima/vis@7.1.0-next.10) (2026-11-23)
 
 ### Features
