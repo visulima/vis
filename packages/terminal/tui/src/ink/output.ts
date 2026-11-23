@@ -334,8 +334,8 @@ export default class Output {
             const parsed = this.caches.getStyledLine(line);
             let offsetX = x;
 
-            // When not clipped, allow writes beyond terminal width by growing the row
-            const maxX = clip ? Math.min(clip.x2!, row.length) : Infinity;
+            // The row is as wide as the output; anything past it would wrap onto an extra terminal row.
+            const maxX = clip ? Math.min(clip.x2!, row.length) : row.length;
 
             const parsedSpans = parsed.getSpans();
             let spanCursor = 0;
@@ -366,7 +366,7 @@ export default class Output {
 
                 // A wide character cut by an edge keeps its visible cell as a blank in its own style, so the
                 // columns after it stay where they are.
-                if (isFullWidth && (offsetX < 0 || (clip && (offsetX < clip.x1! || cellEnd > clip.x2!)))) {
+                if (isFullWidth && (offsetX < 0 || cellEnd > row.length || (clip && (offsetX < clip.x1! || cellEnd > clip.x2!)))) {
                     const visibleStart = Math.max(offsetX, clip?.x1 ?? 0, 0);
                     const visibleEnd = Math.min(cellEnd, clip?.x2 ?? Infinity, row.length);
 
@@ -379,21 +379,11 @@ export default class Output {
                     continue;
                 }
 
-                // Grow row if writing beyond current length (no clip active)
-                if (offsetX >= row.length) {
-                    row.ensureWidth(offsetX + 2);
-                }
-
                 repairWideOverlap(row, offsetX, isFullWidth ? 2 : 1);
                 row.setCharFast(offsetX, parsed.getValue(i), flags, span?.fgColor, span?.bgColor, span?.link);
 
                 if (isFullWidth) {
                     offsetX++;
-
-                    if (offsetX >= row.length) {
-                        row.ensureWidth(offsetX + 1);
-                    }
-
                     row.setCharFast(offsetX, "", flags & ~FULL_WIDTH_MASK, span?.fgColor, span?.bgColor, span?.link);
                 }
 
