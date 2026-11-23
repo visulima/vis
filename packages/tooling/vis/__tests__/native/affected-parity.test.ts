@@ -25,24 +25,19 @@ const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "
 
 const PROVIDER_ENVIRONMENT = /^(?:BUILD_|BUILDKITE|CI$|CI_|CIRCLE|CONTINUOUS_INTEGRATION$|GIT_|GITHUB_|GITLAB_CI$|SYSTEM_|TF_BUILD$)/u;
 
-const baseEnvironment = (): Record<string, string | undefined> => {
-    const withOverrides: Record<string, string | undefined> = {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
-        VIS_CLI_TEST: "1",
-        VIS_NO_UPDATE_CHECK: "1",
-    };
-    const env: Record<string, string | undefined> = Object.fromEntries(
-        Object.entries(withOverrides).filter(([key]) => key === "GIT_CONFIG_GLOBAL" || key === "GIT_CONFIG_NOSYSTEM" || !PROVIDER_ENVIRONMENT.test(key)),
+const KEPT_GIT_CONFIG = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
+const DROPPED = new Set(["VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_VERSION"]);
+
+const baseEnvironment = (): Record<string, string | undefined> =>
+    Object.fromEntries(
+        Object.entries({
+            ...process.env,
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_NOSYSTEM: "1",
+            VIS_CLI_TEST: "1",
+            VIS_NO_UPDATE_CHECK: "1",
+        }).filter(([key]) => !DROPPED.has(key) && (KEPT_GIT_CONFIG.has(key) || !PROVIDER_ENVIRONMENT.test(key))),
     );
-
-    delete env["VIS_FALLBACK_ENTRY"];
-    delete env["VIS_FALLBACK_ENTRY_OVERRIDE"];
-    delete env["VIS_VERSION"];
-
-    return env;
-};
 
 // A delegated error path prints a Node stack, whose async frames differ from one run to the next. Only V8 frames
 // (`at fn (file:1:2)`, `at file:1:2`, `at async fn (file:1:2)`, optionally followed by the `{` that opens the error's properties) are dropped, so any other indented line still has to match.

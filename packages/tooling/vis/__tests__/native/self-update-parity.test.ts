@@ -211,24 +211,20 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a warning on the query's stderr", { args: [], current: "1.0.0", stub: { warn: "npm warn something" } }],
     ];
 
-    it.each(INSTALLS.map(([label, test]): [string, Case] => [`delegates an install before printing, and Node's run is the whole output: ${label}`, test]))(
-        "%s",
-        { timeout: 30_000 },
-        (_title, test) => {
-            const native = runNative(test);
-            const delegated = runNative(test, { realEntry: true });
-            const node = runNode(test);
+    it.each(INSTALLS)("delegates an install before printing, and Node's run is the whole output: %s", { timeout: 30_000 }, (_label, test) => {
+        const native = runNative(test);
+        const delegated = runNative(test, { realEntry: true });
+        const node = runNode(test);
 
-            expect(native.stdout).toBe(`${marker}\n`);
-            expect(delegated.stdout).toBe(node.stdout);
-            expect(delegated.stderr).toBe(node.stderr);
-            expect(delegated.status).toBe(node.status);
-            expect(node.status).toBe(0);
-            // The native query, then Node's own query and the one install.
-            expect(delegated.calls).toBe(`view @visulima/vis version\n${node.calls}`);
-            expect(delegated.calls.match(/^install /gm)).toHaveLength(1);
-        },
-    );
+        expect(native.stdout).toBe(`${marker}\n`);
+        expect(delegated.stdout).toBe(node.stdout);
+        expect(delegated.stderr).toBe(node.stderr);
+        expect(delegated.status).toBe(node.status);
+        expect(node.status).toBe(0);
+        // The native query, then Node's own query and the one install.
+        expect(delegated.calls).toBe(`view @visulima/vis version\n${node.calls}`);
+        expect(delegated.calls.match(/^install /gm)).toHaveLength(1);
+    });
 
     /** Shapes and contexts the native path hands to Node: before npm is run at all, and with the marker shown. */
     const DELEGATED: [label: string, test: Case, extra?: Record<string, string | undefined>, prepare?: (cwd: string) => void][] = [
@@ -249,7 +245,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a Deno file", { args: ["--check"] }, {}, (cwd) => { writeFileSync(join(cwd, "deno.json"), "{}\n"); }],
     ];
 
-    it.each(DELEGATED.map(([label, ...rest]): [string, ...typeof rest] => [`delegates ${label} before npm is run`, ...rest]))("%s", { timeout: 30_000 }, (_title, test, extra, prepare) => {
+    it.each(DELEGATED)("delegates %s before npm is run", { timeout: 30_000 }, (_label, test, extra, prepare) => {
         const native = runNative(test, { extra, prepare });
 
         expect(native.stdout).toContain(marker);
