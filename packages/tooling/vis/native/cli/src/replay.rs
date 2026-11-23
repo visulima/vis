@@ -42,11 +42,11 @@ fn parse(args: &[String]) -> Option<Request> {
     let mut tokens = args.iter().skip(1).map(String::as_str);
 
     while let Some(token) = tokens.next() {
-        let flag = |name: &str| -> bool { token == name };
-
-        if flag("--failed") || flag("--list") {
-            let slot = if flag("--failed") { &mut request.failed } else { &mut request.list };
-
+        if let Some(slot) = match token {
+            "--failed" => Some(&mut request.failed),
+            "--list" => Some(&mut request.list),
+            _ => None,
+        } {
             if std::mem::replace(slot, true) {
                 return None;
             }

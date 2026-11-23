@@ -25,7 +25,7 @@ use crate::error::WrapperError;
 use crate::pail::{pail_width, Layout};
 
 /// The largest integer a JavaScript number holds exactly.
-const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// The workspace root and pail layout of a run the native path may answer, or `None` when Node has
 /// to: Windows (pail's clock is unix-only there and its paths come from `@visulima/path`), a
@@ -80,7 +80,7 @@ impl<'de> Deserialize<'de> for JsInt {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = i64::deserialize(deserializer)?;
 
-        if value.unsigned_abs() > MAX_SAFE_INTEGER as u64 {
+        if value.unsigned_abs() > MAX_SAFE_INTEGER {
             return Err(de::Error::custom("integer outside the exact range of a JavaScript number"));
         }
 
@@ -183,7 +183,7 @@ pub(crate) struct RunFile {
 }
 
 /// The run summaries under `<root>/.vis/runs`, newest first (`b.mtimeMs - a.mtimeMs`, stable, so
-/// equal times keep the order `fs.readdir` returns: bytewise by name). `name_filter` leaves a name
+/// equal times keep the order `fs.readdir` returns: bytewise by name). `skip` leaves a name
 /// out (Node skips the loaded run's own file). `Some(vec![])` when the directory cannot be read,
 /// which Node treats as "no runs"; `None` for a name this port cannot treat like Node does.
 pub(crate) fn run_files(root: &Path, skip: Option<&str>) -> Option<Vec<RunFile>> {

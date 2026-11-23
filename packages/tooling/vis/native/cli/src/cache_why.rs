@@ -242,7 +242,6 @@ struct Found<'a> {
 }
 
 /// The table of a found task. `None` when Node has to answer.
-#[allow(clippy::too_many_lines)]
 fn table(
     request: &Request,
     root: &Path,
