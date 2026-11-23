@@ -716,7 +716,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { collectFiles, computeTaskHash, findAllCycles, findBackEdges, findCycle, getDependentTasks, getMainWorktreeRoot, getTransitiveDeps, hashCommand, hashEnvVar, hashFile, hashFilesBatch, hashFilesInDirectory, hashString, hashStrings, isLinkedWorktree, resetWorktreeCache, runConcurrent, runConcurrentBatch, topologicalSort, trackWithSeccomp } = nativeBinding
+const { collectFiles, computeTaskHash, findAllCycles, findBackEdges, findCycle, getDependentTasks, getMainWorktreeRoot, getTransitiveDeps, hashCommand, hashEnvVar, hashFile, hashFilesBatch, hashFilesInDirectory, hashString, hashStrings, isLinkedWorktree, nativeRunLookupEntry, nativeRunTaskKeys, resetWorktreeCache, runConcurrent, runConcurrentBatch, topologicalSort, trackWithSeccomp } = nativeBinding
 export { collectFiles }
 export { computeTaskHash }
 export { findAllCycles }
@@ -733,6 +733,8 @@ export { hashFilesInDirectory }
 export { hashString }
 export { hashStrings }
 export { isLinkedWorktree }
+export { nativeRunLookupEntry }
+export { nativeRunTaskKeys }
 export { resetWorktreeCache }
 export { runConcurrent }
 export { runConcurrentBatch }

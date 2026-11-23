@@ -187,6 +187,60 @@ export declare function hashStrings(inputs: Array<string>): string;
  */
 export declare function isLinkedWorktree(workspaceRoot: string): boolean;
 
+/** The answer of a cache lookup: `status` is `hit`, `miss` or `not-reproducible`. */
+export interface NativeRunCacheLookup {
+    status: string;
+    code?: number;
+    terminalOutput?: string;
+    notReproducible?: string;
+}
+
+/** An edge of the project graph: `kind` is `static`, `dev` or `peer`. */
+export interface NativeRunDependency {
+    project: string;
+    kind: string;
+}
+
+/** Looks up the local cache entry of `hash` in `cache_dir`, read-only. */
+export declare function nativeRunLookupEntry(cacheDir: string, hash: string): NativeRunCacheLookup;
+
+/** A workspace project and its script for the run target. */
+export interface NativeRunProject {
+    name: string;
+    root: string;
+    script?: string;
+    cache?: boolean;
+    outputs?: Array<string>;
+    dependencies?: Array<NativeRunDependency>;
+}
+
+/** The key of one task. */
+export interface NativeRunTaskKey {
+    id: string;
+    hash: string;
+    dependencies: Array<string>;
+    keyed: boolean;
+}
+
+/**
+ * Computes the task keys of `run <target>` for a script-only workspace.
+ * `depends_on_dependencies` selects `dependsOn: ["^<target>"]`; the default
+ * target has no `dependsOn`.
+ */
+export declare function nativeRunTaskKeys(
+    workspaceRoot: string,
+    target: string,
+    projects: Array<NativeRunProject>,
+    dependsOnDependencies: boolean,
+): NativeRunTaskKeys;
+
+/** The task keys of a run, or why they cannot be reproduced. */
+export interface NativeRunTaskKeys {
+    keys: Array<NativeRunTaskKey>;
+    roots: Array<string>;
+    notReproducible?: string;
+}
+
 /** Represents a task graph for native graph operations. */
 export interface NativeTaskGraph {
     /** All task IDs in the graph. */
