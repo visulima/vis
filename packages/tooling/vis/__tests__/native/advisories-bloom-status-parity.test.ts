@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 
@@ -21,12 +21,6 @@ const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 
 const scratch = mkdtempSync(join(tmpdir(), "vis-advisories-parity-"));
-
-// The scratch directory must be a pnpm workspace root. Node fails without a resolvable root, and the
-// native gate only answers when the root resolves to the working directory (see `native_context`).
-writeFileSync(join(scratch, "package.json"), "{}");
-writeFileSync(join(scratch, "pnpm-lock.yaml"), "");
-writeFileSync(join(scratch, "pnpm-workspace.yaml"), "");
 
 const manifest = (overrides: Record<string, unknown> = {}): string =>
     JSON.stringify(
@@ -104,6 +98,14 @@ const run = (command: string, args: string[], options: { ci: boolean; cwd?: stri
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))(
     "vis advisories bloom status: native vs Node",
     () => {
+        // The scratch directory must be a pnpm workspace root. Node fails without a resolvable root, and the
+        // native gate only answers when the root resolves to the working directory (see `native_context`).
+        beforeAll(() => {
+            writeFileSync(join(scratch, "package.json"), "{}");
+            writeFileSync(join(scratch, "pnpm-lock.yaml"), "");
+            writeFileSync(join(scratch, "pnpm-workspace.yaml"), "");
+        });
+
         afterAll(() => {
             rmSync(scratch, { force: true, recursive: true });
         });

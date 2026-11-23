@@ -24,11 +24,11 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 
-let scratch = "";
-let nativeBinary = "";
-let stubEntry = "";
-let home = "";
-let backslashHome = "";
+let scratch: string;
+let nativeBinary: string;
+let stubEntry: string;
+let home: string;
+let backslashHome: string;
 
 /** A pnpm workspace root the binary and Node both find from its own directory. */
 const makeRoot = (name: string, files: Record<string, string> = {}): string => {
@@ -398,7 +398,13 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         both("a global flag", "plain", "node", ["cache", "list", "--format", "json", "--no-color"]);
     });
 
+    afterAll(() => {
+        rmSync(scratch, { force: true, recursive: true });
+    });
+
     it("answers every shape the way Node does", () => {
+        expect.assertions(1);
+
         // Cases are registered in `beforeAll`, so they run from one test to keep the fixtures in place.
         const failures: string[] = [];
 
@@ -466,8 +472,4 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(failures).toStrictEqual([]);
     }, 600_000);
-
-    afterAll(() => {
-        rmSync(scratch, { force: true, recursive: true });
-    });
 });
