@@ -215,7 +215,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             const missingEntry = join(scratch, "missing-entry.js");
             const nativeDirectory = copyFixture("existing-dockerignore");
             const nodeDirectory = copyFixture("existing-dockerignore");
-            const native = nativeRun(variant, nativeDirectory, { ...colour, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
+            const native = nativeRun(variant, nativeDirectory, { ...colour, VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
             const node = nodeRun(variant, nodeDirectory, colour);
 
             expect(native.status).toBe(node.status);
@@ -237,7 +237,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         expect.assertions(3);
 
         const normalize = (text: string): string => text.replaceAll(/\(node:\d+\)/g, "(node:PID)");
-        const native = nativeRun(variant, copyFixture("empty-project"), { ...colour, VIS_FALLBACK_ENTRY_OVERRIDE: join(scratch, "missing-entry.js") });
+        const missingEntry = join(scratch, "missing-entry.js");
+        const native = nativeRun(variant, copyFixture("empty-project"), { ...colour, VIS_FALLBACK_ENTRY: missingEntry, VIS_FALLBACK_ENTRY_OVERRIDE: missingEntry });
         const delegated = nativeRun(variant, copyFixture("empty-project"), colour);
         const node = nodeRun(variant, copyFixture("empty-project"), colour);
 
