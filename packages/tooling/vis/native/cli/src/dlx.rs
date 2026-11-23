@@ -35,7 +35,6 @@ struct Flags {
     packages: Vec<String>,
     shell_mode: bool,
     silent: bool,
-    yes: bool,
     /// The package (or, in shell mode, the command), then its arguments.
     words: Vec<String>,
 }
@@ -222,10 +221,8 @@ fn parse(args: &[String]) -> Option<Flags> {
                 flags.no_info = true;
                 "no-info"
             }
-            "-y" | "--yes" => {
-                flags.yes = true;
-                "yes"
-            }
+            // Accepted and ignored: with the gate out there is nothing to approve.
+            "-y" | "--yes" => "yes",
             "--offline" => {
                 flags.offline = true;
                 "offline"
