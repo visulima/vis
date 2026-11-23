@@ -8,7 +8,6 @@ import { coerce, lt } from "semver";
 import type { AddOptions, DlxOptions, ExecOptions, InstallOptions, RemoveOptions, ResolvedCommand, WhyOptions } from "#native";
 import {
     detectPackageManager,
-    execPmCommandInteractive,
     resolveAdd,
     resolveDedupe,
     resolveDlx,
@@ -322,9 +321,8 @@ const applyCorepack = (resolved: ResolvedCommand, pm: InstallerInfo): ResolvedCo
  * Per-call execution overrides shared across all `run*` helpers.
  *
  * - `env`: extra environment variables for this single invocation.
- *   Merged into `process.env`; the underlying spawn uses Node's
- *   `spawnSync` instead of the native exec to avoid leaking env into
- *   sibling processes. Pass `{}` to opt out.
+ *   Merged into `process.env` for this one child, so it does not leak
+ *   into sibling processes. Pass `{}` to opt out.
  * - `dry`: print the resolved command but do not execute it. Returns
  *   `0`. Useful for embedders previewing what `vis` would do.
  */
@@ -334,25 +332,19 @@ interface RunOverrides {
 }
 
 /**
- * Execute a resolved command with optional per-call env injection.
+ * Execute a resolved command with the terminal's stdio, merging an optional per-call env into `process.env`.
  *
- * The native `execPmCommandInteractive` inherits `process.env` and
- * cannot accept ad-hoc overrides. When `env` is provided, fall back
- * to Node's `spawnSync` with merged env — same `inherit` stdio
- * semantics, slightly slower process spawn but identical exit-code
- * handling. Without `env`, the fast native path is used.
+ * Always Node's `spawnSync`, not the native `execPmCommandInteractive`: on macOS the child that one starts
+ * gets `/dev/null` for stdin, stdout and stderr whatever the parent's stdio is, which loses the package
+ * manager's output and prompts.
  */
 const spawnResolved = (resolved: ResolvedCommand, cwd: string, env?: Record<string, string>): number => {
-    if (env === undefined) {
-        return execPmCommandInteractive(resolved.bin, resolved.args, cwd);
-    }
-
     // Caller's `env` overrides inherited `process.env` (last-write-wins
     // via spread). Trust boundary is the caller — env is not validated;
     // callers must not forward untrusted user input into this map.
     const result = spawnSync(resolved.bin, resolved.args, {
         cwd,
-        env: { ...process.env, ...env },
+        env: env === undefined ? process.env : { ...process.env, ...env },
         stdio: "inherit",
     });
 
