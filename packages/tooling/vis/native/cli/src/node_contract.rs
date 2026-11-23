@@ -34,6 +34,12 @@ pub fn init() {
 
     env::remove_var("VIS_HANDOFF");
 
+    // `process.version` of the launcher's Node. Only the launcher knows it, so a start without one drops
+    // whatever a parent process left behind: `vis run` answers natively only with a version it can trust.
+    if !handoff {
+        env::remove_var("VIS_NODE_VERSION");
+    }
+
     let exe = env::current_exe().and_then(fs::canonicalize).ok();
 
     match exe.as_deref().and_then(locate) {

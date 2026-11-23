@@ -48,6 +48,8 @@ if (routesToNative(userArguments)) {
                 VIS_HANDOFF: "launcher",
                 VIS_LAUNCHER: "node",
                 VIS_NODE: process.execPath,
+                // `process.version` of this Node, which `vis run` records in the run summary natively.
+                VIS_NODE_VERSION: process.version,
                 VIS_VERSION: version,
             },
             stdio: "inherit",
