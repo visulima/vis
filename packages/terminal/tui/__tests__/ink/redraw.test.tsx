@@ -18,6 +18,9 @@ const ERASE_SCROLLBACK = /\u001B\[3J/u;
 const COLS = 40;
 const ROWS = 12;
 
+const EXPECTED_ROWS = ["static-1", "static-2", "alpha bravo charlie delta echo", "live"];
+const EXPECTED_ROWS_WITH_THIRD = ["static-1", "static-2", "static-3", "alpha bravo charlie delta echo", "live"];
+
 const defaultItems = ["static-1", "static-2"];
 
 const App = ({ items = defaultItems }: { readonly items?: string[] }) => (
@@ -67,7 +70,7 @@ describe("instance.redraw()", () => {
             await app.waitUntilRenderFlush();
 
             expect(screenOf(stdout)).toEqual(screenOf(fresh));
-            expect(screenOf(stdout)).toEqual(["static-1", "static-2", "alpha bravo charlie delta echo", "live"]);
+            expect(screenOf(stdout)).toEqual(EXPECTED_ROWS);
 
             app.unmount();
             freshApp.unmount();
@@ -86,7 +89,7 @@ describe("instance.redraw()", () => {
             app.redraw();
             await app.waitUntilRenderFlush();
 
-            expect(screenOf(stdout)).toEqual(["static-1", "static-2", "static-3", "alpha bravo charlie delta echo", "live"]);
+            expect(screenOf(stdout)).toEqual(EXPECTED_ROWS_WITH_THIRD);
 
             app.unmount();
         });
@@ -102,36 +105,21 @@ describe("instance.redraw()", () => {
             app.redraw();
             await app.waitUntilRenderFlush();
 
-            expect(screenOf(stdout)).toEqual(["static-1", "static-2", "static-3", "alpha bravo charlie delta echo", "live"]);
+            expect(screenOf(stdout)).toEqual(EXPECTED_ROWS_WITH_THIRD);
 
             app.unmount();
         });
     });
 
     describe("when there is nothing to redraw", () => {
-        it("writes nothing when the output is not a TTY", async () => {
+        it.each([
+            { isTTY: false, name: "the output is not a TTY", options: { interactive: true } },
+            { isTTY: true, name: "the app is not interactive", options: { interactive: false } },
+        ])("writes nothing when $name", async ({ isTTY, options }) => {
             expect.assertions(1);
 
-            const stdout = createStdout(COLS, false, ROWS);
-            const app = render(<App />, { interactive: true, stdout });
-
-            await app.waitUntilRenderFlush();
-
-            const before = stdout.getWrites().length;
-
-            app.redraw();
-            await app.waitUntilRenderFlush();
-
-            expect(stdout.getWrites()).toHaveLength(before);
-
-            app.unmount();
-        });
-
-        it("writes nothing when the app is not interactive", async () => {
-            expect.assertions(1);
-
-            const stdout = createStdout(COLS, true, ROWS);
-            const app = render(<App />, { interactive: false, stdout });
+            const stdout = createStdout(COLS, isTTY, ROWS);
+            const app = render(<App />, { ...options, stdout });
 
             await app.waitUntilRenderFlush();
 
@@ -163,32 +151,94 @@ describe("instance.redraw()", () => {
         });
     });
 
-    it("writes the rows that scrolled off an overflowToBackbuffer region again", async () => {
-        expect.assertions(3);
-
-        const stdout = createStdout(COLS, true, ROWS);
+    describe("overflowToBackbuffer", () => {
         const content = Array.from({ length: 40 }, (_, index) => `ROW${String(index).padStart(4, "0")}`).join("\n");
-        const app = render(
+
+        const Scrolled = () => (
             <Box flexDirection="column" height={5} overflowToBackbuffer overflowY="scroll" scrollTop={8} stableScrollback width={20}>
                 <Box flexDirection="column" flexShrink={0}>
                     <Text>{content}</Text>
                 </Box>
-            </Box>,
-            { interactive: true, stdout },
+            </Box>
         );
 
+        const expectScrolledRowsWrittenOnce = (stdout: ReturnType<typeof createStdout>, before: number): void => {
+            const written = stdout.getWrites().slice(before).join("");
+            const redrawn = stripAnsi(written);
+
+            expect(written).toMatch(ERASE_SCROLLBACK);
+            expect(redrawn.split("ROW0000")).toHaveLength(2);
+            expect(redrawn.split("ROW0007")).toHaveLength(2);
+        };
+
+        it("writes the rows that scrolled off again", async () => {
+            expect.assertions(3);
+
+            const stdout = createStdout(COLS, true, ROWS);
+            const app = render(<Scrolled />, { interactive: true, stdout });
+
+            await app.waitUntilRenderFlush();
+
+            const before = stdout.getWrites().length;
+
+            app.redraw();
+            await app.waitUntilRenderFlush();
+
+            expectScrolledRowsWrittenOnce(stdout, before);
+
+            app.unmount();
+        });
+
+        it("writes the rows that scrolled off again when the redraw waited for a resume", async () => {
+            expect.assertions(3);
+
+            const stdout = createStdout(COLS, true, ROWS);
+            let suspendTerminal!: ReturnType<typeof useApp>["suspendTerminal"];
+
+            const Example = () => {
+                suspendTerminal = useApp().suspendTerminal;
+
+                return <Scrolled />;
+            };
+
+            const app = render(<Example />, { interactive: true, stdout });
+
+            await app.waitUntilRenderFlush();
+
+            const suspension = await suspendTerminal();
+            const before = stdout.getWrites().length;
+
+            app.redraw();
+            await suspension.resume();
+            await app.waitUntilRenderFlush();
+
+            expectScrolledRowsWrittenOnce(stdout, before);
+
+            app.unmount();
+        });
+    });
+
+    it("does not write the output of a replaced Static again", async () => {
+        expect.assertions(1);
+
+        const stdout = createStdout(COLS, true, ROWS);
+        const Replaceable = ({ id, items }: { readonly id: string; readonly items: string[] }) => (
+            <>
+                <Static items={items} key={id}>
+                    {(item) => <Text key={item}>{item}</Text>}
+                </Static>
+                <Text>live</Text>
+            </>
+        );
+        const app = render(<Replaceable id="a" items={["first-1", "first-2"]} />, { interactive: true, stdout });
+
         await app.waitUntilRenderFlush();
-
-        const before = stdout.getWrites().length;
-
+        app.rerender(<Replaceable id="b" items={["second-1"]} />);
+        await app.waitUntilRenderFlush();
         app.redraw();
         await app.waitUntilRenderFlush();
 
-        const redrawn = stripAnsi(stdout.getWrites().slice(before).join(""));
-
-        expect(stdout.getWrites().slice(before).join("")).toMatch(ERASE_SCROLLBACK);
-        expect(redrawn.split("ROW0000")).toHaveLength(2);
-        expect(redrawn.split("ROW0007")).toHaveLength(2);
+        expect(screenOf(stdout)).toEqual(["second-1", "live"]);
 
         app.unmount();
     });
@@ -220,7 +270,7 @@ describe("instance.redraw()", () => {
         await app.waitUntilRenderFlush();
 
         expect(stdout.getWrites().slice(before).join("")).toMatch(ERASE_SCROLLBACK);
-        expect(screenOf(stdout)).toEqual(["static-1", "static-2", "alpha bravo charlie delta echo", "live"]);
+        expect(screenOf(stdout)).toEqual(EXPECTED_ROWS);
 
         app.unmount();
     });
@@ -239,7 +289,7 @@ describe("instance.redraw()", () => {
 
         await app.waitUntilRenderFlush();
 
-        expect(screenOf(stdout)).toEqual(["static-1", "static-2", "alpha bravo charlie delta echo", "live"]);
+        expect(screenOf(stdout)).toEqual(EXPECTED_ROWS);
 
         app.unmount();
     });

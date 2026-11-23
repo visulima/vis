@@ -1008,7 +1008,7 @@ export default class Ink {
 
                 this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix, rowOffset: this.nativeRowOffset });
             } else {
-                // Inline frames are anchored at the cursor, so nothing is redrawn from home. New <Static> output and
+                // Inline frames are anchored at the cursor, so nothing is redrawn from home, except by redraw(). New <Static> output and
                 // scrolled-off lines are written above the frame; the renderer erases the old frame first.
                 this.nativeScreenStale = false;
 
@@ -1544,7 +1544,7 @@ export default class Ink {
     }
 
     /**
-     * Clears the screen and the scrollback, then draws the current tree again at the current terminal size, with all `Static` output written again.
+     * Clears the screen and the scrollback, then draws the current tree again at the current terminal size, with the output of the mounted `Static` written again.
      * Does nothing after unmount, without an interactive TTY, or in debug and screen reader mode;
      * while the terminal is suspended it is applied on resume.
      */
@@ -1567,17 +1567,21 @@ export default class Ink {
         }
 
         this.forgetFrame();
-        this.isFullRedraw = true;
-
-        // Rows that scrolled off an overflowToBackbuffer region went into the scrollback that was just erased, so they are written again.
-        if (this.backbufferNode) {
-            this.backbufferNode.internal_maxPushedScrollTop = 0;
-        }
+        this.requestFullRedraw();
 
         clearStyledLineCache();
         this.calculateLayout();
         dom.emitLayoutListeners(this.rootNode);
         this.onRender();
+    }
+
+    // The next frame clears the scrollback too, so rows that scrolled off an overflowToBackbuffer region are written again with it.
+    private requestFullRedraw(): void {
+        this.isFullRedraw = true;
+
+        if (this.backbufferNode) {
+            this.backbufferNode.internal_maxPushedScrollTop = 0;
+        }
     }
 
     // Drops what is known about the frame on screen, so the next frame is drawn in full instead of diffed against it.
@@ -1747,6 +1751,7 @@ export default class Ink {
             // Microsoft Terminal, WezTerm, Alacritty, Kitty, Ghostty, etc.), destroying
             // the user's history. See vadimdemedes/ink#935 and the upstream fix in
             // vadimdemedes/ink#936.
+            // Only redraw() erases the scrollback, because the app asked for that.
             // backbufferOutput sits above the live output for this frame only;
             // it is deliberately excluded from this.fullStaticOutput so it is
             // not replayed (and duplicated) on subsequent clear/redraw cycles.
@@ -1761,7 +1766,7 @@ export default class Ink {
             // and the clear would erase it, so the whole static history is written again. Static output new
             // in this frame has not been written anywhere yet, so it is always written.
             const isStaticOnScreen = this.lastOutputHeight < viewportRows;
-            const staticToWrite = isStaticOnScreen || isFullRedraw ? this.fullStaticOutput : staticOutput;
+            const staticToWrite = isStaticOnScreen ? this.fullStaticOutput : staticOutput;
             const clearSequence = isFullRedraw && !this.alternateScreen ? clearScreenAndScrollback : clearScreenAndHomeCursor;
 
             this.options.stdout.write(clearSequence + staticToWrite + backbufferOutput + outputToRender);
@@ -2017,12 +2022,14 @@ export default class Ink {
             this.kittyProtocolEnabled = true;
         }
 
-        // Force a full redraw instead of diffing against the stale pre-suspension
-        // frame, which the child process may have overwritten.
-        // Whatever the child left on screen is not ours to erase, so the frame is forgotten and drawn again at the cursor.
+        // Force a full redraw instead of diffing against the stale pre-suspension frame, which the child process may have
+        // overwritten. Whatever the child left on screen is not ours to erase, so the frame is forgotten and drawn again at the cursor.
         this.forgetFrame();
-        this.isFullRedraw = this.isRedrawRequested;
-        this.isRedrawRequested = false;
+
+        if (this.isRedrawRequested) {
+            this.isRedrawRequested = false;
+            this.requestFullRedraw();
+        }
 
         try {
             this.calculateLayout();
