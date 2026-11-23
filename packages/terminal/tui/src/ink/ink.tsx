@@ -1747,10 +1747,7 @@ export default class Ink {
             !options
             || (options.mode ?? "auto") !== "auto"
             || this.kittyDetectionStarted
-            || !this.rawModeActive
-            || this.activeSuspension
-            || this.isUnmounting
-            || this.isUnmounted
+            || !this.ownsTerminalInput
             || !this.interactive
             || !this.options.stdin.isTTY
             || !this.options.stdout.isTTY
@@ -1773,9 +1770,14 @@ export default class Ink {
         this.syncKittyProtocol();
     }
 
+    private get ownsTerminalInput(): boolean {
+        return this.rawModeActive && !this.activeSuspension && !this.isUnmounting && !this.isUnmounted;
+    }
+
     // Pushes the flags while raw mode is on and the terminal is ours, pops them otherwise.
     private syncKittyProtocol(): void {
-        const shouldBeEnabled = Boolean(this.kittyFlags) && this.rawModeActive && !this.activeSuspension && !this.isUnmounting && !this.isUnmounted;
+        const flags = this.kittyFlags;
+        const shouldBeEnabled = flags !== undefined && this.ownsTerminalInput;
 
         if (shouldBeEnabled === this.kittyProtocolEnabled) {
             return;
@@ -1786,7 +1788,7 @@ export default class Ink {
         this.kittyProtocolEnabled = shouldBeEnabled;
 
         if (shouldBeEnabled) {
-            this.writeBestEffort(stdout, `\u{1B}[>${resolveFlags(this.kittyFlags!)}u`);
+            this.writeBestEffort(stdout, `\u{1B}[>${resolveFlags(flags)}u`);
         } else if (!stdout.destroyed && !stdout.writableEnded) {
             this.writeBestEffort(stdout, "\u{1B}[<u");
         }
@@ -1795,6 +1797,13 @@ export default class Ink {
     // Must stay referentially stable across `render()` calls, for the same reason as handleKittyQueryResponse.
     handleRawModeChange = (isEnabled: boolean): void => {
         this.rawModeActive = isEnabled;
+
+        // A query cut short by raw mode going away was never answered, so it is asked again when raw mode returns.
+        if (!isEnabled && this.finishKittyDetection) {
+            this.finishKittyDetection(false);
+            this.kittyDetectionStarted = false;
+        }
+
         this.startKittyDetection();
         this.syncKittyProtocol();
     };
@@ -1803,7 +1812,7 @@ export default class Ink {
         const { stdout } = this.options;
 
         // Raw mode may have gone away while this probe waited for its turn.
-        if (!this.rawModeActive || this.activeSuspension || this.isUnmounted) {
+        if (!this.ownsTerminalInput) {
             this.kittyDetectionStarted = false;
 
             return Promise.resolve();
@@ -1912,6 +1921,7 @@ export default class Ink {
             // If handing over the terminal fails partway, don't strand the app
             // suspended with no way back: reclaim input, clear the flag, rethrow.
             this.activeSuspension = undefined;
+            this.syncKittyProtocol();
 
             try {
                 this.resumeInput?.();

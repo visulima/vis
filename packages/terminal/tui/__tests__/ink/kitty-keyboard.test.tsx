@@ -534,6 +534,8 @@ describe("kitty-keyboard", () => {
 
         const count = (write: ReturnType<typeof vi.fn>, sequence: string): number => getWrittenStrings(write).filter((w) => w === sequence).length;
 
+        const sequences = (write: ReturnType<typeof vi.fn>): string[] => getWrittenStrings(write).filter((w) => w === POP || w === PUSH);
+
         const Toggle = ({ active }: { readonly active: boolean }): React.ReactNode => {
             useInput(() => {}, { isActive: active });
 
@@ -581,6 +583,34 @@ describe("kitty-keyboard", () => {
             await waitFor(() => count(write, PUSH) === 1);
 
             expect(count(write, QUERY)).toBe(1);
+
+            unmount();
+
+            expect(count(write, POP)).toBe(1);
+        });
+
+        it("auto mode - asks again when raw mode went away while the query was open", async () => {
+            expect.assertions(2);
+
+            const { stdout, write } = createFakeStdout();
+            const stdin = createFakeStdin();
+
+            const { rerender, unmount } = render(<Toggle active />, { interactive: true, kittyKeyboard: { mode: "auto" }, stdin, stdout });
+
+            await waitFor(() => count(write, QUERY) === 1);
+
+            rerender(<Toggle active={false} />);
+            await waitForRawModeOff(stdin);
+
+            rerender(<Toggle active />);
+            await waitFor(() => count(write, QUERY) === 2);
+
+            (stdin.read as ReturnType<typeof vi.fn>).mockReturnValueOnce("\u001B[?1u");
+            stdin.emit("readable");
+
+            await waitFor(() => count(write, PUSH) === 1);
+
+            expect(count(write, QUERY)).toBe(2);
 
             unmount();
 
@@ -644,7 +674,7 @@ describe("kitty-keyboard", () => {
             unmount();
 
             expect(count(write, POP)).toBe(2);
-            expect(getWrittenStrings(write).filter((w) => w === POP || w === PUSH)).toStrictEqual([PUSH, POP, PUSH, POP]);
+            expect(sequences(write)).toStrictEqual([PUSH, POP, PUSH, POP]);
         });
 
         it("enabled mode - pops exactly once when the app exits through useApp().exit()", async () => {
@@ -690,15 +720,14 @@ describe("kitty-keyboard", () => {
             };
 
             const { unmount } = render(<App />, { interactive: true, kittyKeyboard: { mode: "enabled" }, stdin, stdout });
-            const sequences = (): string[] => getWrittenStrings(write).filter((w) => w === POP || w === PUSH);
 
-            expect(sequences()).toStrictEqual([PUSH]);
+            expect(sequences(write)).toStrictEqual([PUSH]);
 
             await state.suspend?.(() => {
-                expect(sequences()).toStrictEqual([PUSH, POP]);
+                expect(sequences(write)).toStrictEqual([PUSH, POP]);
             });
 
-            expect(sequences()).toStrictEqual([PUSH, POP, PUSH]);
+            expect(sequences(write)).toStrictEqual([PUSH, POP, PUSH]);
 
             unmount();
         });
@@ -735,7 +764,7 @@ describe("kitty-keyboard", () => {
 
             unmount();
 
-            expect(getWrittenStrings(write).filter((w) => w === POP || w === PUSH)).toStrictEqual([PUSH, POP]);
+            expect(sequences(write)).toStrictEqual([PUSH, POP]);
         });
 
         it("enabled mode - keeps the protocol off for a consumer that only mounts while suspended", async () => {
