@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { Box, Cursor, Static, Text } from "../../src/components/index";
 import { useApp } from "../../src/ink/hooks/use-app";
+import useInput from "../../src/ink/hooks/use-input";
 import { render } from "../../src/ink/index";
 import { createNative } from "../../src/ink/log-update-native";
 import { createStdin } from "../helpers/ink-create-stdin";
@@ -324,7 +325,13 @@ describe("native renderer", () => {
 
         Object.assign(stdin, { isTTY: true });
 
-        const { unmount, waitUntilRenderFlush } = render(<Text>hello native</Text>, {
+        const Reader = () => {
+            useInput(() => {});
+
+            return <Text>hello native</Text>;
+        };
+
+        const { unmount, waitUntilRenderFlush } = render(<Reader />, {
             alternateScreen: true,
             interactive: true,
             kittyKeyboard: { mode: "enabled" },

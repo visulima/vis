@@ -356,9 +356,13 @@ export default class Ink {
 
     private kittyProtocolEnabled = false;
 
-    // Flags the kitty protocol was enabled with, remembered so suspendTerminal()
-    // can reinstate the exact same protocol on resume.
+    // Flags the protocol should run with (forced by "enabled" mode, or after a successful "auto" detection).
+    // They are only pushed while a component owns raw mode and the terminal is not suspended.
     private kittyFlags?: KittyFlagName[];
+
+    private rawModeActive = false;
+
+    private kittyDetectionStarted = false;
 
     // The suspension that currently owns the terminal, set while suspendTerminal() has handed it to a child process.
     private activeSuspension?: object;
@@ -372,8 +376,6 @@ export default class Ink {
     private finishKittyDetection?: (supported: boolean) => void;
 
     private nextRenderCommit?: { promise: Promise<void>; resolve: () => void };
-
-    private deferredInitDone = false;
 
     constructor(options: Options) {
         this.options = options;
@@ -546,11 +548,7 @@ export default class Ink {
             };
         }
 
-        // Kitty "enabled" mode runs immediately (just a stdout.write).
-        // "auto" mode detection is deferred to the first render frame via
-        // runDeferredInit() because the CSI ? u query sets up a stdin
-        // listener with a 200ms timeout.
-        this.initImmediateKittyKeyboard();
+        this.initEnabledKittyKeyboard();
 
         if (process.env["DEV"] === "true") {
             // @ts-expect-error outdated types
@@ -565,22 +563,6 @@ export default class Ink {
         // error but consumers never call waitUntilExit().
 
         void this.exitPromise.catch(noop);
-    }
-
-    /**
-     * Perform deferred initialization on the first render frame.
-     * Kitty keyboard auto-detection is deferred here because the CSI ? u
-     * query sets up a synchronous stdin listener with a 200ms timeout.
-     * "enabled" mode runs immediately in the constructor (it's just a write).
-     */
-    private runDeferredInit(): void {
-        if (this.deferredInitDone) {
-            return;
-        }
-
-        this.deferredInitDone = true;
-
-        this.initDeferredKittyKeyboard();
     }
 
     resized = (): void => {
@@ -931,10 +913,6 @@ export default class Ink {
             return;
         }
 
-        if (!this.deferredInitDone) {
-            this.runDeferredInit();
-        }
-
         if (this.nextRenderCommit) {
             this.nextRenderCommit.resolve();
             this.nextRenderCommit = undefined;
@@ -1137,6 +1115,7 @@ export default class Ink {
                     interactive={this.interactive}
                     onExit={this.handleAppExit}
                     onKittyQueryResponse={this.handleKittyQueryResponse}
+                    onRawModeChange={this.handleRawModeChange}
                     onRegisterInputControl={this.registerInputControl}
                     onSuspendTerminal={this.suspendTerminal}
                     onWaitUntilRenderFlush={this.waitUntilRenderFlush}
@@ -1356,10 +1335,7 @@ export default class Ink {
             this.finishKittyDetection?.(false);
 
             if (canWriteToStdout) {
-                if (this.kittyProtocolEnabled) {
-                    this.writeBestEffort(this.options.stdout, "\u{1B}[<u");
-                    this.kittyProtocolEnabled = false;
-                }
+                this.syncKittyProtocol();
 
                 // Alternate-screen content is disposable by design. We intentionally
                 // leave it active until React cleanup finishes, then restore the
@@ -1752,68 +1728,106 @@ export default class Ink {
     }
 
     /**
-     * Handle kitty keyboard "enabled" mode immediately (just a stdout.write).
-     * Called from the constructor.
+     * Kitty keyboard "enabled" mode: remember the flags to push. They reach the
+     * terminal only while a component owns raw mode (see syncKittyProtocol).
      */
-    private initImmediateKittyKeyboard(): void {
-        if (!this.options.kittyKeyboard) {
-            return;
-        }
-
+    private initEnabledKittyKeyboard(): void {
         const options = this.options.kittyKeyboard;
-        const mode = options.mode ?? "auto";
 
-        if (mode !== "enabled") {
+        if (!options || (options.mode ?? "auto") !== "enabled") {
             return;
         }
-
-        const flags: KittyFlagName[] = options.flags ?? ["disambiguateEscapeCodes"];
 
         // 'enabled' force-enables the protocol as long as both streams are TTYs,
         // regardless of the interactive setting (e.g. even in CI).
         if (this.options.stdin.isTTY && this.options.stdout.isTTY) {
-            this.enableKittyProtocol(flags);
+            this.requestKittyProtocol(options.flags ?? ["disambiguateEscapeCodes"]);
         }
     }
 
     /**
-     * Handle kitty keyboard "auto" mode detection. Deferred to first render
-     * because the CSI ? u query sets up a stdin listener with a 200ms timeout.
+     * Kitty keyboard "auto" mode: query the terminal once raw mode is on, so the
+     * reply is read as input instead of being echoed by a cooked-mode terminal.
+     * The CSI ? u query is safe to send to any terminal: unsupporting terminals
+     * simply don't respond and the 200ms timeout handles that.
      */
-    private initDeferredKittyKeyboard(): void {
-        if (!this.options.kittyKeyboard) {
-            return;
-        }
-
+    private startKittyDetection(): void {
         const options = this.options.kittyKeyboard;
-        const mode = options.mode ?? "auto";
 
-        if (mode !== "auto") {
+        if (
+            !options
+            || (options.mode ?? "auto") !== "auto"
+            || this.kittyDetectionStarted
+            || !this.ownsTerminalInput
+            || !this.interactive
+            || !this.options.stdin.isTTY
+            || !this.options.stdout.isTTY
+        ) {
             return;
         }
 
-        const flags: KittyFlagName[] = options.flags ?? ["disambiguateEscapeCodes"];
+        this.kittyDetectionStarted = true;
 
-        // Auto mode: require interactive + TTY
-        if (!this.interactive || !this.options.stdin.isTTY || !this.options.stdout.isTTY) {
-            return;
-        }
+        const flags = options.flags ?? ["disambiguateEscapeCodes"];
 
-        // Auto mode: query the terminal for kitty keyboard protocol support.
-        // The CSI ? u query is safe to send to any terminal — unsupporting
-        // terminals simply won't respond, and the 200ms timeout handles that.
-        this.confirmKittySupport(flags);
-    }
-
-    private confirmKittySupport(flags: KittyFlagName[]): void {
         // Serialized against the OSC palette query, which reads the same stdin. Concurrent probes
         // mistake each other's answers for user input: this one's stripper does not know about OSC
         // replies, so it would unshift the palette's answer into the input pipeline.
         void runExclusiveProbe(this.options.stdin, async () => this.runKittySupportQuery(flags));
     }
 
-    private async runKittySupportQuery(flags: KittyFlagName[]): Promise<void> {
+    private requestKittyProtocol(flags: KittyFlagName[]): void {
+        this.kittyFlags = flags;
+        this.syncKittyProtocol();
+    }
+
+    private get ownsTerminalInput(): boolean {
+        return this.rawModeActive && !this.activeSuspension && !this.isUnmounting && !this.isUnmounted;
+    }
+
+    // Pushes the flags while raw mode is on and the terminal is ours, pops them otherwise.
+    private syncKittyProtocol(): void {
+        const flags = this.kittyFlags;
+        const shouldBeEnabled = flags !== undefined && this.ownsTerminalInput;
+
+        if (shouldBeEnabled === this.kittyProtocolEnabled) {
+            return;
+        }
+
         const { stdout } = this.options;
+
+        this.kittyProtocolEnabled = shouldBeEnabled;
+
+        if (shouldBeEnabled) {
+            this.writeBestEffort(stdout, `\u{1B}[>${resolveFlags(flags)}u`);
+        } else if (!stdout.destroyed && !stdout.writableEnded) {
+            this.writeBestEffort(stdout, "\u{1B}[<u");
+        }
+    }
+
+    // Must stay referentially stable across `render()` calls, for the same reason as handleKittyQueryResponse.
+    handleRawModeChange = (isEnabled: boolean): void => {
+        this.rawModeActive = isEnabled;
+
+        // A query cut short by raw mode going away was never answered, so it is asked again when raw mode returns.
+        if (!isEnabled && this.finishKittyDetection) {
+            this.finishKittyDetection(false);
+            this.kittyDetectionStarted = false;
+        }
+
+        this.startKittyDetection();
+        this.syncKittyProtocol();
+    };
+
+    private runKittySupportQuery(flags: KittyFlagName[]): Promise<void> {
+        const { stdout } = this.options;
+
+        // Raw mode may have gone away while this probe waited for its turn.
+        if (!this.ownsTerminalInput) {
+            this.kittyDetectionStarted = false;
+
+            return Promise.resolve();
+        }
 
         // The reply reaches us through App's input pipeline (see onKittyQueryResponse), so it is never read twice.
         // Resolves when the reply arrives, when the window closes, or when suspension cancels the probe.
@@ -1827,7 +1841,7 @@ export default class Ink {
                 this.finishKittyDetection = undefined;
 
                 if (supported && !this.isUnmounted) {
-                    this.enableKittyProtocol(flags);
+                    this.requestKittyProtocol(flags);
                 }
 
                 resolve();
@@ -1895,6 +1909,7 @@ export default class Ink {
 
         // A reply that arrives while the child owns the terminal must not enable the protocol.
         this.finishKittyDetection?.(false);
+        this.syncKittyProtocol();
 
         if (!this.interactive || this.isUnmounted || this.isUnmounting) {
             return suspension;
@@ -1905,11 +1920,6 @@ export default class Ink {
             this.eraseFrame();
             this.log.done();
             this.nativeLog?.done();
-
-            if (this.kittyProtocolEnabled) {
-                this.writeBestEffort(this.options.stdout, "[<u");
-                this.kittyProtocolEnabled = false;
-            }
 
             if (this.alternateScreen) {
                 this.writeBestEffort(this.options.stdout, ALT_SCREEN_OFF);
@@ -1922,6 +1932,7 @@ export default class Ink {
             // If handing over the terminal fails partway, don't strand the app
             // suspended with no way back: reclaim input, clear the flag, rethrow.
             this.activeSuspension = undefined;
+            this.syncKittyProtocol();
 
             try {
                 this.resumeInput?.();
@@ -1944,6 +1955,8 @@ export default class Ink {
         this.activeSuspension = undefined;
 
         if (!this.interactive || this.isUnmounted || this.isUnmounting) {
+            this.syncKittyProtocol();
+
             return;
         }
 
@@ -1960,10 +1973,8 @@ export default class Ink {
             }
         }
 
-        if (this.kittyFlags) {
-            this.writeBestEffort(this.options.stdout, `\u{1B}[>${resolveFlags(this.kittyFlags)}u`);
-            this.kittyProtocolEnabled = true;
-        }
+        this.syncKittyProtocol();
+        this.startKittyDetection();
 
         // Force a full redraw instead of diffing against the stale pre-suspension
         // frame, which the child process may have overwritten.
@@ -1982,11 +1993,5 @@ export default class Ink {
         } catch {
             // best effort — must not mask a callback error in the caller's finally
         }
-    }
-
-    private enableKittyProtocol(flags: KittyFlagName[]): void {
-        this.kittyFlags = flags;
-        this.options.stdout.write(`\u{1B}[>${resolveFlags(flags)}u`);
-        this.kittyProtocolEnabled = true;
     }
 }
