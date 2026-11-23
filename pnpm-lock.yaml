@@ -1284,7 +1284,7 @@ importers:
         specifier: 3.1.0-next.1
         version: link:../task-runner
       '@visulima/tui':
-        specifier: 5.0.2-next.1
+        specifier: 5.1.0-next.1
         version: link:../../terminal/tui
       '@visulima/tui-kit':
         specifier: 1.0.34
@@ -1631,7 +1631,7 @@ importers:
         specifier: 5.0.0
         version: 5.0.0
       '@visulima/vis':
-        specifier: 7.1.0-next.7
+        specifier: 7.1.0-next.8
         version: link:../vis
       zod:
         specifier: catalog:utils
