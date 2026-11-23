@@ -2,7 +2,7 @@
 import { Console as NodeConsole } from "node:console";
 import process from "node:process";
 
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, clearScreenAndHomeCursor, cursorHide, cursorShow, cursorTo, eraseDown, eraseLines, scrollUp } from "@visulima/ansi";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, clearScreenAndHomeCursor, cursorHide, cursorShow, cursorTo, eraseDown, eraseLines, eraseScreenAndScrollback, scrollUp } from "@visulima/ansi";
 import { wordWrap } from "@visulima/string";
 import isInCi from "is-in-ci";
 import patchConsole from "patch-console";
@@ -48,6 +48,8 @@ if (!(console as any).Console) {
 }
 
 const noop = () => {};
+
+const clearScreenAndScrollback = clearScreenAndHomeCursor + eraseScreenAndScrollback;
 
 // Terminal rows a block of text occupies once written: each newline ends a row, and unterminated text takes one more.
 const countLines = (text: string): number => {
@@ -315,6 +317,12 @@ export default class Ink {
 
     // Set when something outside the frame may have changed the screen (a resize or a resume), so the next native frame redraws all of it.
     private nativeScreenStale = false;
+
+    // Set by redraw(): the next frame clears the screen (and the scrollback, outside the alternate screen) and writes all <Static> output again.
+    private isFullRedraw = false;
+
+    // A redraw() that arrived while the terminal was suspended, applied when it resumes.
+    private isRedrawRequested = false;
 
     private readonly useNativeRenderer: boolean;
 
@@ -966,7 +974,10 @@ export default class Ink {
 
         // Native renderer path: write buffer directly via Rust diff engine
         if (this.useNativeRenderer && this.nativeLog && outputBuffer && outputWidth) {
+            const isRedraw = this.isFullRedraw;
+
             this.isFrameCleared = false;
+            this.isFullRedraw = false;
 
             if (staticOutput) {
                 this.fullStaticOutput += staticOutput;
@@ -1000,7 +1011,10 @@ export default class Ink {
                 // Inline frames are anchored at the cursor, so nothing is redrawn from home. New <Static> output and
                 // scrolled-off lines are written above the frame; the renderer erases the old frame first.
                 this.nativeScreenStale = false;
-                this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix: staticOutput + backbufferOutput });
+
+                const prefix = isRedraw ? clearScreenAndScrollback + this.fullStaticOutput + backbufferOutput : staticOutput + backbufferOutput;
+
+                this.nativeLog.render(outputBuffer, outputWidth, outputHeight, { cursor, prefix });
             }
 
             this.lastOutputHeight = outputHeight;
@@ -1529,6 +1543,53 @@ export default class Ink {
         this.isFrameCleared = true;
     }
 
+    /**
+     * Clears the screen and the scrollback, then draws the current tree again at the current terminal size, with all `Static` output written again.
+     * Does nothing after unmount, without an interactive TTY, or in debug and screen reader mode;
+     * while the terminal is suspended it is applied on resume.
+     */
+    redraw(): void {
+        if (
+            !this.interactive
+            || !this.options.stdout.isTTY
+            || this.options.debug
+            || this.isScreenReaderEnabled
+            || this.isUnmounted
+            || this.isUnmounting
+        ) {
+            return;
+        }
+
+        if (this.activeSuspension) {
+            this.isRedrawRequested = true;
+
+            return;
+        }
+
+        this.forgetFrame();
+        this.isFullRedraw = true;
+
+        // Rows that scrolled off an overflowToBackbuffer region went into the scrollback that was just erased, so they are written again.
+        if (this.backbufferNode) {
+            this.backbufferNode.internal_maxPushedScrollTop = 0;
+        }
+
+        clearStyledLineCache();
+        this.calculateLayout();
+        dom.emitLayoutListeners(this.rootNode);
+        this.onRender();
+    }
+
+    // Drops what is known about the frame on screen, so the next frame is drawn in full instead of diffed against it.
+    private forgetFrame(): void {
+        this.lastOutput = "";
+        this.lastOutputToRender = "";
+        this.lastOutputHeight = 0;
+        this.log.reset();
+        this.nativeLog?.destroy();
+        this.nativeScreenStale = true;
+    }
+
     patchConsole(): void {
         if (this.options.debug) {
             return;
@@ -1608,9 +1669,10 @@ export default class Ink {
     }
 
     private renderInteractiveFrame(output: string, outputHeight: number, staticOutput: string, backbufferOutput = ""): void {
-        const { isFrameCleared } = this;
+        const { isFrameCleared, isFullRedraw } = this;
 
         this.isFrameCleared = false;
+        this.isFullRedraw = false;
 
         // Both <Static> output and scrolled-off backbuffer lines ride the same
         // "above the live region" channel. backbufferOutput is intentionally
@@ -1644,13 +1706,13 @@ export default class Ink {
             viewportRows,
         });
 
-        if (shouldClearTerminal) {
+        if (shouldClearTerminal || isFullRedraw) {
             // Skip clearTerminal in incremental mode to avoid erase-then-redraw flicker.
             // Instead, fall through to the normal incremental update path below so that
             // static output is still handled and the log-update diffing takes care of it.
             // Exception: Windows fullscreen redraws must perform a real clear because
             // the incremental eraseLines path is broken there (see ink#971).
-            if (this.options.incrementalRendering && !isWindowsFullscreenRedraw) {
+            if (this.options.incrementalRendering && !isWindowsFullscreenRedraw && !isFullRedraw) {
                 if (hasPrepend) {
                     this.log.clear();
                     this.options.stdout.write(prepend);
@@ -1669,7 +1731,7 @@ export default class Ink {
 
             // A throttled trailing render can arrive with the frame already on screen. Clearing again would push
             // that copy into scrollback, so skip it unless something changed. The final frame on unmount is still drawn.
-            if (output === this.lastOutput && !hasPrepend && !isFrameCleared && !this.log.isCursorDirty() && !this.isUnmounting) {
+            if (output === this.lastOutput && !hasPrepend && !isFrameCleared && !isFullRedraw && !this.log.isCursorDirty() && !this.isUnmounting) {
                 return;
             }
 
@@ -1699,9 +1761,10 @@ export default class Ink {
             // and the clear would erase it, so the whole static history is written again. Static output new
             // in this frame has not been written anywhere yet, so it is always written.
             const isStaticOnScreen = this.lastOutputHeight < viewportRows;
-            const staticToWrite = isStaticOnScreen ? this.fullStaticOutput : staticOutput;
+            const staticToWrite = isStaticOnScreen || isFullRedraw ? this.fullStaticOutput : staticOutput;
+            const clearSequence = isFullRedraw && !this.alternateScreen ? clearScreenAndScrollback : clearScreenAndHomeCursor;
 
-            this.options.stdout.write(clearScreenAndHomeCursor + staticToWrite + backbufferOutput + outputToRender);
+            this.options.stdout.write(clearSequence + staticToWrite + backbufferOutput + outputToRender);
             this.lastOutput = output;
             this.lastOutputToRender = outputToRender;
             this.lastOutputHeight = outputHeight;
@@ -1956,13 +2019,10 @@ export default class Ink {
 
         // Force a full redraw instead of diffing against the stale pre-suspension
         // frame, which the child process may have overwritten.
-        this.lastOutput = "";
-        this.lastOutputToRender = "";
-        this.lastOutputHeight = 0;
-        this.log.reset();
         // Whatever the child left on screen is not ours to erase, so the frame is forgotten and drawn again at the cursor.
-        this.nativeLog?.destroy();
-        this.nativeScreenStale = true;
+        this.forgetFrame();
+        this.isFullRedraw = this.isRedrawRequested;
+        this.isRedrawRequested = false;
 
         try {
             this.calculateLayout();
