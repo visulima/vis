@@ -8,8 +8,9 @@
 //!   sit there, and no `lerna.json` is at or above it), because Node finds the root with
 //!   `@visulima/package`'s search, which this crate does not reproduce;
 //! - no `vis.config.*` applies, and no Deno file is at or above it;
-//! - CI is set, neither stream is a terminal, and pail would not colour its output (its line
-//!   width comes from `COLUMNS`, 80 when unset);
+//! - CI is set and neither stream is a terminal. pail's line width comes from `COLUMNS` (80 when
+//!   unset), and its colour from the detection in [`crate::term::piped_colour_level`]: the header
+//!   of each line is coloured exactly as pail does it, or the run goes to Node;
 //! - every path it prints is plain ASCII with no spaces, so pail's word wrap is the one
 //!   reproduced below.
 //!
@@ -25,7 +26,7 @@ use std::process::exit;
 use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
 use crate::error::WrapperError;
-pub(crate) use crate::pail::{clock, pail_width, wrap};
+use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
 
 const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
@@ -44,7 +45,7 @@ struct Plan {
     /// `node_modules` directories, in the order the Node path visits them.
     directories: Vec<PathBuf>,
     lockfiles: Vec<PathBuf>,
-    width: usize,
+    layout: Layout,
 }
 
 /// Answer `vis clean` natively, or delegate to Node. Never returns.
@@ -100,18 +101,11 @@ fn plan(args: &[String]) -> Option<Plan> {
 
     let (dry_run, lockfile) = flags(args)?;
 
-    // pail colours its output on a terminal, under FORCE_COLOR, or where Node's colour detection
-    // turns colour on (`colour_may_be_forced`); the native path does not colour.
-    if crate::term::color_enabled(args)
-        || crate::ignore::colour_may_be_forced()
-        || !in_ci()
-        || io::stdout().is_terminal()
-        || io::stderr().is_terminal()
-    {
+    if !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return None;
     }
 
-    let width = pail_width()?;
+    let layout = Layout::detect(args)?;
     let root = env::current_dir().ok()?;
 
     if !workspace_root_is_cwd(&root) || vis_config::read(&root) != ConfigState::Absent || deno_file_applies(&root) {
@@ -127,7 +121,7 @@ fn plan(args: &[String]) -> Option<Plan> {
         return None;
     }
 
-    Some(Plan { dry_run, lockfile, directories, lockfiles, width })
+    Some(Plan { dry_run, lockfile, directories, lockfiles, layout })
 }
 
 /// The flags after `clean`, each accepted at most once. Anything else is `None`.
@@ -195,9 +189,9 @@ fn is_plain(path: &Path) -> bool {
 
 fn dry_run_output(plan: &Plan, out: &mut Output) {
     if plan.directories.is_empty() {
-        pail(plan, out, "INFO", "No node_modules directories found.");
+        pail(plan, out, Level::Info, "No node_modules directories found.");
     } else {
-        pail(plan, out, "INFO", "Would remove:");
+        pail(plan, out, Level::Info, "Would remove:");
 
         for directory in &plan.directories {
             out.stdout.push_str(&format!("  {}\n", directory.display()));
@@ -214,24 +208,24 @@ fn dry_run_output(plan: &Plan, out: &mut Output) {
 /// Prints the removal results the way the Node handler does, and returns the exit code.
 fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut Output) -> i32 {
     for directory in &outcome.removed {
-        pail(plan, out, "SUCCESS", &format!("Removed {directory}"));
+        pail(plan, out, Level::Success, &format!("Removed {directory}"));
     }
 
     for lockfile in &outcome.lockfiles_removed {
-        pail(plan, out, "SUCCESS", &format!("Removed {lockfile}"));
+        pail(plan, out, Level::Success, &format!("Removed {lockfile}"));
     }
 
     for error in &outcome.errors {
-        pail(plan, out, "ERROR", error);
+        pail(plan, out, Level::Error, error);
     }
 
     if outcome.removed.is_empty() && outcome.lockfiles_removed.is_empty() {
-        pail(plan, out, "INFO", "No node_modules directories found.");
+        pail(plan, out, Level::Info, "No node_modules directories found.");
     } else {
         let count = outcome.removed.len();
         let noun = if count == 1 { "directory" } else { "directories" };
 
-        pail(plan, out, "INFO", &format!("Cleaned {count} node_modules {noun}"));
+        pail(plan, out, Level::Info, &format!("Cleaned {count} node_modules {noun}"));
     }
 
     if outcome.errors.is_empty() {
@@ -241,12 +235,12 @@ fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut Output) -> i32 
     }
 }
 
-/// One pail block (see [`crate::pail::block`]). pail sends the error level to stderr and every other
+/// One pail block (see [`Layout::block`]). pail sends the error level to stderr and every other
 /// level to stdout.
-fn pail(plan: &Plan, out: &mut Output, label: &str, message: &str) {
-    let buffer = if label == "ERROR" { &mut out.stderr } else { &mut out.stdout };
+fn pail(plan: &Plan, out: &mut Output, level: Level, message: &str) {
+    let buffer = if level.to_stderr() { &mut out.stderr } else { &mut out.stdout };
 
-    buffer.push_str(&crate::pail::block(plan.width, label, message));
+    buffer.push_str(&plan.layout.block(level, message));
 }
 
 /// `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.

@@ -5,13 +5,14 @@
 //! answers when the working directory is that root by the rule in [`native_root_is_cwd`]
 //! ([`native_context`]). Only the `--target`, `--json` and `--write` shapes are native.
 //! Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8 files), a config or
-//! Deno file, a terminal, colour support, and a run outside CI all go to Node via [`crate::delegate`].
+//! Deno file, a terminal, a colour flag, and a run outside CI all go to Node via [`crate::delegate`]. The
+//! dimmed hint of the preview is coloured when Node's colour detection says so ([`crate::term::piped_colour_level`]).
 
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -68,28 +69,6 @@ const SLUG_EXTRAS: [&str; 1] = ["node_modules"];
 const VERCEL_EXTRAS: [&str; 2] = ["node_modules", ".vercel/"];
 
 const VIS_SECTION_HEADER: &str = "# Added by vis ignore";
-
-/// Environment variables that make Node's colour detection turn colour on for the stdout log
-/// lines (the dimmed hint is printed there). Any of them sends the command to Node.
-const COLOUR_ENVIRONMENT: [&str; 17] = [
-    "FORCE_COLOR",
-    "COLORTERM",
-    "TERM_PROGRAM",
-    "TERMINAL_EMULATOR",
-    "TEAMCITY_VERSION",
-    "TF_BUILD",
-    "PM2_HOME",
-    "GITEA_ACTIONS",
-    "CIRCLECI",
-    "GITHUB_WORKFLOW",
-    "GITHUB_ACTIONS",
-    "TRAVIS",
-    "APPVEYOR",
-    "GITLAB_CI",
-    "BUILDKITE",
-    "DRONE",
-    "CI_NAME",
-];
 
 struct Options {
     target: &'static str,
@@ -161,40 +140,24 @@ fn parse(args: &[String]) -> Option<Options> {
     Some(Options { target, filename, extras, json, write })
 }
 
-/// Whether Node would reach the same answer without a root search or any config, Deno or
-/// colour notice. See the module docs for the list.
-fn native_context(cwd: &Path) -> bool {
+/// Whether Node would reach the same answer without a root search or any config or Deno file:
+/// `Some(colour)` when it would, where `colour` is whether Node's colour detection puts the dimmed
+/// hint in escape codes, and `None` for everything else. See the module docs for the list.
+fn native_context(cwd: &Path, args: &[String]) -> Option<bool> {
     // Node's colour detection and path handling differ on Windows; the help route stays there too.
     if cfg!(windows) {
-        return false;
+        return None;
     }
 
     let env_root = env::var_os("VIS_MONOREPO_ROOT");
 
     if !native_root_is_cwd(cwd, env_root.as_deref()) {
-        return false;
+        return None;
     }
 
-    in_ci()
-        && !io::stdout().is_terminal()
-        && !io::stderr().is_terminal()
-        && !colour_may_be_forced()
-        && !has_vis_config(cwd)
-        && !any_ancestor_has(cwd, &DENO_FILES)
-}
+    let colour = crate::term::piped_colour_level(args)? > 0;
 
-/// Whether Node could colour the stdout log lines. A `TERM` other than a dumb or mono one also
-/// counts, since Node reads it for the colour level.
-pub(crate) fn colour_may_be_forced() -> bool {
-    if COLOUR_ENVIRONMENT.iter().any(|key| env::var_os(key).is_some()) {
-        return true;
-    }
-
-    env::var_os("TERM").is_some_and(|term| {
-        let term = term.to_string_lossy().to_ascii_lowercase();
-
-        !(term.contains("dumb") || term.contains("mono"))
-    })
+    (in_ci() && !has_vis_config(cwd) && !any_ancestor_has(cwd, &DENO_FILES)).then_some(colour)
 }
 
 /// Answer the invocation, or delegate to Node. `args` is the lossy view used for parsing;
@@ -204,11 +167,11 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::delegate(raw_args);
     };
 
-    let Some(options) = parse(args).filter(|_| native_context(&cwd)) else {
+    let (Some(options), Some(colour)) = (parse(args), native_context(&cwd, args)) else {
         crate::delegate(raw_args);
     };
 
-    let Some(text) = execute(&options, &cwd) else {
+    let Some(text) = execute(&options, &cwd, colour) else {
         crate::delegate(raw_args);
     };
 
@@ -226,7 +189,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 /// to disk before a `None` is returned, so the delegated run starts from the same state. Once the
 /// ignore file is open for writing the file is truncated, so a failure from then on is reported
 /// here and exits with 1: running Node on a damaged file would merge into it and report success.
-fn execute(options: &Options, cwd: &Path) -> Option<String> {
+fn execute(options: &Options, cwd: &Path, colour: bool) -> Option<String> {
     let path = cwd.join(options.filename);
     let existing = match fs::read(&path) {
         Ok(bytes) => String::from_utf8(bytes).ok()?,
@@ -258,11 +221,14 @@ fn execute(options: &Options, cwd: &Path) -> Option<String> {
     let mut text =
         if merged.content.ends_with('\n') { merged.content.clone() } else { format!("{}\n", merged.content) };
 
-    text.push_str(&format!(
-        "({} new pattern(s); re-run with --write to save {})\n",
-        merged.added.len(),
-        options.filename
-    ));
+    let hint = format!("({} new pattern(s); re-run with --write to save {})", merged.added.len(), options.filename);
+
+    // `dim` of the colour library: the hint inside its own escape pair when colour is on.
+    if colour {
+        text.push_str(&format!("\x1b[2m{hint}\x1b[22m\n"));
+    } else {
+        text.push_str(&format!("{hint}\n"));
+    }
 
     Some(text)
 }

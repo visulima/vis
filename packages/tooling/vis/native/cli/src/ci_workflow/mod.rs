@@ -115,8 +115,8 @@ fn parse(args: &[String]) -> Option<Options> {
 }
 
 /// Whether the context is one where Node prints nothing beyond the plain log lines: the working
-/// directory is the workspace root, CI, no terminal, no colour, and no logger or runtime setting that
-/// changes the lines. Returns the root.
+/// directory is the workspace root, CI, no terminal, a colour environment the binary can decide (the lines carry
+/// no colour codes in any of them), and no logger or runtime setting that changes the lines. Returns the root.
 fn native_root(args: &[String]) -> Option<std::path::PathBuf> {
     if cfg!(windows) {
         return None;
@@ -129,8 +129,7 @@ fn native_root(args: &[String]) -> Option<std::path::PathBuf> {
         return None;
     }
 
-    if crate::term::color_enabled(args)
-        || crate::ignore::colour_may_be_forced()
+    if crate::term::piped_colour_level(args).is_none()
         || !in_ci()
         || io::stdout().is_terminal()
         || io::stderr().is_terminal()

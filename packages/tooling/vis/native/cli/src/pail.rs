@@ -1,9 +1,13 @@
-//! pail's plain (non-terminal, uncoloured) line layout, shared by the commands that print pail
-//! blocks natively (`clean`, `secrets`, `cache hash`, `install`).
+//! pail's log-line layout, shared by the commands that print pail blocks natively (`clean`,
+//! `secrets`, `cache hash`, `install`).
 //!
 //! A block is a header with the local time and the level label, filled with dots to the line
-//! width, a blank line, then the message word-wrapped to the same width. The callers only use it
-//! where Node's output is provably plain: no terminal, no colour, ASCII text.
+//! width, a blank line, then the message word-wrapped to the same width. When pail's colour
+//! detection (see [`crate::term::piped_colour_level`]) turns colour on, the clock and the dots
+//! are grey and the label has the colour of its level, each in its own escape pair; the message
+//! stays plain. Every level above zero uses the same sixteen-colour codes, so the output only
+//! depends on whether colour is on. The callers only use it where Node's output is provably
+//! this layout: no terminal, ASCII text.
 
 use std::env;
 
@@ -13,32 +17,170 @@ const DEFAULT_WIDTH: usize = 80;
 /// Below this width pail's header cannot hold its label, so Node stays in charge.
 const MIN_WIDTH: usize = 40;
 
-/// pail's width: `COLUMNS` when set (it must parse, and be wide enough), else 80.
+/// The width of pail's longest level label (`EMERGENCY`): the label is padded with dots to it.
+const LABEL_FIELD: usize = 9;
+
+/// A log level a native command prints, with the label and colour pail gives it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Level {
+    Error,
+    Info,
+    Notice,
+    Success,
+    Warning,
+}
+
+impl Level {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Error => "ERROR",
+            Self::Info => "INFO",
+            Self::Notice => "NOTICE",
+            Self::Success => "SUCCESS",
+            Self::Warning => "WARNING",
+        }
+    }
+
+    /// The SGR foreground code of the level's colour (`red`, `blueBright`, `magentaBright`, `green`, `yellow`).
+    fn colour(self) -> u8 {
+        match self {
+            Self::Error => 31,
+            Self::Info => 94,
+            Self::Notice => 95,
+            Self::Success => 32,
+            Self::Warning => 33,
+        }
+    }
+
+    /// pail prints the error level on stderr and every other level on stdout.
+    pub(crate) fn to_stderr(self) -> bool {
+        self == Self::Error
+    }
+}
+
+/// How pail lays out a line in this process: its width, and whether it colours the header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Layout {
+    pub(crate) width: usize,
+    pub(crate) colour: bool,
+}
+
+impl Layout {
+    /// The layout Node's pail would use, or `None` when this cannot be proven (a width pail would
+    /// compute differently, a terminal, a colour flag, Windows) and Node has to answer.
+    pub(crate) fn detect(args: &[String]) -> Option<Self> {
+        let colour = crate::term::piped_colour_level(args)? > 0;
+
+        Some(Self { width: pail_width()?, colour })
+    }
+
+    /// One pail block as pail prints it: the header, a blank line, then the wrapped message, each
+    /// line ending in a newline.
+    pub(crate) fn block(self, level: Level, message: &str) -> String {
+        let limit = self.width - 3;
+        let label = level.label();
+        let clock = clock();
+        let head = format!("{clock} {label} ");
+        let padding = LABEL_FIELD.saturating_sub(label.len());
+        let dots = limit.saturating_sub(head.len());
+        let mut text = String::new();
+
+        if self.colour {
+            // pail wraps the clock, the label and each run of dots on its own: the label's padding
+            // is a run of its own, and an empty run is dropped.
+            text.push_str(&paint(90, &clock));
+            text.push(' ');
+            text.push_str(&paint(level.colour(), label));
+            text.push(' ');
+            text.push_str(&paint(90, &".".repeat(padding.min(dots))));
+            text.push_str(&paint(90, &".".repeat(dots.saturating_sub(padding))));
+        } else {
+            text.push_str(&head);
+            text.push_str(&".".repeat(dots));
+        }
+
+        text.push_str("\n\n");
+
+        for line in wrap(message, limit) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+
+        text
+    }
+}
+
+/// `text` inside the SGR pair of a foreground colour, or nothing for an empty string (pail's
+/// colour functions return an empty string for one).
+fn paint(code: u8, text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{code}m{text}\x1b[39m")
+    }
+}
+
+/// `TERM` values whose terminfo entry is 80 columns by 24 lines: the size pail's width lookup (`tput`) treats as "no
+/// answer", so the width then comes from `COLUMNS`, else 80. Other entries (the `-w` wide variants, 132 columns, and
+/// many older terminals) give another width, which this crate cannot look up.
+const TERMS_WITH_DEFAULT_SIZE: [&str; 26] = [
+    "alacritty",
+    "ansi",
+    "dumb",
+    "foot",
+    "ghostty",
+    "kitty",
+    "linux",
+    "rxvt",
+    "rxvt-256color",
+    "rxvt-unicode",
+    "rxvt-unicode-256color",
+    "screen",
+    "screen-256color",
+    "screen-bce",
+    "tmux",
+    "tmux-256color",
+    "vt100",
+    "vt220",
+    "wezterm",
+    "xterm",
+    "xterm-16color",
+    "xterm-256color",
+    "xterm-color",
+    "xterm-direct",
+    "xterm-ghostty",
+    "xterm-kitty",
+];
+
+/// Whether pail's width comes from the environment alone. Its lookup tries the size of the stream, then
+/// `COLUMNS` and `LINES` together, then the controlling terminal (`/dev/tty`), then `tput` under the inherited
+/// `TERM`. A process with a controlling terminal, or a `TERM` outside [`TERMS_WITH_DEFAULT_SIZE`], can therefore
+/// get a width from outside the environment even when both streams are redirected.
+fn environment_decides_width() -> bool {
+    #[cfg(unix)]
+    if std::fs::File::open("/dev/tty").is_ok() {
+        return false;
+    }
+
+    match env::var("TERM") {
+        Err(env::VarError::NotPresent) => true,
+        Ok(term) => TERMS_WITH_DEFAULT_SIZE.contains(&term.as_str()),
+        Err(env::VarError::NotUnicode(_)) => false,
+    }
+}
+
+/// pail's width: `COLUMNS` when set (it must parse, and be wide enough), else 80. `None` when the width could come
+/// from somewhere else (see [`environment_decides_width`]).
 pub(crate) fn pail_width() -> Option<usize> {
+    if !environment_decides_width() {
+        return None;
+    }
+
     match env::var("COLUMNS") {
         Err(env::VarError::NotPresent) => Some(DEFAULT_WIDTH),
         Ok(text) => text.trim().parse::<usize>().ok().filter(|&width| width >= MIN_WIDTH),
         Err(env::VarError::NotUnicode(_)) => None,
     }
-}
-
-/// One pail block as pail prints it: the header, a blank line, then the wrapped message, each line
-/// ending in a newline.
-pub(crate) fn block(width: usize, label: &str, message: &str) -> String {
-    let limit = width - 3;
-    let head = format!("{} {label} ", clock());
-    let mut text = String::new();
-
-    text.push_str(&head);
-    text.push_str(&".".repeat(limit.saturating_sub(head.len())));
-    text.push_str("\n\n");
-
-    for line in wrap(message, limit) {
-        text.push_str(&line);
-        text.push('\n');
-    }
-
-    text
 }
 
 /// pail's PRESERVE_WORDS wrap, with `trim: false`: the message splits into words and single
@@ -117,7 +259,10 @@ pub(crate) fn clock() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{block, wrap};
+    use super::{wrap, Layout, Level};
+
+    const PLAIN: Layout = Layout { width: 80, colour: false };
+    const COLOUR: Layout = Layout { width: 80, colour: true };
 
     #[test]
     fn a_long_path_breaks_after_the_label_and_keeps_its_space() {
@@ -140,11 +285,88 @@ mod tests {
 
     #[test]
     fn a_block_is_a_dotted_header_a_blank_line_and_the_message() {
-        let text = block(80, "INFO", "hello");
+        let text = PLAIN.block(Level::Info, "hello");
         let lines: Vec<&str> = text.split('\n').collect();
 
         assert!(lines[0].contains(" INFO ......"));
         assert_eq!(lines[0].len(), 77);
         assert_eq!(&lines[1..], ["", "hello", ""]);
+    }
+
+    /// The header of a coloured block, with the clock replaced.
+    fn header(level: Level) -> String {
+        let text = COLOUR.block(level, "hello");
+        let first = text.split('\n').next().unwrap().to_owned();
+
+        first.replacen(&first[5..13], "HH:MM:SS", 1)
+    }
+
+    #[test]
+    fn a_coloured_header_wraps_the_clock_label_and_each_run_of_dots() {
+        let dots = |count: usize| ".".repeat(count);
+
+        assert_eq!(
+            header(Level::Info),
+            format!(
+                "\x1b[90mHH:MM:SS\x1b[39m \x1b[94mINFO\x1b[39m \x1b[90m{}\x1b[39m\x1b[90m{}\x1b[39m",
+                dots(5),
+                dots(58)
+            )
+        );
+        assert_eq!(
+            header(Level::Success),
+            format!(
+                "\x1b[90mHH:MM:SS\x1b[39m \x1b[32mSUCCESS\x1b[39m \x1b[90m{}\x1b[39m\x1b[90m{}\x1b[39m",
+                dots(2),
+                dots(58)
+            )
+        );
+        assert_eq!(
+            header(Level::Error),
+            format!(
+                "\x1b[90mHH:MM:SS\x1b[39m \x1b[31mERROR\x1b[39m \x1b[90m{}\x1b[39m\x1b[90m{}\x1b[39m",
+                dots(4),
+                dots(58)
+            )
+        );
+        assert_eq!(
+            header(Level::Notice),
+            format!(
+                "\x1b[90mHH:MM:SS\x1b[39m \x1b[95mNOTICE\x1b[39m \x1b[90m{}\x1b[39m\x1b[90m{}\x1b[39m",
+                dots(3),
+                dots(58)
+            )
+        );
+        assert_eq!(
+            header(Level::Warning),
+            format!(
+                "\x1b[90mHH:MM:SS\x1b[39m \x1b[33mWARNING\x1b[39m \x1b[90m{}\x1b[39m\x1b[90m{}\x1b[39m",
+                dots(2),
+                dots(58)
+            )
+        );
+    }
+
+    #[test]
+    fn a_coloured_block_keeps_its_message_plain() {
+        let text = COLOUR.block(Level::Info, "hello");
+
+        assert!(text.ends_with("\n\nhello\n"));
+    }
+
+    #[test]
+    fn the_listed_terms_are_sorted_and_eighty_columns_wide() {
+        let mut sorted = super::TERMS_WITH_DEFAULT_SIZE;
+
+        sorted.sort_unstable();
+
+        assert_eq!(sorted, super::TERMS_WITH_DEFAULT_SIZE);
+        assert!(!super::TERMS_WITH_DEFAULT_SIZE.iter().any(|term| term.ends_with("-w")));
+    }
+
+    #[test]
+    fn only_the_error_level_goes_to_stderr() {
+        assert!(Level::Error.to_stderr());
+        assert!(!Level::Info.to_stderr() && !Level::Success.to_stderr() && !Level::Warning.to_stderr());
     }
 }

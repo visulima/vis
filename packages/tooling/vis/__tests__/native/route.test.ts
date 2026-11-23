@@ -71,12 +71,11 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
 
         it("keeps a plain install in Node outside CI, on a terminal, on Windows and where output settings could change", () => {
-            expect.assertions(6);
+            expect.assertions(5);
 
             expect(routesToNative(["install"], "linux", {}, "/work/app", false)).toBe(false);
             expect(routesToNative(["install"], "linux", ci, "/work/app", true)).toBe(false);
             expect(routesToNative(["install"], "win32", ci, "/work/app", false)).toBe(false);
-            expect(routesToNative(["install"], "linux", { ...ci, GITHUB_ACTIONS: "true" }, "/work/app", false)).toBe(false);
             expect(routesToNative(["install"], "linux", { ...ci, MARSHALL_DISABLE_ALL: "1" }, "/work/app", false)).toBe(false);
             expect(routesToNative(["install"], "linux", { ...ci, VIS_INSTALLER: "npm" }, "/work/app", false)).toBe(false);
         });
@@ -187,7 +186,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect(route(args)).toBe(false);
         });
 
-        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1" }], [{ CI: "1", TERM: "xterm" }]])(
+        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1", NO_COLOR: "1" }]])(
             "delegates a JSON scan in the environment %j",
             (environment: Record<string, string>) => {
                 expect.assertions(1);
@@ -243,7 +242,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             },
         );
 
-        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1" }], [{ CI: "1", TERM: "xterm" }]])(
+        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1", NO_COLOR: "1" }]])(
             "delegates in the environment %j",
             (environment: Record<string, string>) => {
                 expect.assertions(1);
@@ -284,8 +283,8 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["CI is 0", { CI: "0", VIS_MONOREPO_ROOT: cwd }],
             ["CI is false", { CI: "false", VIS_MONOREPO_ROOT: cwd }],
             ["VIS_MONOREPO_ROOT is another directory", { CI: "1", VIS_MONOREPO_ROOT: "/work" }],
-            ["CLICOLOR_FORCE is set", { CI: "1", CLICOLOR_FORCE: "1", VIS_MONOREPO_ROOT: cwd }],
-            ["TERM is a colour terminal", { CI: "1", TERM: "xterm-256color", VIS_MONOREPO_ROOT: cwd }],
+            ["FORCE_COLOR and NO_COLOR are both set", { CI: "1", FORCE_COLOR: "1", NO_COLOR: "1", VIS_MONOREPO_ROOT: cwd }],
+            ["a PM2 process runs it without CI set", { CONTINUOUS_INTEGRATION: "1", PM2_HOME: "/home/pm2", pm_id: "0", VIS_MONOREPO_ROOT: cwd }],
         ])("delegates `vis ignore` in Node when %s", (_label: string, environment: Record<string, string>) => {
             expect.assertions(1);
 
@@ -312,9 +311,10 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect(route(["ignore"], overrides)).toBe(false);
         });
 
-        it("routes when TERM is mono", () => {
-            expect.assertions(1);
+        it("routes whatever TERM is, since it prints no pail line whose width could change", () => {
+            expect.assertions(2);
 
+            expect(route(["ignore"], { environment: { ...ciEnvironment, TERM: "dumb" } })).toBe(true);
             expect(route(["ignore"], { environment: { ...ciEnvironment, TERM: "xterm-mono" } })).toBe(true);
         });
 
@@ -363,6 +363,119 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect.assertions(1);
 
             expect(routesToNative(["cache", "clean"], "linux", ci, "/work/app", false)).toBe(false);
+        });
+    });
+
+    // The binary decides pail's colour itself (`piped_colour_level` in term.rs, the same rules as Node's detection) and prints
+    // the codes Node prints, so a colour environment no longer keeps a command in Node. What it cannot decide stays there.
+    describe("colour environments", () => {
+        const cwd = "/work/app";
+        const holdsMarker = (directory: string): boolean => directory === cwd;
+
+        // One invocation per command that prints through pail or colours a line, each in a CI context.
+        const COMMANDS: [string, string[], Record<string, string>][] = [
+            ["clean", ["clean"], { CI: "1" }],
+            ["ignore", ["ignore"], { CI: "1" }],
+            ["install", ["install"], { CI: "1" }],
+            ["cache hash", ["cache", "hash", "app:build"], { CI: "1" }],
+            ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
+            ["sync ci-workflow", ["sync", "ci-workflow", "--provider=github"], { CI: "1" }],
+        ];
+
+        // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
+        const PRINTS_PAIL_LINES = new Set(["cache hash", "clean", "install", "secrets"]);
+
+        const ANSWERED: Record<string, string>[] = [
+            { GITHUB_ACTIONS: "true" },
+            { GITHUB_WORKFLOW: "w" },
+            { GITEA_ACTIONS: "true" },
+            { CIRCLECI: "true" },
+            { GITLAB_CI: "true" },
+            { BUILDKITE: "true" },
+            { TRAVIS: "true" },
+            { APPVEYOR: "true" },
+            { DRONE: "true" },
+            { TF_BUILD: "True" },
+            { TEAMCITY_VERSION: "2024.1.1" },
+            { FORCE_COLOR: "0" },
+            { FORCE_COLOR: "1" },
+            { FORCE_COLOR: "3" },
+            { FORCE_COLOR: "true" },
+            { NO_COLOR: "1" },
+            { TERM: "xterm-256color" },
+            { TERM: "xterm" },
+            { TERM: "tmux-256color" },
+            { TERM: "dumb" },
+            { COLORTERM: "truecolor" },
+            // `NODE_DISABLE_COLORS` alone is not read by the detection.
+            { NODE_DISABLE_COLORS: "1" },
+            { TERM_PROGRAM: "vscode" },
+            { CLICOLOR_FORCE: "1" },
+            // A PM2 process needs `pm_id` as well to count as a terminal.
+            { PM2_HOME: "/home/pm2" },
+            { FORCE_COLOR: "2", GITHUB_ACTIONS: "true", TERM: "dumb" },
+        ];
+
+        const route = (args: string[], environment: Record<string, string>): boolean =>
+            routesToNative(args, "linux", environment, cwd, false, holdsMarker);
+
+        it.each(COMMANDS.flatMap(([name, args, base]) => ANSWERED.map((colour) => [name, args, base, colour] as const)))(
+            "routes `vis %s` to the binary with %j",
+            (_name: string, args: string[], base: Record<string, string>, colour: Record<string, string>) => {
+                expect.assertions(1);
+
+                expect(route(args, { ...base, ...colour })).toBe(true);
+            },
+        );
+
+        it.each(
+            COMMANDS.flatMap(([name, args, base]) =>
+                [
+                    // The Node runtime warns on stderr, with its process id, when both are set.
+                    { FORCE_COLOR: "1", NO_COLOR: "1" },
+                    { FORCE_COLOR: "0", NO_COLOR: "" },
+                    { FORCE_COLOR: "1", NODE_DISABLE_COLORS: "1" },
+                ].map((colour) => [name, args, base, colour] as const),
+            ),
+        )("keeps `vis %s` in Node with %j", (_name: string, args: string[], base: Record<string, string>, colour: Record<string, string>) => {
+            expect.assertions(1);
+
+            expect(route(args, { ...base, ...colour })).toBe(false);
+        });
+
+        it("keeps a PM2 process in Node unless CI is set, where Node's CI provider checks come before it", () => {
+            expect.assertions(2);
+
+            // Node counts a PM2 process as a terminal; its detection only looks at that after the CI providers.
+            expect(routesToNative(["clean"], "linux", { CONTINUOUS_INTEGRATION: "1", PM2_HOME: "/home/pm2", pm_id: "0" }, cwd, false, holdsMarker)).toBe(false);
+            expect(routesToNative(["clean"], "linux", { CI: "1", PM2_HOME: "/home/pm2", pm_id: "0" }, cwd, false, holdsMarker)).toBe(true);
+        });
+
+        // pail asks `tput` for its width under `TERM`, and a wide or unknown entry gives another one than 80. A command without
+        // a pail line (ignore, sync ci-workflow) does not care.
+        it.each(COMMANDS.flatMap(([name, args, base]) => ["vt100-w", "screen-w", "iTerm.app", "xterm-mono"].map((term) => [name, args, base, term] as const)))(
+            "routes `vis %s` with TERM=%s as its pail lines allow",
+            (name: string, args: string[], base: Record<string, string>, term: string) => {
+                expect.assertions(1);
+
+                expect(route(args, { ...base, TERM: term })).toBe(!PRINTS_PAIL_LINES.has(name));
+            },
+        );
+
+        it.each(COMMANDS)("keeps `vis %s` with a colour flag in Node, which reads its colour from the arguments", (_name: string, args: string[], base: Record<string, string>) => {
+            expect.assertions(4);
+
+            for (const flag of ["--no-color", "--color", "--colors", "--color=256"]) {
+                expect(route([...args, flag], { ...base, GITHUB_ACTIONS: "true" })).toBe(false);
+            }
+        });
+
+        it("still keeps a terminal, a missing CI marker and Windows in Node, whatever the colour environment", () => {
+            expect.assertions(3);
+
+            expect(routesToNative(["clean"], "linux", { CI: "1", GITHUB_ACTIONS: "true" }, cwd, true, holdsMarker)).toBe(false);
+            expect(routesToNative(["clean"], "linux", { GITHUB_ACTIONS: "true" }, cwd, false, holdsMarker)).toBe(false);
+            expect(routesToNative(["clean"], "win32", { CI: "1", GITHUB_ACTIONS: "true" }, cwd, false, holdsMarker)).toBe(false);
         });
     });
 

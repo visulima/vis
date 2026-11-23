@@ -26,29 +26,62 @@ const asksForHelp = (args) => {
     return optionArguments.some((argument) => argument === "--help" || argument === "-h");
 };
 
-// Environment variables that turn on colour in Node for the stdout log lines. Mirrors
-// `COLOUR_ENVIRONMENT` in `native/cli/src/ignore.rs`, plus `CLICOLOR_FORCE`, which the binary
-// does not check. The launcher only pre-filters, so a superset here is safe: Node answers.
-const IGNORE_COLOUR_ENVIRONMENT = [
-    "CLICOLOR_FORCE",
-    "FORCE_COLOR",
-    "COLORTERM",
-    "TERM_PROGRAM",
-    "TERMINAL_EMULATOR",
-    "TEAMCITY_VERSION",
-    "TF_BUILD",
-    "PM2_HOME",
-    "GITEA_ACTIONS",
-    "CIRCLECI",
-    "GITHUB_WORKFLOW",
-    "GITHUB_ACTIONS",
-    "TRAVIS",
-    "APPVEYOR",
-    "GITLAB_CI",
-    "BUILDKITE",
-    "DRONE",
-    "CI_NAME",
-];
+// `TERM` values whose terminfo entry is 80 columns by 24 lines, the size the width lookup of pail treats as "no
+// answer". Same list as `TERMS_WITH_DEFAULT_SIZE` in `native/cli/src/pail.rs`; keep them in step.
+const TERMS_WITH_DEFAULT_SIZE = new Set([
+    "alacritty",
+    "ansi",
+    "dumb",
+    "foot",
+    "ghostty",
+    "kitty",
+    "linux",
+    "rxvt",
+    "rxvt-256color",
+    "rxvt-unicode",
+    "rxvt-unicode-256color",
+    "screen",
+    "screen-256color",
+    "screen-bce",
+    "tmux",
+    "tmux-256color",
+    "vt100",
+    "vt220",
+    "wezterm",
+    "xterm",
+    "xterm-16color",
+    "xterm-256color",
+    "xterm-color",
+    "xterm-direct",
+    "xterm-ghostty",
+    "xterm-kitty",
+]);
+
+// The Node runtime warns on stderr, with its process id, when `FORCE_COLOR` is set together with `NO_COLOR` or
+// `NODE_DISABLE_COLORS`. The binary leaves such a run to Node for every command (`node_warns_about_colour` in `term.rs`).
+const nodeWarnsAboutColour = (environment) => environment.FORCE_COLOR !== undefined && (environment.NO_COLOR !== undefined || environment.NODE_DISABLE_COLORS !== undefined);
+
+const LEADING_DASHES = /^-+/;
+
+const isColourFlag = (argument) => {
+    const name = argument.replace(LEADING_DASHES, "");
+
+    return argument.startsWith("-") && (name.startsWith("color") || name.startsWith("no-color"));
+};
+
+// Whether the binary can decide the colour Node prints (`colourIsDecidable`), and for the commands that log through pail
+// also what pail prints (`pailOutputIsDecidable`). The colour of the header of each pail line follows the detection in
+// `piped_colour_level` (`native/cli/src/term.rs`), and the width of a line follows `pail_width` (`native/cli/src/pail.rs`).
+// The binary answers for every colour environment (`GITHUB_ACTIONS`, `FORCE_COLOR`, ...) and prints the codes Node prints.
+// It leaves to Node: a colour flag among the arguments (`bin.ts` turns `--no-color` into `NO_COLOR`); a PM2 process
+// without `CI` set (Node treats it as a terminal, which only the checks after the CI providers look at); `FORCE_COLOR`
+// together with `NO_COLOR` or `NODE_DISABLE_COLORS` (the Node runtime then warns on stderr, with its process id); and, where
+// the width matters, a `TERM` that may give pail another width than 80 (it asks `tput`). The binary also leaves a process
+// with a controlling terminal to Node, which the launcher does not check.
+const colourIsDecidable = (environment, args) =>
+    !args.some((argument) => isColourFlag(argument)) && !(environment.CI === undefined && environment.PM2_HOME !== undefined && environment.pm_id !== undefined) && !nodeWarnsAboutColour(environment);
+
+const pailOutputIsDecidable = (environment, args) => colourIsDecidable(environment, args) && (environment.TERM === undefined || TERMS_WITH_DEFAULT_SIZE.has(environment.TERM));
 
 // Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads. Same list
 // as `ROOT_MARKERS` in `native/cli/src/advisories.rs`; keep them in step.
@@ -88,14 +121,6 @@ const rootIsCwd = (cwd, holdsMarker = holdsRootMarker) => {
 // `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.
 const inCi = (environment) => ["CI", "CONTINUOUS_INTEGRATION"].some((key) => environment[key] !== undefined && environment[key] !== "0" && environment[key] !== "false");
 
-// Whether `TERM` leaves Node free to colour its output: unset, dumb or mono. The binary reads the
-// same variable in `colour_may_be_forced` (`ignore.rs`).
-const plainTerm = (environment) => {
-    const term = environment.TERM?.toLowerCase();
-
-    return term === undefined || term.includes("dumb") || term.includes("mono");
-};
-
 // Whether the launcher's root search ends at `cwd`, so a binary that computes the root from the working
 // directory finds the same one as Node. The inherited `VIS_MONOREPO_ROOT` is only a reason to delegate,
 // never the root itself.
@@ -111,8 +136,8 @@ const cwdIsRoot = (environment, cwd, holdsMarker) => {
 
 // Whether `vis ignore` can pass the binary's native gate (`native_context` in `ignore.rs`). The
 // binary re-checks everything; this only skips the extra process when it would delegate anyway.
-// It never answers `ignore` on Windows (Node's colour detection and path handling differ there).
-const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMarker) => {
+// It never answers `ignore` on Windows (path handling differs there).
+const ignoreMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
     if (platform === "win32" || interactive) {
         return false;
     }
@@ -125,11 +150,7 @@ const ignoreMayRunNatively = (platform, environment, cwd, interactive, holdsMark
         return false;
     }
 
-    if (IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined)) {
-        return false;
-    }
-
-    return plainTerm(environment);
+    return colourIsDecidable(environment, args);
 };
 
 // Whether `vis clean` can pass the binary's native gate (`plan` in `clean.rs`). The binary re-checks
@@ -141,7 +162,7 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
         return false;
     }
 
-    if (!inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+    if (!inCi(environment) || !pailOutputIsDecidable(environment, args)) {
         return false;
     }
 
@@ -158,7 +179,7 @@ const LIST_NATIVE_SHAPES = [[], ["--json"], ["--format", "json"], ["--format", "
 // is native: no flags, `--json`, or one `--format` value. The binary re-checks the CI context and
 // every other shape, so this only skips the extra process when it would delegate anyway.
 const listMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment)) {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
         return false;
     }
 
@@ -170,8 +191,8 @@ const listMayRunNatively = (platform, environment, args, interactive) => {
 // Whether `vis cache hash` can pass the binary's native gate (`native` in `cache_hash.rs`). The
 // binary re-checks the context and every shape (one task id, `--format json|table`, `--run <id>`),
 // so this only skips the extra process for a call that would be delegated anyway: no task id, a
-// flag the binary does not know, or a table in a context where Node may colour it (the binary does
-// not; the JSON is written raw, so colour does not matter there). It stays in Node on Windows
+// flag the binary does not know, or a table in a colour context the binary cannot decide (the JSON is written
+// raw, so colour does not matter there). It stays in Node on Windows
 // (pail's clock is unix-only there).
 const CACHE_HASH_FLAG = /^--(?:format|run)(?:=.*)?$/;
 
@@ -184,7 +205,7 @@ const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
         return false;
     }
 
-    return cacheHashAsksForJson(flags) || (!IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && plainTerm(environment));
+    return cacheHashAsksForJson(flags) || pailOutputIsDecidable(environment, args);
 };
 
 // A version `vis self-update` hands to npm natively: `x.y.z` with an optional `-pre` and `+build` part. Same
@@ -197,7 +218,15 @@ const SELF_UPDATE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Z.-]+)?(?:\+[0-9A-Z.-]+)?$/
 // config and Deno files, `VIS_VERSION` and npm itself; this only skips the extra process when it would delegate
 // anyway. It stays in Node on Windows.
 const selfUpdateMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || environment.DEBUG !== undefined || environment.VIS_MONOREPO_ROOT !== undefined || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))) {
+    if (
+        platform === "win32"
+        || interactive
+        || !inCi(environment)
+        || nodeWarnsAboutColour(environment)
+        || environment.DEBUG !== undefined
+        || environment.VIS_MONOREPO_ROOT !== undefined
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
         return false;
     }
 
@@ -228,7 +257,7 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
         return cacheHashMayRunNatively(platform, environment, args, interactive);
     }
 
-    return platform !== "win32" && !interactive && inCi(environment);
+    return platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment);
 };
 
 // Whether `vis affected` can pass the binary's native gate (`answer` in `affected.rs`). Only the
@@ -236,7 +265,7 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
 // --affected`, which the binary hands to Node itself. The binary re-checks everything, so this only
 // skips the extra process when it would delegate anyway.
 const affectedMayRunNatively = (platform, environment, args, interactive) =>
-    platform !== "win32" && !interactive && inCi(environment) && args.includes("--sparse-checkout");
+    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && args.includes("--sparse-checkout");
 
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
@@ -261,10 +290,10 @@ const optionValue = (args, index, name) => {
 // and the text view only with `--quiet`. The binary re-checks everything, including the workspace root
 // and the ignore and config files; this only skips the extra process when it would delegate anyway. Like
 // `ignore`, it stays in Node when the working directory is not the workspace root. Like `clean`, it never
-// answers on Windows or on a terminal, and not where Node's colour, `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`
+// answers on Windows or on a terminal, and not where `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`
 // or `CEREBRO_*` output settings could change what the status lines look like.
 const secretsMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
         return false;
     }
 
@@ -388,10 +417,10 @@ const installShapeIsNative = (flags) => {
 };
 
 // Whether the context lets `vis install` and `vis add` pass the binary's native gate (`install::setup` in
-// `install.rs`): a CI context with no terminal, no colour and none of the variables that change which installer Node
+// `install.rs`): a CI context with no terminal, no colour the binary cannot decide and none of the variables that change which installer Node
 // picks or what its output looks like. It stays in Node on Windows, where Node runs the package manager through a shell.
-const installContextIsNative = (platform, environment, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+const installContextIsNative = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
         return false;
     }
 
@@ -405,7 +434,7 @@ const installContextIsNative = (platform, environment, interactive) => {
 // Whether `vis install` can pass the binary's native gate (`plan` in `install.rs`): the plain install in that
 // context. The binary re-checks everything, including the workspace root, the config and `package.json`; this only
 // skips the extra process when it would delegate anyway.
-const installMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && installShapeIsNative(args.slice(1));
+const installMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, args, interactive) && installShapeIsNative(args.slice(1));
 
 // The flags `vis add` takes natively (`parse` in `add.rs`): each at most once, none of them with a value except
 // `--filter`. `--no-marshall-check` is required: without it Node looks the packages up in the registry first.
@@ -476,16 +505,46 @@ const addShapeIsNative = (rest) => {
 
 // Whether `vis add` can pass the binary's native gate (`plan` in `add.rs`). The binary re-checks everything,
 // including the packages against the typosquat blocklist; this only skips the extra process when it would delegate anyway.
-const addMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, interactive) && addShapeIsNative(args.slice(1));
+// The native `add` has only been compared with Node's output where no colour is on, so any variable that can turn
+// colour on keeps it in Node (the binary re-checks the colour level it finds).
+const ADD_COLOUR_ENVIRONMENT = [
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERMINAL_EMULATOR",
+    "TEAMCITY_VERSION",
+    "TF_BUILD",
+    "PM2_HOME",
+    "GITEA_ACTIONS",
+    "CIRCLECI",
+    "GITHUB_WORKFLOW",
+    "GITHUB_ACTIONS",
+    "TRAVIS",
+    "APPVEYOR",
+    "GITLAB_CI",
+    "BUILDKITE",
+    "DRONE",
+    "CI_NAME",
+];
+
+const addColourIsPlain = (environment) => {
+    const term = environment.TERM?.toLowerCase();
+
+    return !ADD_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && (term === undefined || term.includes("dumb") || term.includes("mono"));
+};
+
+const addMayRunNatively = (platform, environment, args, interactive) =>
+    installContextIsNative(platform, environment, args, interactive) && addColourIsPlain(environment) && addShapeIsNative(args.slice(1));
 
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
 // `--provider` values. The binary re-checks everything, including the config, the providers and the
 // workspace; this only skips the extra process when it would delegate anyway. Like `secrets`, it stays in
-// Node when the working directory is not the workspace root, on Windows, on a terminal, and where Node's
-// colour, `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change the log lines.
+// Node when the working directory is not the workspace root, on Windows, on a terminal, and where
+// `NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change the log lines.
 const syncCiWorkflowMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || IGNORE_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) || !plainTerm(environment)) {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !colourIsDecidable(environment, args)) {
         return false;
     }
 
@@ -562,7 +621,7 @@ const NATIVE_SHAPE_GATES = new Map([
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
-    ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, cwd, interactive, holdsMarker))],
+    ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
     // The plain working-tree scan.

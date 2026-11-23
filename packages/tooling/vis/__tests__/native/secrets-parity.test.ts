@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
+import { COLOUR_VARIABLES, DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
 
 /**
  * `vis secrets` exists twice: the Node handler (`src/commands/secrets/handler.ts`, over the scanner
@@ -163,6 +164,8 @@ const DELEGATED: [fixture: string, args: string[]][] = [
     ["findings", ["--format", "text"]],
     ["findings", ["--format", "json", "--no-redact"]],
     ["findings", ["--format", "csv"]],
+    ["clean", ["--format", "json", "--no-color"]],
+    ["clean", ["--format", "json", "--color"]],
     ["findings", ["--format", "json", "dir one"]],
     ["clean", []],
     ["malformedBaseline", ["--format", "json", "--baseline", ".secrets-baseline.json"]],
@@ -183,33 +186,9 @@ const DELEGATED_AND_COMPARED: [fixture: string, args: string[]][] = [
     ["checksummed", ["--format", "json"]],
 ];
 
-// The variables that make Node colour its output and make the binary delegate (`colour_may_be_forced` and
-// `term::color_enabled`). A CI runner sets several of them (GITHUB_ACTIONS, GITHUB_WORKFLOW, TERM), which
-// would send every native case to Node, so none of them may reach the child.
-const COLOUR_ENVIRONMENT = [
-    "APPVEYOR",
-    "BUILDKITE",
-    "CIRCLECI",
-    "CI_NAME",
-    "COLORTERM",
-    "DRONE",
-    "FORCE_COLOR",
-    "GITEA_ACTIONS",
-    "GITHUB_ACTIONS",
-    "GITHUB_WORKFLOW",
-    "GITLAB_CI",
-    "PM2_HOME",
-    "TEAMCITY_VERSION",
-    "TERM",
-    "TERMINAL_EMULATOR",
-    "TERM_PROGRAM",
-    "TF_BUILD",
-    "TRAVIS",
-];
-
 // What changes Node's output apart from the arguments: the CI marker, colour, and test mode.
 const DROPPED_ENVIRONMENT = new Set([
-    ...COLOUR_ENVIRONMENT,
+    ...COLOUR_VARIABLES,
     "CI",
     "COLUMNS",
     "CONTINUOUS_INTEGRATION",
@@ -224,7 +203,7 @@ const DROPPED_ENVIRONMENT = new Set([
 const UNSET = "unset";
 
 /** `COLUMNS` is `columns`, 80 unless a case says otherwise, or absent for {@link UNSET}. */
-const contextEnvironment = (ci: boolean, columns: string = "80"): Record<string, string | undefined> => {
+const contextEnvironment = (ci: boolean, columns: string = "80", extra: Record<string, string> = {}): Record<string, string | undefined> => {
     const env: Record<string, string | undefined> = Object.fromEntries(Object.entries(process.env).filter(([key]) => !DROPPED_ENVIRONMENT.has(key)));
 
     if (columns !== UNSET) {
@@ -237,11 +216,11 @@ const contextEnvironment = (ci: boolean, columns: string = "80"): Record<string,
         env["CI"] = "1";
     }
 
-    return env;
+    return { ...env, ...extra };
 };
 
-/** The fixture's path and pail's clock differ between runs. */
-const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS");
+/** The fixture's path, pail's clock and the process id in the Node runtime's own warnings differ between runs. */
+const normalize = (text: string, root: string): string => text.replaceAll(root, "<ROOT>").replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS").replaceAll(/\(node:\d+\)/g, "(node:PID)");
 
 interface Run {
     status: number | null;
@@ -270,14 +249,14 @@ const capture = (command: string, args: string[], directory: string, env: Record
     }
 };
 
-const runNode = (directory: string, args: string[], ci: boolean, columns?: string): Run =>
-    capture(process.execPath, [nodeEntry, "secrets", ...args], directory, contextEnvironment(ci, columns));
+const runNode = (directory: string, args: string[], ci: boolean, columns?: string, extra?: Record<string, string>): Run =>
+    capture(process.execPath, [nodeEntry, "secrets", ...args], directory, contextEnvironment(ci, columns, extra));
 
-const runNative = (directory: string, args: string[], ci: boolean, entry: string, columns?: string): Run =>
+const runNative = (directory: string, args: string[], ci: boolean, entry: string, columns?: string, extra?: Record<string, string>): Run =>
     // A binary in a platform package keeps the entry and version the launcher passes; one inside the vis
     // package (a dev copy) takes the override instead. Set both.
     capture(binary as string, ["secrets", ...args], directory, {
-        ...contextEnvironment(ci, columns),
+        ...contextEnvironment(ci, columns, extra),
         VIS_FALLBACK_ENTRY: entry,
         VIS_FALLBACK_ENTRY_OVERRIDE: entry,
         VIS_NODE: process.execPath,
@@ -359,6 +338,32 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         expect(native.status).toBe(node.status);
     }, TIMEOUT);
 
+    // pail colours the header of its status lines (stderr) where its colour detection says so; the report on stdout is
+    // plain. The binary prints the same codes in every colour environment, and answers natively (the stub entry would
+    // print the marker otherwise).
+    describe.each(SHORT_COLOUR_ENVIRONMENTS)("colour environment %j", (colour) => {
+        // The text view with `--quiet` too, in the first two environments.
+        it.each([
+            ["oneFinding", ["--format", "json"]],
+            ["clean", ["--format", "json"]],
+            ...(SHORT_COLOUR_ENVIRONMENTS.indexOf(colour) < 2 ? ([["oneFinding", ["--quiet"]]] as const) : []),
+        ] as const)("%s %j prints the same status lines as Node", (fixture, args) => {
+            expect.assertions(5);
+
+            const directory = directoryOf(fixture);
+            const columns = colour["COLUMNS"];
+            const extra = Object.fromEntries(Object.entries(colour).filter(([key]) => key !== "COLUMNS"));
+            const node = runNode(directory, [...args], true, columns, extra);
+            const native = runNative(directory, [...args], true, paths.stub, columns, extra);
+
+            expect(native.stdout).not.toContain(marker);
+            expect(normalize(native.stdout, directory)).toBe(normalize(node.stdout, directory));
+            expect(normalize(native.stderr, directory)).toBe(normalize(node.stderr, directory));
+            expect(native.status).toBe(node.status);
+            expect(native.stderr.includes("\u001B[")).toBe(node.stderr.includes("\u001B["));
+        }, TIMEOUT);
+    });
+
     it.each(DELEGATED)("%s %j is delegated", (fixture, args) => {
         expect.assertions(1);
 
@@ -382,7 +387,7 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         ["outside CI", {}, false],
         ["with NODE_ENV=test, which silences pail's status lines in Node", { NODE_ENV: "test" }, true],
         ["with a CEREBRO_ variable, which sets Node's output level", { CEREBRO_OUTPUT_LEVEL: "16" }, true],
-        ["with FORCE_COLOR, which colours Node's output", { FORCE_COLOR: "1" }, true],
+        ...DELEGATED_COLOUR_ENVIRONMENTS.map((colour) => [`with ${JSON.stringify(colour)}, which makes the Node runtime warn with its process id`, colour, true] as const),
         ["with NODE_ENV=debug, which makes pail log more", { NODE_ENV: "debug" }, true],
         ["with DEBUG set, which makes pail log more", { DEBUG: "1" }, true],
         ["with PAIL_LOG_LEVEL set", { PAIL_LOG_LEVEL: "error" }, true],
