@@ -352,6 +352,9 @@ export default class Ink {
     // Whether <Static> output has been written since the last identity change, on any render path.
     private staticOutputWritten = false;
 
+    // <Static> output produced while suspendTerminal() holds the terminal, written with the first frame after resume.
+    private suspendedStaticOutput = "";
+
     // The single scrollable node with `overflowToBackbuffer` enabled, detected
     // during the layout/scroll walk. Only one such region is supported.
     private backbufferNode: dom.DOMElement | undefined;
@@ -963,7 +966,17 @@ export default class Ink {
     };
 
     private commitFrame(renderResult: ReturnType<typeof render>): void {
-        const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth, staticOutput } = renderResult;
+        // The child process owns the terminal, so <Static> output waits for the frame drawn on resume.
+        if (this.activeSuspension && this.interactive && !this.isUnmounting) {
+            this.suspendedStaticOutput += renderResult.staticOutput;
+
+            return;
+        }
+
+        const { cursorPosition, cursorRequested, cursorShape, output, outputBuffer, outputHeight, outputWidth } = renderResult;
+        const staticOutput = this.suspendedStaticOutput + renderResult.staticOutput;
+
+        this.suspendedStaticOutput = "";
 
         this.renderedCursorRequested = cursorRequested;
         this.renderedCursorPosition = cursorPosition;
@@ -1328,7 +1341,9 @@ export default class Ink {
             // primary screen buffer.
             && !this.alternateScreen
         ) {
-            const shouldRenderFinalFrame = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten)) && !this.isFrameCleared;
+            const hasUnwrittenStatic = this.suspendedStaticOutput !== "";
+            const shouldRenderFinalFrame
+                = (!this.throttledOnRender || (!this.hasPendingThrottledRender && !this.staticOutputWritten) || hasUnwrittenStatic) && !this.isFrameCleared;
 
             if (shouldRenderFinalFrame) {
                 this.calculateLayout();
