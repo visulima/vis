@@ -52,7 +52,10 @@ const OVERLAY_NAMES: [&str; 7] =
     ["vis.task.ts", "vis.task.mts", "vis.task.cts", "vis.task.js", "vis.task.mjs", "vis.task.cjs", "vis.task.json"];
 
 /// Workspace-config YAML names in precedence order (`WORKSPACE_YAML_NAMES`).
-pub(crate) const WORKSPACE_YAML_NAMES: [&str; 2] = ["aube-workspace.yaml", "pnpm-workspace.yaml"];
+pub(crate) const WORKSPACE_YAML_NAMES: [&str; 2] = [AUBE_WORKSPACE_YAML, "pnpm-workspace.yaml"];
+
+/// aube's workspace file, which wins over pnpm's and which this crate does not read.
+pub(crate) const AUBE_WORKSPACE_YAML: &str = "aube-workspace.yaml";
 
 /// Resolves the project directories of the workspace rooted at `root`, or delegates.
 ///
@@ -76,10 +79,15 @@ pub fn project_directories_vetted(root: &Path) -> Membership {
     resolve(root, true, None).unwrap_or(Membership::Delegate)
 }
 
+/// Whether `root` is a path this module reads: absolute and UTF-8, off Windows.
+fn root_is_readable(root: &Path) -> bool {
+    !cfg!(windows) && root.is_absolute() && root.to_str().is_some()
+}
+
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
 fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Membership> {
-    if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
+    if !root_is_readable(root) {
         return None;
     }
 
@@ -102,15 +110,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
         return Some(Membership::Native(directories));
     }
 
-    // Overlapping patterns (`tools` and `tools/**`) resolve the same directory twice; keep the first.
-    let mut seen: HashSet<String> = HashSet::with_capacity(directories.len());
-    let mut unique: Vec<String> = Vec::with_capacity(directories.len());
-
-    for directory in directories {
-        if seen.insert(directory.clone()) {
-            unique.push(directory);
-        }
-    }
+    let unique = unique(directories);
 
     if limit.is_some_and(|limit| unique.len() >= limit) {
         return None;
@@ -122,11 +122,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
     let kept: Vec<Option<String>> = unique
         .into_par_iter()
         .map(|directory| {
-            if !directory.is_ascii() {
-                return None;
-            }
-
-            if is_ignored(&rules, &directory) {
+            if !is_unignored(&rules, &directory)? {
                 return Some(None);
             }
 
@@ -263,22 +259,10 @@ fn is_candidate(directory: &Path) -> bool {
 /// The raw workspace patterns: the first workspace YAML with a `packages` list, else the
 /// `package.json` `workspaces` array. Object form and every malformed case delegate.
 fn workspace_patterns(root: &Path) -> Option<Vec<String>> {
-    for file in WORKSPACE_YAML_NAMES {
-        let path = root.join(file);
-
-        if path.exists() {
-            let text = fs::read_to_string(&path).ok()?;
-
-            if !text.is_ascii() {
-                return None;
-            }
-
-            let patterns = yaml_packages(&text);
-
-            if !patterns.is_empty() {
-                return Some(patterns);
-            }
-        }
+    match workspace_yaml(root) {
+        Ok(Some(yaml)) => return Some(yaml.patterns),
+        Ok(None) => {}
+        Err(Delegate) => return None,
     }
 
     let path = root.join("package.json");
@@ -348,7 +332,7 @@ fn strip_quotes(entry: &str) -> &str {
 }
 
 /// One pattern after its form is known. Slices borrow from the pattern.
-enum Shape<'a> {
+pub(crate) enum Shape<'a> {
     Exact(&'a str),
     Simple(&'a str),
     Double { base: &'a str, star_star: bool },
@@ -357,7 +341,7 @@ enum Shape<'a> {
 
 /// Sorts a pattern into the form `resolveWorkspacePatterns` gives it. Negations (`!`), empty
 /// or absolute paths, `.`/`..` segments, and any character outside the allowlist return `None`.
-fn classify(pattern: &str) -> Option<Shape<'_>> {
+pub(crate) fn classify(pattern: &str) -> Option<Shape<'_>> {
     let clean = pattern.trim_end_matches('/');
 
     if let Some(base) = clean.strip_suffix("/**") {
@@ -398,64 +382,76 @@ fn valid_path(path: &str) -> bool {
 /// [`project_directories`], no project name, overlay or other ecosystem matters. `None` delegates: no pattern
 /// list in the workspace YAML, a pattern or `.gitignore` line outside the shapes above, or a non-ASCII name.
 pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> {
-    directories_for_patterns(root, &yaml_workspace_patterns(root)?)
+    directories_for_patterns(root, &workspace_yaml(root).ok()??.patterns)
 }
 
-/// The `packages` patterns of the first workspace YAML that lists any, read as [`yaml_packages`] does. `None` when
-/// there is no such YAML, when it is not ASCII or when `root` is not a path this module reads.
-pub(crate) fn yaml_workspace_patterns(root: &Path) -> Option<Vec<String>> {
-    if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
-        return None;
+/// The workspace is one this module does not read: the caller hands the command to Node.
+pub(crate) struct Delegate;
+
+/// The first workspace YAML that lists any `packages`, with the text it was read from.
+pub(crate) struct WorkspaceYaml {
+    pub(crate) patterns: Vec<String>,
+    pub(crate) text: String,
+}
+
+/// The first of [`WORKSPACE_YAML_NAMES`] whose `packages` list (read as [`yaml_packages`] does) is not empty, or
+/// `Ok(None)` when no workspace YAML lists any. `Err` when `root` is not a path this module reads, or a workspace
+/// YAML is unreadable or not ASCII.
+pub(crate) fn workspace_yaml(root: &Path) -> Result<Option<WorkspaceYaml>, Delegate> {
+    if !root_is_readable(root) {
+        return Err(Delegate);
     }
 
     for file in WORKSPACE_YAML_NAMES {
         let path = root.join(file);
 
         if path.exists() {
-            let text = fs::read_to_string(&path).ok()?;
+            let text = fs::read_to_string(&path).map_err(|_| Delegate)?;
 
             if !text.is_ascii() {
-                return None;
+                return Err(Delegate);
             }
 
-            let found = yaml_packages(&text);
+            let patterns = yaml_packages(&text);
 
-            if !found.is_empty() {
-                return Some(found);
+            if !patterns.is_empty() {
+                return Ok(Some(WorkspaceYaml { patterns, text }));
             }
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// What `resolveWorkspacePatterns(root, patterns)` returns: the directories the patterns name that hold a
 /// `package.json`, deduplicated, minus those the built-in excludes and the root `.gitignore` drop. `None` delegates,
 /// as for [`directories_with_package_json`].
 pub(crate) fn directories_for_patterns(root: &Path, patterns: &[String]) -> Option<Vec<String>> {
-    let directories = expand_patterns(root, patterns, &|directory| directory.join("package.json").exists())?;
-    let mut unique: Vec<String> = Vec::new();
-
-    for directory in directories {
-        if !unique.contains(&directory) {
-            unique.push(directory);
-        }
-    }
-
+    let directories = unique(expand_patterns(root, patterns, &|directory| directory.join("package.json").exists())?);
     let rules = gitignore_rules(root)?;
     let mut kept = Vec::new();
 
-    for directory in unique {
-        if !directory.is_ascii() {
-            return None;
-        }
-
-        if !is_ignored(&rules, &directory) {
+    for directory in directories {
+        if is_unignored(&rules, &directory)? {
             kept.push(directory);
         }
     }
 
     Some(kept)
+}
+
+/// `directories` without the repeats (overlapping patterns such as `tools` and `tools/**` name a directory
+/// twice), each at its first position.
+fn unique(directories: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::with_capacity(directories.len());
+
+    directories.into_iter().filter(|directory| seen.insert(directory.clone())).collect()
+}
+
+/// Whether `directory` survives the `.gitignore` rules; `None` for a name outside ASCII, which Node compares
+/// differently, and so is Node's.
+fn is_unignored(rules: &[Rule], directory: &str) -> Option<bool> {
+    directory.is_ascii().then(|| !is_ignored(rules, directory))
 }
 
 /// The directory names directly under `directory`, in the order `walkSync` yields them (see [`list_dirs`]).

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::json::{parse, Json};
-use crate::workspace::{directories_for_patterns, yaml_workspace_patterns};
+use crate::workspace::{directories_for_patterns, workspace_yaml, AUBE_WORKSPACE_YAML};
 
 /// A dependency block, in the order `iterateWorkspaceDeps` reads them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,11 +105,19 @@ pub(super) struct Workspace {
 /// Reads the workspace rooted at `root`, or `None` when the command must go to Node.
 pub(super) fn read(root: &Path) -> Option<Workspace> {
     // Node reads the packages of `package.json#workspaces` first and would add the YAML's only when that finds none.
-    if root.join("aube-workspace.yaml").exists() || yaml_declares_overrides(root)? {
+    if root.join(AUBE_WORKSPACE_YAML).exists() {
         return None;
     }
 
-    let patterns = yaml_workspace_patterns(root)?;
+    let yaml = workspace_yaml(root).ok()??;
+
+    // Node reads the YAML's `overrides` into `pnpm.overrides` instances with a full YAML parser (quoted keys, flow
+    // mappings and spaces before the colon included); the word is enough to tell that there are none.
+    if yaml.text.contains("overrides") {
+        return None;
+    }
+
+    let patterns = yaml.patterns;
     let mut directories = vec![".".to_owned()];
 
     directories.extend(directories_for_patterns(root, &patterns)?);
@@ -132,19 +140,6 @@ pub(super) fn read(root: &Path) -> Option<Workspace> {
     let instances = instances(&packages)?;
 
     Some(Workspace { instances, packages, patterns, root: root.to_path_buf() })
-}
-
-/// Whether the workspace YAML mentions `overrides` at all. Node reads the key into `pnpm.overrides` instances with a
-/// full YAML parser (quoted keys, flow mappings and spaces before the colon included); the word is enough to tell that
-/// there are none. `None` when it is unreadable.
-fn yaml_declares_overrides(root: &Path) -> Option<bool> {
-    let path = root.join("pnpm-workspace.yaml");
-
-    if !path.exists() {
-        return Some(false);
-    }
-
-    Some(fs::read_to_string(path).ok()?.contains("overrides"))
 }
 
 /// The string-valued entries of the block `dep_type` of `package`. `None` when JavaScript would read the block as

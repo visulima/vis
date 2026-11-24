@@ -13,7 +13,7 @@ use std::path::Path;
 use super::data::{DepType, Instance, Package, Workspace};
 use super::Selection;
 use crate::json::Json;
-use crate::workspace::{child_directories, directories_for_patterns};
+use crate::workspace::{child_directories, classify, directories_for_patterns, Shape};
 
 pub(super) struct WorkspaceProtocol {
     pub(super) dep_name: String,
@@ -211,18 +211,24 @@ fn redefine_root(instances: &[Instance]) -> Vec<RedefineRoot> {
         .collect()
 }
 
+/// A dependency that names a version of an outside package: not a workspace package, in a block that holds versions,
+/// and not a `workspace:` or `catalog:` reference. `workspace-versions` and `similar-deps` both look at these only.
+fn is_versioned_external(instance: &Instance) -> bool {
+    !instance.is_internal
+        && VERSION_TYPES.contains(&instance.dep_type)
+        && !instance.specifier.starts_with("workspace:")
+        && !instance.specifier.starts_with("catalog:")
+}
+
 /// `lintWorkspaceVersions` with the default `highest` strategy: an external dependency that two packages declare with
 /// two different specifiers is a drift.
 fn has_version_drift(instances: &[Instance]) -> bool {
     let mut seen: HashMap<&str, &str> = HashMap::new();
 
     for instance in instances {
-        let eligible = !instance.is_internal
-            && VERSION_TYPES.contains(&instance.dep_type)
-            && !instance.specifier.starts_with("workspace:")
-            && !instance.specifier.starts_with("catalog:");
-
-        if eligible && *seen.entry(&instance.dep_name).or_insert(&instance.specifier) != instance.specifier {
+        if is_versioned_external(instance)
+            && *seen.entry(&instance.dep_name).or_insert(&instance.specifier) != instance.specifier
+        {
             return true;
         }
     }
@@ -386,12 +392,7 @@ fn similar_deps(instances: &[Instance]) -> Vec<SimilarDeps> {
     let mut buckets: Vec<(&Family, Vec<SimilarMember>)> = Vec::new();
 
     for instance in instances {
-        let eligible = !instance.is_internal
-            && VERSION_TYPES.contains(&instance.dep_type)
-            && !instance.specifier.starts_with("workspace:")
-            && !instance.specifier.starts_with("catalog:");
-
-        if !eligible {
+        if !is_versioned_external(instance) {
             continue;
         }
 
@@ -452,9 +453,10 @@ fn missing_package_json(workspace: &Workspace) -> Option<Vec<String>> {
     let mut missing = Vec::new();
 
     for pattern in &workspace.patterns {
-        let clean = pattern.trim_end_matches('/');
-        let matches: Vec<String> = match clean.strip_suffix("/*") {
-            Some(base) if !base.contains('*') && !base.is_empty() => {
+        // Every pattern has been through `classify` by now (`data::read` expands them all), so the shapes
+        // below are the only ones that get here.
+        let matches: Vec<String> = match classify(pattern)? {
+            Shape::Simple(base) => {
                 if !root.join(base).exists() {
                     continue;
                 }
@@ -465,14 +467,14 @@ fn missing_package_json(workspace: &Workspace) -> Option<Vec<String>> {
                     .map(|name| format!("{base}/{name}"))
                     .collect()
             }
-            _ if !clean.contains('*') && !clean.starts_with('!') && !clean.is_empty() => {
-                if root.join(clean).exists() {
-                    vec![clean.to_owned()]
+            Shape::Exact(path) => {
+                if root.join(path).exists() {
+                    vec![path.to_owned()]
                 } else {
                     Vec::new()
                 }
             }
-            _ => return None,
+            Shape::Double { .. } | Shape::Bare(_) => return None,
         };
 
         for directory in matches {
