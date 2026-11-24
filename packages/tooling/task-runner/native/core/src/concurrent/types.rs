@@ -37,6 +37,9 @@ pub enum StdinMode {
     Pipe,
     /// The runner's own stdin.
     Inherit,
+    /// A pseudo-terminal: the command sees a terminal on stdin, stdout and stderr.
+    /// Its output arrives merged, as raw chunks, as `Stdout` events.
+    Pty,
 }
 
 impl FromStr for StdinMode {
@@ -47,10 +50,11 @@ impl FromStr for StdinMode {
             "null" => Ok(Self::Null),
             "pipe" => Ok(Self::Pipe),
             "inherit" => Ok(Self::Inherit),
+            "pty" => Ok(Self::Pty),
             _ => Err(InvalidOption {
                 option: "stdin",
                 value: value.to_string(),
-                expected: "\"null\", \"pipe\" or \"inherit\"",
+                expected: "\"null\", \"pipe\", \"inherit\" or \"pty\"",
             }),
         }
     }
@@ -164,6 +168,20 @@ impl FromStr for KillOthers {
     }
 }
 
+/// Size of a pseudo-terminal, in character cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PtySize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+impl Default for PtySize {
+    /// The classic terminal size, which is also what the JS spawner starts a pty with.
+    fn default() -> Self {
+        Self { cols: 80, rows: 24 }
+    }
+}
+
 /// Configuration for a single command to run concurrently.
 #[derive(Debug, Clone, Default)]
 pub struct ConcurrentCommandConfig {
@@ -179,6 +197,11 @@ pub struct ConcurrentCommandConfig {
     pub shell: Option<bool>,
     /// How standard input is wired (default: closed).
     pub stdin: StdinMode,
+    /// Whether the command inherits this process's environment under `env` (default: true).
+    /// `Some(false)` starts it with no variables but `env`; the caller owns the whole environment.
+    pub inherit_env: Option<bool>,
+    /// Initial size when `stdin` is [`StdinMode::Pty`] (default: 80x24).
+    pub pty_size: Option<PtySize>,
 }
 
 /// Options controlling the concurrent runner behavior.
@@ -202,7 +225,7 @@ pub struct ConcurrentRunnerOptions {
 }
 
 /// A request from the caller to a running `ConcurrentRunner`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlMessage {
     /// Stop the run: kill every running command and spawn no more.
     ///
@@ -214,6 +237,11 @@ pub enum ControlMessage {
     /// Signal one running command's process tree. `None` uses the runner's
     /// `kill_signal`. Does nothing if the command is not running.
     Kill { index: u32, signal: Option<KillSignal> },
+    /// Write to a running command's stdin (a pipe or a pty). Does nothing if the
+    /// command is not running or has neither.
+    Write { index: u32, data: Vec<u8> },
+    /// Resize a running pty command's terminal. Does nothing for any other command.
+    Resize { index: u32, size: PtySize },
 }
 
 /// An event emitted during concurrent execution.

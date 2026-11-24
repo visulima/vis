@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::completion::SuccessCondition;
+use super::events::EventSink;
 use super::process::{spawn_process, CompletionMessage, ProcessInfo};
 use super::types::{
     ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ControlMessage,
@@ -40,8 +41,10 @@ impl ConcurrentRunner {
 
     /// Run all commands concurrently with real-time event streaming.
     ///
-    /// Events are sent to `event_tx` as they occur. `control_rx` carries
-    /// requests from the caller to stop the run or kill one command; the runner
+    /// Events are sent to `events` as they occur: a bare unbounded channel sender, or the sink of
+    /// an [`event_channel`](super::events::event_channel) when the consumer should be able to
+    /// slow the commands down. `control_rx` carries
+    /// requests from the caller to stop the run, kill one command or feed its stdin; the runner
     /// installs no signal handlers of its own, so whoever embeds it decides
     /// which signals mean "abort" and forwards them here. Dropping the sender
     /// does not stop the run.
@@ -49,7 +52,7 @@ impl ConcurrentRunner {
     /// Returns the final result after all processes complete.
     pub async fn run(
         &self,
-        event_tx: mpsc::UnboundedSender<ProcessEvent>,
+        events: impl Into<EventSink>,
         mut control_rx: mpsc::UnboundedReceiver<ControlMessage>,
     ) -> ConcurrentRunResult {
         // Channel for process completion notifications
@@ -57,13 +60,14 @@ impl ConcurrentRunner {
 
         let mut run = RunState {
             runner: self,
-            event_tx,
+            events: events.into(),
             completion_tx,
             pending: (0..self.commands.len()).collect(),
             active: Vec::with_capacity(self.max_processes),
             close_events: Vec::with_capacity(self.commands.len()),
             aborting: false,
             interrupted: false,
+            giving_up: Arc::new(AtomicBool::new(false)),
         };
 
         // An abort that was requested before the run started means nothing is spawned.
@@ -184,7 +188,7 @@ impl ConcurrentRunner {
 /// Mutable state of one `run`.
 struct RunState<'a> {
     runner: &'a ConcurrentRunner,
-    event_tx: mpsc::UnboundedSender<ProcessEvent>,
+    events: EventSink,
     completion_tx: mpsc::UnboundedSender<CompletionMessage>,
     /// Indices of the commands not yet spawned.
     pending: VecDeque<usize>,
@@ -196,6 +200,8 @@ struct RunState<'a> {
     aborting: bool,
     /// Whether the abort was a user interrupt, which turns exit codes into 0.
     interrupted: bool,
+    /// Set once the run is torn down: commands stop waiting for a consumer that is not reading.
+    giving_up: Arc<AtomicBool>,
 }
 
 impl RunState<'_> {
@@ -205,16 +211,32 @@ impl RunState<'_> {
                 if !self.aborting {
                     self.runner.kill_all_with(&self.active, graceful);
                     self.aborting = true;
+                    self.giving_up.store(true, Ordering::Release);
                     // A user interrupt is a cancellation, not a failure: closes report 0.
                     self.interrupted = graceful;
                 }
             }
             ControlMessage::Kill { index, signal } => {
-                if let Some(info) = self.active.iter().find(|process| process.index == index) {
+                if let Some(info) = self.running(index) {
                     self.runner.signal_process(info, signal.unwrap_or(self.runner.kill_signal));
                 }
             }
+            // Both only queue work for a thread of their own: the loop never waits for a child.
+            ControlMessage::Write { index, data } => {
+                if let Some(input) = self.running(index).and_then(|info| info.input.as_ref()) {
+                    input.write(data);
+                }
+            }
+            ControlMessage::Resize { index, size } => {
+                if let Some(pty) = self.running(index).and_then(|info| info.pty.as_ref()) {
+                    pty.resize(size);
+                }
+            }
         }
+    }
+
+    fn running(&self, index: u32) -> Option<&ProcessInfo> {
+        self.active.iter().find(|process| process.index == index)
     }
 
     /// Spawn queued commands until `max_processes` are running. A command that
@@ -229,13 +251,14 @@ impl RunState<'_> {
             match spawn_process(
                 index as u32,
                 config,
-                self.event_tx.clone(),
+                &self.events,
                 self.completion_tx.clone(),
                 self.runner.shell_path.as_deref(),
+                &self.giving_up,
             ) {
                 Ok(info) => self.active.push(info),
                 Err(error) => {
-                    let _ = self.event_tx.send(ProcessEvent::Error {
+                    self.events.send(ProcessEvent::Error {
                         index: index as u32,
                         message: format!("Failed to spawn: {error}"),
                     });
@@ -265,7 +288,7 @@ impl RunState<'_> {
             }
         }
 
-        let _ = self.event_tx.send(ProcessEvent::Close {
+        self.events.send(ProcessEvent::Close {
             index: close_event.index,
             exit_code: close_event.exit_code,
             killed: close_event.killed,
@@ -277,6 +300,7 @@ impl RunState<'_> {
         if !self.aborting && self.runner.should_kill_others(&close_event) {
             self.runner.kill_all_with(&self.active, false);
             self.aborting = true;
+            self.giving_up.store(true, Ordering::Release);
         }
 
         self.close_events.push(close_event);

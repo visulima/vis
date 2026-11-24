@@ -220,6 +220,7 @@ mod tests {
             env: Some(env),
             shell: None,
             stdin: StdinMode::Null,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -335,6 +336,7 @@ mod tests {
             env: None,
             shell: None,
             stdin: StdinMode::Null,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -363,6 +365,7 @@ mod tests {
             env: None,
             shell: Some(false),
             stdin: StdinMode::Null,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -391,6 +394,7 @@ mod tests {
             env: None,
             shell: Some(true),
             stdin: StdinMode::Null,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -419,6 +423,7 @@ mod tests {
             env: None,
             shell: Some(true),
             stdin: StdinMode::Null,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
         let result = run_batch(&runner).await;
@@ -438,6 +443,7 @@ mod tests {
             env: None,
             shell: Some(true),
             stdin: StdinMode::Pipe,
+            ..Default::default()
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -850,5 +856,245 @@ mod tests {
             }
         }
         assert_eq!(lines, vec!["a b".to_string()]);
+    }
+
+    // ── stdin pipe, environment and event backpressure ──────────────────────────
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_piped_stdin_stays_open_and_takes_writes() {
+        // `read` blocks until a line arrives; before the handle existed a piped
+        // stdin was closed at once, so this saw EOF and printed nothing.
+        let mut config = make_config("read line; echo got:$line", None);
+        config.stdin = StdinMode::Pipe;
+        let mut run = start(vec![config], &default_options());
+
+        run.wait_for_started(1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!run.result.is_finished(), "a piped stdin must stay open until the command is done with it");
+
+        run.control.send(ControlMessage::Write { index: 0, data: b"hello\n".to_vec() }).unwrap();
+
+        let (result, events) = run.finish().await;
+
+        assert!(result.success);
+        assert!(
+            events.iter().any(|e| matches!(e, ProcessEvent::Stdout { text, .. } if text == "got:hello")),
+            "{events:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_write_to_a_command_without_a_pipe_is_ignored() {
+        let mut run = start(vec![make_config("sleep 0.3; echo done", None)], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Write { index: 0, data: b"ignored\n".to_vec() }).unwrap();
+        run.control.send(ControlMessage::Write { index: 7, data: b"nobody\n".to_vec() }).unwrap();
+
+        let (result, events) = run.finish().await;
+
+        assert!(result.success);
+        assert!(events.iter().any(|e| matches!(e, ProcessEvent::Stdout { text, .. } if text == "done")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_slow_write_does_not_stall_the_control_loop() {
+        // The child never reads its stdin, so the pipe fills up and a blocking write would hang
+        // the run loop; an abort sent afterwards must still be honoured.
+        let mut config = make_config("sleep 30", None);
+        config.stdin = StdinMode::Pipe;
+        let mut run = start(vec![config], &default_options());
+
+        run.wait_for_started(1).await;
+
+        for _ in 0..64 {
+            run.control.send(ControlMessage::Write { index: 0, data: vec![b'x'; 64 * 1024] }).unwrap();
+        }
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert!(result.close_events[0].killed);
+    }
+
+    #[cfg(unix)]
+    async fn run_env_probe(inherit_env: Option<bool>) -> String {
+        std::env::set_var("RUNNER_TEST_PARENT_ONLY", "from-parent");
+
+        let mut env = std::collections::HashMap::new();
+        env.insert("RUNNER_TEST_OVERLAY".to_string(), "from-overlay".to_string());
+
+        let mut config = make_config("echo \"[$RUNNER_TEST_PARENT_ONLY][$RUNNER_TEST_OVERLAY]\"", None);
+        config.env = Some(env);
+        config.inherit_env = inherit_env;
+
+        let (event_tx, mut events) = mpsc::unbounded_channel::<ProcessEvent>();
+        let runner = ConcurrentRunner::new(vec![config], &default_options());
+        let result = runner.run(event_tx, no_control()).await;
+
+        assert!(result.success);
+
+        let mut texts = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if let ProcessEvent::Stdout { text, .. } = event {
+                texts.push(text);
+            }
+        }
+
+        texts.join("\n")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_the_environment_is_inherited_by_default() {
+        assert_eq!(run_env_probe(None).await, "[from-parent][from-overlay]");
+        assert_eq!(run_env_probe(Some(true)).await, "[from-parent][from-overlay]");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_inherit_env_false_gives_the_command_only_its_own_variables() {
+        assert_eq!(run_env_probe(Some(false)).await, "[][from-overlay]");
+    }
+
+    #[tokio::test]
+    async fn test_the_runner_does_not_set_force_color_itself() {
+        // Colour is the caller's decision (resolved into `env` on the JS side); the core must not
+        // second-guess it, whether or not this process has a terminal.
+        std::env::remove_var("FORCE_COLOR");
+
+        let mut config = make_config("echo \"[${FORCE_COLOR-unset}]\"", None);
+        config.env = Some(std::collections::HashMap::new());
+        let (event_tx, mut events) = mpsc::unbounded_channel::<ProcessEvent>();
+        let runner = ConcurrentRunner::new(vec![config], &default_options());
+
+        runner.run(event_tx, no_control()).await;
+
+        let mut seen = None;
+        while let Ok(event) = events.try_recv() {
+            if let ProcessEvent::Stdout { text, .. } = event {
+                seen = Some(text);
+            }
+        }
+
+        assert_eq!(seen.as_deref(), Some("[unset]"));
+    }
+
+    /// A run on a stream that holds `capacity` output events at a time, with nobody reading it yet.
+    #[cfg(unix)]
+    struct BoundedRun {
+        stream: crate::concurrent::events::EventStream,
+        result: tokio::task::JoinHandle<ConcurrentRunResult>,
+        _control: mpsc::UnboundedSender<ControlMessage>,
+    }
+
+    #[cfg(unix)]
+    fn start_bounded(commands: Vec<ConcurrentCommandConfig>, capacity: usize) -> BoundedRun {
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let (sink, stream) = crate::concurrent::events::event_channel(capacity);
+        let (control, control_rx) = mpsc::unbounded_channel();
+        let result = tokio::spawn(async move { runner.run(sink, control_rx).await });
+
+        BoundedRun { stream, result, _control: control }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_consumer_that_does_not_read_stalls_the_child_instead_of_filling_memory() {
+        // 200,000 lines of about 11 bytes is far more than a pipe and the channel can hold.
+        let mut run = start_bounded(vec![make_config("seq 1 200000", None)], 8);
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Nobody has read anything: the run cannot be done, and at most `capacity` lines are queued.
+        assert!(!run.result.is_finished(), "the child must be blocked on its full pipe");
+
+        let first = run.stream.try_next_batch(usize::MAX).expect("something is queued");
+        let queued = first.events.iter().filter(|e| matches!(e, ProcessEvent::Stdout { .. })).count();
+
+        assert!(queued <= 8, "{queued} lines queued with a capacity of 8");
+        drop(first);
+
+        // Draining it all, in order, lets the run finish without losing a line.
+        let mut next = 1 + queued;
+        let mut closed = false;
+
+        while !closed {
+            let batch = tokio::time::timeout(std::time::Duration::from_secs(10), run.stream.next_batch(64))
+                .await
+                .expect("the run must keep producing while it is drained")
+                .expect("the stream stays open until the close");
+
+            for event in &batch.events {
+                match event {
+                    ProcessEvent::Stdout { text, .. } => {
+                        assert_eq!(text, &next.to_string());
+                        next += 1;
+                    }
+                    ProcessEvent::Close { exit_code, .. } => {
+                        assert_eq!(*exit_code, 0);
+                        closed = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert_eq!(next, 200_001);
+        assert!(run.result.await.unwrap().success);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_slow_consumer_does_not_lose_output_to_the_drain_grace() {
+        // The command exits at once with more output than the channel holds. A consumer that waits
+        // longer than the 2 s pipe-drain grace must still get every line: time spent waiting for a
+        // credit is not time a descendant spent holding the pipe.
+        let mut run = start_bounded(vec![make_config("seq 1 5000", None)], 4);
+
+        tokio::time::sleep(std::time::Duration::from_millis(2600)).await;
+
+        let mut seen = 0;
+        let mut exit_code = None;
+
+        while exit_code.is_none() {
+            let batch = tokio::time::timeout(std::time::Duration::from_secs(10), run.stream.next_batch(64))
+                .await
+                .expect("the run must finish")
+                .expect("the stream stays open until the close");
+
+            for event in &batch.events {
+                match event {
+                    ProcessEvent::Stdout { .. } => seen += 1,
+                    ProcessEvent::Close { exit_code: code, .. } => exit_code = Some(*code),
+                    _ => {}
+                }
+            }
+        }
+
+        assert_eq!(seen, 5000, "no line may be dropped while the consumer was slow");
+        assert_eq!(exit_code, Some(0));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_an_abort_is_honoured_while_the_consumer_is_not_reading() {
+        let mut run = start_bounded(vec![make_config("yes", None)], 4);
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!run.result.is_finished());
+
+        run._control.send(ControlMessage::Abort { graceful: false }).unwrap();
+
+        // The stream is full and nobody reads it; the run must still wind down on its own.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), &mut run.result)
+            .await
+            .expect("an abort must not wait for the consumer")
+            .unwrap();
+
+        assert!(result.close_events[0].killed);
     }
 }
