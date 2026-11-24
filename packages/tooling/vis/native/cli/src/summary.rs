@@ -18,7 +18,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
-use crate::cache::{mtime_ms, sorted_entries};
+use crate::cache::entries::{mtime_ms, sorted_entries};
 use crate::cache_hash::{Output, Probe, ProbeId, Summary};
 use crate::error::WrapperError;
 use crate::js::{is_index_like, MAX_SAFE_INTEGER};
