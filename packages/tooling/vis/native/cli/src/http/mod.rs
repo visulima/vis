@@ -36,7 +36,8 @@ const DEFAULT_GLOBAL_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest response body read, after decompression.
 const DEFAULT_MAX_BODY: u64 = 64 * 1024 * 1024;
-const MAX_REDIRECTS: u32 = 10;
+/// As many redirects as `fetch` follows, so a command that replaces a `fetch` call gives up at the same hop.
+const MAX_REDIRECTS: u32 = 20;
 
 #[derive(Clone, Debug)]
 pub(crate) struct HttpConfig {
