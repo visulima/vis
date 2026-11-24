@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use super::data::{DepType, Instance, Package, Workspace};
-use super::Selection;
+use super::{Lint, Selection};
 use crate::json::Json;
 use crate::workspace::{child_directories, classify, directories_for_patterns, Shape};
 
@@ -118,8 +118,8 @@ const SIMILAR_FAMILIES: [Family; 13] = [
 
 /// Runs the selected lints; the others stay empty, as in the handler. `None` sends the command to Node.
 pub(super) fn run(workspace: &Workspace, selection: &Selection) -> Option<Report> {
-    if (selection.workspace_versions && has_version_drift(&workspace.instances))
-        || (selection.custom_types && has_custom_type_drift(&workspace.packages)?)
+    if (selection.has(Lint::WorkspaceVersions) && has_version_drift(&workspace.instances))
+        || (selection.has(Lint::CustomTypes) && has_custom_type_drift(&workspace.packages)?)
     {
         return None;
     }
@@ -128,43 +128,43 @@ pub(super) fn run(workspace: &Workspace, selection: &Selection) -> Option<Report
     let instances = &workspace.instances;
     let mut report = Report::default();
 
-    if selection.workspace_protocol {
+    if selection.has(Lint::WorkspaceProtocol) {
         report.workspace_protocol = workspace_protocol(instances);
     }
 
-    if selection.redefine_root {
+    if selection.has(Lint::RedefineRoot) {
         report.redefine_root = redefine_root(instances);
     }
 
-    if selection.empty_deps {
+    if selection.has(Lint::EmptyDeps) {
         report.empty_deps = empty_deps(packages);
     }
 
-    if selection.root_private {
+    if selection.has(Lint::RootPrivate) {
         report.root_private = root_private(packages);
     }
 
-    if selection.root_package_manager {
+    if selection.has(Lint::RootPackageManager) {
         report.root_package_manager = root_package_manager(packages)?;
     }
 
-    if selection.root_deps {
+    if selection.has(Lint::RootDeps) {
         report.root_deps = root_deps(packages);
     }
 
-    if selection.missing_package_json {
+    if selection.has(Lint::MissingPackageJson) {
         report.missing_package_json = missing_package_json(workspace)?;
     }
 
-    if selection.dead_workspace_patterns {
+    if selection.has(Lint::DeadWorkspacePatterns) {
         report.dead_patterns = dead_patterns(workspace)?;
     }
 
-    if selection.types_in_deps {
+    if selection.has(Lint::TypesInDeps) {
         report.types_in_deps = types_in_deps(workspace);
     }
 
-    if selection.similar_deps {
+    if selection.has(Lint::SimilarDeps) {
         report.similar_deps = similar_deps(instances);
     }
 

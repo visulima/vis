@@ -3,7 +3,7 @@
 
 use super::data::{Package, Workspace};
 use super::lint::Report;
-use super::Selection;
+use super::{Lint, Selection};
 use crate::json::{stringify, Json};
 use crate::term::Style;
 
@@ -38,55 +38,55 @@ pub(super) fn human(workspace: &Workspace, report: &Report, selection: &Selectio
     let packages = &workspace.packages;
     let mut sections: Vec<Vec<String>> = Vec::new();
 
-    if selection.workspace_protocol {
+    if selection.has(Lint::WorkspaceProtocol) {
         sections.push(workspace_protocol(packages, report, style));
     }
 
-    if selection.redefine_root {
+    if selection.has(Lint::RedefineRoot) {
         sections.push(redefine_root(packages, report, style));
     }
 
-    if selection.workspace_versions {
+    if selection.has(Lint::WorkspaceVersions) {
         sections.push(vec![style.green("\u{2713} workspace-versions: no drift")]);
     }
 
-    if selection.custom_types {
+    if selection.has(Lint::CustomTypes) {
         sections.push(vec![style.green("\u{2713} custom-types: no engines / packageManager / volta drift")]);
     }
 
-    if selection.banned_deps {
+    if selection.has(Lint::BannedDeps) {
         sections.push(vec![style.green("\u{2713} banned-deps: no violations")]);
     }
 
-    if selection.empty_deps {
+    if selection.has(Lint::EmptyDeps) {
         sections.push(empty_deps(packages, report, style));
     }
 
-    if selection.root_private {
+    if selection.has(Lint::RootPrivate) {
         sections.push(root_private(packages, report, style));
     }
 
-    if selection.root_package_manager {
+    if selection.has(Lint::RootPackageManager) {
         sections.push(root_package_manager(packages, report, style));
     }
 
-    if selection.root_deps {
+    if selection.has(Lint::RootDeps) {
         sections.push(root_deps(packages, report, style));
     }
 
-    if selection.missing_package_json {
+    if selection.has(Lint::MissingPackageJson) {
         sections.push(missing_package_json(report, style));
     }
 
-    if selection.dead_workspace_patterns {
+    if selection.has(Lint::DeadWorkspacePatterns) {
         sections.push(dead_patterns(report, style));
     }
 
-    if selection.types_in_deps {
+    if selection.has(Lint::TypesInDeps) {
         sections.push(types_in_deps(packages, report, style));
     }
 
-    if selection.similar_deps {
+    if selection.has(Lint::SimilarDeps) {
         sections.push(similar_deps(packages, report, style));
     }
 
@@ -364,7 +364,7 @@ pub(super) fn minimal(packages: &[Package], report: &Report, selection: &Selecti
         out.push('\n');
     };
 
-    for issue in report.workspace_protocol.iter().filter(|_| selection.workspace_protocol) {
+    for issue in report.workspace_protocol.iter().filter(|_| selection.has(Lint::WorkspaceProtocol)) {
         let package = &packages[issue.package];
 
         line(&[
@@ -376,7 +376,7 @@ pub(super) fn minimal(packages: &[Package], report: &Report, selection: &Selecti
         ]);
     }
 
-    for issue in report.redefine_root.iter().filter(|_| selection.redefine_root) {
+    for issue in report.redefine_root.iter().filter(|_| selection.has(Lint::RedefineRoot)) {
         line(&[
             "redefine-root",
             &packages[issue.package].relative_path(),
@@ -386,35 +386,35 @@ pub(super) fn minimal(packages: &[Package], report: &Report, selection: &Selecti
         ]);
     }
 
-    for (index, dep_type) in report.empty_deps.iter().filter(|_| selection.empty_deps) {
+    for (index, dep_type) in report.empty_deps.iter().filter(|_| selection.has(Lint::EmptyDeps)) {
         line(&["empty-deps", &packages[*index].relative_path(), dep_type.name()]);
     }
 
-    if selection.root_private && report.root_private.is_some() {
+    if selection.has(Lint::RootPrivate) && report.root_private.is_some() {
         line(&["root-private", &packages[0].relative_path()]);
     }
 
-    if selection.root_package_manager && report.root_package_manager {
+    if selection.has(Lint::RootPackageManager) && report.root_package_manager {
         line(&["root-package-manager", &packages[0].relative_path(), ""]);
     }
 
-    for name in report.root_deps.iter().flatten().filter(|_| selection.root_deps) {
+    for name in report.root_deps.iter().flatten().filter(|_| selection.has(Lint::RootDeps)) {
         line(&["root-deps", &packages[0].relative_path(), name]);
     }
 
-    for directory in report.missing_package_json.iter().filter(|_| selection.missing_package_json) {
+    for directory in report.missing_package_json.iter().filter(|_| selection.has(Lint::MissingPackageJson)) {
         line(&["missing-package-json", directory]);
     }
 
-    for issue in report.dead_patterns.iter().filter(|_| selection.dead_workspace_patterns) {
+    for issue in report.dead_patterns.iter().filter(|_| selection.has(Lint::DeadWorkspacePatterns)) {
         line(&["dead-workspace-pattern", "pnpm-workspace.yaml", &issue.pattern]);
     }
 
-    for issue in report.types_in_deps.iter().filter(|_| selection.types_in_deps) {
+    for issue in report.types_in_deps.iter().filter(|_| selection.has(Lint::TypesInDeps)) {
         line(&["types-in-deps", &packages[issue.package].relative_path(), &issue.dep_name, &issue.child_specifier]);
     }
 
-    for issue in report.similar_deps.iter().filter(|_| selection.similar_deps) {
+    for issue in report.similar_deps.iter().filter(|_| selection.has(Lint::SimilarDeps)) {
         for member in &issue.members {
             line(&[
                 "similar-deps",
@@ -483,7 +483,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         fields
     };
 
-    if selection.workspace_protocol {
+    if selection.has(Lint::WorkspaceProtocol) {
         let issues = report.workspace_protocol.iter().map(|issue| {
             let mut fields = vec![
                 ("depName", text(&issue.dep_name)),
@@ -500,7 +500,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("workspaceProtocol", block(issues.collect())));
     }
 
-    if selection.redefine_root {
+    if selection.has(Lint::RedefineRoot) {
         let issues = report.redefine_root.iter().map(|issue| {
             let mut fields = vec![
                 ("childSpecifier", text(&issue.child_specifier)),
@@ -518,19 +518,19 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("redefineRoot", block(issues.collect())));
     }
 
-    if selection.workspace_versions {
+    if selection.has(Lint::WorkspaceVersions) {
         out.push(("workspaceVersions", block(Vec::new())));
     }
 
-    if selection.custom_types {
+    if selection.has(Lint::CustomTypes) {
         out.push(("customTypes", block(Vec::new())));
     }
 
-    if selection.banned_deps {
+    if selection.has(Lint::BannedDeps) {
         out.push(("bannedDeps", block(Vec::new())));
     }
 
-    if selection.empty_deps {
+    if selection.has(Lint::EmptyDeps) {
         let issues = report.empty_deps.iter().map(|(index, dep_type)| {
             let package = &packages[*index];
             let mut fields = vec![("depType", text(dep_type.name()))];
@@ -543,7 +543,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("emptyDeps", block(issues.collect())));
     }
 
-    if selection.root_private {
+    if selection.has(Lint::RootPrivate) {
         let issues = report.root_private.iter().map(|raw| {
             let mut fields = vec![("packageJsonPath", text(&packages[0].relative_path()))];
 
@@ -555,14 +555,14 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("rootPrivate", block(issues.collect())));
     }
 
-    if selection.root_package_manager {
+    if selection.has(Lint::RootPackageManager) {
         let issues =
             report.root_package_manager.then(|| object(vec![("packageJsonPath", text(&packages[0].relative_path()))]));
 
         out.push(("rootPackageManager", block(issues.into_iter().collect())));
     }
 
-    if selection.root_deps {
+    if selection.has(Lint::RootDeps) {
         let issues = report.root_deps.iter().map(|names| {
             object(vec![
                 ("depNames", Json::Array(names.iter().map(|name| text(name)).collect())),
@@ -573,7 +573,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("rootDeps", block(issues.collect())));
     }
 
-    if selection.missing_package_json {
+    if selection.has(Lint::MissingPackageJson) {
         out.push((
             "missingPackageJson",
             block(
@@ -586,7 +586,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         ));
     }
 
-    if selection.dead_workspace_patterns {
+    if selection.has(Lint::DeadWorkspacePatterns) {
         let source_path = workspace.root.join("pnpm-workspace.yaml");
         let issues = report.dead_patterns.iter().map(|issue| {
             object(vec![
@@ -599,7 +599,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("deadWorkspacePatterns", block(issues.collect())));
     }
 
-    if selection.types_in_deps {
+    if selection.has(Lint::TypesInDeps) {
         let issues = report.types_in_deps.iter().map(|issue| {
             let mut fields = vec![("childSpecifier", text(&issue.child_specifier)), ("depName", text(&issue.dep_name))];
 
@@ -611,7 +611,7 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("typesInDeps", block(issues.collect())));
     }
 
-    if selection.similar_deps {
+    if selection.has(Lint::SimilarDeps) {
         let issues = report.similar_deps.iter().map(|issue| {
             let members = issue.members.iter().map(|member| {
                 let mut fields = vec![("depName", text(&member.dep_name)), ("depType", text(member.dep_type.name()))];
