@@ -3,19 +3,21 @@
 //! Everything else is Node's. The native attempt reads the workspace, keys every task and looks every
 //! key up in the cache **before it prints or writes anything**; the first thing that is not a clean hit
 //! (a miss, a key it cannot reproduce, an entry that holds outputs, an expired entry, a stale install, a
-//! toolchain pin, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
+//! toolchain pin that is not met, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
 //! does it write `.vis/last-summary.json` and print what the Node static renderer prints for such a run.
 //!
 //! What the answer covers:
 //!
 //! * the invocation `run <target>` and nothing else: no flag, no further argument;
 //! * a CI context (`CI` set, stderr and stdout not terminals), with the colour codes and the log grouping
-//!   (GitHub Actions, GitLab CI, Buildkite, Azure Pipelines) the Node renderer prints for that environment,
-//!   started by the JS launcher, which passes `process.version` in `VIS_NODE_VERSION`;
+//!   (GitHub Actions, GitLab CI, Buildkite, Azure Pipelines) the Node renderer prints for that environment;
+//!   the Node version the summary records is the launcher's `process.version` (`VIS_NODE_VERSION`) when it started
+//!   the binary, and otherwise the answer of `node --version` from the Node the run would be handed to;
 //! * a pnpm workspace of script-only JS projects (`targets::script_targets`), no `vis.config`, no
 //!   `dependsOn`, default inputs, no outputs, no `cache: false`;
-//! * a workspace whose startup preflights print nothing: no toolchain pin, a lockfile that is fresh
-//!   against `node_modules`, no legacy task-runner directory, no run history.
+//! * a workspace whose startup preflights print nothing: no toolchain pin, or one that every pinned tool meets
+//!   (`toolchain.rs`), a lockfile that is fresh against `node_modules`, no legacy task-runner directory, no run
+//!   history.
 //!
 //! Output order: Node prints the lines of tasks that run side by side in the order they happen to finish.
 //! This module prints them in a fixed order (project order, three tasks in flight like the default
