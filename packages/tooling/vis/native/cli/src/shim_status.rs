@@ -13,9 +13,7 @@ use std::process::exit;
 
 use crate::node_context::context_is_native;
 use crate::output::write_stdout;
-
-/// The package managers the shim directory intercepts, `SHIM_NAMES` in `src/commands/shim/handler.ts`.
-const SHIM_NAMES: [&str; 6] = ["npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"];
+use crate::pm_shim::SHIM_NAMES;
 
 /// The text Node prints for the shim directory `directory` and the `PATH` entries `path`.
 fn text(directory: &Path, path: &str) -> Option<String> {

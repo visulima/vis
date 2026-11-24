@@ -32,6 +32,7 @@
 //! table of scenarios through both runners and compares them.
 
 mod builtins;
+mod common;
 mod config;
 mod exec;
 mod filter;
@@ -45,10 +46,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
+use common::DEFAULT_HOOKS_DIRECTORY;
 use config::{Entry, Target};
 use serde_json::Value;
-
-const DEFAULT_HOOKS_DIRECTORY: &str = ".vis/hooks";
 
 /// Stages where git supplies its own positional args instead of a file set.
 const STAGES_WITH_GIT_ARGS: [&str; 6] =

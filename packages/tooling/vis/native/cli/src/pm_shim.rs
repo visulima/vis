@@ -21,6 +21,10 @@ struct ShimEntry {
     runner: bool,
 }
 
+/// The package managers the shim directory intercepts, `SHIM_NAMES` in `src/commands/shim/handler.ts`, in the order
+/// `vis shim status` lists the missing ones. `shim_entry` knows exactly these.
+pub(crate) const SHIM_NAMES: [&str; 6] = ["npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"];
+
 fn shim_entry(invoked: &str) -> Option<ShimEntry> {
     let (pm, runner) = match invoked {
         "npm" => ("npm", false),
@@ -180,7 +184,13 @@ pub fn dispatch(invoked: &str, args: &[String]) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, pinned_pm, Decision};
+    use super::{decide, pinned_pm, shim_entry, Decision, SHIM_NAMES};
+
+    #[test]
+    fn every_listed_shim_name_is_a_shim_and_nothing_else_is() {
+        assert!(SHIM_NAMES.iter().all(|name| shim_entry(name).is_some()));
+        assert!(["bun", "node", "npmx", ""].iter().all(|name| shim_entry(name).is_none()));
+    }
 
     /// A scratch directory holding `files`, with `app` below it as the working directory.
     fn project(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
