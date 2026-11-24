@@ -129,3 +129,21 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 });
+
+describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis shim status under a path with format characters", () => {
+    const formatted = new Harness(["shim", "status"]);
+
+    beforeAll(() => {
+        formatted.setup("vis-shim-%s-%d-{0}-");
+    });
+
+    afterAll(() => {
+        formatted.teardown();
+    });
+
+    it("prints the path as it is", () => {
+        expect.hasAssertions();
+
+        expect(formatted.expectParity(workspaceFiles(shims(SHIMS.slice(0, 2))), []).stdout).toContain("%s-%d-{0}-");
+    });
+});
