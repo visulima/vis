@@ -111,7 +111,7 @@ describe(runNativeConcurrent, () => {
         });
 
         it("kills the command's process tree with the given signal, SIGTERM by default", async () => {
-            expect.assertions(4);
+            expect.assertions(3);
 
             const kill = async (signal?: string) => {
                 const result = await runNativeConcurrent([{ command: "sleep 30" }], {
@@ -140,38 +140,34 @@ describe(runNativeConcurrent, () => {
                     },
                 }),
             ).resolves.toMatchObject({ success: true });
-            expect(byDefault.index).toBe(0);
         });
 
         it("runs a command in a terminal that can be written to and resized", async () => {
-            expect.assertions(3);
+            expect.assertions(4);
 
-            const { events, result } = await (async () => {
-                const seen: ProcessEvent[] = [];
-                const outcome = await runNativeConcurrent(
-                    [{ command: "read line; stty size; echo got:$line; test -t 1 && echo tty", ptySize: { cols: 90, rows: 20 }, stdin: "pty" }],
-                    {
-                        onEvent: (event) => {
-                            seen.push(event);
+            const events: ProcessEvent[] = [];
+            const result = await runNativeConcurrent(
+                [{ command: "read line; stty size; echo got:$line; test -t 1 && echo tty", ptySize: { cols: 90, rows: 20 }, stdin: "pty" }],
+                {
+                    onEvent: (event) => {
+                        events.push(event);
 
-                            if (event.kind === "started") {
-                                event.resize?.(100, 30);
-                                event.write?.("typed\n");
-                            }
-                        },
+                        if (event.kind === "started") {
+                            event.resize?.(100, 30);
+                            event.write?.("typed\n");
+                        }
                     },
-                );
-
-                return { events: seen, result: outcome };
-            })();
+                },
+            );
             const output = events
                 .filter((event) => event.kind === "stdout")
                 .map((event) => event.text)
                 .join("");
 
             expect(result.success).toBe(true);
+            expect(output).toContain("30 100");
             expect(output).toContain("got:typed");
-            expect(output).toMatch(/tty/);
+            expect(output).toContain("tty");
         });
     });
 

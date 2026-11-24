@@ -125,11 +125,32 @@ pub async fn run_concurrent_batch(
     wait_for_result(launched.result).await
 }
 
+/// Hand one batch to JavaScript and wait until it has been handled; only then do the batch's
+/// credits come back. Lines are left out unless `with_output`, and a batch with nothing left is
+/// not sent at all. False when there is no callback, or JavaScript can no longer be reached.
+async fn deliver(callback: Option<&BatchCallback>, mut batch: EventBatch, with_output: bool) -> bool {
+    let events: Vec<ProcessEvent> = std::mem::take(&mut batch.events)
+        .into_iter()
+        .filter(|event| {
+            with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
+        })
+        .map(Into::into)
+        .collect();
+
+    match callback {
+        Some(callback) if !events.is_empty() => {
+            callback.call_async(ProcessEventBatch { events, result: None, error: None }).await.is_ok()
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
 /// Start `runner` and forward its events to `on_batch`, in batches, ending with the result.
 ///
-/// The forwarder hands a batch over and waits for the callback to return before it releases the
-/// batch, so the output credits (see `event_channel`) measure what JavaScript has not finished
-/// with. A child that outpaces the callback blocks on its pipe instead of filling memory.
+/// The forwarder waits for the callback to return before it releases a batch, so the output
+/// credits (see `event_channel`) measure what JavaScript has not finished with. A child that
+/// outpaces the callback blocks on its pipe instead of filling memory.
 ///
 /// The callback lives in the forwarding task and is dropped when the run ends, so it never keeps
 /// Node alive after the result has been delivered.
@@ -140,45 +161,18 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
 
     spawn(async move {
         let mut run = tokio::spawn(async move { runner.run(sink, control_rx).await });
-        let mut reachable = on_batch.is_some();
-
-        // Hand one batch to JavaScript and wait until it has been handled. Lines are left out when
-        // the caller asked for lifecycle events only; a batch with nothing left is not sent at all.
-        let deliver = |mut batch: EventBatch, reachable: bool| {
-            let events = std::mem::take(&mut batch.events);
-            let callback = on_batch.as_ref().filter(|_| reachable);
-
-            async move {
-                let events: Vec<ProcessEvent> = events
-                    .into_iter()
-                    .filter(|event| {
-                        with_output
-                            || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
-                    })
-                    .map(Into::into)
-                    .collect();
-                let delivered = match callback {
-                    Some(callback) if !events.is_empty() => {
-                        callback.call_async(ProcessEventBatch { events, result: None, error: None }).await.is_ok()
-                    }
-                    Some(_) => true,
-                    None => false,
-                };
-
-                // The credits come back only now.
-                drop(batch);
-
-                delivered
-            }
-        };
-
+        let mut callback = on_batch;
         let mut outcome = None;
 
         // Everything the run produced goes out first, in the order it was produced.
         loop {
             tokio::select! {
                 batch = stream.next_batch(MAX_BATCH) => match batch {
-                    Some(batch) => reachable = deliver(batch, reachable).await && reachable,
+                    Some(batch) => {
+                        if !deliver(callback.as_ref(), batch, with_output).await {
+                            callback = None;
+                        }
+                    }
                     None => break,
                 },
                 joined = &mut run => {
@@ -199,7 +193,9 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
         stream.close();
 
         while let Some(batch) = stream.try_next_batch(MAX_BATCH) {
-            reachable = deliver(batch, reachable).await && reachable;
+            if !deliver(callback.as_ref(), batch, with_output).await {
+                callback = None;
+            }
         }
 
         let last = match outcome {
@@ -216,7 +212,7 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
             },
         };
 
-        if let (Some(callback), true) = (on_batch.as_ref(), reachable) {
+        if let Some(callback) = callback {
             let _ = callback.call_async(last).await;
         }
     });
