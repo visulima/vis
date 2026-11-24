@@ -1,3 +1,20 @@
+## @visulima/vis [7.1.0-next.12](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.11...@visulima/vis@7.1.0-next.12) (2026-11-24)
+
+### Features
+
+* **vis:** answer `vis info` and the gate-free `vis dlx` runs natively ([1641481](https://github.com/visulima/vis/commit/1641481bad04711c0515ce59a8d7f82e690fd1f3))
+* **vis:** sort package.json files in the native binary ([59fbdeb](https://github.com/visulima/vis/commit/59fbdeb1e852009c50e2e70e15b6e80c560937da))
+
+### Code Refactoring
+
+* **vis:** drop a single-use wrapper in the sort-package-json exports step ([65138ad](https://github.com/visulima/vis/commit/65138ad82a04a1349f73fccc78a107054089b430))
+* **vis:** drop the unused `yes` field from the dlx flag parser ([9563b9f](https://github.com/visulima/vis/commit/9563b9f51005bea0f4054cd4b598b9628a0647c2))
+
+### Tests
+
+* **vis:** cover the files left behind and the update check for info and dlx ([15403d4](https://github.com/visulima/vis/commit/15403d4b3ab248ac38ac168511dc21e943305224))
+* **vis:** run the already-sorted flag sets of sort-package-json one by one ([b9f0108](https://github.com/visulima/vis/commit/b9f01085b995ff34c173b7bb03b0cb0566584616))
+
 ## @visulima/vis [7.1.0-next.11](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.10...@visulima/vis@7.1.0-next.11) (2026-11-23)
 
 ### Features
