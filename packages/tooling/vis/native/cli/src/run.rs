@@ -35,8 +35,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rayon::prelude::*;
 use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer};
+use vis_core::date::iso_from_millis;
 
 use crate::advisories::{in_ci, native_context};
+use crate::js::{is_js_whitespace, json_string, random_uuid};
 use crate::targets::{script_targets_below, Targets};
 use crate::term;
 use crate::toolchain::{self, Pins, Versions};
@@ -290,15 +292,6 @@ fn nothing_to_sweep(cache: &Path) -> bool {
     true
 }
 
-/// What JavaScript's `String.prototype.trim` removes.
-pub(crate) fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
-    )
-}
-
 /// `(durationMs / 1000).toFixed(1)` for a duration below one second: JavaScript rounds an exact tie up,
 /// Rust rounds it to even.
 fn seconds_text(milliseconds: u64) -> String {
@@ -316,50 +309,7 @@ fn duration_text(milliseconds: u64) -> String {
 
 /// An ISO 8601 UTC time with milliseconds, `Date.prototype.toISOString`.
 fn iso(time: SystemTime) -> String {
-    let milliseconds = time.duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as i64);
-    let days = milliseconds.div_euclid(86_400_000);
-    let of_day = milliseconds.rem_euclid(86_400_000);
-
-    // Civil date from the day count (Howard Hinnant's algorithm).
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        of_day / 3_600_000,
-        of_day / 60_000 % 60,
-        of_day / 1000 % 60,
-        of_day % 1000
-    )
-}
-
-/// `randomUUID()`: a version 4 UUID from the process's own randomness.
-fn uuid() -> String {
-    use std::hash::{BuildHasher, Hasher};
-
-    let mut bytes = [0u8; 16];
-
-    for chunk in bytes.chunks_mut(8) {
-        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-
-        hasher.write_u128(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_nanos()));
-        hasher.write_u32(std::process::id());
-        chunk.copy_from_slice(&hasher.finish().to_le_bytes());
-    }
-
-    bytes[6] = bytes[6] & 0x0f | 0x40;
-    bytes[8] = bytes[8] & 0x3f | 0x80;
-
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-
-    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+    iso_from_millis(time.duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as i64))
 }
 
 /// A JSON value that keeps the order its object keys were added in, as a JavaScript object does.
@@ -373,33 +323,13 @@ enum Json {
     Bool(bool),
 }
 
-fn escape(text: &str, out: &mut String) {
-    out.push('"');
-
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-
-    out.push('"');
-}
-
 impl Json {
     /// `JSON.stringify(value, undefined, 2)`.
     fn pretty(&self, depth: usize, out: &mut String) {
         let indent = |depth: usize| "  ".repeat(depth);
 
         match self {
-            Self::Text(text) => escape(text, out),
+            Self::Text(text) => out.push_str(&json_string(text)),
             Self::Number(number) => out.push_str(&number.to_string()),
             Self::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
             Self::Array(items) if items.is_empty() => out.push_str("[]"),
@@ -434,7 +364,7 @@ impl Json {
 
         for (index, (key, value)) in fields.enumerate() {
             out.push_str(&indent(depth + 1));
-            escape(key, out);
+            out.push_str(&json_string(key));
             out.push_str(": ");
             value.pretty(depth + 1, out);
             out.push_str(if index + 1 < count { ",\n" } else { "\n" });
@@ -652,9 +582,9 @@ impl Answer {
     }
 
     /// `.vis/last-summary.json`, as `generateRunSummary` builds it for a run of cache hits.
-    fn summary(&self) -> String {
+    fn summary(&self) -> Option<String> {
         let count = self.hits.len() as u64;
-        let id = format!("{}_{}", iso(self.started).replace([':', '.'], "-"), uuid());
+        let id = format!("{}_{}", iso(self.started).replace([':', '.'], "-"), random_uuid()?);
         let tasks = self
             .hits
             .iter()
@@ -741,7 +671,7 @@ impl Answer {
 
         summary.pretty(0, &mut out);
 
-        out
+        Some(out)
     }
 }
 
@@ -937,7 +867,7 @@ fn write_summary(answer: &Answer) -> Option<()> {
     let directory = env::current_dir().ok()?.join(".vis");
 
     fs::create_dir_all(&directory).ok()?;
-    fs::write(directory.join("last-summary.json"), answer.summary()).ok()
+    fs::write(directory.join("last-summary.json"), answer.summary()?).ok()
 }
 
 /// The status a run is handed back with: `EX_TEMPFAIL`, which a launcher that is not waiting for it shows as a
@@ -1208,14 +1138,5 @@ mod tests {
         assert!(!fits(&"t".repeat(40), &ids(10)));
         assert_eq!(describe("build", 1, "p3:build"), "target build for project p3");
         assert_eq!(describe("build", 12, "p3:build"), "target build for 12 projects");
-    }
-
-    #[test]
-    fn uuids_look_like_v4() {
-        let id = uuid();
-
-        assert_eq!(id.len(), 36);
-        assert_eq!(id.as_bytes()[14], b'4');
-        assert_ne!(id, uuid());
     }
 }

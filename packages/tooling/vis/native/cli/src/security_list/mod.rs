@@ -33,6 +33,7 @@ use vis_core::detect::detect_package_manager;
 use crate::advisories::{
     any_ancestor_has, in_ci, monorepo_root, output_settings_are_default, write_stdout, DENO_FILES,
 };
+use crate::js::{is_index_like, is_truthy};
 use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 
@@ -209,11 +210,6 @@ fn property<'a, 'b>(expression: &'b Expression<'a>, key: &str) -> Option<&'b Exp
     vis_config::object_properties(object)?.into_iter().find(|(name, _)| name == key).map(|(_, value)| value)
 }
 
-/// A key a JavaScript object does not list in insertion order (array indices) or treats specially.
-fn is_order_sensitive(key: &str) -> bool {
-    key == "__proto__" || (!key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
 /// The `security` settings of the config that applies to `cwd`, or `None` to delegate.
 fn config(cwd: &Path) -> Option<Config> {
     let state = vis_config::read(cwd);
@@ -313,11 +309,11 @@ fn config(cwd: &Path) -> Option<Config> {
         keys(allow)
     })?;
 
-    if ordered.len() != allow.len() || ordered.iter().any(|key| !allow.contains_key(key) || is_order_sensitive(key)) {
+    if ordered.len() != allow.len() || ordered.iter().any(|key| !allow.contains_key(key) || is_index_like(key)) {
         return None;
     }
 
-    config.allow = ordered.iter().map(|key| (key.clone(), scan::is_truthy(&allow[key]))).collect();
+    config.allow = ordered.iter().map(|key| (key.clone(), is_truthy(&allow[key]))).collect();
     config.drift.allow =
         Some(config.allow.iter().filter(|(_, allowed)| *allowed).map(|(key, _)| key.clone()).collect());
 

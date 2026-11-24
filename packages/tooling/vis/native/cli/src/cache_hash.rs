@@ -36,6 +36,7 @@ use serde_json::value::RawValue;
 
 use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::error::WrapperError;
+use crate::js::is_index_like;
 use crate::pail::{pail_width, Layout, Level};
 
 /// A recorded hash is cut to this many characters in the table, then `…` follows.
@@ -96,12 +97,6 @@ pub(crate) fn parse(args: &[String]) -> Option<Request> {
     Some(Request { task_id: task_id.filter(|id| !id.is_empty())?.to_owned(), json, run: run.map(str::to_owned) })
 }
 
-/// Object keys that JavaScript would not keep in file order (integer-like keys come first) or
-/// that name a prototype member.
-fn reserved_key(key: &str) -> bool {
-    key == "__proto__" || (!key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
 /// A string-to-string map, in file order. Duplicate and reserved keys are Node's.
 struct Bucket(Vec<(String, String)>);
 
@@ -121,7 +116,7 @@ impl<'de> Deserialize<'de> for Bucket {
                 let mut seen = HashSet::new();
 
                 while let Some((key, value)) = map.next_entry::<String, String>()? {
-                    if reserved_key(&key) || !seen.insert(key.clone()) {
+                    if is_index_like(&key) || !seen.insert(key.clone()) {
                         return Err(de::Error::custom("key left to Node"));
                     }
 
@@ -167,7 +162,7 @@ impl<'de> Deserialize<'de> for Lists {
                 let mut seen = HashSet::new();
 
                 while let Some((key, value)) = map.next_entry::<String, Vec<String>>()? {
-                    if reserved_key(&key) || !seen.insert(key.clone()) {
+                    if is_index_like(&key) || !seen.insert(key.clone()) {
                         return Err(de::Error::custom("key left to Node"));
                     }
 
@@ -879,6 +874,19 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bucket_declines_the_keys_javascript_reorders_but_keeps_the_empty_key() {
+        let parses = |json: &str| serde_json::from_str::<Bucket>(json).is_ok();
+
+        assert!(parses(r#"{"b":"1","a":"2","":"3","007":"4"}"#));
+
+        for key in ["7", "0", "__proto__"] {
+            assert!(!parses(&format!(r#"{{"{key}":"x"}}"#)), "{key:?}");
+        }
+
+        assert!(!parses(r#"{"a":"1","a":"2"}"#));
+    }
 
     fn argv(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| (*item).to_owned()).collect()

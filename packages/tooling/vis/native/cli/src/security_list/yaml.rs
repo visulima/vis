@@ -13,6 +13,8 @@
 
 use std::collections::HashSet;
 
+use crate::js::is_index_like;
+
 /// What the four keys hold after the read.
 #[derive(Default, Debug, PartialEq)]
 pub(super) struct Snapshot {
@@ -235,7 +237,7 @@ pub(super) fn snapshot(text: &str) -> Option<Snapshot> {
                     _ => return None,
                 }
 
-                if key == "__proto__" || key.bytes().all(|byte| byte.is_ascii_digit()) {
+                if key.is_empty() || is_index_like(key) {
                     return None;
                 }
             }
@@ -278,6 +280,12 @@ mod tests {
 
     fn read(text: &str) -> Option<Snapshot> {
         snapshot(text)
+    }
+
+    #[test]
+    fn an_integer_like_allow_key_is_left_to_node() {
+        assert!(read("allowBuilds:\n  123: true\n").is_none());
+        assert!(read("allowBuilds:\n  __proto__: true\n").is_none());
     }
 
     #[test]

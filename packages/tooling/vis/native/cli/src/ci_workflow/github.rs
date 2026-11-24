@@ -8,6 +8,7 @@ use super::ecosystems::{Detected, Ecosystem};
 use super::plan::{vis_dependencies_command, vis_drift_check_command, vis_target_command, Plan, GENERATED_NOTE};
 use super::tables::{Action, Tables};
 use super::yaml::{self, Yaml};
+use crate::js::json_string;
 
 /// GitHub runs at most 10 background steps of a job at once; more would queue.
 const MAX_PARALLEL_STEPS: usize = 10;
@@ -66,7 +67,7 @@ fn render_step(step: &Step, indent: &str) -> String {
     let mut lines: Vec<String> =
         step.comment.iter().flat_map(|comment| comment.split('\n').map(|line| format!("{indent}# {line}"))).collect();
 
-    lines.push(format!("{indent}- name: {}", yaml::string(&step.name)));
+    lines.push(format!("{indent}- name: {}", json_string(&step.name)));
 
     if let Some(condition) = &step.if_ {
         lines.extend(yaml::entry("if", &Yaml::str(condition.clone()), &key));
@@ -76,7 +77,7 @@ fn render_step(step: &Step, indent: &str) -> String {
         Some(Uses::Raw(uses)) => lines.extend(yaml::entry("uses", &Yaml::str(uses.clone()), &key)),
         Some(Uses::Pinned(action)) => lines.push(format!(
             "{key}uses: {} # {}",
-            yaml::string(&format!("{}@{}", action.name, action.sha)),
+            json_string(&format!("{}@{}", action.name, action.sha)),
             action.version
         )),
         None => {}
@@ -360,7 +361,7 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     }
 
     let branches: Vec<String> =
-        plan.branches.iter().map(|branch| format!("            - {}", yaml::string(branch))).collect();
+        plan.branches.iter().map(|branch| format!("            - {}", json_string(branch))).collect();
     let extras: String = job_extras.iter().map(|line| format!("{line}\n")).collect();
     let rendered_steps: Vec<String> = steps.iter().map(|step| render_step(step, "            ")).collect();
 
@@ -394,7 +395,7 @@ jobs:
         note = GENERATED_NOTE,
         branches = branches.join("\n"),
         permissions = yaml::entry("permissions", &Yaml::Map(permissions), "").join("\n"),
-        runs_on = yaml::string(&plan.runs_on),
+        runs_on = json_string(&plan.runs_on),
         timeout = plan.timeout_minutes,
         steps = rendered_steps.join("\n"),
     ))

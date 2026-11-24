@@ -11,6 +11,8 @@
 //! - lone surrogate escapes, which `JSON.parse` keeps and Rust strings cannot hold;
 //! - nesting deeper than [`MAX_DEPTH`].
 
+use crate::js::{is_index_like, json_string};
+
 /// Deeper documents are left to Node (the sorter crate itself stops at 128).
 const MAX_DEPTH: usize = 64;
 
@@ -262,7 +264,7 @@ impl Reader<'_> {
 
             let key = self.string()?;
 
-            if is_order_sensitive_key(&key) || entries.iter().any(|(name, _)| *name == key) {
+            if is_index_like(&key) || entries.iter().any(|(name, _)| *name == key) {
                 return None;
             }
 
@@ -288,13 +290,6 @@ impl Reader<'_> {
     }
 }
 
-/// `__proto__`, and the keys a JS object lists before all others: canonical array indices (`"0"`, `"17"`, up
-/// to 2^32 - 2). Every all-digit key without a leading zero is treated as one, which only over-delegates.
-fn is_order_sensitive_key(key: &str) -> bool {
-    key == "__proto__"
-        || (!key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()) && (key == "0" || !key.starts_with('0')))
-}
-
 /// `JSON.stringify(value, null, indent)`. `indent` is what JS calls the gap: at most its first ten
 /// characters are used, and an empty one gives the compact form with no spaces at all.
 pub fn stringify(value: &Json, indent: &str) -> String {
@@ -313,12 +308,12 @@ fn write_value(out: &mut String, value: &Json, gap: &str, depth: usize) {
         Json::Bool(true) => out.push_str("true"),
         Json::Bool(false) => out.push_str("false"),
         Json::Int(number) => out.push_str(&number.to_string()),
-        Json::Str(text) => write_string(out, text),
+        Json::Str(text) => out.push_str(&json_string(text)),
         Json::Array(items) => write_container(out, '[', ']', items.len(), gap, depth, |out, index| {
             write_value(out, &items[index], gap, depth + 1);
         }),
         Json::Object(entries) => write_container(out, '{', '}', entries.len(), gap, depth, |out, index| {
-            write_string(out, &entries[index].0);
+            out.push_str(&json_string(&entries[index].0));
             out.push(':');
 
             if !gap.is_empty() {
@@ -370,28 +365,6 @@ fn newline(out: &mut String, gap: &str, depth: usize) {
     for _ in 0..depth {
         out.push_str(gap);
     }
-}
-
-/// `JSON.stringify` of a string: the two quote characters, the short escapes, `\u00xx` (lower-case) for the
-/// other control characters, and everything else as is.
-fn write_string(out: &mut String, text: &str) {
-    out.push('"');
-
-    for character in text.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            control if control < ' ' => out.push_str(&format!("\\u{:04x}", u32::from(control))),
-            other => out.push(other),
-        }
-    }
-
-    out.push('"');
 }
 
 #[cfg(test)]

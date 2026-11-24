@@ -25,8 +25,10 @@ use std::process::{exit, Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use vis_core::date::iso_from_millis;
 
-use crate::advisories::{any_ancestor_has, in_ci, js_number, monorepo_root, DENO_FILES};
+use crate::advisories::{any_ancestor_has, in_ci, monorepo_root, DENO_FILES};
+use crate::js::{js_number, json_string, MAX_SAFE_INTEGER};
 use crate::vis_config::{self, ConfigState};
 
 /// `DEFAULT_WORKSPACE_CACHE_DIRECTORY` in `src/util/vis-paths.ts`.
@@ -552,10 +554,8 @@ pub(crate) fn sorted_entries(directory: &Path) -> Option<Vec<fs::DirEntry>> {
     Some(entries)
 }
 
-/// Node adds sizes as JavaScript numbers, which are exact only up to `Number.MAX_SAFE_INTEGER`.
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
-
-/// `a + b`, or `None` once the sum is one a JavaScript number would round.
+/// `a + b`, or `None` once the sum is one a JavaScript number would round: Node adds sizes as JavaScript numbers, which
+/// are exact only up to `Number.MAX_SAFE_INTEGER`.
 pub(crate) fn add_safe(a: u64, b: u64) -> Option<u64> {
     a.checked_add(b).filter(|sum| *sum <= MAX_SAFE_INTEGER)
 }
@@ -765,31 +765,7 @@ pub(crate) fn format_bytes(bytes: u64) -> Option<String> {
 pub(crate) fn iso(ms: f64) -> Option<String> {
     let ms = ms.trunc();
 
-    if !(0.0..=253_402_300_799_999.0).contains(&ms) {
-        return None;
-    }
-
-    let ms = ms as i64;
-    let (days, of_day) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
-
-    // Civil date from days since 1970-01-01.
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-
-    Some(format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        of_day / 3_600_000,
-        of_day / 60_000 % 60,
-        of_day / 1000 % 60,
-        of_day % 1000
-    ))
+    (0.0..=253_402_300_799_999.0).contains(&ms).then(|| iso_from_millis(ms as i64))
 }
 
 /// `formatAge`.
@@ -807,10 +783,6 @@ fn format_age(mtime_ms: f64, now: f64) -> String {
     }
 }
 
-fn json_string(text: &str) -> Option<String> {
-    serde_json::to_string(text).ok()
-}
-
 pub(crate) fn now_ms() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |elapsed| elapsed.as_millis() as f64)
 }
@@ -824,7 +796,7 @@ fn list_output(directory: &str, format: Format) -> Option<String> {
     let exists = fs::metadata(directory).is_ok();
     let entries = if exists { collect_entries(directory)? } else { Vec::new() };
     let total = total_size(&entries)?;
-    let quoted = json_string(directory)?;
+    let quoted = json_string(directory);
 
     if format == Format::Json {
         if entries.is_empty() {
@@ -840,7 +812,7 @@ fn list_output(directory: &str, format: Format) -> Option<String> {
             rows.push(format!(
                 "    {{\n      \"ageMs\": {},\n      \"hash\": {},\n      \"mtimeIso\": \"{}\",\n      \"sizeBytes\": {}\n    }}",
                 js_number(now - entry.mtime_ms),
-                json_string(&entry.hash)?,
+                json_string(&entry.hash),
                 iso(entry.mtime_ms)?,
                 entry.size
             ));
@@ -972,7 +944,7 @@ fn size_output(options: &Options, directories: &[String]) -> Option<String> {
 
                 rows.push(format!(
                     "    {{\n      \"directory\": {},\n      \"entries\": {},\n      \"exists\": {exists},\n      \"newestEntry\": {},\n      \"oldestEntry\": {},\n      \"totalBytes\": {total}\n    }}",
-                    json_string(directory)?,
+                    json_string(directory),
                     entries.len(),
                     iso_or_null(entries.first().map(|entry| entry.mtime_ms))?,
                     iso_or_null(entries.last().map(|entry| entry.mtime_ms))?

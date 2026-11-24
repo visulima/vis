@@ -1,7 +1,7 @@
 //! The YAML the renderers emit by hand (`src/util/ci-workflow/yaml.ts`): double-quoted scalars,
 //! `|` blocks for multi-line strings, and maps and lists nested four spaces deeper per level.
 
-use crate::advisories::js_number;
+use crate::js::{is_index_like, js_number, json_string};
 
 /// A config value the renderers print: scalars, lists and maps, with a map's keys in source order.
 /// `null`, a list inside a list and a key that sorts as an array index in JavaScript never get this
@@ -30,31 +30,6 @@ impl Yaml {
     }
 }
 
-/// `JSON.stringify` of a string, which is a valid double-quoted YAML scalar.
-pub fn string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-
-    out.push('"');
-
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            character if (character as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", character as u32)),
-            character => out.push(character),
-        }
-    }
-
-    out.push('"');
-
-    out
-}
-
 /// `/^[\w.-]+$/u`: `\w` is ASCII only.
 fn plain_key(key: &str) -> bool {
     !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
@@ -64,7 +39,7 @@ fn key(key: &str) -> String {
     if plain_key(key) {
         key.to_owned()
     } else {
-        string(key)
+        json_string(key)
     }
 }
 
@@ -79,7 +54,7 @@ fn scalar(value: &Yaml, block_indent: &str) -> String {
 
             format!("|\n{}", lines.join("\n"))
         }
-        Yaml::Str(value) => string(value),
+        Yaml::Str(value) => json_string(value),
         Yaml::List(_) | Yaml::Map(_) => String::new(),
     }
 }
@@ -140,24 +115,18 @@ pub fn printable(value: &Yaml) -> bool {
     }
 }
 
-/// Keys JavaScript orders ahead of the others (`Object.keys` puts integer-like keys first, ascending),
-/// and the `__proto__` key, which an object literal does not store as a plain property.
-pub fn is_index_like(name: &str) -> bool {
-    name == "__proto__" || (!name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn strings_are_quoted_like_json() {
-        assert_eq!(string("plain"), "\"plain\"");
-        assert_eq!(string("a\"b\\c"), "\"a\\\"b\\\\c\"");
-        assert_eq!(string("tab\tline\nret\r\u{8}\u{c}"), "\"tab\\tline\\nret\\r\\b\\f\"");
-        assert_eq!(string("\u{1}\u{1f}"), "\"\\u0001\\u001f\"");
+        assert_eq!(json_string("plain"), "\"plain\"");
+        assert_eq!(json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+        assert_eq!(json_string("tab\tline\nret\r\u{8}\u{c}"), "\"tab\\tline\\nret\\r\\b\\f\"");
+        assert_eq!(json_string("\u{1}\u{1f}"), "\"\\u0001\\u001f\"");
         // DEL, U+2028 and non-ASCII text stay raw, as `JSON.stringify` leaves them.
-        assert_eq!(string("\u{7f}\u{2028}é☃😀"), "\"\u{7f}\u{2028}é☃😀\"");
+        assert_eq!(json_string("\u{7f}\u{2028}é☃😀"), "\"\u{7f}\u{2028}é☃😀\"");
     }
 
     #[test]

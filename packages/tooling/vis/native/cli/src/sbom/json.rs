@@ -3,6 +3,8 @@
 //! The BOM's key order is the insertion order of the Node objects, so the values are built
 //! by hand instead of through a map type that sorts or hashes its keys.
 
+use crate::js::json_string;
+
 pub(super) enum Json {
     Array(Vec<Json>),
     Number(u64),
@@ -27,7 +29,7 @@ impl Json {
     fn write(&self, out: &mut String, depth: usize) {
         match self {
             Self::Number(number) => out.push_str(&number.to_string()),
-            Self::String(text) => write_string(out, text),
+            Self::String(text) => out.push_str(&json_string(text)),
             Self::Array(items) => write_items(out, depth, '[', ']', items.iter().map(|item| (None, item))),
             Self::Object(entries) => {
                 write_items(out, depth, '{', '}', entries.iter().map(|(key, value)| (Some(*key), value)));
@@ -58,7 +60,7 @@ fn write_items<'a>(
         out.push_str(&"  ".repeat(depth + 1));
 
         if let Some(key) = key {
-            write_string(out, key);
+            out.push_str(&json_string(key));
             out.push_str(": ");
         }
 
@@ -72,28 +74,6 @@ fn write_items<'a>(
     out.push('\n');
     out.push_str(&"  ".repeat(depth));
     out.push(close);
-}
-
-/// A JSON string as `JSON.stringify` writes it: the two quotes and the five short escapes, the other
-/// control characters as lower-case `\u00xx`, and everything else (including U+2028) verbatim.
-fn write_string(out: &mut String, text: &str) {
-    out.push('"');
-
-    for character in text.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            control if control < ' ' => out.push_str(&format!("\\u{:04x}", u32::from(control))),
-            other => out.push(other),
-        }
-    }
-
-    out.push('"');
 }
 
 #[cfg(test)]

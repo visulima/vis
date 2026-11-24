@@ -47,6 +47,7 @@ use serde_json::Value;
 use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 use crate::cache::vis_cache_dir;
 use crate::http::{HttpClient, HttpConfig, HttpError};
+use crate::js::{json_number, json_string};
 
 const DEFAULT_KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
 /// `DEFAULT_FETCH_TIMEOUT_MS` of the Node module.
@@ -362,56 +363,16 @@ fn array_index(key: &str) -> Option<u32> {
     canonical.then(|| key.parse::<u32>().ok()).flatten().filter(|index| *index != u32::MAX)
 }
 
-/// `Number.prototype.toString` for a finite double: the shortest digits that read back as the same double, in
-/// decimal up to 21 digits and from 1e-6 on, in exponent form beyond. A non-finite value is `null` in a document.
-fn js_number(value: f64) -> Option<String> {
-    if !value.is_finite() {
-        return Some("null".to_owned());
-    }
-
-    if value == 0.0 {
-        return Some("0".to_owned());
-    }
-
-    if value < 0.0 {
-        return Some(format!("-{}", js_number(-value)?));
-    }
-
-    // Rust prints the shortest digits that round-trip too: `d.ddde<exponent>`.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific.split_once('e')?;
-    let digits: String = mantissa.chars().filter(|character| *character != '.').collect();
-    let point = exponent.parse::<i32>().ok()? + 1;
-    let length = i32::try_from(digits.len()).ok()?;
-
-    Some(if length <= point && point <= 21 {
-        format!("{digits}{}", "0".repeat(usize::try_from(point - length).ok()?))
-    } else if 0 < point && point <= 21 {
-        let (whole, fraction) = digits.split_at(usize::try_from(point).ok()?);
-
-        format!("{whole}.{fraction}")
-    } else if -6 < point && point <= 0 {
-        format!("0.{}{digits}", "0".repeat(usize::try_from(-point).ok()?))
-    } else {
-        let power = point - 1;
-        let sign = if power < 0 { '-' } else { '+' };
-        let (first, rest) = digits.split_at(1);
-        let fraction = if rest.is_empty() { String::new() } else { format!(".{rest}") };
-
-        format!("{first}{fraction}e{sign}{}", power.abs())
-    })
-}
-
 impl Js {
     /// `JSON.stringify(value)` with no indentation.
     fn stringify(&self, out: &mut String) -> Option<()> {
         match self {
             Self::Null => out.push_str("null"),
             Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-            Self::Number(value) => out.push_str(&js_number(*value)?),
+            Self::Number(value) => out.push_str(&json_number(*value)),
             // `serde_json` escapes the quote, the backslash and the control characters, as JavaScript does, and
             // writes every other character as it is.
-            Self::String(text) => out.push_str(&serde_json::to_string(text).ok()?),
+            Self::String(text) => out.push_str(&json_string(text)),
             Self::Array(items) => {
                 out.push('[');
 
@@ -441,7 +402,7 @@ impl Js {
                         out.push(',');
                     }
 
-                    out.push_str(&serde_json::to_string(key).ok()?);
+                    out.push_str(&json_string(key));
                     out.push(':');
                     value.stringify(out)?;
                 }

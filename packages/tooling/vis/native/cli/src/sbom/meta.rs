@@ -17,6 +17,8 @@ use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use crate::js::is_truthy;
+
 /// The input is outside what this port reproduces; the Node CLI answers.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Unsupported;
@@ -128,23 +130,12 @@ pub(super) struct Decoration {
     pub(super) references: Vec<(&'static str, String)>,
 }
 
-/// A JavaScript truthiness test on a JSON value.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
-}
-
 /// `value` when it is a truthy string, `None` when it is falsy, and an error when Node would pass another
 /// kind of value on.
 fn text(value: Option<&Value>) -> Result<Option<&str>, Unsupported> {
     match value {
         None => Ok(None),
-        Some(value) if !truthy(value) => Ok(None),
+        Some(value) if !is_truthy(value) => Ok(None),
         Some(Value::String(text)) => Ok(Some(text)),
         Some(_) => Err(Unsupported),
     }
