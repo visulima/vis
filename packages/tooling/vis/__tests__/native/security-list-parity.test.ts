@@ -409,7 +409,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it("a run outside CI is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(base(), ARGS, {}, false);
+            // Node prints a random, rate-limited tip outside CI; VIS_CLI_TEST keeps it out of the comparison.
+            harness.expectDelegation(base(), ARGS, { VIS_CLI_TEST: "1" }, false);
         });
 
         it.each(DELEGATED_COLOUR_ENVIRONMENTS)("%j is declined", (environment) => {
