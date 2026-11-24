@@ -820,7 +820,7 @@ const computeTaskHash = (hashDetails: TaskHashDetails): string => {
     return getNativeBindings().computeTaskHash({
         command: hashDetails.command,
         implicitDeps: pairs(hashDetails.implicitDeps),
-        nodes: pairs(hashDetails.nodes) as string[][],
+        nodes: Object.entries(hashDetails.nodes),
         runtime: pairs(hashDetails.runtime),
     });
 };
