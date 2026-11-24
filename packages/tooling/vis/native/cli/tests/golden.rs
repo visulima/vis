@@ -24,6 +24,32 @@ const GOLDEN_VERSION: &str = "6.6.0";
 
 const WIDTHS: [u32; 2] = [80, 120];
 
+/// Variables the help colour decision reads (the Node CLI's detection and the native port of it): a CI provider, a
+/// terminal hint, a legacy flag. A runner sets some of them (`CI`, `GITHUB_ACTIONS`, `TERM`), which turns colour on for
+/// piped output, so the "plain" captures only stay plain when the subject starts without them.
+const COLOUR_ENVIRONMENT: &[&str] = &[
+    "ANSICON",
+    "APPVEYOR",
+    "BUILDKITE",
+    "CEREBRO_TERMINAL_WIDTH",
+    "CI",
+    "CIRCLECI",
+    "COLORTERM",
+    "DRONE",
+    "FORCE_COLOR",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "JENKINS_URL",
+    "NODE_DISABLE_COLORS",
+    "NO_COLOR",
+    "TEAMCITY_VERSION",
+    "TERM",
+    "TERM_PROGRAM",
+    "TF_BUILD",
+    "TRAVIS",
+    "WT_SESSION",
+];
+
 struct Case {
     name: &'static str,
     args: &'static [&'static str],
@@ -68,12 +94,13 @@ fn capture(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Path) -> (O
 fn capture_streams(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Path) -> (Option<i32>, Vec<u8>, Vec<u8>) {
     let mut command = Command::new(exe);
 
+    for name in COLOUR_ENVIRONMENT {
+        command.env_remove(name);
+    }
+
     command
         .args(args)
         .current_dir(cwd)
-        .env_remove("NO_COLOR")
-        .env_remove("FORCE_COLOR")
-        .env_remove("CEREBRO_TERMINAL_WIDTH")
         // `COLUMNS` counts as a width only together with `LINES`.
         .env("LINES", "24")
         .env("COLUMNS", width.to_string())
