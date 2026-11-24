@@ -1,5 +1,28 @@
 # https://help.github.com/en/categories/automating-your-workflow-with-github-actions
 
+# macOS build policy
+# ------------------
+# GitHub-hosted macOS runners queue for a long time, and every consumer of this
+# workflow ("Check Native Build", the `Test` job's artifact wait, the install
+# smoke) waits for the whole matrix. A pull request therefore builds the two
+# darwin targets only when it can change them:
+#
+#   - push to main / next / maintenance branches (this is what releases publish),
+#     and workflow_dispatch: every target.
+#   - pull request into `main` (the release promotion; preview-release.yaml
+#     publishes packages from it and needs every platform package complete):
+#     every target.
+#   - any other pull request (into `next`): the darwin targets only when it
+#     touches a path listed in .github/macos-native-paths.yml (fspy_macos,
+#     native/src/macos.rs, the interpose test, this workflow).
+#
+# The matrix is computed in `files-changed` and handed to `build` as JSON, because
+# a matrix cannot skip single legs with `if:` (the `matrix` context is not
+# available there). A leg left out of the matrix has no job at all, so
+# `Check Native Build` stays green and the Linux/Windows artifacts still exist.
+# Consumers that run on a PR must not require darwin artifacts; install-smoke.yml
+# applies the same rule.
+
 name: "Build Native"
 
 on: # yamllint disable-line rule:truthy
@@ -42,6 +65,7 @@ jobs:
             tui: "${{ steps.changes.outputs.tui }}"
             vis: "${{ steps.changes.outputs.vis }}"
             secret-scanner: "${{ steps.changes.outputs.secret-scanner }}"
+            matrix: "${{ steps.targets.outputs.matrix }}"
             any-changed: "${{ steps.changes.outputs.task-runner == 'true' || steps.changes.outputs.tui == 'true' || steps.changes.outputs.vis == 'true' || steps.changes.outputs.secret-scanner == 'true' }}"
         steps:
             - name: "Harden Runner"
@@ -85,46 +109,65 @@ jobs:
                         - 'packages/tooling/secret-scanner/index.js'
                         - '.github/workflows/build-native.yml'
 
+            - name: "Check for macOS native file changes"
+              uses: "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d" # v4.0.3
+              id: "macos"
+              with:
+                  filters: ".github/macos-native-paths.yml"
+
+            # Every target for pushes, dispatches and PRs into main; the darwin targets
+            # only for other PRs that touch macOS code (see the policy at the top).
+            - name: "Select build targets"
+              id: "targets"
+              shell: "bash"
+              env:
+                  EVENT_NAME: "${{ github.event_name }}"
+                  BASE_REF: "${{ github.base_ref }}"
+                  MACOS_CHANGED: "${{ steps.macos.outputs.macos }}"
+              run: |
+                  set -euo pipefail
+                  # `cross: "-x"` builds through cargo-zigbuild (zig cc). The vis napi
+                  # addon links rusqlite's bundled SQLite, so cross-compiling needs a C
+                  # cross-compiler; --use-napi-cross downloads a toolchain that has been
+                  # flaky (missing .tgz, "failed to find tool aarch64-linux-gnu-gcc"),
+                  # while zig ships its own cc and already cross-builds the vis-cli
+                  # helper for these triples.
+                  settings='[
+                    {"target":"x86_64-apple-darwin","os":"macos-latest"},
+                    {"target":"aarch64-apple-darwin","os":"macos-latest","testable":true},
+                    {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","testable":true},
+                    {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","cross":"-x"},
+                    {"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest","cross":"-x"},
+                    {"target":"aarch64-unknown-linux-musl","os":"ubuntu-latest","cross":"-x"},
+                    {"target":"x86_64-pc-windows-msvc","os":"windows-latest","testable":true},
+                    {"target":"aarch64-pc-windows-msvc","os":"windows-latest"}
+                  ]'
+                  macos=true
+                  if [ "$EVENT_NAME" = "pull_request" ] && [ "$BASE_REF" != "main" ] && [ "$MACOS_CHANGED" != "true" ]; then
+                    macos=false
+                    settings="$(jq -c 'map(select(.os != "macos-latest"))' <<<"$settings")"
+                    echo "::notice::macOS targets skipped: this pull request does not touch macOS native code"
+                  else
+                    settings="$(jq -c . <<<"$settings")"
+                  fi
+                  echo "macos=$macos" >> "$GITHUB_OUTPUT"
+                  echo "matrix=$settings" >> "$GITHUB_OUTPUT"
+
     # Build all changed packages per target, test inline on native-runnable targets.
-    # Always runs so that test.yml can download artifacts for every PR — caches
-    # prevent recompilation when native sources are unchanged.
+    # Always runs so that the test job can download artifacts for every PR — caches
+    # prevent recompilation when native sources are unchanged. The darwin targets
+    # are left out of pull requests that cannot affect them (see the policy above).
     build:
         name: "Build native - ${{ matrix.settings.target }}"
         needs: "files-changed"
         timeout-minutes: 60
         strategy:
             fail-fast: false
+            # Computed by `files-changed` (see the macOS build policy at the top).
+            # The legs it can hold, with their `os`, `testable` and `cross` fields,
+            # are listed in its "Select build targets" step.
             matrix:
-                settings:
-                    - target: "x86_64-apple-darwin"
-                      os: "macos-latest"
-                    - target: "aarch64-apple-darwin"
-                      os: "macos-latest"
-                      testable: true
-                    - target: "x86_64-unknown-linux-gnu"
-                      os: "ubuntu-latest"
-                      testable: true
-                    - target: "x86_64-unknown-linux-musl"
-                      os: "ubuntu-latest"
-                      cross: "-x"
-                    - target: "aarch64-unknown-linux-gnu"
-                      os: "ubuntu-latest"
-                      # Cross via cargo-zigbuild (zig cc), like the musl
-                      # targets. The vis napi addon links rusqlite's bundled
-                      # SQLite, so cross-compiling needs a C cross-compiler;
-                      # --use-napi-cross downloads a toolchain that has been
-                      # flaky (missing .tgz → "failed to find tool
-                      # aarch64-linux-gnu-gcc"). zig ships its own cc and
-                      # already cross-builds the vis-cli helper for this triple.
-                      cross: "-x"
-                    - target: "aarch64-unknown-linux-musl"
-                      os: "ubuntu-latest"
-                      cross: "-x"
-                    - target: "x86_64-pc-windows-msvc"
-                      os: "windows-latest"
-                      testable: true
-                    - target: "aarch64-pc-windows-msvc"
-                      os: "windows-latest"
+                settings: "${{ fromJSON(needs.files-changed.outputs.matrix) }}"
         runs-on: "${{ matrix.settings.os }}"
 
         steps:
@@ -580,7 +623,12 @@ jobs:
                     run: "pnpm --config.verify-deps-before-run=false vitest run __tests__/native-binding.test.ts"
                     working-directory: "packages/tooling/secret-scanner"
 
-    # This check runs once all build jobs have passed
+    # This check runs once all build jobs have passed. Every consumer of the build
+    # artifacts waits for it, and branch protection requires it, so it stays one
+    # job with a stable name. On a pull request that skips the macOS targets the
+    # matrix simply has no darwin legs, so `build` still concludes `success`.
+    # Only `files-changed` must have succeeded: if it did not, `build` never
+    # started and the gate must not turn green.
     build-native-required-check:
         needs: ["files-changed", "build"]
         name: "Check Native Build"
@@ -594,7 +642,15 @@ jobs:
                   egress-policy: "audit"
 
             - name: "Check for failures"
+              env:
+                  FILES_CHANGED_RESULT: "${{ needs.files-changed.result }}"
+                  RESULTS: "${{ join(needs.*.result, ' ') }}"
               run: |
-                  if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-                    echo "One of the dependent jobs have failed. You may need to re-run it." && exit 1
+                  if [[ "$FILES_CHANGED_RESULT" != "success" ]]; then
+                    echo "Detecting the native build targets concluded '$FILES_CHANGED_RESULT'. You may need to re-run it." && exit 1
                   fi
+                  for result in $RESULTS; do
+                    if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+                      echo "A native build job concluded '$result'. You may need to re-run it." && exit 1
+                    fi
+                  done

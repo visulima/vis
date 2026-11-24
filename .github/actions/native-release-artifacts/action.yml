@@ -16,13 +16,22 @@ inputs:
     github-token:
         description: "Token for the artifact download (secrets.GITHUB_TOKEN)."
         required: true
+    skip-platforms:
+        description: >-
+            Space-separated prefixes of platform packages (the directory names under
+            `npm/`, e.g. `darwin-`) that are not verified, because this commit's Build
+            Native run did not build them (a pull request that cannot affect them).
+            Releases and previews leave it empty, so every platform package is checked.
+        required: false
+        default: ""
 
 runs:
     using: "composite"
     steps:
-        # Build Native always uploads bindings for every target and the loaders from
+        # Build Native uploads bindings for every target it built and the loaders from
         # x86_64-unknown-linux-gnu, so a missing artifact is an error, never "nothing
-        # changed". `secrets.GITHUB_TOKEN` returns transient HTTP 401 mid-download on
+        # changed". It builds every target except, on a pull request into `next` that
+        # does not touch macOS code, the darwin ones (see build-native.yml). `secrets.GITHUB_TOKEN` returns transient HTTP 401 mid-download on
         # multi-MB artifacts and dawidd6 doesn't retry, hence one retry.
         - name: "Download native artifacts"
           id: "download"
@@ -109,6 +118,8 @@ runs:
         # instead.
         - name: "Verify platform packages are complete"
           shell: "bash"
+          env:
+              SKIP_PLATFORMS: "${{ inputs.skip-platforms }}"
           run: |
               set -euo pipefail
               shopt -s nullglob
@@ -122,6 +133,15 @@ runs:
                   fi
                   for manifest in "${manifests[@]}"; do
                       dir="$(dirname "$manifest")"
+                      skip=0
+                      # Unquoted on purpose: a space-separated list of plain prefixes (no globs).
+                      for prefix in $SKIP_PLATFORMS; do
+                          case "$(basename "$dir")" in "$prefix"*) skip=1 ;; esac
+                      done
+                      if [ "$skip" -eq 1 ]; then
+                          echo "not verifying ${dir}: its target was not built for this commit"
+                          continue
+                      fi
                       # Plain assignment, so a jq failure stops the step under `set -e`.
                       # jq prints CRLF on Windows; a trailing CR would make every entry but the last look missing.
                       files="$(jq -er '.files[]' "$manifest" | tr -d '\r')"

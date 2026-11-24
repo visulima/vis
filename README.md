@@ -63,6 +63,8 @@ FORCE_COLOR=3 pnpm -r run test
 
 CI runs `build-native.yml` on pushes and pull requests to `main`. It compiles the bindings for every target, and the `ci.yml` test job downloads the host binding for the same commit.
 
+The two macOS targets are the slowest to get a runner, so a pull request into `next` builds them only when it touches macOS native code (the paths in `.github/macos-native-paths.yml`: `fspy_macos`, `native/src/macos.rs`, the interpose test, the macOS-specific vis CLI sources, `build-native.yml`). Pushes to `main` and `next`, releases, `workflow_dispatch` and pull requests into `main` always build every target. The "Check Native Build" and "Test" checks stay green either way, and the install smoke drops its macOS leg when the macOS targets were not built. The full policy is at the top of `.github/workflows/build-native.yml`.
+
 ## Contributing
 
 Read the [contributing guide](https://github.com/visulima/vis/blob/main/.github/CONTRIBUTING.md) first. Commits follow Angular-style conventional commits, scoped to the package name, for example `fix(secret-scanner): ...`.

@@ -2,8 +2,10 @@ name: "Wait for Build Native"
 description: >-
     Block until the "Check Native Build" gate of a commit's Build Native run has
     concluded, failing if it failed. That gate needs every target of the native
-    build matrix, so once it is green all `bindings-*` / `loader-*` artifacts of
-    the commit exist. Shared by the test legs, the coverage baseline and the
+    build matrix that run built, so once it is green all `bindings-*` / `loader-*`
+    artifacts of the commit exist. Pull requests into `next` that do not touch
+    macOS code skip the darwin targets (see build-native.yml), so their artifacts
+    are absent. Shared by the test legs, the coverage baseline and the
     preview release.
 
 inputs:

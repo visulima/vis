@@ -107,8 +107,11 @@ runs:
 
               rm -rf "$artifacts"
 
-        # Build Native uploads every target, so the runner's own bindings must be
-        # present now; tests would otherwise silently skip their native coverage.
+        # Build Native always builds the Linux and Windows targets (the darwin ones only
+        # for pushes and macOS-relevant pull requests), and runners here are Linux or
+        # Windows, so the runner's own bindings must be present now; tests would
+        # otherwise silently skip their native coverage. A darwin runner would need the
+        # darwin artifacts, which a pull request may not have built.
         - name: "Verify host native bindings"
           shell: "bash"
           run: |
