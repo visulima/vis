@@ -117,7 +117,7 @@ fn pnpm_root(tag: &str) -> Scratch {
     scratch
 }
 
-// ---- B14: `vis pm` -----------------------------------------------------------------------------
+// ---- `vis pm` -----------------------------------------------------------------------------
 
 #[test]
 fn pm_runs_a_plain_subcommand_natively_at_the_root() {
@@ -189,7 +189,7 @@ fn pm_with_a_global_option_is_left_to_node() {
     assert_delegated(&scratch.run(&["pm", "cache", "dir", "--cwd", "."]), "pm cache dir --cwd .");
 }
 
-// ---- B16: `vis exec` ---------------------------------------------------------------------------
+// ---- `vis exec` ---------------------------------------------------------------------------
 
 #[test]
 fn exec_runs_through_the_package_manager_when_no_local_bin_exists() {
@@ -245,7 +245,7 @@ fn exec_skips_an_empty_runtime_flag_like_node() {
     assert_eq!(stdout(&output), "BUNX:eslint\n", "{}", stderr(&output));
 }
 
-// ---- B17, B19: `vis x` runtime -----------------------------------------------------------------
+// ---- `vis x` runtime -----------------------------------------------------------------
 
 #[test]
 fn x_takes_the_runtime_from_the_nearest_directory_with_a_lockfile() {
@@ -299,7 +299,7 @@ fn x_skips_an_empty_runtime_flag_and_reads_the_environment() {
     assert!(stdout(&output).starts_with("NODE:--import "), "stdout: {}", stdout(&output));
 }
 
-// ---- Q84, B5: the raw argv reaches Node --------------------------------------------------------
+// ---- the raw argv reaches Node --------------------------------------------------------
 
 /// A stub `node` printing each argument after the entry, NUL-terminated, as raw bytes.
 fn raw_node(scratch: &Scratch) {
@@ -390,7 +390,7 @@ fn hook_run_delegates_non_utf8_argv_unchanged() {
     assert_eq!(output.stdout, b"hook\0run\0x\xff.ts\0".to_vec());
 }
 
-// ---- B18, B20, Q95: `vis __pm-shim` ------------------------------------------------------------
+// ---- `vis __pm-shim` ------------------------------------------------------------
 
 #[test]
 fn shim_guard_reads_only_the_pins_node_reads() {
@@ -460,7 +460,7 @@ fn shim_reports_a_real_manager_that_cannot_start() {
     assert_eq!(output.status.code(), Some(0));
 }
 
-// ---- Q104: a child killed by a signal ends the command with 1, as in Node ---------------------
+// ---- a child killed by a signal ends the command with 1, as in Node ---------------------
 
 #[test]
 fn a_manager_killed_by_a_signal_ends_pm_exec_and_the_family_with_one() {
@@ -479,7 +479,7 @@ fn a_manager_killed_by_a_signal_ends_pm_exec_and_the_family_with_one() {
     assert_eq!(scratch.run(&["x", "app.ts"]).status.code(), Some(1));
 }
 
-// ---- Q109: a stderr nobody reads is no panic ----------------------------------------------------
+// ---- a stderr nobody reads is no panic ----------------------------------------------------
 
 /// Runs `vis <args>` with stderr on a pipe whose reader has already exited (the write fails with
 /// EPIPE) and returns the exit code the binary ended with, which a panic would turn into 101.

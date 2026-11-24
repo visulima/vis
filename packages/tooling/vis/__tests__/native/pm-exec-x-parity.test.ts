@@ -13,13 +13,14 @@ import { resolveRuntime } from "../../src/runtime/resolve-runtime";
 /**
  * Where the native `vis pm` and `vis x` follow Node's own code rather than a copy of it.
  *
- * - `vis pm <sub>`: the native path answers only the subcommands that `dispatchSubcommand` passes through
+ * - `vis pm &lt;sub>`: the native path answers only the subcommands that `dispatchSubcommand` passes through
  *   for every manager, and hands every other one to Node. The table is read from Node's function.
  * - `vis x`: the runtime comes from `resolveRuntime` (flag, `VIS_RUNTIME`, then the nearest lockfile), and an
  *   unknown runtime is reported with the message that function throws.
  *
- * The native run's environment is built from scratch: stub `node` and `bun` on `PATH` that print a marker, and a
- * fallback entry that is never reached (a declined run would exit 70 through a missing Node).
+ * The native run's environment is built from scratch: stub `bun` and `pnpm` on `PATH` that print a marker. The `pm`
+ * cases point `VIS_NODE` at nothing, so a run the binary declines (hands to Node) ends with exit 70; the `x` cases
+ * use a stub `node`, which is the runtime `vis x` starts.
  *
  * Needs the native `vis` binary (VIS_NATIVE_BIN or a local build); skipped otherwise.
  */
@@ -38,12 +39,35 @@ const MANAGERS = [
 
 // Every subcommand `vis pm` names in its usage line, plus others a user might pass.
 const SUBCOMMANDS = [
-    "cache", "publish", "audit", "list", "view", "config", "whoami", "login", "logout", "pack", "owner", "dist-tag", "search", "fund", "ping", "token", "deprecate", "rebuild", "prune", "plugin", "pkg", "ls", "info", "outdated",
+    "cache",
+    "publish",
+    "audit",
+    "list",
+    "view",
+    "config",
+    "whoami",
+    "login",
+    "logout",
+    "pack",
+    "owner",
+    "dist-tag",
+    "search",
+    "fund",
+    "ping",
+    "token",
+    "deprecate",
+    "rebuild",
+    "prune",
+    "plugin",
+    "pkg",
+    "ls",
+    "info",
+    "outdated",
 ];
 
 let scratch: string;
 let nativeBinary: string;
-let counter = 0;
+let counter: number;
 
 const stub = (directory: string, name: string, body: string): void => {
     writeFileSync(join(directory, name), `#!/bin/sh\n${body}\n`);
@@ -101,15 +125,15 @@ describe.skipIf(!binary || process.platform === "win32")("vis pm / vis x: native
 
         const passesThroughEverywhere = MANAGERS.every((pm) => dispatchSubcommand(pm, subcommand, []).kind === "passthrough");
         const { bindir, cwd } = project({ "package.json": "{}", "pnpm-lock.yaml": "lockfileVersion: 9\n" });
-        const native = runNative(["pm", subcommand], cwd, bindir);
+        const native = runNative(["pm", subcommand], cwd, bindir, { VIS_NODE: join(scratch, "no-such-node") });
 
-        // A declined run reaches the stub node; a native run reaches the stub pnpm (or fails to map the subcommand).
-        expect(native.stdout.includes("NODE:")).toBe(!passesThroughEverywhere);
+        // A declined run cannot start the missing Node and exits 70; a native run never gets that far.
+        expect(native.status === 70).toBe(!passesThroughEverywhere);
     });
 
     const runtimeCases: [string, Record<string, string>, string[], Record<string, string>][] = [
-        ["nearest lockfile beats a bun lockfile further up", { "bun.lock": "{}", "app/package-lock.json": "{}" }, [], {}],
-        ["a bun lockfile at the working directory", { "bun.lock": "{}", "app/bun.lockb": "" }, [], {}],
+        ["nearest lockfile beats a bun lockfile further up", { "app/package-lock.json": "{}", "bun.lock": "{}" }, [], {}],
+        ["a bun lockfile at the working directory", { "app/bun.lockb": "", "bun.lock": "{}" }, [], {}],
         ["no lockfile", { "app/package.json": "{}" }, [], {}],
         ["bun next to a node lockfile", { "app/bun.lock": "{}", "app/yarn.lock": "" }, [], {}],
         ["an empty --runtime falls to VIS_RUNTIME", {}, ["--runtime="], { VIS_RUNTIME: "bun" }],
@@ -122,10 +146,10 @@ describe.skipIf(!binary || process.platform === "win32")("vis pm / vis x: native
 
         const { bindir, cwd } = project({ ...files, "app/app.ts": "" });
         const app = join(cwd, "app");
-        const expected = resolveRuntime(app, { env: env as NodeJS.ProcessEnv, flag: flags[0]?.slice("--runtime=".length) }).runtime;
+        const expected = resolveRuntime(app, { env, flag: flags[0]?.slice("--runtime=".length) }).runtime;
         const native = runNative(["x", ...flags, "app.ts"], app, bindir, env);
 
-        expect(native.stdout.startsWith(expected === "bun" ? "BUN:" : "NODE:")).toBe(true);
+        expect(native.stdout.startsWith(expected === "bun" ? "BUN:run " : "NODE:--import ")).toBe(true);
     });
 
     it.each([
@@ -140,7 +164,7 @@ describe.skipIf(!binary || process.platform === "win32")("vis pm / vis x: native
         let message = "";
 
         try {
-            resolveRuntime(cwd, { env: env as NodeJS.ProcessEnv, flag });
+            resolveRuntime(cwd, { env, flag });
         } catch (error) {
             message = (error as Error).message;
         }
