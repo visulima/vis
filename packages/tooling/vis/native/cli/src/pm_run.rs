@@ -1,6 +1,6 @@
-//! What the package-manager runners (`install`, `add`, `info`, `dlx`) share: the gates that decide whether the
-//! native path may run the manager, the notices Node prints first, and the start-up environment Node gives the
-//! manager.
+//! What the commands that run a package manager share. `install`, `add`, `info` and `dlx` share the gates that decide
+//! whether the native path may run the manager, the notices Node prints first, and the start-up environment Node gives
+//! the manager ([`ManagerRun`]); `exec`, `pm` and the pm family share [`run_resolved`].
 
 use std::env;
 use std::ffi::OsString;
