@@ -35,6 +35,11 @@ const fallbackEntry = process.env.VIS_FALLBACK_ENTRY_OVERRIDE ?? join(packageRoo
 
 const userArguments = process.argv.slice(2);
 
+// `vis run` hands a run it cannot answer back to this process by exiting with this status, having printed
+// and written nothing; the launcher then runs the Node CLI below instead of the binary starting a second Node.
+// Same value as the one the binary reads from `VIS_HANDBACK_STATUS` (`leave_to_node` in `native/cli/src/run.rs`).
+const HANDBACK_STATUS = 75;
+
 if (routesToNative(userArguments)) {
     const binary = resolveNativeBinary(packageRoot);
 
@@ -45,9 +50,12 @@ if (routesToNative(userArguments)) {
             env: {
                 ...process.env,
                 VIS_FALLBACK_ENTRY: fallbackEntry,
+                VIS_HANDBACK_STATUS: String(HANDBACK_STATUS),
                 VIS_HANDOFF: "launcher",
                 VIS_LAUNCHER: "node",
                 VIS_NODE: process.execPath,
+                // `process.version` of this Node, which `vis run` records in the run summary natively.
+                VIS_NODE_VERSION: process.version,
                 VIS_VERSION: version,
             },
             stdio: "inherit",
@@ -56,6 +64,8 @@ if (routesToNative(userArguments)) {
         if (error) {
             // Binary unusable (e.g. corrupt install) — fall through to Node.
             process.env.VIS_NATIVE_BIN_FAILED = "1";
+        } else if (userArguments[0] === "run" && status === HANDBACK_STATUS) {
+            // The binary left this `run` to Node; fall through to the in-process CLI below.
         } else if (signal) {
             // Signal-terminated: follow the shell convention (128 + signal number)
             // so the exit code matches the binary's own delegation path.

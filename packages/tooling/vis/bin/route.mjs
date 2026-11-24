@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { GROUP_LISTINGS } from "./group-listing.mjs";
@@ -170,6 +170,71 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
     const known = new Set(["--dry-run", "--lockfile", "-l"]);
 
     return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
+};
+
+// Variables that send `vis run` to Node: the remote cache, the cache location, selection, concurrency,
+// logging, and the CI providers whose log grouping Node switches on. Same list as `NODE_ONLY_VARIABLES` and
+// `CI_GROUPING_VARIABLES` in `native/cli/src/run.rs`; keep them in step.
+const RUN_NODE_ONLY_VARIABLES = [
+    "BUILDKITE",
+    "CACHE_TOKEN",
+    "DEBUG",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "PAIL_LOG_LEVEL",
+    "TF_BUILD",
+    "TURBO_API",
+    "TURBO_TEAM",
+    "TURBO_TOKEN",
+    "VIS_AFFECTED_FILES",
+    "VIS_CACHE_DIRECTORY",
+    "VIS_CLI_TEST",
+    "VIS_PARTITION",
+    "VIS_POLYFILL",
+    "VIS_RUNNER_TAGS",
+    "VIS_RUNTIME",
+    "VIS_RUN_CONCURRENCY_LIMIT",
+];
+
+// Whether a task cache can exist for `cwd`: the default directory is there, or the checkout is a linked
+// worktree (`.git` is a file), whose cache lives in the main checkout. Without one nothing can hit, so the
+// run goes to Node without the extra process.
+const taskCacheMayExist = (cwd) => {
+    try {
+        if (statSync(join(cwd, ".git")).isFile()) {
+            return true;
+        }
+    } catch {
+        // No `.git`: the checkout is its own cache anchor.
+    }
+
+    return existsSync(join(cwd, "node_modules", ".cache", "vis"));
+};
+
+// Whether `vis run <target>` can pass the binary's native gate (`attempt` in `run.rs`): exactly one plain target and
+// no flag, in a CI context off a terminal, with none of the variables above, from a workspace root that already has
+// a task cache. The binary re-checks everything and also needs the launcher's hand-off (it answers only a run in which
+// every task is a cache hit and hands every other run to Node before printing anything), so this only skips the extra
+// process when it would delegate anyway. It stays in Node on Windows.
+const runMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker, cacheMayExist) => {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || args.length !== 2 || args[1].startsWith("-")) {
+        return false;
+    }
+
+    // `CI` itself, not just `CONTINUOUS_INTEGRATION`: parts of the Node run read `process.env.CI` directly.
+    if (!environment.CI || environment.CI === "0" || environment.CI === "false") {
+        return false;
+    }
+
+    if (
+        RUN_NODE_ONLY_VARIABLES.some((key) => environment[key] !== undefined)
+        || ["debug", "test"].includes(environment.NODE_ENV)
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    return cwdIsRoot(environment, cwd, holdsMarker) && cacheMayExist(cwd);
 };
 
 // The argument lists (after `list`) that the binary answers natively.
@@ -817,6 +882,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
     // A recorded run, a task of it, or the list of runs.
     ["replay", ({ args, environment, interactive, platform }) => helpOrNative(args, () => replayMayRunNatively(platform, environment, args, interactive))],
+    // `run <target>`, answered only when every task is a cache hit; the binary hands every other run to Node.
+    ["run", ({ args, cacheMayExist, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => runMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker, cacheMayExist))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
@@ -859,14 +926,14 @@ const routesListingOrCompletionToNative = (args, command, subcommand) => {
 
 // The routing of the commands that have their own native shapes: `true` or `false` when the
 // command decides, `undefined` when it is left to the help-surface rule in `routesToNative`.
-const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker) => {
+const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker, cacheMayExist = taskCacheMayExist) => {
     const [command = "", subcommand] = args;
 
     if (alwaysNative(command, subcommand, args)) {
         return true;
     }
 
-    const gated = NATIVE_SHAPE_GATES.get(command)?.({ args, cwd, environment, holdsMarker, interactive, platform, subcommand });
+    const gated = NATIVE_SHAPE_GATES.get(command)?.({ args, cacheMayExist, cwd, environment, holdsMarker, interactive, platform, subcommand });
 
     if (gated !== undefined) {
         return gated;
@@ -884,8 +951,9 @@ const routesToNative = (
     cwd = process.cwd(),
     interactive = Boolean(process.stdout.isTTY || process.stderr.isTTY),
     holdsMarker = holdsRootMarker,
+    cacheMayExist = taskCacheMayExist,
 ) => {
-    const decided = routesCommandToNative(args, platform, environment, cwd, interactive, holdsMarker);
+    const decided = routesCommandToNative(args, platform, environment, cwd, interactive, holdsMarker, cacheMayExist);
 
     if (decided !== undefined) {
         return decided;

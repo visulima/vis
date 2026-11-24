@@ -552,6 +552,12 @@ The dry-run plan reflects the reversed order, so you can verify the sequence bef
 
 If your `destroy` target already declares `dependsOn` pointing the right way (e.g. `dependsOn: ["^destroy"]` reversed manually as `dependents: ["destroy"]`-style hand-roll), you don't need the flag — but most teams use the same `dependsOn` for both directions and toggle the order with `--reverse` instead.
 
+## Fully cached runs
+
+A plain `vis run <target>` (no other argument or flag) in a CI environment can be answered by the native `vis` executable without starting Node, when every task is a local cache hit. It prints what the static output prints for such a run, writes `.vis/last-summary.json`, and exits with the same code. A run in which any task is not a clean hit is handed to the Node implementation before anything is printed or written, so the result is the same either way.
+
+The native answer covers script-only JS workspaces without a `vis.config`, with a lockfile that is current against `node_modules`, no toolchain pin, no outputs and no `cache: false`. It prints no colour and no CI log groups, and it is only used when the launcher started it. When tasks run side by side, Node prints their lines in the order they finish; the native answer prints the same lines in a fixed order (project order, three tasks in flight), so compare the lines as a set when you diff the two. It also leaves a run to Node when any cache entry is older than the cache's expiry window (7 days), because Node removes such entries while it runs.
+
 ## How It Works
 
 1. **Parse selector** — Resolves `:target`, `~:target`, `#tag:target`, or `project:target`

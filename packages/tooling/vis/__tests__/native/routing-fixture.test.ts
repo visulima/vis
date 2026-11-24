@@ -40,6 +40,8 @@ describe("launcher routing fixture (shared with native/cli/tests/routing.rs)", (
             routing.directory === undefined ? cwd : `${cwd}/${routing.directory}`,
             routing.interactive ?? false,
             (directory: string) => directory === cwd,
+            // A case names the task cache it expects the project to have by listing a file in it.
+            () => Object.keys(routing.files ?? {}).some((file) => file.startsWith("node_modules/.cache/vis/")),
         );
 
         expect(routed).toBe(routing.launcher === "native");

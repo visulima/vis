@@ -52,6 +52,7 @@ mod pm;
 mod pm_family;
 mod pm_shim;
 mod replay;
+mod run;
 mod secrets;
 mod self_update;
 mod sort_package_json;
@@ -136,6 +137,10 @@ fn main() {
         {
             cache::run(&args, &raw_args)
         }
+        // `vis run <target>` — answered natively only when every task is a local cache hit (a CI context,
+        // started by the launcher). Everything else is handed to Node before anything is printed, inside
+        // `run::run`; help is left to the arm below.
+        "run" if args.len() == 2 && !surface::asks_for_help(&args) => run::run(&args, &raw_args),
         // `vis list` — the plain project listing, native for a JS-only workspace in CI. Every
         // other shape, and every root the gates reject, is delegated inside `list::run`.
         "list" if !surface::asks_for_help(&args) => list::run(&args, &raw_args),
