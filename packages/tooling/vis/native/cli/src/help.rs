@@ -6,6 +6,7 @@
 
 use crate::manifest::{ArgDef, Command, EnvDef, Example, Manifest, OptionDef, Routed};
 use crate::table::{render, visible_width, Cell, Layout};
+use crate::term::Style;
 
 const CLI_NAME: &str = "vis";
 
@@ -19,41 +20,10 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ("CEREBRO_TERMINAL_WIDTH", "Sets the terminal width for table rendering. Useful for testing and consistent output"),
 ];
 
-/// SGR styling that turns itself off when colour is disabled.
-#[derive(Clone, Copy)]
-pub struct Style {
-    pub color: bool,
-}
+/// A name and a description: one line of a command listing.
+type Row = (String, String);
 
 impl Style {
-    fn paint(self, open: u8, close: u8, text: &str) -> String {
-        if self.color && !text.is_empty() {
-            format!("\u{1b}[{open}m{text}\u{1b}[{close}m")
-        } else {
-            text.to_owned()
-        }
-    }
-
-    fn bold(self, text: &str) -> String {
-        self.paint(1, 22, text)
-    }
-
-    fn underline(self, text: &str) -> String {
-        self.paint(4, 24, text)
-    }
-
-    fn cyan(self, text: &str) -> String {
-        self.paint(36, 39, text)
-    }
-
-    fn green(self, text: &str) -> String {
-        self.paint(32, 39, text)
-    }
-
-    fn yellow(self, text: &str) -> String {
-        self.paint(33, 39, text)
-    }
-
     /// A reverse-video label in `color` (`32` green, `33` yellow, ...), bold around it.
     fn label(self, color: u8, text: &str) -> String {
         self.bold(&self.paint(7, 27, &self.paint(color, 39, text)))
@@ -289,14 +259,14 @@ impl Help<'_> {
 
     /// `vis`, `vis --help` and `vis help [--group <name>]`.
     pub fn root(&self, group: Option<&str>) -> String {
-        let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut groups: Vec<(Option<&str>, Vec<Row>)> = Vec::new();
 
         for command in self.manifest.commands.iter().filter(|command| !command.hidden) {
             if group.is_some_and(|wanted| command.group.as_deref() != Some(wanted)) {
                 continue;
             }
 
-            let key = command.group.clone().unwrap_or_else(|| "__Other".to_owned());
+            let key = command.group.as_deref();
             let row = self.command_row(command);
 
             match groups.iter_mut().find(|(name, _)| *name == key) {
@@ -314,12 +284,13 @@ impl Help<'_> {
         let mut sections = vec![Section::titled(self.style.label(36, " Usage "), self.text_table(&usage))];
 
         for (key, rows) in &groups {
-            let header = if key == "__Other" || group.is_some() {
-                let title = group.map(|name| format!(" {}", capitalize(name))).unwrap_or_default();
+            let header = match key {
+                Some(name) if group.is_none() => self.style.group_label(&capitalize(name)),
+                _ => {
+                    let title = group.map(|name| format!(" {}", capitalize(name))).unwrap_or_default();
 
-                self.style.label(32, &format!(" Available{title} Commands "))
-            } else {
-                self.style.group_label(&capitalize(key))
+                    self.style.label(32, &format!(" Available{title} Commands "))
+                }
             };
 
             sections.push(Section::titled(header, self.list_table(rows)));

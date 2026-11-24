@@ -13,6 +13,57 @@ pub enum Stream {
     Stderr,
 }
 
+/// SGR styling that turns itself off when colour is disabled. Like `colorize`, a style re-opens itself after the
+/// close of an inner style that ends with the same code (`red a {green b} c` keeps `c` red).
+#[derive(Clone, Copy)]
+pub struct Style {
+    pub colour: bool,
+}
+
+impl Style {
+    pub fn paint(self, open: u8, close: u8, text: &str) -> String {
+        if !self.colour || text.is_empty() {
+            return text.to_owned();
+        }
+
+        let text = if text.contains('\x1b') {
+            text.replace(&format!("\x1b[{close}m"), &format!("\x1b[{open}m"))
+        } else {
+            text.to_owned()
+        };
+
+        format!("\x1b[{open}m{text}\x1b[{close}m")
+    }
+
+    pub fn bold(self, text: &str) -> String {
+        self.paint(1, 22, text)
+    }
+
+    pub fn dim(self, text: &str) -> String {
+        self.paint(2, 22, text)
+    }
+
+    pub fn underline(self, text: &str) -> String {
+        self.paint(4, 24, text)
+    }
+
+    pub fn red(self, text: &str) -> String {
+        self.paint(31, 39, text)
+    }
+
+    pub fn green(self, text: &str) -> String {
+        self.paint(32, 39, text)
+    }
+
+    pub fn yellow(self, text: &str) -> String {
+        self.paint(33, 39, text)
+    }
+
+    pub fn cyan(self, text: &str) -> String {
+        self.paint(36, 39, text)
+    }
+}
+
 /// What a standard stream is on Windows. Every other platform has no console to switch on, and its
 /// streams count as [`Console::Redirected`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -47,8 +98,46 @@ fn stream_shows_ansi(stream: Stream) -> bool {
     }
 }
 
-/// The colour flags `@visulima/is-ansi-color-supported` reads from `argv`, up to the first `--`. Each is
-/// `^-{1,2}(...)$`; the detection tries them in the order no colour, 256 colours, true colour, colour.
+/// A colour flag on the command line, as `@visulima/is-ansi-color-supported` reads it from `argv`: `^-{1,2}(...)$`
+/// over the names below. [`ColourFlag::Other`] is any other argument that looks like one (`--color=banana`,
+/// `--colorful`), which only Node can interpret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColourFlag {
+    None,
+    Ansi256,
+    TrueColor,
+    On,
+    Other,
+}
+
+impl ColourFlag {
+    pub fn parse(argument: &str) -> Option<Self> {
+        let name = argument.strip_prefix("--").or_else(|| argument.strip_prefix('-'));
+
+        match name {
+            Some("no-color" | "no-colors" | "color=false" | "color=never") => Some(Self::None),
+            Some("color=256") => Some(Self::Ansi256),
+            Some("color=16m" | "color=full" | "color=truecolor") => Some(Self::TrueColor),
+            Some("color" | "colors" | "color=true" | "color=always") => Some(Self::On),
+            _ => {
+                let name = argument.trim_start_matches('-');
+
+                (argument.starts_with('-') && (name.starts_with("color") || name.starts_with("no-color")))
+                    .then_some(Self::Other)
+            }
+        }
+    }
+
+    /// The two colour flags the Node CLI declares as global options (`--color`, `--no-color`), which a command
+    /// may follow like any other valueless global flag. The spellings [`ColourFlag::parse`] also reads
+    /// (`-color`, `--colors`, `--color=256`, ...) are not global options and leave the call to Node.
+    pub fn is_global_option(argument: &str) -> bool {
+        matches!(argument, "--no-color" | "--color")
+    }
+}
+
+/// The colour flags up to the first `--`, in the order the detection tries them: no colour, 256 colours, true
+/// colour, colour.
 #[derive(Clone, Copy, Default)]
 struct ColourFlags {
     none: bool,
@@ -62,16 +151,12 @@ impl ColourFlags {
         let mut flags = Self::default();
 
         for argument in args.iter().take_while(|argument| argument.as_str() != "--") {
-            let Some(name) = argument.strip_prefix("--").or_else(|| argument.strip_prefix('-')) else {
-                continue;
-            };
-
-            match name {
-                "no-color" | "no-colors" | "color=false" | "color=never" => flags.none = true,
-                "color=256" => flags.ansi256 = true,
-                "color=16m" | "color=full" | "color=truecolor" => flags.truecolor = true,
-                "color" | "colors" | "color=true" | "color=always" => flags.on = true,
-                _ => {}
+            match ColourFlag::parse(argument) {
+                Some(ColourFlag::None) => flags.none = true,
+                Some(ColourFlag::Ansi256) => flags.ansi256 = true,
+                Some(ColourFlag::TrueColor) => flags.truecolor = true,
+                Some(ColourFlag::On) => flags.on = true,
+                Some(ColourFlag::Other) | None => {}
             }
         }
 
@@ -111,14 +196,6 @@ fn colour_from(
     }
 
     detect_level(get, ColourFlags::from_args(args), stdout_is_terminal, windows).map(|level| level > 0)
-}
-
-/// An argument the colour detection of the Node CLI reads from `argv` (`--color`, `--no-color`,
-/// `--color=256`, ...). `bin.ts` also turns `--no-color` into `NO_COLOR` / `FORCE_COLOR` for the process.
-fn is_colour_flag(argument: &str) -> bool {
-    let name = argument.trim_start_matches('-');
-
-    argument.starts_with('-') && (name.starts_with("color") || name.starts_with("no-color"))
 }
 
 /// `/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/`: the TeamCity versions that print colour.
@@ -318,7 +395,7 @@ pub fn piped_colour_level(args: &[String]) -> Option<u8> {
     if cfg!(windows)
         || std::io::stdout().is_terminal()
         || std::io::stderr().is_terminal()
-        || args.iter().any(|argument| is_colour_flag(argument))
+        || args.iter().any(|argument| ColourFlag::parse(argument).is_some())
     {
         return None;
     }
@@ -472,6 +549,18 @@ mod tests {
     }
 
     #[test]
+    fn one_parser_reads_every_spelling_of_a_colour_flag() {
+        assert_eq!(ColourFlag::parse("--no-color"), Some(ColourFlag::None));
+        assert_eq!(ColourFlag::parse("-color=256"), Some(ColourFlag::Ansi256));
+        assert_eq!(ColourFlag::parse("--colors"), Some(ColourFlag::On));
+        assert_eq!(ColourFlag::parse("--color=banana"), Some(ColourFlag::Other));
+        assert_eq!(ColourFlag::parse("color"), None);
+        // Only the two declared options may sit before a command, as the surface sees them.
+        assert!(ColourFlag::is_global_option("--color") && ColourFlag::is_global_option("--no-color"));
+        assert!(!ColourFlag::is_global_option("--colors") && !ColourFlag::is_global_option("-color"));
+    }
+
+    #[test]
     fn no_color_beats_the_ci_providers_even_when_empty() {
         assert_eq!(level(&[("NO_COLOR", ""), ("CI", "1"), ("GITHUB_ACTIONS", "1")]), Some(0));
         assert_eq!(level(&[("NO_COLOR", "1"), ("CI", "1"), ("GITLAB_CI", "1")]), Some(0));
@@ -520,11 +609,11 @@ mod tests {
     #[test]
     fn colour_flags_are_recognised() {
         for flag in ["--color", "--no-color", "--colors", "--color=256", "--no-colors", "-color"] {
-            assert!(is_colour_flag(flag), "{flag}");
+            assert!(ColourFlag::parse(flag).is_some(), "{flag}");
         }
 
         for flag in ["colour", "--cwd", "--format", "color"] {
-            assert!(!is_colour_flag(flag), "{flag}");
+            assert!(ColourFlag::parse(flag).is_none(), "{flag}");
         }
     }
 
