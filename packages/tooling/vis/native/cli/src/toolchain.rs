@@ -424,42 +424,61 @@ fn is_exact_version(text: &str) -> bool {
         && text.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.')
 }
 
+/// The comparison a range clause starts with.
+#[derive(Clone, Copy)]
+enum Operator {
+    AtLeast,
+    AtMost,
+    Above,
+    Below,
+    /// `^`: the same major, at least the target.
+    Caret,
+    /// `~`: the same major and minor, at least the target.
+    Tilde,
+}
+
+impl Operator {
+    /// The operator a clause starts with and the version after it. `None` for a clause the matcher does not know.
+    fn split(clause: &str) -> Option<(Self, &str)> {
+        // `>=` and `<=` before `>` and `<`.
+        [
+            (">=", Self::AtLeast),
+            ("<=", Self::AtMost),
+            (">", Self::Above),
+            ("<", Self::Below),
+            ("^", Self::Caret),
+            ("~", Self::Tilde),
+        ]
+        .into_iter()
+        .find_map(|(prefix, operator)| Some((operator, clause.strip_prefix(prefix)?)))
+    }
+
+    /// Whether `actual` passes against `target`, which `ordering` compares.
+    fn holds(self, actual: &[i64], target: &[i64], ordering: std::cmp::Ordering) -> bool {
+        match self {
+            Self::AtLeast => ordering.is_ge(),
+            Self::AtMost => ordering.is_le(),
+            Self::Above => ordering.is_gt(),
+            Self::Below => ordering.is_lt(),
+            // `actualMajor !== targetMajor`, and for `~` also the minors, where a missing minor is `undefined`.
+            Self::Caret | Self::Tilde => {
+                actual.first() == target.first()
+                    && (matches!(self, Self::Caret) || actual.get(1) == target.get(1))
+                    && ordering.is_ge()
+            }
+        }
+    }
+}
+
 /// One whitespace-separated group of clauses of a range (`matchesAll`). `None` is a number this matcher would
 /// not compare the way JavaScript does.
 fn matches_all(actual: &[i64], clauses: &[&str]) -> Option<bool> {
     for clause in clauses {
-        let (operator, rest) = if let Some(rest) = clause.strip_prefix(">=") {
-            (">=", rest)
-        } else if let Some(rest) = clause.strip_prefix("<=") {
-            ("<=", rest)
-        } else if let Some(rest) = clause.strip_prefix('>') {
-            (">", rest)
-        } else if let Some(rest) = clause.strip_prefix('<') {
-            ("<", rest)
-        } else if let Some(rest) = clause.strip_prefix('^') {
-            ("^", rest)
-        } else if let Some(rest) = clause.strip_prefix('~') {
-            ("~", rest)
-        } else {
-            // A clause the matcher does not know passes.
-            continue;
-        };
+        // A clause the matcher does not know passes.
+        let Some((operator, rest)) = Operator::split(clause) else { continue };
         let target = parts(rest.trim_matches(is_js_whitespace))?;
-        let ordering = compare(actual, &target);
-        let passes = match operator {
-            ">=" => ordering.is_ge(),
-            "<=" => ordering.is_le(),
-            ">" => ordering.is_gt(),
-            "<" => ordering.is_lt(),
-            _ => {
-                // `actualMajor !== targetMajor`, and for `~` also the minors, where a missing minor is `undefined`.
-                actual.first() == target.first()
-                    && (operator == "^" || actual.get(1) == target.get(1))
-                    && ordering.is_ge()
-            }
-        };
 
-        if !passes {
+        if !operator.holds(actual, &target, compare(actual, &target)) {
             return Some(false);
         }
     }
