@@ -57,8 +57,8 @@ const resolveEnv = (config: ConcurrentCommandConfig): Record<string, string> => 
 
 /**
  * A terminal dimension the addon accepts, or the default. Callers pass `process.stdout.columns`,
- * which some terminals report as 0; node-pty took that as it came, and the addon refuses it, which
- * would fail the whole run over a cosmetic size.
+ * which some terminals report as 0; node-pty falls back to the default size for that, and the addon
+ * refuses it, which would fail the whole run over a cosmetic size.
  */
 const terminalSize = (size: { cols: number; rows: number } | undefined): { cols: number; rows: number } | undefined => {
     if (!size) {
