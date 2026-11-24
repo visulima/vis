@@ -1,3 +1,9 @@
+## @visulima/vis [7.1.0-next.13](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.12...@visulima/vis@7.1.0-next.13) (2026-11-24)
+
+### Features
+
+* **vis:** answer a fully cached `vis run <target>` natively ([#195](https://github.com/visulima/vis/issues/195)) ([565a1ca](https://github.com/visulima/vis/commit/565a1cac1723f0f2d953bbd97d3d9562a511fec0))
+
 ## @visulima/vis [7.1.0-next.12](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.11...@visulima/vis@7.1.0-next.12) (2026-11-24)
 
 ### Features
