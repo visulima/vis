@@ -811,6 +811,60 @@ fn delegated_clean_forwards_a_non_utf8_argument_unchanged() {
     assert_eq!(recorded, b"clean\0caf\xe9\0", "argv reached the stub as {recorded:?}");
 }
 
+/// A pnpm workspace whose `vendor/lib` links to a directory holding a `node_modules`, and whose
+/// `packages/app/loop` links back to the root: the native `clean` must neither remove the linked
+/// directory's `node_modules` nor loop, and its dry run must list the paths the real run removes.
+#[cfg(unix)]
+#[test]
+fn native_clean_never_follows_a_symlink() {
+    let base = std::env::temp_dir().join(format!("vis-clean-links-{}", std::process::id()));
+    let workspace = base.join("workspace");
+    let outside = base.join("other-repo");
+
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(workspace.join("packages/app/node_modules")).unwrap();
+    std::fs::create_dir_all(workspace.join("vendor")).unwrap();
+    std::fs::create_dir_all(outside.join("node_modules")).unwrap();
+    std::fs::write(workspace.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+    std::fs::write(workspace.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+    std::fs::write(outside.join("node_modules/keep.js"), "").unwrap();
+    std::os::unix::fs::symlink(&outside, workspace.join("vendor/lib")).unwrap();
+    std::os::unix::fs::symlink(&workspace, workspace.join("packages/app/loop")).unwrap();
+
+    let workspace = workspace.canonicalize().unwrap();
+
+    let run = |flags: &[&str]| {
+        binary()
+            .arg("clean")
+            .args(flags)
+            .current_dir(&workspace)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("CI", "1")
+            .env("VIS_NO_UPDATE_CHECK", "1")
+            .output()
+            .expect("run binary")
+    };
+
+    let dry = run(&["--dry-run"]);
+    let dry_out = String::from_utf8_lossy(&dry.stdout).into_owned();
+
+    assert_eq!(dry.status.code(), Some(0), "a declined run exits 70: {dry:?}");
+    assert!(dry_out.contains("packages/app/node_modules"), "stdout was: {dry_out}");
+    assert!(!dry_out.contains("vendor"), "the dry run listed a path behind a link: {dry_out}");
+
+    let real = run(&[]);
+    let real_out = String::from_utf8_lossy(&real.stdout).into_owned();
+
+    assert_eq!(real.status.code(), Some(0), "stderr was: {}", String::from_utf8_lossy(&real.stderr));
+    assert!(real_out.contains("Removed") && real_out.contains("packages/app/node_modules"), "stdout was: {real_out}");
+    assert!(!real_out.contains("vendor"), "the run removed a path behind a link: {real_out}");
+    assert!(!workspace.join("packages/app/node_modules").exists());
+    assert!(outside.join("node_modules/keep.js").exists(), "a directory outside the workspace was deleted");
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
 /// Writes a monorepo root with a `vis.config.ts` pinning `install.backend`, a yarn lockfile the pin
 /// must override, a stub Node that must not run, and a stub for the pinned package manager on PATH. Returns the scratch base, the project and the bin dir.
 #[cfg(unix)]
