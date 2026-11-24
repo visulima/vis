@@ -5,9 +5,6 @@
 //! Whitespace, `parseInt` and the string escape are owned by `task_runner_core::js` (the task hasher needs them too)
 //! and re-exported here. Calendar arithmetic is in `vis_core::date`, which the addon uses as well.
 
-use std::fs;
-use std::io::Read;
-
 use serde_json::Value;
 pub(crate) use task_runner_core::js::{is_js_whitespace, json_string, parse_int};
 
@@ -127,7 +124,9 @@ pub(crate) fn json_number(value: f64) -> String {
 /// Fills `bytes` from the operating system's entropy.
 #[cfg(unix)]
 fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
-    fs::File::open("/dev/urandom").ok()?.read_exact(bytes).ok()
+    use std::io::Read;
+
+    std::fs::File::open("/dev/urandom").ok()?.read_exact(bytes).ok()
 }
 
 /// Fills `bytes` from the randomly keyed hasher the standard library seeds, mixed with the time and process id.

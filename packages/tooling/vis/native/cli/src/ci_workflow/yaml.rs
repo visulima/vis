@@ -173,6 +173,8 @@ mod tests {
     fn what_node_orders_differently_is_not_printable() {
         assert!(printable(&Yaml::Map(vec![("a".to_owned(), Yaml::Number(1.0))])));
         assert!(!printable(&Yaml::Map(vec![("1".to_owned(), Yaml::str("x"))])));
+        // A key with a leading zero or no text is an ordinary key, kept in insertion order.
+        assert!(printable(&Yaml::Map(vec![("007".to_owned(), Yaml::str("x")), (String::new(), Yaml::str("y"))])));
         assert!(!printable(&Yaml::Map(vec![("__proto__".to_owned(), Yaml::str("x"))])));
         assert!(!printable(&Yaml::List(vec![Yaml::List(vec![])])));
         assert!(!printable(&Yaml::Number(f64::INFINITY)));
