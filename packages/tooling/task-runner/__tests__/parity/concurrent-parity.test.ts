@@ -530,6 +530,25 @@ describe("inheritEnv: false", () => {
     });
 });
 
+describe("what every caller relies on", () => {
+    it.each(["js", "native"] as const)("%s: no commands resolve at once as a success", async (runner) => {
+        expect.assertions(1);
+
+        await expect(runners[runner]([], {})).resolves.toStrictEqual({ closeEvents: [], success: true });
+    });
+
+    it.each(["js", "native"] as const)("%s: a close event carries the time the command ran, in the event and in the result", async (runner) => {
+        expect.assertions(3);
+
+        const { events, result } = await observe(runner, [{ command: probeCommand("exit-after", "150", "0") }]);
+        const closeEvent = events.find((event) => event.kind === "close")!;
+
+        expect(closeEvent.durationMs).toBeGreaterThanOrEqual(100);
+        expect(result.closeEvents[0]!.durationMs).toBeGreaterThanOrEqual(100);
+        expect(closeEvent.commandName).toBeUndefined();
+    });
+});
+
 describe("neither runner handles SIGHUP", () => {
     it.skipIf(!posix).each(["js", "native"] as const)("%s adds no SIGHUP listener while it runs", async (runner) => {
         expect.assertions(1);
