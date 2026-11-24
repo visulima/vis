@@ -31,7 +31,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
-use crate::advisories::{
+use crate::node_context::{
     any_ancestor_has, in_ci, monorepo_root, native_root_is_cwd, output_settings_are_default, DENO_FILES,
 };
 use crate::targets::{self, Targets};

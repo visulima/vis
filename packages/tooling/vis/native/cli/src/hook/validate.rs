@@ -21,7 +21,7 @@ use serde_json::Value;
 
 use super::config;
 use super::list::{context_is_native, parse, STAGES};
-use crate::advisories::write_stdout;
+use crate::output::write_stdout;
 
 /// Entries of the hooks directory that are neither stage scripts nor an issue.
 const IGNORED_ENTRIES: [&str; 3] = ["_", "config.json", "README.md"];

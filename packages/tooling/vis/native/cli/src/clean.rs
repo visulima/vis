@@ -161,7 +161,7 @@ fn workspace_root_is_cwd(cwd: &Path) -> bool {
     if cwd
         .ancestors()
         .skip(1)
-        .any(|directory| crate::advisories::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
+        .any(|directory| crate::node_context::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
     {
         return false;
     }

@@ -16,9 +16,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
 use crate::error::WrapperError;
 use crate::js::trim;
+use crate::node_context::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.

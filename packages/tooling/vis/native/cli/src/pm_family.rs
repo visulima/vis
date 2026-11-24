@@ -182,7 +182,7 @@ pub(crate) fn corepack_applies(cwd: &Path) -> bool {
 fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
     cwd.ancestors()
         .skip(1)
-        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+        .any(|ancestor| crate::node_context::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
 }
 
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native

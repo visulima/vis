@@ -47,7 +47,7 @@ fn left_to_node(args: &[String], subcommand: &str, cwd: &Path) -> bool {
         && (crate::vis_config::requires_node(&config) || crate::vis_config::native_backend_pin(&config).is_some());
 
     DISPATCHED.contains(&subcommand)
-        || !crate::advisories::native_root_is_cwd(cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
+        || !crate::node_context::native_root_is_cwd(cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
         || installer_selected_by_environment()
         || uses_global_option(args)
         || config_decides_installer

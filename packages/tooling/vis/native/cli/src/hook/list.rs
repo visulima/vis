@@ -20,7 +20,8 @@ use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::process::exit;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
+use crate::node_context::{native_context, output_settings_are_default};
+use crate::output::write_stdout;
 
 pub(super) const DEFAULT_HOOKS_DIRECTORY: &str = ".vis/hooks";
 

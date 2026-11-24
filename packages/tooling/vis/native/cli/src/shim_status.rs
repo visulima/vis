@@ -12,7 +12,8 @@ use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::process::exit;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
+use crate::node_context::{native_context, output_settings_are_default};
+use crate::output::write_stdout;
 
 /// The package managers the shim directory intercepts, `SHIM_NAMES` in `src/commands/shim/handler.ts`.
 const SHIM_NAMES: [&str; 6] = ["npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"];

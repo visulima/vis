@@ -147,7 +147,7 @@ fn native_context() -> Option<String> {
 
     let cwd = env::current_dir().ok()?;
 
-    crate::advisories::quiet_context(&cwd, &cwd).then_some(current)
+    crate::node_context::quiet_context(&cwd, &cwd).then_some(current)
 }
 
 /// `npm view @visulima/vis version`: the trimmed answer and the stderr text, or `None` when npm cannot

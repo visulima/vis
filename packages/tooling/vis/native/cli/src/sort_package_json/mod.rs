@@ -32,8 +32,8 @@ use std::process::exit;
 
 use sort_package_json::{sort_package_json_with_options, SortOptions};
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::error::WrapperError;
+use crate::node_context::{in_ci, monorepo_root, quiet_context};
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::{expand_patterns, yaml_packages, WORKSPACE_YAML_NAMES};

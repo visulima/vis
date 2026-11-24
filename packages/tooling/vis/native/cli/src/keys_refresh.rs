@@ -44,10 +44,11 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 use crate::cache::vis_cache_dir;
 use crate::http::{HttpClient, HttpConfig, HttpError};
 use crate::js::{json_number, json_string};
+use crate::node_context::{native_context, output_settings_are_default};
+use crate::output::write_stdout;
 
 const DEFAULT_KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
 /// `DEFAULT_FETCH_TIMEOUT_MS` of the Node module.

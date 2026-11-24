@@ -29,8 +29,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context, write_stdout};
 use crate::js::is_js_whitespace;
+use crate::node_context::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
+use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
 use crate::sort_package_json::json::Json;
 use crate::vis_config::{self, ConfigState};

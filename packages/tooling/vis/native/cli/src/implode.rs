@@ -23,9 +23,10 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{output_settings_are_default, quiet_context, write_stdout, write_streams};
 use crate::cache::{is_plain, quiet_workspace_root, resolve};
 use crate::error::WrapperError;
+use crate::node_context::{output_settings_are_default, quiet_context};
+use crate::output::{write_stdout, write_streams};
 
 /// `SHELL_PROFILES` in `handler.ts`, relative to the home directory, in the order Node visits them.
 const PROFILES: [&str; 6] = [".zshrc", ".zshenv", ".bashrc", ".bash_profile", ".profile", ".config/fish/config.fish"];

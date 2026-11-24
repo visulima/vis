@@ -27,10 +27,10 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::cache_hash::root_collation;
 use crate::graph::{project_graph, GraphResult};
 use crate::js;
+use crate::node_context::{in_ci, monorepo_root, quiet_context};
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use vis_core::date::iso_from_millis;

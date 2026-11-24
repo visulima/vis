@@ -22,8 +22,9 @@
 use std::ffi::OsString;
 use std::io::IsTerminal;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 use crate::js::PROTOTYPE_NAMES;
+use crate::node_context::{native_context, output_settings_are_default};
+use crate::output::write_stdout;
 use crate::targets::{script_targets, Targets};
 
 /// What the handler prints for a task nothing depends on and that depends on nothing: a blank line, the title, a blank

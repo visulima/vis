@@ -30,10 +30,9 @@ use oxc_ast::ast::Expression;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::advisories::{
-    any_ancestor_has, in_ci, monorepo_root, output_settings_are_default, write_stdout, DENO_FILES,
-};
 use crate::js::{is_index_like, is_truthy};
+use crate::node_context::{any_ancestor_has, in_ci, monorepo_root, output_settings_are_default, DENO_FILES};
+use crate::output::write_stdout;
 use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 

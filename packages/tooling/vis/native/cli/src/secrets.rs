@@ -32,8 +32,8 @@ use serde_json::value::RawValue;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
 use crate::js::{is_truthy, js_number, json_number};
+use crate::node_context::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
 use crate::pail::{Layout, Level as LogLevel};
 
 /// The tool version Node stamps into SARIF (`toolVersion` in the secrets handler).

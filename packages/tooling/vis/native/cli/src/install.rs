@@ -257,9 +257,9 @@ pub(crate) fn setup(args: &[String], raw: &[OsString]) -> Option<Setup> {
     if cwd
         .ancestors()
         .skip(1)
-        .any(|directory| crate::advisories::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
+        .any(|directory| crate::node_context::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
         || ["lerna.json", "turbo.json"].iter().any(|name| cwd.join(name).exists())
-        || crate::advisories::any_ancestor_has(&cwd, &crate::advisories::DENO_FILES)
+        || crate::node_context::any_ancestor_has(&cwd, &crate::node_context::DENO_FILES)
         || crate::pm_family::ancestor_pins_package_manager(&cwd)
     {
         return None;
@@ -435,7 +435,7 @@ pub(crate) fn filter_value(value: &str) -> Option<String> {
 fn context_allows_native() -> bool {
     // The peer hint is pail output, coloured by `Layout::detect`. The package manager itself gets a
     // forced colour on a terminal, which the native path does not reproduce.
-    if !crate::advisories::in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
+    if !crate::node_context::in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return false;
     }
 

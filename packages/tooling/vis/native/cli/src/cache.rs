@@ -27,8 +27,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use vis_core::date::iso_from_millis;
 
-use crate::advisories::{any_ancestor_has, in_ci, monorepo_root, DENO_FILES};
 use crate::js::{js_number, json_string, MAX_SAFE_INTEGER};
+use crate::node_context::{any_ancestor_has, in_ci, monorepo_root, DENO_FILES};
 use crate::vis_config::{self, ConfigState};
 
 /// `DEFAULT_WORKSPACE_CACHE_DIRECTORY` in `src/util/vis-paths.ts`.

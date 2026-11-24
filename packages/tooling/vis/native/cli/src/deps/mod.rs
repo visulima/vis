@@ -22,8 +22,8 @@ mod print;
 use std::ffi::OsString;
 use std::process::exit;
 
-use crate::advisories::write_stdout;
 use crate::hook::list::context_is_native;
+use crate::output::write_stdout;
 
 /// Which lints run, from the flags.
 #[derive(Default)]
