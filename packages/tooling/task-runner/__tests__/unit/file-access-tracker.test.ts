@@ -260,7 +260,7 @@ describe(FileAccessTracker, () => {
     // runs. When it is not, the native call has to reject promptly (so the TS
     // side can fall back to an untracked run) and the suspended child must never
     // execute — previously a DLL that failed to load left the drain blocked in
-    // `ConnectNamedPipe` forever. Windows-only: unverified outside Windows CI.
+    // `ConnectNamedPipe` forever. Windows-only; no CI job runs these yet.
     describe("windows IAT-hook injection failure", () => {
         const iatAvailable = new FileAccessTracker(tmpdir(), []).isIatHookSupported();
         const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`;
