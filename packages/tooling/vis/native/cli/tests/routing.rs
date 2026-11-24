@@ -120,6 +120,9 @@ fn run_case(case: &Case, directory: &Path, empty_path: &Path) -> Outcome {
         )
         .env("VIS_NODE", "/nonexistent/node")
         .env("VIS_FALLBACK_ENTRY", "/nonexistent/bin.js")
+        // A terminal size, so help is not handed to Node to look the width up.
+        .env("COLUMNS", "80")
+        .env("LINES", "24")
         .envs(&case.env)
         .stdin(std::process::Stdio::null())
         .output()

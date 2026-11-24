@@ -44,6 +44,9 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
 
         return {
             ...inherited,
+            // A terminal size, so help is not handed to Node to look the width up.
+            COLUMNS: "80",
+            LINES: "24",
             VIS_FALLBACK_ENTRY: fallbackStub,
             VIS_FALLBACK_ENTRY_OVERRIDE: fallbackStub,
             VIS_NATIVE_BIN: binary as string,

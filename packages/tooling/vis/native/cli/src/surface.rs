@@ -90,6 +90,7 @@ pub fn asks_for_help(args: &[String]) -> bool {
 /// caller delegate it.
 pub fn answer(args: &[String]) -> Option<i32> {
     // A leading `--version` / `-V` does not matter once help is asked for: cerebro checks help first.
+    let invoked = args;
     let args = match args.first().map(String::as_str) {
         Some("--version" | "-V") if asks_for_help(args) => &args[1..],
         _ => args,
@@ -146,7 +147,7 @@ pub fn answer(args: &[String]) -> Option<i32> {
     let command = manifest::resolve(&manifest.commands, &request.words)?;
 
     // The lean entry only serves `dlx`/`exec` when they are the first argument.
-    emit(&help.command(command, command.lean && args.first().map(String::as_str) == request.words.first().copied()));
+    emit(&help.command(command, command.lean && invoked.first().map(String::as_str) == request.words.first().copied()));
 
     Some(0)
 }

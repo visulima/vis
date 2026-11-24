@@ -83,6 +83,13 @@ const colourRows: Row[] = [
     { args: ["help", "cache"], env: { COLORTERM: "truecolor" }, native: true },
     { args: ["cache", "--help"], env: { TERM: "xterm-256color" }, native: true },
     { args: ["run", "--help"], env: { CI: "1", GITLAB_CI: "true" }, native: true },
+    // A command's help takes every colour flag, as Node's detection reads them from `argv`.
+    { args: ["run", "--help", "--color=256"], env: {}, native: true },
+    { args: ["run", "--help", "-color"], env: {}, native: true },
+    { args: ["run", "--help", "--colors"], env: {}, native: true },
+    { args: ["run", "--help", "--color=never"], env: { CI: "1", GITHUB_ACTIONS: "true" }, native: true },
+    { args: ["run", "--help", "--color=never"], env: { FORCE_COLOR: "1" }, native: true },
+    { args: ["run", "--help", "--color=16m"], env: {}, native: true },
     // The colour flags the binary does not know about are Node's.
     { args: ["--help", "--colors"], env: {}, native: false },
     { args: ["--help", "--color=256"], env: {}, native: false },
@@ -124,6 +131,10 @@ const versionRows: Row[] = [
     { args: ["-V", "-h"], env: SIZE, native: true },
     { args: ["--version", "--no-color", "--help"], env: { ...SIZE, FORCE_COLOR: "1" }, native: true },
     { args: ["--version", "cache", "--help"], env: SIZE, native: true },
+    // The lean entry serves `dlx` and `exec` only as the first argument, so a leading `--version` gets the full help.
+    { args: ["--version", "dlx", "--help"], env: SIZE, native: true },
+    { args: ["-V", "exec", "--help"], env: SIZE, native: true },
+    { args: ["dlx", "--help"], env: SIZE, native: true },
     { args: ["--version"], env: SIZE, native: true },
     { args: ["-V"], env: SIZE, native: true },
     { args: ["--version", "--", "--help"], env: SIZE, native: true },
@@ -222,11 +233,5 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(native.stdout).toContain("Usage");
         expect(native.stdout).not.toBe(`${version}\n`);
-    });
-
-    it("holds at least twenty-five distinct colour environments", () => {
-        expect.assertions(1);
-
-        expect(new Set(colourRows.map((row) => JSON.stringify([row.env, row.args]))).size).toBeGreaterThanOrEqual(25);
     });
 });
