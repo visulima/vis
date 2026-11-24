@@ -5,6 +5,7 @@
 //! caller's question (`run_key` answers it for the CLI; the Node hasher keys whatever it is given).
 
 use crate::file_hasher::hash_bytes;
+use crate::js::json_string;
 use crate::task_hasher::hash_command;
 
 /// The `__global__` hash of a workspace's global input files.
@@ -69,7 +70,7 @@ pub fn hash_task_command(
     outputs: &str,
     overrides_json: &str,
 ) -> String {
-    let outputs = js_json_string(outputs);
+    let outputs = json_string(outputs);
 
     hash_command(
         project,
@@ -77,33 +78,6 @@ pub fn hash_task_command(
         configuration,
         &format!(r#"{{"command":{command_json},"outputs":{outputs},"overrides":{overrides_json}}}"#),
     )
-}
-
-/// Serialises `text` as `JSON.stringify` does: the escapes `\"` `\\` `\b` `\f` `\n`
-/// `\r` `\t`, `\u00xx` for the other control characters, everything else verbatim
-/// (Rust strings cannot hold the lone surrogates `JSON.stringify` escapes).
-pub(crate) fn js_json_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-
-    out.push('"');
-
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-
-    out.push('"');
-
-    out
 }
 
 #[cfg(all(test, unix))]

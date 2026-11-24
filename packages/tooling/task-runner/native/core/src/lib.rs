@@ -8,6 +8,7 @@ pub mod concurrent;
 mod error;
 mod file_hasher;
 mod graph;
+pub mod js;
 mod key_parts;
 mod run_graph;
 mod run_key;

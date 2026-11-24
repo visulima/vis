@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::js::parse_int;
 use crate::run_graph::NotReproducible;
 
 /// What a complete entry stored.
@@ -21,39 +22,6 @@ pub enum CacheLookup {
     Hit(CacheEntry),
     /// No complete entry: the directory, `.commit` or `code` is missing or unreadable, or `code` is not a number.
     Miss,
-}
-
-/// JS `String.prototype.trim` whitespace: the Unicode space separators, the line
-/// terminators, tab, vertical tab, form feed and the byte order mark.
-fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
-    )
-}
-
-/// `Number.parseInt(text.trim(), 10)`: an optional sign and the leading decimal
-/// digits, anything after them ignored. `None` is NaN. A value beyond `i64`
-/// saturates; it is no exit code a process can have.
-fn parse_int(text: &str) -> Option<i64> {
-    let trimmed = text.trim_matches(is_js_whitespace);
-    let (negative, digits) = match trimmed.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
-    };
-    let digits: &str = &digits[..digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len())];
-
-    if digits.is_empty() {
-        return None;
-    }
-
-    let magnitude = digits
-        .bytes()
-        .try_fold(0i64, |acc, digit| acc.checked_mul(10)?.checked_add(i64::from(digit - b'0')))
-        .unwrap_or(i64::MAX);
-
-    Some(if negative { -magnitude } else { magnitude })
 }
 
 fn is_hash(hash: &str) -> bool {
@@ -137,24 +105,6 @@ mod tests {
         put(&dir, "terminalOutput", output.as_bytes());
 
         dir
-    }
-
-    #[test]
-    fn parse_int_follows_js() {
-        assert_eq!(parse_int("0"), Some(0));
-        assert_eq!(parse_int(" 12\n"), Some(12));
-        assert_eq!(parse_int("0x1f"), Some(0));
-        assert_eq!(parse_int("12abc"), Some(12));
-        assert_eq!(parse_int("-3"), Some(-3));
-        assert_eq!(parse_int("+7"), Some(7));
-        assert_eq!(parse_int("\u{feff}1"), Some(1));
-        assert_eq!(parse_int("1e3"), Some(1));
-        assert_eq!(parse_int("3.9"), Some(3));
-        assert_eq!(parse_int(""), None);
-        assert_eq!(parse_int("abc"), None);
-        assert_eq!(parse_int("-"), None);
-        assert_eq!(parse_int("\u{85}1"), None, "U+0085 is not JS whitespace");
-        assert_eq!(parse_int("99999999999999999999"), Some(i64::MAX));
     }
 
     #[test]
