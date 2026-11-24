@@ -15,6 +15,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::js::is_truthy;
+use crate::sort_package_json::json::Json;
+
+use super::{strings, text};
 
 /// The lifecycle hooks vis inspects, in the order the report lists them.
 const BUILD_HOOKS: [&str; 4] = ["preinstall", "install", "postinstall", "prepare"];
@@ -30,10 +33,35 @@ pub(super) struct BuildEntry {
     pub(super) hooks: Vec<String>,
 }
 
+impl BuildEntry {
+    pub(super) fn to_json(&self) -> Json {
+        let mut fields = vec![("hooks".to_owned(), strings(&self.hooks)), ("name".to_owned(), text(&self.name))];
+
+        if let Some(version) = &self.version {
+            fields.push(("version".to_owned(), text(version)));
+        }
+
+        Json::Object(fields)
+    }
+}
+
 /// A bin name that two or more packages expose.
 pub(super) struct BinConflict {
     pub(super) bin: String,
     pub(super) packages: Vec<(String, String)>,
+}
+
+impl BinConflict {
+    pub(super) fn to_json(&self) -> Json {
+        let packages = self.packages.iter().map(|(name, path)| {
+            Json::Object(vec![("name".to_owned(), text(name)), ("relativePath".to_owned(), text(path))])
+        });
+
+        Json::Object(vec![
+            ("bin".to_owned(), text(&self.bin)),
+            ("packages".to_owned(), Json::Array(packages.collect())),
+        ])
+    }
 }
 
 /// What the walk found.
@@ -375,52 +403,60 @@ fn split_allow_key(key: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// `isPatternAllowed`.
-fn is_pattern_allowed(entry: &BuildEntry, allow: &[(String, bool)], pin_versions: bool) -> bool {
-    for (pattern, allowed) in allow {
-        if !allowed {
-            continue;
-        }
+/// One truthy `installScripts.allow` key, classified once the way `isPatternAllowed` and `scanBuildScriptStatus`
+/// read it (the first suffix that fits wins: `@*`, then `*`, then a name with an optional `@version`).
+pub(super) struct Allow {
+    /// The key as written, which the report prints for an entry that matches nothing.
+    key: String,
+    pattern: Pattern,
+}
 
-        if let Some(bare) = pattern.strip_suffix("@*") {
-            if bare == entry.name {
-                return true;
-            }
+enum Pattern {
+    /// `name@*`: the package of that name, in any version.
+    AnyVersion(String),
+    /// `prefix*`: every package whose name starts with the prefix.
+    Prefix(String),
+    /// `name` or `name@version`; the version counts only with `pinVersions`.
+    Exact { name: String, version: Option<String> },
+}
 
-            continue;
-        }
+impl Allow {
+    pub(super) fn parse(key: &str) -> Self {
+        let pattern = if let Some(bare) = key.strip_suffix("@*") {
+            Pattern::AnyVersion(bare.to_owned())
+        } else if let Some(prefix) = key.strip_suffix('*') {
+            Pattern::Prefix(prefix.to_owned())
+        } else {
+            let (name, version) = split_allow_key(key);
 
-        if let Some(prefix) = pattern.strip_suffix('*') {
-            if entry.name.starts_with(prefix) {
-                return true;
-            }
+            Pattern::Exact { name: name.to_owned(), version: version.map(str::to_owned) }
+        };
 
-            continue;
-        }
-
-        let (name, version) = split_allow_key(pattern);
-
-        if name != entry.name {
-            continue;
-        }
-
-        if !pin_versions || version.is_none() || entry.version.as_deref() == version {
-            return true;
-        }
+        Self { key: key.to_owned(), pattern }
     }
 
-    false
+    /// `isPatternAllowed` for one entry.
+    fn allows(&self, entry: &BuildEntry, pin_versions: bool) -> bool {
+        match &self.pattern {
+            Pattern::AnyVersion(bare) => *bare == entry.name,
+            Pattern::Prefix(prefix) => entry.name.starts_with(prefix.as_str()),
+            Pattern::Exact { name, version } => {
+                *name == entry.name
+                    && (!pin_versions || version.is_none() || entry.version.as_deref() == version.as_deref())
+            }
+        }
+    }
 }
 
 /// `scanBuildScriptStatus`: what is approved, what is not, which allowlist entries match nothing, and (with
 /// `pinVersions`) which entries point at an old version.
-pub(super) fn status(packages: &[BuildEntry], allow: &[(String, bool)], pin_versions: bool) -> Status {
+pub(super) fn status(packages: &[BuildEntry], allow: &[Allow], pin_versions: bool) -> Status {
     let mut installed = Vec::new();
     let mut unapproved = Vec::new();
     let by_name: HashMap<&str, &BuildEntry> = packages.iter().map(|entry| (entry.name.as_str(), entry)).collect();
 
     for entry in packages {
-        if is_pattern_allowed(entry, allow, pin_versions) {
+        if allow.iter().any(|allowed| allowed.allows(entry, pin_versions)) {
             installed.push(entry.clone());
         } else {
             unapproved.push(entry.clone());
@@ -430,37 +466,30 @@ pub(super) fn status(packages: &[BuildEntry], allow: &[(String, bool)], pin_vers
     let mut excess = Vec::new();
     let mut version_drift = Vec::new();
 
-    for (pattern, allowed) in allow {
-        if !allowed {
-            continue;
-        }
-
-        if let Some(bare) = pattern.strip_suffix("@*") {
-            if !by_name.contains_key(bare) {
-                excess.push(pattern.clone());
+    for Allow { key, pattern } in allow {
+        match pattern {
+            Pattern::AnyVersion(bare) => {
+                if !by_name.contains_key(bare.as_str()) {
+                    excess.push(key.clone());
+                }
             }
-
-            continue;
-        }
-
-        if let Some(prefix) = pattern.strip_suffix('*') {
-            if !packages.iter().any(|entry| entry.name.starts_with(prefix)) {
-                excess.push(pattern.clone());
+            Pattern::Prefix(prefix) => {
+                if !packages.iter().any(|entry| entry.name.starts_with(prefix.as_str())) {
+                    excess.push(key.clone());
+                }
             }
+            Pattern::Exact { name, version } => {
+                let Some(entry) = by_name.get(name.as_str()) else {
+                    excess.push(key.clone());
 
-            continue;
-        }
+                    continue;
+                };
 
-        let (name, version) = split_allow_key(pattern);
-        let Some(entry) = by_name.get(name) else {
-            excess.push(pattern.clone());
-
-            continue;
-        };
-
-        if let (true, Some(version), Some(current)) = (pin_versions, version, entry.version.as_deref()) {
-            if version != "*" && !current.is_empty() && current != version {
-                version_drift.push((pattern.clone(), format!("{name}@{current}")));
+                if let (true, Some(version), Some(current)) = (pin_versions, version, entry.version.as_deref()) {
+                    if version != "*" && !current.is_empty() && current != version {
+                        version_drift.push((key.clone(), format!("{name}@{current}")));
+                    }
+                }
             }
         }
     }
@@ -476,8 +505,9 @@ mod tests {
         BuildEntry { name: name.to_owned(), version: Some(version.to_owned()), hooks: vec!["postinstall".to_owned()] }
     }
 
-    fn allow(items: &[(&str, bool)]) -> Vec<(String, bool)> {
-        items.iter().map(|(key, value)| ((*key).to_owned(), *value)).collect()
+    /// The truthy keys, as the config reader hands them over.
+    fn allow(items: &[(&str, bool)]) -> Vec<Allow> {
+        items.iter().filter(|(_, allowed)| *allowed).map(|(key, _)| Allow::parse(key)).collect()
     }
 
     #[test]

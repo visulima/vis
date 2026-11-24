@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use oxc_ast::ast::Expression;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use vis_core::detect::detect_package_manager;
 
 use crate::js::{is_index_like, is_truthy};
@@ -35,13 +35,13 @@ use crate::output::write_stdout;
 use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 
-use scan::{status, Found, Status};
+use scan::{status, Allow, Found, Status};
 
 /// What the report reads from `vis.config`: the `security` settings `list.ts` and the drift check use.
 #[derive(Default)]
 struct Config {
-    /// `installScripts.allow` as `Object.entries` lists it, each value reduced to its truthiness.
-    allow: Vec<(String, bool)>,
+    /// The truthy `installScripts.allow` keys, in the order `Object.entries` lists them.
+    allow: Vec<Allow>,
     /// The `allowBins` keys whose value is `true`.
     allow_bins: HashSet<String>,
     pin_versions: bool,
@@ -91,74 +91,32 @@ fn report() -> Option<String> {
     let conflicts = found.conflicts(&config.allow_bins)?;
     let drift = drift(&config.drift, &snapshot);
 
-    let text = |value: &str| Json::Str(value.to_owned());
-    let strings = |items: &[String]| Json::Array(items.iter().map(|item| text(item)).collect());
-    let packages = |items: &[scan::BuildEntry]| {
-        Json::Array(
-            items
-                .iter()
-                .map(|entry| {
-                    let mut fields =
-                        vec![("hooks".to_owned(), strings(&entry.hooks)), ("name".to_owned(), text(&entry.name))];
-
-                    if let Some(version) = &entry.version {
-                        fields.push(("version".to_owned(), text(version)));
-                    }
-
-                    Json::Object(fields)
-                })
-                .collect(),
-        )
-    };
+    let list = |items: &[scan::BuildEntry]| Json::Array(items.iter().map(scan::BuildEntry::to_json).collect());
+    let version_drift = triage
+        .version_drift
+        .iter()
+        .map(|(from, to)| Json::Object(vec![("from".to_owned(), text(from)), ("to".to_owned(), text(to))]));
 
     let report = Json::Object(vec![
-        (
-            "binConflicts".to_owned(),
-            Json::Array(
-                conflicts
-                    .iter()
-                    .map(|conflict| {
-                        Json::Object(vec![
-                            ("bin".to_owned(), text(&conflict.bin)),
-                            (
-                                "packages".to_owned(),
-                                Json::Array(
-                                    conflict
-                                        .packages
-                                        .iter()
-                                        .map(|(name, path)| {
-                                            Json::Object(vec![
-                                                ("name".to_owned(), text(name)),
-                                                ("relativePath".to_owned(), text(path)),
-                                            ])
-                                        })
-                                        .collect(),
-                                ),
-                            ),
-                        ])
-                    })
-                    .collect(),
-            ),
-        ),
+        ("binConflicts".to_owned(), Json::Array(conflicts.iter().map(scan::BinConflict::to_json).collect())),
         ("drift".to_owned(), drift),
         ("excess".to_owned(), strings(&triage.excess)),
-        ("installed".to_owned(), packages(&triage.installed)),
+        ("installed".to_owned(), list(&triage.installed)),
         ("packageManager".to_owned(), text("pnpm")),
         ("pinVersions".to_owned(), Json::Bool(config.pin_versions)),
-        ("unapproved".to_owned(), packages(&triage.unapproved)),
-        (
-            "versionDrift".to_owned(),
-            Json::Array(
-                triage
-                    .version_drift
-                    .iter()
-                    .map(|(from, to)| Json::Object(vec![("from".to_owned(), text(from)), ("to".to_owned(), text(to))]))
-                    .collect(),
-            ),
-        ),
+        ("unapproved".to_owned(), list(&triage.unapproved)),
+        ("versionDrift".to_owned(), Json::Array(version_drift.collect())),
     ]);
 
     Some(format!("{}\n", stringify(&report, "  ")))
+}
+
+fn text(value: &str) -> Json {
+    Json::Str(value.to_owned())
+}
+
+fn strings(items: &[String]) -> Json {
+    Json::Array(items.iter().map(|item| text(item)).collect())
 }
 
 /// The working directory when Node would reach the same answer from the workspace root: a unix CI run with no
@@ -216,26 +174,11 @@ fn config(cwd: &Path) -> Option<Config> {
         return Some(Config::default());
     };
     let security = security.as_object()?;
-    let mut config =
-        Config { pin_versions: security.get("pinVersions") == Some(&Value::Bool(true)), ..Config::default() };
-
-    // `allowBins[bin] === true`. A string, number, boolean or `null` never yields `true` for any key, so it
-    // blesses nothing; an array does (`[true]["0"] === true`), and Node's lookup is not reproduced for it.
-    match security.get("allowBins") {
-        Some(Value::Array(_)) => return None,
-        Some(Value::Object(allow_bins)) => {
-            if allow_bins.contains_key("__proto__") {
-                return None;
-            }
-
-            config.allow_bins = allow_bins
-                .iter()
-                .filter(|(_, value)| **value == Value::Bool(true))
-                .map(|(key, _)| key.clone())
-                .collect();
-        }
-        _ => {}
-    }
+    let mut config = Config {
+        pin_versions: security.get("pinVersions") == Some(&Value::Bool(true)),
+        allow_bins: allow_bins(security)?,
+        ..Config::default()
+    };
 
     let policies = match security.get("policies") {
         None | Some(Value::Null) => return Some(config),
@@ -243,31 +186,7 @@ fn config(cwd: &Path) -> Option<Config> {
         Some(_) => return None,
     };
 
-    if let Some(first_seen) = policies.get("firstSeen") {
-        match first_seen {
-            Value::Null => {}
-            Value::Object(first_seen) => {
-                config.drift.minutes = match first_seen.get("minutes") {
-                    None => None,
-                    Some(Value::Number(number)) => Some(
-                        number
-                            .as_f64()
-                            .filter(|number| number.fract() == 0.0 && number.abs() < 9_007_199_254_740_992.0)?
-                            as i64,
-                    ),
-                    Some(_) => return None,
-                };
-                config.drift.exclude = match first_seen.get("exclude") {
-                    None | Some(Value::Null | Value::Bool(false)) => None,
-                    Some(Value::Array(items)) => {
-                        Some(items.iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()?)
-                    }
-                    Some(_) => return None,
-                };
-            }
-            _ => return None,
-        }
-    }
+    (config.drift.minutes, config.drift.exclude) = first_seen(policies)?;
 
     let allow = match policies.get("installScripts") {
         None | Some(Value::Null) => return Some(config),
@@ -279,8 +198,69 @@ fn config(cwd: &Path) -> Option<Config> {
         Some(_) => return None,
     };
 
-    // The order `Object.entries` lists the keys in is the order of the source, which `Value` does not keep.
-    let ordered = vis_config::convert_default_export(&file, |root| {
+    let allowed = allowed_keys(&file, allow)?;
+
+    config.allow = allowed.iter().map(|key| Allow::parse(key)).collect();
+    config.drift.allow = Some(allowed);
+
+    Some(config)
+}
+
+/// The `allowBins` keys whose value is `true`: `allowBins[bin] === true`. A string, number, boolean or `null`
+/// never yields `true` for any key, so it blesses nothing; an array does (`[true]["0"] === true`), and Node's
+/// lookup is not reproduced for it.
+fn allow_bins(security: &Map<String, Value>) -> Option<HashSet<String>> {
+    match security.get("allowBins") {
+        Some(Value::Array(_)) => None,
+        Some(Value::Object(allow_bins)) => {
+            if allow_bins.contains_key("__proto__") {
+                return None;
+            }
+
+            Some(
+                allow_bins
+                    .iter()
+                    .filter(|(_, value)| **value == Value::Bool(true))
+                    .map(|(key, _)| key.clone())
+                    .collect(),
+            )
+        }
+        _ => Some(HashSet::new()),
+    }
+}
+
+/// The `minutes` and `exclude` of `policies.firstSeen`, which the drift check compares with the package
+/// manager's settings. Neither is set when the policy is absent or `null`.
+fn first_seen(policies: &Map<String, Value>) -> Option<(Option<i64>, Option<Vec<String>>)> {
+    let first_seen = match policies.get("firstSeen") {
+        None | Some(Value::Null) => return Some((None, None)),
+        Some(Value::Object(first_seen)) => first_seen,
+        Some(_) => return None,
+    };
+    let minutes = match first_seen.get("minutes") {
+        None => None,
+        Some(Value::Number(number)) => {
+            Some(number.as_f64().filter(|number| number.fract() == 0.0 && number.abs() < 9_007_199_254_740_992.0)?
+                as i64)
+        }
+        Some(_) => return None,
+    };
+    let exclude = match first_seen.get("exclude") {
+        None | Some(Value::Null | Value::Bool(false)) => None,
+        Some(Value::Array(items)) => {
+            Some(items.iter().map(|item| item.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()?)
+        }
+        Some(_) => return None,
+    };
+
+    Some((minutes, exclude))
+}
+
+/// The truthy keys of `installScripts.allow` in the order `Object.entries` lists them, which is the order of the
+/// source (`Value` does not keep it). `None` when that order is not the source's: a key JavaScript sorts as an
+/// index, or a key the source repeats.
+fn allowed_keys(file: &Path, allow: &Map<String, Value>) -> Option<Vec<String>> {
+    let ordered = vis_config::convert_default_export(file, |root| {
         let allow = property(property(property(property(root, "security")?, "policies")?, "installScripts")?, "allow")?;
 
         keys(allow)
@@ -290,11 +270,7 @@ fn config(cwd: &Path) -> Option<Config> {
         return None;
     }
 
-    config.allow = ordered.iter().map(|key| (key.clone(), is_truthy(&allow[key]))).collect();
-    config.drift.allow =
-        Some(config.allow.iter().filter(|(_, allowed)| *allowed).map(|(key, _)| key.clone()).collect());
-
-    Some(config)
+    Some(ordered.into_iter().filter(|key| is_truthy(&allow[key])).collect())
 }
 
 /// What `pnpm-workspace.yaml` holds for the drift check, or `None` when it is outside the grammar of [`yaml`].
@@ -313,8 +289,6 @@ fn snapshot(input: &DriftInput, cwd: &Path) -> Option<yaml::Snapshot> {
 /// `checkPmNativeConfigDrift(config, "pnpm", cwd)` as the JSON object `list.ts` prints, given the yaml's
 /// [`snapshot`].
 fn drift(input: &DriftInput, snapshot: &yaml::Snapshot) -> Json {
-    let text = |value: &str| Json::Str(value.to_owned());
-    let strings = |items: &[String]| Json::Array(items.iter().map(|item| text(item)).collect());
     let difference = |ours: &[String], theirs: &[String]| -> Vec<String> {
         ours.iter().filter(|item| !theirs.contains(item)).cloned().collect()
     };
