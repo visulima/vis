@@ -399,9 +399,9 @@ fn has_unscoped_entries(base: &str) -> bool {
     found
 }
 
-#[cfg(unix)]
 /// `evictionDirectories`: `base` and, when branch scoping applies, the subtree of every branch. `None` when a
 /// branch directory has a name `@visulima/path` would rewrite.
+#[cfg(unix)]
 pub(crate) fn eviction_directories(base: &str, branch_scoped: bool) -> Option<Vec<String>> {
     let mut directories = vec![base.to_owned()];
 
