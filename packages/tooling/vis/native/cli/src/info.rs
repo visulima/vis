@@ -59,7 +59,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     match command.status() {
         // Node treats exit 1 ("not found", an empty result) as an ordinary outcome and forwards any other
         // code. A child without an exit code (a signal) is reported as 1 there, so it ends the same way.
-        Ok(status) => exit(match status.code().unwrap_or(1) {
+        Ok(status) => exit(match crate::node_exit_code(status) {
             1 => 0,
             code => code,
         }),

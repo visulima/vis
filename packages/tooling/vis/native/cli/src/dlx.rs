@@ -62,7 +62,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 
     match command.status() {
         // Node reports a child without an exit code (a signal) as 1.
-        Ok(status) => exit(status.code().unwrap_or(1)),
+        Ok(status) => exit(crate::node_exit_code(status)),
         // Found on `PATH` but could not start; nothing has been printed, so Node reports it.
         Err(_) => crate::delegate(raw),
     }

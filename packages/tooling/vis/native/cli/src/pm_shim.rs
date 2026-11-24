@@ -5,13 +5,14 @@
 //! tool. The JS implementation lives in `src/commands/shim/dispatch.ts`; this is a
 //! behaviourally identical, zero-Node reimplementation. The pure decision logic
 //! (`decide`) mirrors `decideShim` and is covered by the same cases as the JS
-//! unit tests.
+//! unit tests. The pinned manager comes from the sources of that file's `pinnedPm`
+//! and no others (`pinned_pm`), not from `vis_core::detect`, which reads more.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
-use vis_core::detect::pinned_package_manager;
+use crate::error::WrapperError;
 
 /// A recognised shim: the canonical package-manager name it maps to, and whether
 /// it is a one-off runner (npx/pnpx) that should always pass through the guard.
@@ -69,6 +70,43 @@ fn is_nested() -> bool {
     env::var_os("npm_config_user_agent").is_some() || env::var_os("npm_execpath").is_some()
 }
 
+/// The package manager a `package.json` pins through `packageManager`, when it is one of the three
+/// shimmed managers. Anything else (`bun@1`, an unparsable file, no field) is no pin.
+fn manifest_pin(directory: &Path) -> Option<&'static str> {
+    let manifest = directory.join("package.json");
+
+    if !manifest.is_file() {
+        return None;
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(manifest).ok()?).ok()?;
+    let spec = value.get("packageManager")?.as_str()?;
+
+    match spec.split('@').next()? {
+        "npm" => Some("npm"),
+        "pnpm" => Some("pnpm"),
+        "yarn" => Some("yarn"),
+        _ => None,
+    }
+}
+
+/// The project's pinned manager, as `pinnedPm` in `src/commands/shim/dispatch.ts` finds it: walking up
+/// from `cwd`, in each directory the `packageManager` field first, then the lockfiles `pnpm-lock.yaml`,
+/// `yarn.lock`, `package-lock.json` and `npm-shrinkwrap.json`. No pin means no opinion.
+fn pinned_pm(cwd: &Path) -> Option<&'static str> {
+    const LOCKFILES: [(&str, &str); 4] = [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("package-lock.json", "npm"),
+        ("npm-shrinkwrap.json", "npm"),
+    ];
+
+    cwd.ancestors().find_map(|directory| {
+        manifest_pin(directory)
+            .or_else(|| LOCKFILES.iter().find(|(file, _)| directory.join(file).is_file()).map(|(_, pm)| *pm))
+    })
+}
+
 /// Find the real package-manager executable on PATH, skipping the `.vis/shims`
 /// directory so the wrapper never re-invokes itself.
 fn find_real_pm(invoked: &str) -> Option<PathBuf> {
@@ -101,12 +139,18 @@ fn find_real_pm(invoked: &str) -> Option<PathBuf> {
     None
 }
 
-/// Exec the real PM with inherited stdio, propagating its exit status (shell
-/// convention `128 + signal` for signal-terminated children). Never returns.
+/// Exec the real PM with inherited stdio and end with its exit status. Never returns. The status is Node's
+/// `process.exit(result.status ?? (result.signal === null ? 0 : 1))`: the manager's own, and 1, not
+/// `128 + signal`, for one a signal killed. A manager that cannot be started is reported on stderr. Node's
+/// `spawnSync` reports that as neither a status nor a signal, so Node's dispatcher says nothing and exits 0;
+/// the exit status stays 0 here.
 fn exec_real(real: &Path, args: &[String]) -> ! {
     match Command::new(real).args(args).status() {
-        Ok(status) => exit(crate::forward_code(status)),
-        Err(_) => exit(1),
+        Ok(status) => exit(crate::node_exit_code(status)),
+        Err(source) => {
+            eprintln!("{}", WrapperError::spawn("__pm-shim", &real.to_string_lossy(), source));
+            exit(0)
+        }
     }
 }
 
@@ -118,10 +162,10 @@ pub fn dispatch(invoked: &str, args: &[String]) -> ! {
     }
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let pinned = pinned_package_manager(&cwd.to_string_lossy());
+    let pinned = pinned_pm(&cwd);
 
-    if decide(invoked, pinned.as_deref(), args.first().map(String::as_str), is_nested()) == Decision::Refuse {
-        let pinned = pinned.as_deref().unwrap_or("");
+    if decide(invoked, pinned, args.first().map(String::as_str), is_nested()) == Decision::Refuse {
+        let pinned = pinned.unwrap_or("");
 
         eprintln!(
             "vis: this project uses {pinned}, but `{invoked}` was run. Use `{pinned}` instead, or run `vis shim uninstall` to disable the PM guard."
@@ -140,7 +184,62 @@ pub fn dispatch(invoked: &str, args: &[String]) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, Decision};
+    use super::{decide, pinned_pm, Decision};
+
+    /// A scratch directory holding `files`, with `app` below it as the working directory.
+    fn project(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("vis-pm-shim-{}-{tag}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("app")).unwrap();
+
+        for (name, content) in files {
+            std::fs::write(root.join(name), content).unwrap();
+        }
+
+        root
+    }
+
+    #[test]
+    fn the_pin_comes_from_the_manifest_then_the_lockfiles_of_one_directory() {
+        let root = project("pin", &[("package.json", r#"{"packageManager":"yarn@4.1.0"}"#), ("pnpm-lock.yaml", "")]);
+
+        assert_eq!(pinned_pm(&root.join("app")), Some("yarn"));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let root = project("lock", &[("package.json", "{}"), ("yarn.lock", ""), ("package-lock.json", "")]);
+
+        assert_eq!(pinned_pm(&root.join("app")), Some("yarn"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_npm_pnpm_and_yarn_pins_and_their_four_lockfiles_count() {
+        for (tag, files) in [
+            ("bun", vec![("package.json", r#"{"packageManager":"bun@1.1.0"}"#)]),
+            ("workspace", vec![("pnpm-workspace.yaml", "packages: []\n")]),
+            ("yarnrc", vec![(".yarnrc.yml", "")]),
+            ("bun-lock", vec![("bun.lock", ""), ("bun.lockb", "")]),
+            ("broken", vec![("package.json", "{ not json")]),
+            ("scope", vec![("package.json", r#"{"packageManager":"@scope/x@1"}"#)]),
+        ] {
+            let root = project(tag, &files);
+
+            assert_eq!(pinned_pm(&root.join("app")), None, "{tag}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn a_manifest_without_a_pin_falls_through_to_its_own_lockfile_before_the_parent() {
+        let root = project("fall", &[("pnpm-lock.yaml", "")]);
+
+        std::fs::write(root.join("app").join("package.json"), "{}").unwrap();
+        std::fs::write(root.join("app").join("package-lock.json"), "{}").unwrap();
+
+        assert_eq!(pinned_pm(&root.join("app")), Some("npm"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn dispatches_on_agreement() {

@@ -7,6 +7,7 @@
 //! forwarded to the PM in order (the Node handlers were fixed to match).
 
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,7 +31,7 @@ fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32
         .current_dir(cwd)
         .status()
         .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))?;
-    let mut code = crate::forward_code(status);
+    let mut code = crate::node_exit_code(status);
 
     // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
     // non-error case the Node handlers suppress. Match that so the native
@@ -137,13 +138,16 @@ fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
 /// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
 /// lockfiles, so a native choice from the lockfile would differ.
 pub(crate) fn installer_selected_by_environment() -> bool {
-    const AUBE_NAMES: [&str; 4] = ["aube", "aube.exe", "aube.cmd", "aube.bat"];
+    env::var_os("VIS_INSTALLER").is_some() || env::var_os("VIS_RUNTIME").is_some() || binary_on_path("aube")
+}
 
-    env::var_os("VIS_INSTALLER").is_some()
-        || env::var_os("VIS_RUNTIME").is_some()
-        || env::var_os("PATH").is_some_and(|path| {
-            env::split_paths(&path).any(|directory| AUBE_NAMES.iter().any(|name| directory.join(name).is_file()))
-        })
+/// Whether `name` (with the Windows executable extensions) is a file in a `PATH` directory.
+pub(crate) fn binary_on_path(name: &str) -> bool {
+    let names = [name.to_owned(), format!("{name}.exe"), format!("{name}.cmd"), format!("{name}.bat")];
+
+    env::var_os("PATH").is_some_and(|path| {
+        env::split_paths(&path).any(|directory| names.iter().any(|name| directory.join(name).is_file()))
+    })
 }
 
 /// Node runs the installer a `packageManager` pin names through Corepack, which can differ from the
@@ -167,6 +171,12 @@ pub(crate) fn ancestor_pins_package_manager(cwd: &Path) -> bool {
     false
 }
 
+/// Whether Node wraps the package manager in Corepack: a `packageManager` pin in `cwd` or an ancestor
+/// (`install.corepack` left on `auto`) and `corepack` on `PATH`. The native path never does.
+pub(crate) fn corepack_applies(cwd: &Path) -> bool {
+    binary_on_path("corepack") && ancestor_pins_package_manager(cwd)
+}
+
 /// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
 /// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
 fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
@@ -177,20 +187,22 @@ fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
 
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native
 /// argument parsing does not apply them, so they must reach Node.
-fn uses_global_option(args: &[String]) -> bool {
+pub(crate) fn uses_global_option(args: &[String]) -> bool {
     const OPTIONS: [&str; 3] = ["--config", "--cwd", "--runtime"];
 
     args.iter()
         .any(|argument| OPTIONS.iter().any(|option| argument == option || argument.starts_with(&format!("{option}="))))
 }
 
-/// Entry point. `verb` is the command name, `full_args` is the FULL invocation
-/// (including the leading verb) so the config-delegation path can replay it.
-pub fn run(verb: &str, full_args: &[String]) -> ! {
+/// Entry point. `full_args` is the FULL invocation (including the leading verb, which names the
+/// command) and `raw_args` the same argv as the OS gave it, so the config-delegation path can replay it
+/// byte for byte.
+pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
+    let verb = full_args.first().map_or("", String::as_str);
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
-        crate::delegate(full_args);
+        crate::delegate(raw_args);
     }
 
     // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
@@ -240,7 +252,7 @@ pub fn run(verb: &str, full_args: &[String]) -> ! {
                 || uses_global_option(full_args)
                 || ancestor_pins_package_manager(&cwd)))
     {
-        crate::delegate(full_args);
+        crate::delegate(raw_args);
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };

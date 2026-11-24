@@ -95,7 +95,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 
     match command.status() {
         // Node reports a child without an exit code (a signal) as 1.
-        Ok(status) => exit(status.code().unwrap_or(1)),
+        Ok(status) => exit(crate::node_exit_code(status)),
         // The manager was found on `PATH` but could not start. With nothing printed yet, Node reports it;
         // after a notice, a second run in Node would print the notice twice.
         Err(_) if plan.notices.is_empty() => crate::delegate(raw),
