@@ -292,6 +292,62 @@ describe(FingerprintManager, () => {
             expect(reasons!.some((r) => r.type === "file-created")).toBe(true);
         });
 
+        it("should not treat a path the task probed and then wrote as a created input", async () => {
+            expect.assertions(3);
+
+            const accesses: FileAccess[] = [
+                { path: join(workspaceRoot, "out/result.txt"), type: "missing" },
+                { path: join(workspaceRoot, "out/result.txt"), type: "write" },
+            ];
+
+            const fingerprint = await manager.createFingerprint(accesses, "app:build", {}, {});
+
+            expect(fingerprint.missingFiles).toStrictEqual([]);
+
+            await mkdir(join(workspaceRoot, "out"), { recursive: true });
+            await writeFile(join(workspaceRoot, "out/result.txt"), "done");
+
+            const reasons = await manager.validate(fingerprint);
+
+            expect(reasons).toBeUndefined();
+            expect(fingerprint.modifiedInputs).toBeUndefined();
+        });
+
+        it("should not treat a directory the task probed and then wrote into as a created input", async () => {
+            expect.assertions(2);
+
+            const accesses: FileAccess[] = [
+                { path: join(workspaceRoot, "dist"), type: "missing" },
+                { path: join(workspaceRoot, "dist/nested/app.js"), type: "write" },
+                { path: join(workspaceRoot, ".env.local"), type: "missing" },
+            ];
+
+            const fingerprint = await manager.createFingerprint(accesses, "app:build", {}, {});
+
+            // `.env.local` stays: nothing the task did could have created it.
+            expect(fingerprint.missingFiles).toStrictEqual([".env.local"]);
+
+            await mkdir(join(workspaceRoot, "dist/nested"), { recursive: true });
+            await writeFile(join(workspaceRoot, "dist/nested/app.js"), "x");
+
+            const reasons = await manager.validate(fingerprint);
+
+            expect(reasons).toBeUndefined();
+        });
+
+        it("should not treat a path the task probed and then read as a created input", async () => {
+            expect.assertions(1);
+
+            const accesses: FileAccess[] = [
+                { path: join(workspaceRoot, "src/generated.ts"), type: "missing" },
+                { path: join(workspaceRoot, "src/generated.ts"), type: "read" },
+            ];
+
+            const fingerprint = await manager.createFingerprint(accesses, "app:build", {}, {});
+
+            expect(fingerprint.missingFiles).toStrictEqual([]);
+        });
+
         it("should detect directory listing changes", async () => {
             expect.assertions(2);
 

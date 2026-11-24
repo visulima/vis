@@ -314,7 +314,26 @@ export class FingerprintManager {
             envHashes[key] = envValueHash(key, value);
         }
 
-        const missingFiles = [...missingPaths].toSorted();
+        // A path the task probed as missing and later touched successfully — itself, or
+        // something inside it — came into being during the run (its own output), so it
+        // is not an input that appeared later.
+        const existingPaths = new Set<string>();
+
+        for (const access of accesses) {
+            if (access.type === "missing") {
+                continue;
+            }
+
+            const path = relative(this.#workspaceRoot, access.path);
+
+            existingPaths.add(path);
+
+            for (let slash = path.lastIndexOf("/"); slash > 0; slash = path.lastIndexOf("/", slash - 1)) {
+                existingPaths.add(path.slice(0, slash));
+            }
+        }
+
+        const missingFiles = [...missingPaths].filter((path) => !existingPaths.has(path)).toSorted();
 
         return {
             commandHash,

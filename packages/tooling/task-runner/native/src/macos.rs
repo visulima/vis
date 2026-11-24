@@ -16,10 +16,12 @@
 //!
 //! ## Path resolution
 //!
-//! The dylib sends paths verbatim (it can't cheaply canonicalise in an
-//! arbitrary process). Relative paths are joined against the spawn `cwd`
-//! here; absolute paths pass through. The TypeScript caller does the
-//! workspace-root + exclusion filtering, identical to the seccomp path.
+//! The dylib resolves each path to an absolute one before sending it (`openat`
+//! directory descriptors via `F_GETPATH`, relative paths against the process's
+//! own current directory), since only the tracked process knows those. A path
+//! it could not resolve arrives relative and is joined against the spawn `cwd`
+//! here. The TypeScript caller does the workspace-root + exclusion filtering,
+//! identical to the seccomp path.
 
 #![cfg(target_os = "macos")]
 
@@ -139,9 +141,11 @@ fn run(
 
     let mut command = Command::new(&argv[0]);
     command.args(&argv[1..]);
+    command.envs(&extra_env);
+    // Injected last: a stale value inherited from an outer tracker (or passed by
+    // the caller) must not replace this run's dylib or report socket.
     command.env("DYLD_INSERT_LIBRARIES", dylib_path);
     command.env("FSPY_MACOS_FD", child_fd.to_string());
-    command.envs(&extra_env);
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -395,8 +399,9 @@ fn signal_cancel(cancel_write: RawFd) {
     }
 }
 
-/// Join relative paths against the spawn cwd; pass absolutes through. Lossy
-/// UTF-8 — non-UTF-8 paths are rare and the JS side compares as strings.
+/// Join the rare unresolved relative path against the spawn cwd; pass absolutes
+/// through. Lossy UTF-8 — non-UTF-8 paths are rare and the JS side compares as
+/// strings.
 fn normalize(bytes: &[u8], cwd: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
 
@@ -415,6 +420,7 @@ fn kind_str(mode: u8) -> &'static str {
         1 => "write",
         2 => "stat",
         3 => "readdir",
+        4 => "missing",
         _ => "read",
     }
 }

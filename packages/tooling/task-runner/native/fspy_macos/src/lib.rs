@@ -14,17 +14,25 @@
 //! dyld maps this dylib first and runs [`init`] (via `ctor`) before the
 //! target's `main`. `init` adopts the socket fd. Every interposed libc call
 //! forwards to the real implementation and then best-effort `send(2)`s one
-//! datagram `[u8 mode][path bytes]` to the parent.
+//! datagram `[u8 mode][absolute path bytes]` to the parent (`mode` is
+//! read/write/stat/readdir, or `missing` for a lookup that failed with `ENOENT`).
 //!
-//! ## Why fixed-arity hooks (not `c_variadic`)
+//! ## `open`/`openat` are variadic
 //!
-//! `open`/`openat` are variadic in C (`open(path, flags, ...)`). Defining a
-//! variadic Rust fn needs nightly (`feature(c_variadic)`). Instead each hook
-//! is declared with the **maximum fixed arity** (`open(path, flags, mode)`).
-//! On the macOS arm64/x86_64 SysV-style ABIs the first args arrive in
-//! registers, so reading a `mode` slot the caller didn't pass is harmless —
-//! we only ever *use* it when `O_CREAT` is set, and we forward all three to
-//! the real `open`, which itself ignores `mode` without `O_CREAT`.
+//! `open(path, flags, ...)` takes its optional `mode` as a C variadic argument.
+//! Defining a variadic Rust fn needs nightly (`feature(c_variadic)`), so each hook
+//! is written with the fixed arity `(path, flags, mode)` and reads `mode` from
+//! wherever the platform ABI puts it:
+//!
+//! - **x86_64** (SysV): variadic and fixed arguments share the argument
+//!   registers, so the fixed-arity hook receives `mode` in `rdx` as is.
+//! - **aarch64** (Apple): *every* variadic argument is passed on the stack, so a
+//!   fixed-arity hook would read a leftover register instead. A two-instruction
+//!   assembly trampoline (`fspy_open_variadic`, `fspy_openat_variadic`) loads the
+//!   stack slot into the register the hook expects and tail-calls it; the
+//!   interpose table points at the trampolines.
+//!
+//! The hook forwards `mode` to the real call only when `O_CREAT` is set.
 //!
 //! ## Why a dylib-local interpose call doesn't recurse
 //!
@@ -41,7 +49,7 @@ use core::ffi::{c_char, c_int, c_void};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use libc::{mode_t, size_t, ssize_t, DIR};
+use libc::{size_t, ssize_t, DIR};
 
 /// Wire opcodes — one byte prefix per datagram. Kept in sync with the parser
 /// in `native/src/macos.rs`.
@@ -50,6 +58,8 @@ mod mode {
     pub const WRITE: u8 = 1;
     pub const STAT: u8 = 2;
     pub const READDIR: u8 = 3;
+    /// A lookup that failed with `ENOENT`: the path did not exist when probed.
+    pub const MISSING: u8 = 4;
 }
 
 /// Env var carrying the inherited reporting socket fd. Set by the parent.
@@ -97,7 +107,12 @@ fn init() {
         return;
     };
 
-    if fd < 0 {
+    // The number can be stale: a descendant that closed its descriptors (or was
+    // spawned without inheriting the socket) still sees `FSPY_MACOS_FD` in its
+    // environment, and the number may by now belong to an unrelated file or
+    // stream. Only adopt a unix-domain datagram socket; otherwise stay disabled
+    // rather than write access records into someone else's descriptor.
+    if fd < 0 || !is_report_socket(fd) {
         return;
     }
 
@@ -118,9 +133,87 @@ fn init() {
     REPORT_FD.store(fd, Ordering::Relaxed);
 }
 
-/// Best-effort: send one `[mode][path]` datagram. Never blocks (`MSG_DONTWAIT`)
-/// and never errors out the caller — a full/closed socket just drops the record.
-unsafe fn report(path: *const c_char, mode: u8) {
+/// True when `fd` is an `AF_UNIX`/`SOCK_DGRAM` socket — what the parent hands out.
+fn is_report_socket(fd: c_int) -> bool {
+    let mut kind: c_int = 0;
+    let mut kind_len = std::mem::size_of::<c_int>() as libc::socklen_t;
+
+    // SAFETY: `kind`/`kind_len` are valid out-parameters for SO_TYPE.
+    let typed = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            std::ptr::addr_of_mut!(kind).cast::<c_void>(),
+            &mut kind_len,
+        )
+    };
+
+    if typed != 0 || kind != libc::SOCK_DGRAM {
+        return false;
+    }
+
+    // SAFETY: an all-zero `sockaddr_storage` is a valid out-parameter for getsockname.
+    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+    // SAFETY: `addr`/`addr_len` describe a writable sockaddr_storage.
+    let named = unsafe { libc::getsockname(fd, std::ptr::addr_of_mut!(addr).cast::<libc::sockaddr>(), &mut addr_len) };
+
+    named == 0 && c_int::from(addr.ss_family) == libc::AF_UNIX
+}
+
+/// Fill `buf` with the absolute form of `path`, returning its length: absolute
+/// paths verbatim, relative ones joined to the directory `dirfd` refers to (or
+/// the current directory for `AT_FDCWD`). The parent cannot do this itself — it
+/// does not know the descriptor's directory or any `chdir` the process made.
+/// When the base cannot be resolved the relative path is sent as is and the
+/// parent falls back to joining it with the spawn directory.
+unsafe fn absolute_path(path: *const c_char, dirfd: c_int, buf: &mut [u8]) -> usize {
+    // SAFETY: `path` is a valid NUL-terminated C string from the caller.
+    let path_len = unsafe { libc::strlen(path) };
+    let relative = path_len > 0 && unsafe { *path } as u8 != b'/';
+    let mut len = 0;
+
+    if relative {
+        let base = buf.as_mut_ptr().cast::<c_char>();
+
+        // SAFETY: `buf` holds at least PATH_MAX bytes, which `getcwd` and
+        // `F_GETPATH` both require.
+        let resolved = unsafe {
+            if dirfd == libc::AT_FDCWD {
+                !libc::getcwd(base, buf.len()).is_null()
+            } else {
+                libc::fcntl(dirfd, libc::F_GETPATH, base) != -1
+            }
+        };
+
+        if resolved {
+            // SAFETY: both calls NUL-terminate on success.
+            len = unsafe { libc::strlen(base) };
+
+            // The root directory already ends in a separator.
+            if len < buf.len() && buf[len - 1] != b'/' {
+                buf[len] = b'/';
+                len += 1;
+            }
+        }
+    }
+
+    let room = buf.len() - len;
+    let copy = path_len.min(room);
+
+    // SAFETY: copying `copy <= room` bytes from the C string into the buffer.
+    unsafe { std::ptr::copy_nonoverlapping(path.cast::<u8>(), buf.as_mut_ptr().add(len), copy) };
+
+    len + copy
+}
+
+/// Best-effort: send one `[mode][absolute path]` datagram. Never blocks
+/// (`MSG_DONTWAIT`) and never errors out the caller — a full/closed socket just
+/// drops the record. `dirfd` is the directory a relative `path` is resolved
+/// against (`AT_FDCWD` for the plain, non-`*at` calls).
+unsafe fn report(path: *const c_char, dirfd: c_int, mode: u8) {
     if path.is_null() {
         return;
     }
@@ -146,6 +239,10 @@ unsafe fn report(path: *const c_char, mode: u8) {
         return;
     }
 
+    // The hooks report right after the real call; the caller still has to see
+    // that call's `errno`, not whatever `getcwd`/`send` left behind.
+    let saved_errno = last_errno();
+
     // PATH_MAX (1024 on macOS) + 1 opcode byte. A path longer than this is
     // truncated for the wire; the parent treats it as a best-effort hint.
     const CAP: usize = 1 + 1024;
@@ -153,13 +250,8 @@ unsafe fn report(path: *const c_char, mode: u8) {
 
     buf[0] = mode;
 
-    // SAFETY: `path` is a valid NUL-terminated C string from the caller.
-    let len = unsafe { libc::strlen(path) }.min(CAP - 1);
-
-    // SAFETY: copying `len <= CAP-1` bytes from the C string into the buffer.
-    unsafe {
-        std::ptr::copy_nonoverlapping(path.cast::<u8>(), buf.as_mut_ptr().add(1), len);
-    }
+    // SAFETY: `path` is non-null and NUL-terminated; the buffer is PATH_MAX bytes.
+    let len = unsafe { absolute_path(path, dirfd, &mut buf[1..]) };
 
     // SAFETY: send on the datagram socket; MSG_DONTWAIT keeps it non-blocking.
     unsafe {
@@ -167,6 +259,24 @@ unsafe fn report(path: *const c_char, mode: u8) {
     }
 
     IN_HOOK.with(|flag| flag.set(false));
+
+    // SAFETY: `__error` returns this thread's errno slot.
+    unsafe { *libc::__error() = saved_errno };
+}
+
+/// The calling thread's `errno`.
+fn last_errno() -> c_int {
+    // SAFETY: `__error` returns this thread's errno slot.
+    unsafe { *libc::__error() }
+}
+
+/// For a lookup that just failed: report the path as `missing` when the failure
+/// was `ENOENT`, so a later appearance of the path invalidates a fingerprint
+/// that probed it. Other failures (`EACCES`, `ENOTDIR`, …) are not reported.
+unsafe fn report_if_missing(path: *const c_char, dirfd: c_int) {
+    if last_errno() == libc::ENOENT {
+        unsafe { report(path, dirfd, mode::MISSING) };
+    }
 }
 
 /// `open(path, flags[, mode])` → classify by access flags.
@@ -182,23 +292,40 @@ fn open_mode(flags: c_int) -> u8 {
 // ---- hooks -----------------------------------------------------------------
 //
 // Each hook forwards to the real libc function (resolved within this image, so
-// not re-interposed) and reports on success. `extern "C"` + fixed arity.
+// not re-interposed) and reports on success, or as `missing` when a lookup
+// failed with `ENOENT`. `extern "C"` + fixed arity.
 
-unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-    let fd = unsafe { libc::open(path, flags, mode as c_int) };
+/// `open(path, flags[, mode])`. `mode` is only meaningful (and only forwarded)
+/// with `O_CREAT`; see the module docs for how it reaches this fn on each arch.
+unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -> c_int {
+    let fd = if flags & libc::O_CREAT != 0 {
+        unsafe { libc::open(path, flags, mode) }
+    } else {
+        unsafe { libc::open(path, flags) }
+    };
 
     if fd >= 0 {
-        unsafe { report(path, open_mode(flags)) };
+        unsafe { report(path, libc::AT_FDCWD, open_mode(flags)) };
+    } else if flags & libc::O_CREAT == 0 {
+        // A failed create says nothing about the path's prior state (the parent
+        // directory may be what is missing).
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     fd
 }
 
-unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-    let fd = unsafe { libc::openat(dirfd, path, flags, mode as c_int) };
+unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: c_int) -> c_int {
+    let fd = if flags & libc::O_CREAT != 0 {
+        unsafe { libc::openat(dirfd, path, flags, mode) }
+    } else {
+        unsafe { libc::openat(dirfd, path, flags) }
+    };
 
     if fd >= 0 {
-        unsafe { report(path, open_mode(flags)) };
+        unsafe { report(path, dirfd, open_mode(flags)) };
+    } else if flags & libc::O_CREAT == 0 {
+        unsafe { report_if_missing(path, dirfd) };
     }
 
     fd
@@ -208,7 +335,9 @@ unsafe extern "C" fn hook_stat(path: *const c_char, buf: *mut libc::stat) -> c_i
     let rc = unsafe { libc::stat(path, buf) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -218,7 +347,9 @@ unsafe extern "C" fn hook_lstat(path: *const c_char, buf: *mut libc::stat) -> c_
     let rc = unsafe { libc::lstat(path, buf) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -228,7 +359,9 @@ unsafe extern "C" fn hook_access(path: *const c_char, amode: c_int) -> c_int {
     let rc = unsafe { libc::access(path, amode) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -238,7 +371,9 @@ unsafe extern "C" fn hook_opendir(path: *const c_char) -> *mut DIR {
     let dir = unsafe { libc::opendir(path) };
 
     if !dir.is_null() {
-        unsafe { report(path, mode::READDIR) };
+        unsafe { report(path, libc::AT_FDCWD, mode::READDIR) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     dir
@@ -248,8 +383,18 @@ unsafe extern "C" fn hook_rename(old: *const c_char, new: *const c_char) -> c_in
     let rc = unsafe { libc::rename(old, new) };
 
     if rc == 0 {
-        unsafe { report(old, mode::WRITE) };
-        unsafe { report(new, mode::WRITE) };
+        unsafe { report(old, libc::AT_FDCWD, mode::WRITE) };
+        unsafe { report(new, libc::AT_FDCWD, mode::WRITE) };
+    }
+
+    rc
+}
+
+unsafe extern "C" fn hook_mkdir(path: *const c_char, mode: libc::mode_t) -> c_int {
+    let rc = unsafe { libc::mkdir(path, mode) };
+
+    if rc == 0 {
+        unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
     rc
@@ -259,14 +404,14 @@ unsafe extern "C" fn hook_unlink(path: *const c_char) -> c_int {
     let rc = unsafe { libc::unlink(path) };
 
     if rc == 0 {
-        unsafe { report(path, mode::WRITE) };
+        unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
     rc
 }
 
-/// `read`/`write` are NOT hooked — we classify at `open` time, which is enough
-/// for cache fingerprinting and keeps the hot path (every byte of I/O) clean.
+// `read`/`write` are NOT hooked — we classify at `open` time, which is enough
+// for cache fingerprinting and keeps the hot path (every byte of I/O) clean.
 
 // ---- child-process propagation ---------------------------------------------
 //
@@ -379,6 +524,55 @@ unsafe extern "C" fn hook_execve(path: *const c_char, argv: *const *const c_char
     }
 }
 
+extern "C" {
+    // Not exported by the `libc` crate. Marks `fd` as inherited by a child spawned
+    // with `POSIX_SPAWN_CLOEXEC_DEFAULT` (which closes every descriptor that file
+    // actions do not name).
+    fn posix_spawn_file_actions_addinherit_np(file_actions: *mut libc::posix_spawn_file_actions_t, fd: c_int) -> c_int;
+}
+
+/// Runs `spawn` with file actions that keep the report socket open in the child.
+///
+/// libuv (Node's `child_process`, so vitest's fork pool and `vite` -> `esbuild`)
+/// spawns with `POSIX_SPAWN_CLOEXEC_DEFAULT`; without an explicit inherit action
+/// the child loses the socket and its accesses never reach the parent. The
+/// caller's file actions are extended in place when given; otherwise a temporary
+/// set is created and destroyed around the call.
+unsafe fn with_inherited_report_fd(
+    file_actions: *const libc::posix_spawn_file_actions_t,
+    spawn: impl FnOnce(*const libc::posix_spawn_file_actions_t) -> c_int,
+) -> c_int {
+    let fd = REPORT_FD.load(Ordering::Relaxed);
+
+    if fd < 0 {
+        return spawn(file_actions);
+    }
+
+    if !file_actions.is_null() {
+        // SAFETY: `file_actions` points at an initialised object the caller owns.
+        unsafe { posix_spawn_file_actions_addinherit_np(file_actions.cast_mut(), fd) };
+
+        return spawn(file_actions);
+    }
+
+    let mut own: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
+
+    // SAFETY: `own` is a valid out-parameter; it is destroyed below once initialised.
+    if unsafe { libc::posix_spawn_file_actions_init(&mut own) } != 0 {
+        return spawn(file_actions);
+    }
+
+    // SAFETY: `own` was initialised just above.
+    unsafe { posix_spawn_file_actions_addinherit_np(&mut own, fd) };
+
+    let rc = spawn(&own);
+
+    // SAFETY: `own` was initialised and the spawn call has returned.
+    unsafe { libc::posix_spawn_file_actions_destroy(&mut own) };
+
+    rc
+}
+
 unsafe extern "C" fn hook_posix_spawn(
     pid: *mut libc::pid_t,
     path: *const c_char,
@@ -389,9 +583,11 @@ unsafe extern "C" fn hook_posix_spawn(
 ) -> c_int {
     // The kernel copies `envp` during the call, so dropping the rebuilt storage
     // when this returns is safe.
-    match unsafe { rebuild_envp(envp as *const *const c_char) } {
-        Some(copy) => unsafe { libc::posix_spawn(pid, path, file_actions, attrp, argv, copy.as_ptr()) },
-        None => unsafe { libc::posix_spawn(pid, path, file_actions, attrp, argv, envp) },
+    let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
+    let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
+
+    unsafe {
+        with_inherited_report_fd(file_actions, |actions| libc::posix_spawn(pid, path, actions, attrp, argv, envp))
     }
 }
 
@@ -403,11 +599,48 @@ unsafe extern "C" fn hook_posix_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    match unsafe { rebuild_envp(envp as *const *const c_char) } {
-        Some(copy) => unsafe { libc::posix_spawnp(pid, path, file_actions, attrp, argv, copy.as_ptr()) },
-        None => unsafe { libc::posix_spawnp(pid, path, file_actions, attrp, argv, envp) },
+    let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
+    let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
+
+    unsafe {
+        with_inherited_report_fd(file_actions, |actions| libc::posix_spawnp(pid, path, actions, attrp, argv, envp))
     }
 }
+
+// Apple arm64 passes every variadic argument on the stack, so `open`'s `mode`
+// is at `[sp]` (`openat`'s too) while a fixed-arity hook would read it from a
+// register. These trampolines load the slot into the register the hook expects
+// and tail-call it (stack and link register untouched).
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text",
+    ".p2align 2",
+    ".globl _fspy_open_variadic",
+    "_fspy_open_variadic:",
+    "ldr w2, [sp]",
+    "b {open}",
+    ".globl _fspy_openat_variadic",
+    "_fspy_openat_variadic:",
+    "ldr w3, [sp]",
+    "b {openat}",
+    open = sym hook_open,
+    openat = sym hook_openat,
+);
+
+#[cfg(target_arch = "aarch64")]
+extern "C" {
+    fn fspy_open_variadic();
+    fn fspy_openat_variadic();
+}
+
+#[cfg(target_arch = "aarch64")]
+const OPEN_REPLACEMENT: unsafe extern "C" fn() = fspy_open_variadic;
+#[cfg(target_arch = "aarch64")]
+const OPENAT_REPLACEMENT: unsafe extern "C" fn() = fspy_openat_variadic;
+#[cfg(not(target_arch = "aarch64"))]
+const OPEN_REPLACEMENT: unsafe extern "C" fn(*const c_char, c_int, c_int) -> c_int = hook_open;
+#[cfg(not(target_arch = "aarch64"))]
+const OPENAT_REPLACEMENT: unsafe extern "C" fn(c_int, *const c_char, c_int, c_int) -> c_int = hook_openat;
 
 macro_rules! interpose {
     ($static_name:ident, $replacement:expr, $replacee:expr) => {
@@ -418,14 +651,15 @@ macro_rules! interpose {
     };
 }
 
-interpose!(I_OPEN, hook_open, libc::open);
-interpose!(I_OPENAT, hook_openat, libc::openat);
+interpose!(I_OPEN, OPEN_REPLACEMENT, libc::open);
+interpose!(I_OPENAT, OPENAT_REPLACEMENT, libc::openat);
 interpose!(I_STAT, hook_stat, libc::stat);
 interpose!(I_LSTAT, hook_lstat, libc::lstat);
 interpose!(I_ACCESS, hook_access, libc::access);
 interpose!(I_OPENDIR, hook_opendir, libc::opendir);
 interpose!(I_RENAME, hook_rename, libc::rename);
 interpose!(I_UNLINK, hook_unlink, libc::unlink);
+interpose!(I_MKDIR, hook_mkdir, libc::mkdir);
 // Child-process propagation: re-inject DYLD_INSERT_LIBRARIES + FSPY_MACOS_FD
 // into curated child environments so tracking follows the whole tree.
 interpose!(I_EXECVE, hook_execve, libc::execve);
