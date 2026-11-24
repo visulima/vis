@@ -203,6 +203,8 @@ struct Triggers {
 struct Detectors<'a> {
     /// `(pattern, lowercased first segment)` of each trigger without a wildcard.
     files: Vec<(&'a str, String)>,
+    /// The lowercased first segments of `files`: the only entry names a listing has to remember.
+    first_segments: HashSet<Vec<u8>>,
     /// The part after the `*` of each wildcard trigger.
     suffixes: Vec<&'a [u8]>,
     dependencies: &'a [String],
@@ -222,7 +224,9 @@ impl<'a> Detectors<'a> {
             }
         }
 
-        Self { files, suffixes, dependencies: &triggers.fallback_dependencies }
+        let first_segments = files.iter().map(|(_, segment)| segment.as_bytes().to_vec()).collect();
+
+        Self { files, first_segments, suffixes, dependencies: &triggers.fallback_dependencies }
     }
 }
 
@@ -242,7 +246,12 @@ fn detector_triggered(project: &Path, manifest: &Manifest, detectors: &Detectors
         }
 
         ascii &= bytes.is_ascii();
-        names.insert(bytes.to_ascii_lowercase());
+
+        let folded = bytes.to_ascii_lowercase();
+
+        if detectors.first_segments.contains(&folded) {
+            names.insert(folded);
+        }
     }
 
     // `exists` follows links and, on a case-insensitive volume, ignores case, so a pattern is only ruled out
