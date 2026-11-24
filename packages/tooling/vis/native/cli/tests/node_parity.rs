@@ -451,13 +451,13 @@ fn shim_exits_one_when_the_real_manager_dies_by_signal() {
 fn shim_reports_a_real_manager_that_cannot_start() {
     let scratch = Scratch::new("shim-spawn");
 
-    // Found on PATH (a file) but not executable: Node's spawn fails and exits 0, so the exit stays.
+    // Found on PATH (a file) but not executable: the spawn fails, which is an error (exit 1), as in Node.
     std::fs::write(scratch.bin().join("npm"), "#!/bin/sh\n").unwrap();
 
     let output = scratch.run(&["__pm-shim", "npm", "install"]);
 
-    assert!(stderr(&output).starts_with("vis __pm-shim: failed to run '"), "stderr: {}", stderr(&output));
-    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).starts_with("vis shim: could not start npm: "), "stderr: {}", stderr(&output));
+    assert_eq!(output.status.code(), Some(1));
 }
 
 // ---- a child killed by a signal ends the command with 1, as in Node ---------------------

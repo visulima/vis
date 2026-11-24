@@ -1,9 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, promises as fs, readFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { decideShim } from "../../../src/commands/shim/dispatch";
+import { decideShim, shimExit } from "../../../src/commands/shim/dispatch";
 import { shimInstallExecute, shimStatusExecute, shimUninstallExecute } from "../../../src/commands/shim/handler";
 import { cleanupTemporaryDirectory, createTemporaryDirectory } from "../../test-helpers";
 
@@ -32,6 +33,50 @@ describe(decideShim, () => {
         expect.hasAssertions();
 
         expect(decideShim("yarn", undefined, "install", false)).toBe("dispatch");
+    });
+});
+
+describe(shimExit, () => {
+    it("passes the manager's own status through", () => {
+        expect.hasAssertions();
+
+        expect(shimExit("npm", { signal: null, status: 3 })).toStrictEqual({ code: 3 });
+        expect(shimExit("npm", { signal: null, status: 0 })).toStrictEqual({ code: 0 });
+    });
+
+    it("ends with 1 for a manager a signal killed", () => {
+        expect.hasAssertions();
+
+        expect(shimExit("npm", { signal: "SIGKILL", status: null })).toStrictEqual({ code: 1 });
+    });
+
+    it("ends with 1 and a message for a manager that could not be started", () => {
+        expect.hasAssertions();
+
+        const outcome = shimExit("npm", { error: new Error("spawnSync /bin/npm EACCES"), signal: null, status: null });
+
+        expect(outcome).toStrictEqual({ code: 1, message: "vis shim: could not start npm: spawnSync /bin/npm EACCES" });
+    });
+});
+
+describe("shimExit with a real spawn", () => {
+    it.skipIf(process.platform === "win32")("reports a manager that is not executable", async () => {
+        expect.assertions(2);
+
+        const directory = createTemporaryDirectory();
+
+        try {
+            const manager = join(directory, "npm");
+
+            await fs.writeFile(manager, "#!/bin/sh\n", { mode: 0o644 });
+
+            const outcome = shimExit("npm", spawnSync(manager, ["install"]));
+
+            expect(outcome.code).toBe(1);
+            expect(outcome.message).toMatch(/^vis shim: could not start npm: .*EACCES/u);
+        } finally {
+            cleanupTemporaryDirectory(directory);
+        }
     });
 });
 
