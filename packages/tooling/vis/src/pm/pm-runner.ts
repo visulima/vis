@@ -21,6 +21,7 @@ import {
     whichBin,
 } from "#native";
 
+import { VisUserError } from "../errors/vis-user-error";
 import {
     resolveAubeAdd,
     resolveAubeDedupe,
@@ -811,7 +812,8 @@ const resolveInfo = (pm: InstallerInfo, options: InfoOptions): ResolvedCommand =
     // `--` is a POSIX argv "end of options" marker. Every PM's view/info
     // subcommand respects it. Inserting it before the user-supplied package
     // name prevents a name starting with `-` (e.g. `-rf`, `--registry=...`)
-    // from being reinterpreted as a flag by the underlying tool.
+    // from being reinterpreted as a flag by the underlying tool. `--json` goes before it: after `--`
+    // the manager reads it as another field name and prints plain text.
     switch (pm.name) {
         case "bun": {
             // `bun pm view` landed in bun 1.3. Older bun has no registry-info command;
@@ -824,27 +826,37 @@ const resolveInfo = (pm: InstallerInfo, options: InfoOptions): ResolvedCommand =
                 );
             }
 
-            args.push("pm", "view", "--", options.package, ...options.fields);
+            args.push("pm", "view");
 
             if (options.json) {
                 args.push("--json");
             }
+
+            args.push("--", options.package, ...options.fields);
 
             break;
         }
         case "npm":
         case "pnpm": {
-            args.push("view", "--", options.package, ...options.fields);
+            args.push("view");
 
             if (options.json) {
                 args.push("--json");
             }
 
+            args.push("--", options.package, ...options.fields);
+
             break;
         }
         case "yarn": {
             if (pm.version.startsWith("1.")) {
-                args.push("info", "--", options.package);
+                args.push("info");
+
+                if (options.json) {
+                    args.push("--json");
+                }
+
+                args.push("--", options.package);
 
                 const [firstField, ...rest] = options.fields;
 
@@ -855,19 +867,17 @@ const resolveInfo = (pm: InstallerInfo, options: InfoOptions): ResolvedCommand =
 
                     args.push(firstField);
                 }
+            } else {
+                args.push("npm", "info");
 
                 if (options.json) {
                     args.push("--json");
                 }
-            } else {
-                args.push("npm", "info", "--", options.package);
+
+                args.push("--", options.package);
 
                 if (options.fields.length > 0) {
                     warnings.push("yarn berry does not support field arguments to 'npm info'; ignoring.");
-                }
-
-                if (options.json) {
-                    args.push("--json");
                 }
             }
 
@@ -1098,7 +1108,21 @@ const runExec = (pm: InstallerInfo, options: ExecOptions, cwd: string, logger: C
         return runResolved(pm, resolveAubeExec(options), cwd, logger, extras);
     }
 
-    return resolveAndRun(pm, () => resolveExec(pm.name, pm.version, options), cwd, logger, extras);
+    // The resolver refuses flags the manager cannot honour (`--reverse` off pnpm, workspace flags on bun); that
+    // message is all the user needs.
+    return resolveAndRun(
+        pm,
+        () => {
+            try {
+                return resolveExec(pm.name, pm.version, options);
+            } catch (error) {
+                throw new VisUserError((error as Error).message, { cause: error });
+            }
+        },
+        cwd,
+        logger,
+        extras,
+    );
 };
 
 const runPmSubcommand = (pm: InstallerInfo, subcommand: string, args: string[], cwd: string, logger: Console, extras: RunOverrides = {}): number => {

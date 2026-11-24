@@ -229,7 +229,7 @@ fn has_peer_dependency_warnings(output: &[u8]) -> bool {
 /// What the gates settle for a native run, before the command's own flags and arguments come in.
 pub(crate) struct Setup {
     pub(crate) cwd: PathBuf,
-    /// The manager Node would pick for `cwd`, and its version (`latest` when unknown).
+    /// The manager Node would pick for `cwd`, and its version (`latest` when unknown, `1.x` for a classic `yarn.lock`).
     pub(crate) manager: String,
     pub(crate) version: String,
     pub(crate) root: Root,

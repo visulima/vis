@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { detectPm, resolveInfo } from "../../src/pm/pm-runner";
+import { isUserError } from "../../src/errors/vis-user-error";
+import { detectPm, resolveInfo, runExec } from "../../src/pm/pm-runner";
 
 describe(detectPm, () => {
     it("should detect a valid package manager for the workspace", () => {
@@ -46,7 +47,18 @@ describe(resolveInfo, () => {
         const { args, bin } = resolveInfo({ name: "pnpm", version: "10.0.0" }, { fields: ["version", "dependencies"], json: true, package: "react@18" });
 
         expect(bin).toBe("pnpm");
-        expect(args).toStrictEqual(["view", "--", "react@18", "version", "dependencies", "--json"]);
+        expect(args).toStrictEqual(["view", "--json", "--", "react@18", "version", "dependencies"]);
+    });
+
+    it("should put --json before `--` so the manager reads it as a flag, not a field name", () => {
+        expect.assertions(4);
+
+        const info = { fields: ["version"], json: true, package: "react" };
+
+        expect(resolveInfo({ name: "npm", version: "10.0.0" }, info).args).toStrictEqual(["view", "--json", "--", "react", "version"]);
+        expect(resolveInfo({ name: "bun", version: "1.3.0" }, info).args).toStrictEqual(["pm", "view", "--json", "--", "react", "version"]);
+        expect(resolveInfo({ name: "yarn", version: "1.22.19" }, info).args).toStrictEqual(["info", "--json", "--", "react", "version"]);
+        expect(resolveInfo({ name: "yarn", version: "4.1.0" }, { ...info, fields: [] }).args).toStrictEqual(["npm", "info", "--json", "--", "react"]);
     });
 
     it("should use `bun pm view` (not `bun view`) for bun", () => {
@@ -101,7 +113,7 @@ describe(resolveInfo, () => {
         const { args, bin, warnings } = resolveInfo({ name: "yarn", version: "4.1.0" }, { fields: ["version"], json: true, package: "react" });
 
         expect(bin).toBe("yarn");
-        expect(args).toStrictEqual(["npm", "info", "--", "react", "--json"]);
+        expect(args).toStrictEqual(["npm", "info", "--json", "--", "react"]);
         expect(warnings).toHaveLength(1);
     });
 
@@ -122,5 +134,29 @@ describe(resolveInfo, () => {
         // `--` guarantees the tool treats the `--registry=…` token as a positional package name
         // (for which it will then report "not found"), not as a flag override.
         expect(args).toStrictEqual(["view", "--", "--registry=evil.com"]);
+    });
+});
+
+describe(runExec, () => {
+    const options = { args: [], command: "eslint", filter: [], parallel: false, recursive: false, reverse: true, shellMode: false, workspaceRoot: false };
+
+    it("should refuse a flag the manager cannot honour with a message-only user error", () => {
+        expect.assertions(3);
+
+        const attempt = (): number => runExec({ name: "npm", useCorepack: false, version: "10.0.0" }, options, process.cwd(), console, { dry: true });
+
+        expect(attempt).toThrow(/--reverse/);
+
+        let thrown: unknown;
+
+        try {
+            attempt();
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(isUserError(thrown)).toBe(true);
+
+        expect(runExec({ name: "pnpm", useCorepack: false, version: "10.0.0" }, options, process.cwd(), { ...console, log: () => undefined }, { dry: true })).toBe(0);
     });
 });

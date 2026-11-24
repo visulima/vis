@@ -401,7 +401,7 @@ const resolveAubeUnlink = (packages: ReadonlyArray<string>, recursive: boolean):
 };
 
 const resolveAubeInfo = (options: InfoOptions): ResolvedCommand => {
-    const args: string[] = ["view", "--", options.package];
+    const args: string[] = ["view"];
     const warnings: string[] = [];
     const [first, ...rest] = options.fields;
 
@@ -409,7 +409,14 @@ const resolveAubeInfo = (options: InfoOptions): ResolvedCommand => {
     // Matches yarn-v1's existing precedence in `resolveInfo`: when the
     // user asks for a specific field they likely want that, not a JSON
     // dump of every field.
-    if (first !== undefined) {
+    if (first === undefined) {
+        // `--json` goes before `--`: after it the CLI reads it as a field name.
+        if (options.json) {
+            args.push("--json");
+        }
+
+        args.push("--", options.package);
+    } else {
         if (rest.length > 0) {
             warnings.push("aube view only supports a single field; using the first.");
         }
@@ -418,9 +425,7 @@ const resolveAubeInfo = (options: InfoOptions): ResolvedCommand => {
             warnings.push("aube view does not support --json with a field selector; printing the field without --json.");
         }
 
-        args.push(first);
-    } else if (options.json) {
-        args.push("--json");
+        args.push("--", options.package, first);
     }
 
     return { args, bin: "aube", warnings };

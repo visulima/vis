@@ -122,8 +122,8 @@ fn is_plain_word(token: &str) -> bool {
         && token.chars().all(|character| character.is_ascii_alphanumeric() || "@/._~^<>=*|+:#,-".contains(character))
 }
 
-/// `resolveInfo` for the managers a plain run can have: the version is unknown (`latest`) wherever no
-/// `packageManager` pin names one, and a pin never reaches here. `None` for a warning or an unknown version.
+/// `resolveInfo` for the managers a plain run can have: the version is unknown (`latest`) wherever neither a
+/// `packageManager` pin nor a classic `yarn.lock` names one, and a pin never reaches here. `None` for a warning or an unknown version.
 fn resolve_info(manager: &str, version: &str, flags: &Flags) -> Option<ResolvedCommand> {
     if version != "latest" {
         return None;
@@ -140,14 +140,15 @@ fn resolve_info(manager: &str, version: &str, flags: &Flags) -> Option<ResolvedC
         _ => return None,
     }
 
-    // `--` keeps a package name that starts with a dash from being read as a flag by the manager.
-    args.push("--".to_owned());
-    args.push(package.clone());
-    args.extend(fields.iter().cloned());
-
+    // `--json` goes before `--`, which ends the flags: after it the manager reads it as a field name. The
+    // `--` keeps a package name that starts with a dash from being read as a flag.
     if flags.json {
         args.push("--json".to_owned());
     }
+
+    args.push("--".to_owned());
+    args.push(package.clone());
+    args.extend(fields.iter().cloned());
 
     Some(ResolvedCommand { args, bin: manager.to_owned(), warnings: Vec::new() })
 }
@@ -198,9 +199,9 @@ mod tests {
             resolve_info(manager, "latest", flags).map(|resolved| (resolved.bin, resolved.args.join(" ")))
         };
 
-        assert_eq!(line("pnpm", &flags), Some(("pnpm".into(), "view -- react version --json".into())));
-        assert_eq!(line("npm", &flags), Some(("npm".into(), "view -- react version --json".into())));
-        assert_eq!(line("bun", &flags), Some(("bun".into(), "pm view -- react version --json".into())));
+        assert_eq!(line("pnpm", &flags), Some(("pnpm".into(), "view --json -- react version".into())));
+        assert_eq!(line("npm", &flags), Some(("npm".into(), "view --json -- react version".into())));
+        assert_eq!(line("bun", &flags), Some(("bun".into(), "pm view --json -- react version".into())));
         // A field on yarn berry is a warning in Node.
         assert_eq!(line("yarn", &flags), None);
 

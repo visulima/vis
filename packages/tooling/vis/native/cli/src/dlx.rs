@@ -140,7 +140,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
 
 /// The manager Node's `resolveInstaller` picks for the lean entry, which reads no config: a bun lockfile
 /// as the nearest one makes the runtime bun and so the manager bun; otherwise the detection of the
-/// lockfiles. The version is unknown (`latest`) wherever no `packageManager` pin names one.
+/// lockfiles. The version is unknown (`latest`) wherever no `packageManager` pin or classic `yarn.lock` names one.
 fn installer(cwd: &Path) -> (String, String) {
     if nearest_lockfile_is_bun(cwd) {
         return ("bun".to_owned(), "latest".to_owned());

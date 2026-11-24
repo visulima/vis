@@ -32,3 +32,9 @@ vis exec -c 'echo $PATH'         # shell mode
 | `--filter`         | `-F`  |         | Filter packages by name pattern (repeatable)  |
 | `--parallel`       |       | `false` | Run concurrently without topological ordering |
 | `--reverse`        |       | `false` | Reverse topological execution order           |
+
+## Package manager support
+
+`--reverse` is passed through by pnpm and aube; npm and yarn have no equivalent, so `vis exec --reverse` fails there instead of running in the wrong order.
+
+bun runs `bunx <command>` once in the current directory. It has no workspace selection, so `--recursive`, `--filter`, `--workspace-root`, `--parallel`, `--reverse` and `--shell-mode` fail on bun instead of being dropped.

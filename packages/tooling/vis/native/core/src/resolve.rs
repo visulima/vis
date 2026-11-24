@@ -35,6 +35,40 @@ pub struct ExecOptions {
     pub filter: Vec<String>,
 }
 
+/// Refuse the selection flags of `vis exec` for a manager that runs one binary once in the current directory
+/// (`bunx`, the `npx` stand-in for yarn classic): each would be dropped and the command would still exit 0.
+fn refuse_exec_flags(pm: &str, runner: &str, opts: &ExecOptions, shell_mode: bool) -> Result<(), String> {
+    let flags: Vec<&str> = [
+        (opts.recursive, "--recursive"),
+        (!opts.filter.is_empty(), "--filter"),
+        (opts.workspace_root, "--workspace-root"),
+        (opts.parallel, "--parallel"),
+        (opts.reverse, "--reverse"),
+        (shell_mode && opts.shell_mode, "--shell-mode"),
+    ]
+    .into_iter()
+    .filter_map(|(set, flag)| set.then_some(flag))
+    .collect();
+
+    if flags.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{pm} cannot honour {} for `vis exec`: it runs {runner} once in the current directory.",
+        flags.join(", ")
+    ))
+}
+
+/// `--reverse` only reorders a recursive run, and only pnpm (and aube) can; elsewhere it would be dropped.
+fn reject_reverse(pm: &str, opts: &ExecOptions) -> Result<(), String> {
+    if opts.reverse {
+        return Err(format!("{pm} has no --reverse for `vis exec`; only pnpm can run workspaces in reverse order."));
+    }
+
+    Ok(())
+}
+
 /// Resolve `vis exec <command>` to the PM-specific invocation.
 pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
@@ -64,6 +98,10 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
                 args.push("--parallel".into());
             }
 
+            if opts.reverse {
+                args.push("--reverse".into());
+            }
+
             if opts.shell_mode {
                 args.push("-c".into());
             }
@@ -72,6 +110,7 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
             args.extend(opts.args);
         }
         "npm" => {
+            reject_reverse(pm, &opts)?;
             args.push("exec".into());
 
             for f in &opts.filter {
@@ -87,30 +126,38 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
                 args.push("--include-workspace-root".into());
             }
 
+            // npm's `-c` is `--call <String>` and takes the next token, so the command has to ride in
+            // the same argument; `npm exec` refuses extra arguments next to `--call`, which stays loud.
             if opts.shell_mode {
-                args.push("-c".into());
+                args.push(format!("--call={}", opts.command));
+
+                if !opts.args.is_empty() {
+                    args.push("--".into());
+                }
+            } else {
+                args.push("--".into());
+                args.push(opts.command);
             }
 
-            args.push("--".into());
-            args.push(opts.command);
             args.extend(opts.args);
         }
         "yarn" => {
+            reject_reverse(pm, &opts)?;
+
             if version.starts_with("1.") {
+                refuse_exec_flags("yarn v1", "`npx <command>`", &opts, false)?;
                 warnings.push("yarn v1 does not support exec. Falling back to npx.".into());
                 bin = "npx".into();
+
+                if opts.shell_mode {
+                    args.push("-c".into());
+                }
+
                 args.push(opts.command);
                 args.extend(opts.args);
             } else {
                 if opts.recursive || !opts.filter.is_empty() {
-                    args.push("workspaces".into());
-                    args.push("foreach".into());
-                    args.push("--all".into());
-
-                    for f in &opts.filter {
-                        args.push("--include".into());
-                        args.push(f.clone());
-                    }
+                    yarn_foreach_prefix(&opts.filter, &mut args);
 
                     if opts.parallel {
                         args.push("--parallel".into());
@@ -123,6 +170,8 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
             }
         }
         "bun" => {
+            refuse_exec_flags("bun", "`bunx <command>`", &opts, true)?;
+
             bin = "bunx".into();
             args.push(opts.command);
             args.extend(opts.args);
@@ -139,7 +188,7 @@ pub fn resolve_pm_command(
     pm: &str,
     version: &str,
     subcommand: &str,
-    extra_args: Vec<String>,
+    mut extra_args: Vec<String>,
 ) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -160,114 +209,43 @@ pub fn resolve_pm_command(
         return Ok(ResolvedCommand { args, bin: "npm".into(), warnings });
     }
 
-    if subcommand == "cache" {
-        match pm {
-            "pnpm" => {
-                match extra_args.first().map(String::as_str) {
-                    Some("dir") => {
-                        args.push("store".into());
-                        args.push("path".into());
-                    }
-                    Some("clean") => {
-                        args.push("store".into());
-                        args.push("prune".into());
-                        args.extend(extra_args.into_iter().skip(1));
-                    }
-                    _ => {
-                        args.push("store".into());
-                        args.extend(extra_args);
-                    }
+    match (subcommand, pm) {
+        ("cache", "pnpm") => {
+            args.push("store".into());
+
+            match extra_args.first().map(String::as_str) {
+                Some("dir") => {
+                    args.push("path".into());
+                    extra_args.clear();
                 }
-
-                return Ok(ResolvedCommand { args, bin: "pnpm".into(), warnings });
-            }
-            "bun" => {
-                args.push("pm".into());
-                args.push("cache".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("cache".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "list" || subcommand == "ls" {
-        match pm {
-            "bun" => {
-                args.push("pm".into());
-                args.push("ls".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("list".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "pack" {
-        match pm {
-            "bun" => {
-                args.push("pm".into());
-                args.push("pack".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("pack".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "view" || subcommand == "info" {
-        match pm {
-            "yarn" => {
-                if version.starts_with("1.") {
-                    args.push("info".into());
-                } else {
-                    args.push("npm".into());
-                    args.push("info".into());
+                Some("clean") => {
+                    args.push("prune".into());
+                    extra_args.remove(0);
                 }
-
-                args.extend(extra_args);
-            }
-            "bun" => {
-                args.push("pm".into());
-                args.push("view".into());
-                args.extend(extra_args);
-            }
-            _ => {
-                args.push("view".into());
-                args.extend(extra_args);
+                _ => {}
             }
         }
+        ("cache", "bun") => args.extend(["pm".into(), "cache".into()]),
+        ("list" | "ls", "bun") => args.extend(["pm".into(), "ls".into()]),
+        ("list" | "ls", _) => args.push("list".into()),
+        ("pack", "bun") => args.extend(["pm".into(), "pack".into()]),
+        ("view" | "info", "yarn") if version.starts_with("1.") => args.push("info".into()),
+        ("view" | "info", "yarn") => args.extend(["npm".into(), "info".into()]),
+        ("view" | "info", "bun") => args.extend(["pm".into(), "view".into()]),
+        ("view" | "info", _) => args.push("view".into()),
+        _ => {
+            if subcommand == "prune" && (pm == "yarn" || pm == "bun") {
+                warnings.push(format!("{pm} does not support 'prune'. It prunes automatically on install."));
+            }
 
-        return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
+            if subcommand == "rebuild" && (pm == "yarn" || pm == "bun") {
+                warnings.push(format!("{pm} does not support 'rebuild'."));
+            }
+
+            args.push(subcommand.to_owned());
+        }
     }
 
-    if subcommand == "prune" && (pm == "yarn" || pm == "bun") {
-        warnings.push(format!("{pm} does not support 'prune'. It prunes automatically on install."));
-    }
-
-    if subcommand == "rebuild" && (pm == "yarn" || pm == "bun") {
-        warnings.push(format!("{pm} does not support 'rebuild'."));
-    }
-
-    args.push(subcommand.to_owned());
     args.extend(extra_args);
 
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
@@ -372,10 +350,6 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
                 args.push("-D".into());
             }
 
-            if opts.global {
-                args.push("-g".into());
-            }
-
             if opts.recursive {
                 args.push("--recursive".into());
             }
@@ -389,10 +363,6 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
                 args.push("--save-dev".into());
             }
 
-            if opts.global {
-                args.push("--global".into());
-            }
-
             for f in &opts.filter {
                 args.push("--workspace".into());
                 args.push(f.clone());
@@ -403,7 +373,11 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
             }
 
             if opts.workspace_root {
-                args.push("-w".into());
+                // npm's `-w` is `--workspace` and consumes the next argument, so it cannot select the
+                // root. Pin the root explicitly instead.
+                args.push(
+                    if opts.filter.is_empty() { "--workspaces=false" } else { "--include-workspace-root" }.into(),
+                );
             }
 
             args.extend(opts.packages);
@@ -1020,7 +994,7 @@ pub struct AddOptions {
 pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
 
     // Global packages use npm exclusively (except bun, which ships a
     // native global-install path).
@@ -1059,9 +1033,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             if opts.optional {
                 args.push("-O".into());
             }
-            if opts.global {
-                args.push("-g".into());
-            }
             if opts.workspace {
                 args.push("--workspace".into());
             }
@@ -1081,9 +1052,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             if opts.optional {
                 args.push("--save-optional".into());
             }
-            if opts.global {
-                args.push("--global".into());
-            }
             for f in &opts.filter {
                 args.push("--workspace".into());
                 args.push(f.clone());
@@ -1099,9 +1067,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
         }
         "yarn" => {
             if version.starts_with("1.") {
-                if opts.global {
-                    args.push("global".into());
-                }
                 yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("add".into());
                 if opts.save_dev {
@@ -1121,12 +1086,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                 }
                 args.extend(opts.packages);
             } else {
-                if opts.global {
-                    warnings.push("yarn berry does not support global packages. Using npm.".into());
-                    let mut a = vec!["install".into(), "--global".into()];
-                    a.extend(opts.packages);
-                    return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
-                }
                 if opts.filter.len() > 1 {
                     yarn_foreach_prefix(&opts.filter, &mut args);
                 } else {
@@ -1183,7 +1142,6 @@ pub struct DlxOptions {
     pub silent: bool,
 }
 
-/// Resolve `vis dlx`.
 /// The executable `npm exec` runs for a package spec: the package name without its scope and
 /// version (`@scope/pkg@1.0` -> `pkg`, `create-vite@6.0.0` -> `create-vite`). A spec with a `:`
 /// is a git, URL or file location, where an `@` belongs to the location (`git@host`,
@@ -1198,16 +1156,33 @@ fn npm_bin_name(spec: &str) -> String {
     name.rsplit('/').next().unwrap_or_default().to_string()
 }
 
+/// The command to run for `spec` once `--package` names the packages to install: `--package` turns
+/// the positional into a command, so the spec's bin has to be spelled out.
+fn bin_of_spec(spec: &str) -> String {
+    let bin = npm_bin_name(spec);
+
+    if bin.is_empty() {
+        spec.to_owned()
+    } else {
+        bin
+    }
+}
+
+/// Resolve `vis dlx`.
 pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
     let mut bin = pm.to_owned();
+    // With `-p` extras the positional is a command and only the named packages are installed, so
+    // the main package must be named as well. In shell mode the positional is the command line.
+    let name_main = !opts.shell_mode && !opts.additional_packages.is_empty();
+    let command = if name_main { bin_of_spec(&opts.package) } else { opts.package.clone() };
 
     match pm {
         "pnpm" => {
             args.push("dlx".into());
-            for pkg in &opts.additional_packages {
+            for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                 args.push("--package".into());
                 args.push(pkg.clone());
             }
@@ -1217,26 +1192,32 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
             if opts.silent {
                 args.push("--silent".into());
             }
-            args.push(opts.package);
+            args.push(command);
             args.extend(opts.args);
         }
         "npm" => {
             args.push("exec".into());
             args.push("--yes".into());
-            for pkg in &opts.additional_packages {
+            for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                 args.push(format!("--package={pkg}"));
-            }
-            args.push(format!("--package={}", opts.package));
-            if opts.shell_mode {
-                args.push("-c".into());
             }
             if opts.silent {
                 args.push("--loglevel".into());
                 args.push("silent".into());
             }
-            let bin_name = npm_bin_name(&opts.package);
-            args.push("--".into());
-            args.push(if bin_name.is_empty() { opts.package.clone() } else { bin_name });
+            // npm's `-c` is `--call <String>` and takes the next token, so the command rides in the same
+            // argument. Without `--package`, npm reads the bin out of the package manifest itself; with
+            // it, the positional is the command.
+            if opts.shell_mode {
+                args.push(format!("--call={}", opts.package));
+
+                if !opts.args.is_empty() {
+                    args.push("--".into());
+                }
+            } else {
+                args.push("--".into());
+                args.push(command);
+            }
             args.extend(opts.args);
         }
         "yarn" => {
@@ -1244,18 +1225,18 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 warnings.push("yarn v1 does not support dlx. Falling back to npx.".into());
                 bin = "npx".into();
                 args.push("--yes".into());
-                for pkg in &opts.additional_packages {
+                for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                     args.push("--package".into());
                     args.push(pkg.clone());
                 }
                 if opts.silent {
                     args.push("--quiet".into());
                 }
-                args.push(opts.package);
+                args.push(command);
                 args.extend(opts.args);
             } else {
                 args.push("dlx".into());
-                for pkg in &opts.additional_packages {
+                for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                     args.push("-p".into());
                     args.push(pkg.clone());
                 }
@@ -1265,17 +1246,17 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 if opts.silent {
                     args.push("--quiet".into());
                 }
-                args.push(opts.package);
+                args.push(command);
                 args.extend(opts.args);
             }
         }
         "bun" => {
             args.push("x".into());
-            for pkg in &opts.additional_packages {
+            for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                 args.push("--package".into());
                 args.push(pkg.clone());
             }
-            args.push(opts.package);
+            args.push(command);
             args.extend(opts.args);
         }
         _ => unreachable!(),
@@ -1582,9 +1563,13 @@ mod tests {
     }
 
     #[test]
-    fn dlx_npm_runs_the_bin_without_the_version() {
+    fn dlx_npm_with_extras_runs_the_bin_without_the_version() {
         let bin_for = |package: &str| {
-            let opts = DlxOptions { package: package.to_owned(), ..Default::default() };
+            let opts = DlxOptions {
+                package: package.to_owned(),
+                additional_packages: argv(&["typescript"]),
+                ..Default::default()
+            };
             let resolved = resolve_dlx("npm", "11.0.0", opts).unwrap();
 
             (resolved.args[resolved.args.len() - 2..].to_vec(), resolved.args)
@@ -1618,5 +1603,204 @@ mod tests {
         let resolved = resolve_dlx("yarn", "1.22.0", opts).unwrap();
 
         assert_eq!(resolved.bin, "npx");
+    }
+
+    #[test]
+    fn dlx_npm_lets_npm_pick_the_bin_when_no_extra_packages_are_given() {
+        let opts = |package: &str| DlxOptions {
+            package: package.to_owned(),
+            args: argv(&["new", "app"]),
+            ..Default::default()
+        };
+
+        // `--package` stops npm from reading the bin out of the manifest, so `@angular/cli` would run `cli`.
+        assert_eq!(
+            resolve_dlx("npm", "11.0.0", opts("@angular/cli")).unwrap().args,
+            ["exec", "--yes", "--", "@angular/cli", "new", "app"]
+        );
+        assert_eq!(
+            resolve_dlx("npm", "11.0.0", opts("create-vite@6.0.0")).unwrap().args,
+            ["exec", "--yes", "--", "create-vite@6.0.0", "new", "app"]
+        );
+
+        let silent = DlxOptions { silent: true, ..opts("@vue/cli") };
+
+        assert_eq!(
+            resolve_dlx("npm", "11.0.0", silent).unwrap().args,
+            ["exec", "--yes", "--loglevel", "silent", "--", "@vue/cli", "new", "app"]
+        );
+    }
+
+    #[test]
+    fn dlx_npm_installs_every_package_and_names_the_bin_when_extras_are_given() {
+        let opts = DlxOptions {
+            package: "ts-node@10.9.2".to_owned(),
+            args: argv(&["x.ts"]),
+            additional_packages: argv(&["typescript"]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_dlx("npm", "11.0.0", opts).unwrap().args,
+            ["exec", "--yes", "--package=typescript", "--package=ts-node@10.9.2", "--", "ts-node", "x.ts"]
+        );
+    }
+
+    #[test]
+    fn dlx_npm_shell_mode_passes_the_command_as_a_call_value() {
+        let opts = DlxOptions {
+            package: "cowsay hi | lolcatjs".to_owned(),
+            additional_packages: argv(&["cowsay", "lolcatjs"]),
+            shell_mode: true,
+            silent: true,
+            ..Default::default()
+        };
+
+        // npm's `-c` is `--call <String>`: it takes the next token, so `-c --` made `--` the command.
+        assert_eq!(
+            resolve_dlx("npm", "11.0.0", opts).unwrap().args,
+            [
+                "exec",
+                "--yes",
+                "--package=cowsay",
+                "--package=lolcatjs",
+                "--loglevel",
+                "silent",
+                "--call=cowsay hi | lolcatjs"
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_npm_shell_mode_passes_the_command_as_a_call_value() {
+        let opts = ExecOptions {
+            command: "eslint . && tsc".to_owned(),
+            shell_mode: true,
+            recursive: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_exec("npm", "10.0.0", opts).unwrap().args,
+            ["exec", "--workspaces", "--call=eslint . && tsc"]
+        );
+    }
+
+    #[test]
+    fn remove_npm_workspace_root_does_not_swallow_the_package_name() {
+        let root = RemoveOptions { packages: argv(&["lodash"]), workspace_root: true, ..Default::default() };
+        let with_filter = RemoveOptions {
+            packages: argv(&["lodash"]),
+            workspace_root: true,
+            filter: argv(&["app"]),
+            ..Default::default()
+        };
+
+        // npm's `-w` is `--workspace <name>`: it would take `lodash` as the workspace.
+        assert_eq!(resolve_remove("npm", "10.0.0", root).unwrap().args, ["uninstall", "--workspaces=false", "lodash"]);
+        assert_eq!(
+            resolve_remove("npm", "10.0.0", with_filter).unwrap().args,
+            ["uninstall", "--workspace", "app", "--include-workspace-root", "lodash"]
+        );
+    }
+
+    #[test]
+    fn dlx_with_extra_packages_installs_the_main_package_too() {
+        let opts = || DlxOptions {
+            package: "ts-node@10.9.2".to_owned(),
+            args: argv(&["x.ts"]),
+            additional_packages: argv(&["typescript"]),
+            ..Default::default()
+        };
+
+        // Once a package is named explicitly the positional is a command and nothing else is installed.
+        assert_eq!(
+            resolve_dlx("pnpm", "10.0.0", opts()).unwrap().args,
+            ["dlx", "--package", "typescript", "--package", "ts-node@10.9.2", "ts-node", "x.ts"]
+        );
+        assert_eq!(
+            resolve_dlx("yarn", "4.5.0", opts()).unwrap().args,
+            ["dlx", "-p", "typescript", "-p", "ts-node@10.9.2", "ts-node", "x.ts"]
+        );
+        assert_eq!(
+            resolve_dlx("bun", "1.3.0", opts()).unwrap().args,
+            ["x", "--package", "typescript", "--package", "ts-node@10.9.2", "ts-node", "x.ts"]
+        );
+
+        let classic = resolve_dlx("yarn", "1.22.0", opts()).unwrap();
+
+        assert_eq!(classic.bin, "npx");
+        assert_eq!(
+            classic.args,
+            ["--yes", "--package", "typescript", "--package", "ts-node@10.9.2", "ts-node", "x.ts"]
+        );
+    }
+
+    #[test]
+    fn dlx_shell_mode_keeps_the_command_out_of_the_package_list() {
+        let opts = DlxOptions {
+            package: "cowsay hi".to_owned(),
+            additional_packages: argv(&["cowsay"]),
+            shell_mode: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_dlx("pnpm", "10.0.0", opts).unwrap().args,
+            ["dlx", "--package", "cowsay", "-c", "cowsay hi"]
+        );
+    }
+
+    #[test]
+    fn exec_reverse_is_passed_to_pnpm_and_refused_where_it_has_no_effect() {
+        let opts =
+            || ExecOptions { command: "eslint".to_owned(), recursive: true, reverse: true, ..Default::default() };
+
+        assert_eq!(
+            resolve_exec("pnpm", "10.0.0", opts()).unwrap().args,
+            ["exec", "--recursive", "--reverse", "eslint"]
+        );
+
+        for (pm, version) in [("npm", "10.0.0"), ("yarn", "4.5.0"), ("yarn", "1.22.0")] {
+            let error = resolve_exec(pm, version, opts()).unwrap_err();
+
+            assert!(error.contains("--reverse"), "{pm} {version}: {error}");
+        }
+    }
+
+    #[test]
+    fn exec_on_yarn_classic_refuses_the_flags_npx_cannot_honour() {
+        let flagged = |tweak: fn(&mut ExecOptions)| {
+            let mut opts = exec("eslint");
+
+            tweak(&mut opts);
+
+            resolve_exec("yarn", "1.22.0", opts)
+        };
+
+        assert!(flagged(|opts| opts.recursive = true).unwrap_err().contains("--recursive"));
+        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().contains("--filter"));
+        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().contains("--workspace-root"));
+        assert!(flagged(|opts| opts.parallel = true).unwrap_err().contains("--parallel"));
+        assert_eq!(flagged(|opts| opts.shell_mode = true).unwrap().args, ["-c", "eslint"]);
+    }
+
+    #[test]
+    fn exec_on_bun_refuses_the_flags_bunx_cannot_honour() {
+        let flagged = |tweak: fn(&mut ExecOptions)| {
+            let mut opts = exec("eslint");
+
+            tweak(&mut opts);
+
+            resolve_exec("bun", "1.1.0", opts)
+        };
+
+        assert!(flagged(|opts| opts.recursive = true).unwrap_err().contains("--recursive"));
+        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().contains("--filter"));
+        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().contains("--workspace-root"));
+        assert!(flagged(|opts| opts.parallel = true).unwrap_err().contains("--parallel"));
+        assert!(flagged(|opts| opts.reverse = true).unwrap_err().contains("--reverse"));
+        assert!(flagged(|opts| opts.shell_mode = true).unwrap_err().contains("--shell-mode"));
+        assert!(flagged(|_| {}).is_ok());
     }
 }
