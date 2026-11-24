@@ -151,7 +151,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     }
 
     // Node reports a child without an exit code (a signal) as 1.
-    let code = child.wait().ok().and_then(|status| status.code()).unwrap_or(1);
+    let code = child.wait().map_or(1, crate::node_exit_code);
 
     for reader in readers {
         let _ = reader.join();

@@ -208,11 +208,11 @@ pub fn reject_unknown(args: &[String]) -> Option<i32> {
     });
 
     match closest(word, names) {
-        Some(candidate) => eprintln!("Error: Unknown command \"{word}\". Did you mean \"{candidate}\"?"),
-        None => eprintln!("Error: Unknown command \"{word}\"."),
+        Some(candidate) => emit_stderr(&format!("Error: Unknown command \"{word}\". Did you mean \"{candidate}\"?\n")),
+        None => emit_stderr(&format!("Error: Unknown command \"{word}\".\n")),
     }
 
-    eprintln!("Run \"vis --help\" to see the available commands.");
+    emit_stderr("Run \"vis --help\" to see the available commands.\n");
 
     Some(1)
 }
@@ -259,7 +259,7 @@ fn answer_help_command(manifest: &Manifest, help: &Help, request: &Request) -> O
 
     // The Node CLI prints the banner, reports the miss on stderr, and still exits 0.
     emit(&format!("vis v{}\n", help.version));
-    eprintln!("Command \"{}\" not found", path.join(" "));
+    emit_stderr(&format!("Command \"{}\" not found\n", path.join(" ")));
 
     Some(0)
 }

@@ -126,12 +126,14 @@ fn main() {
         }
         // `vis exec <command>` — run a local bin via the project PM. Matches the
         // Node lean exec path (runtime/lockfile detection, no config load).
-        "exec" => exec::run(if args.len() > 1 { &args[1..] } else { &[] }),
+        "exec" => exec::run(&args, &raw_args),
         // `vis hook run …` — native git-hook runner. Every other `hook`
         // subcommand (install, migrate, …), and any `run` shape the fast path
         // is not certain about, is delegated to Node by `hook::run` itself.
         // `hook run --help` is the manifest's to answer (the `_` arm below).
-        "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
+        "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => {
+            hook::run(&args, &raw_args)
+        }
         // `vis hook list` — the stage scripts of the hooks directory, native for a CI context at the root of
         // a pnpm workspace. Every other shape, and every directory it cannot read exactly, is delegated inside
         // `hook::list::run`, before anything is printed; help is left to the arm below.
@@ -151,7 +153,7 @@ fn main() {
                 && args.get(2).map(String::as_str) == Some("status")
                 && !surface::asks_for_help(&args) =>
         {
-            advisories::run(&args)
+            advisories::run(&args, &raw_args)
         }
         // `vis ignore` — the plain `--target` / `--json` / `--write` shapes in a CI context;
         // help and everything else falls through to the arm below.
@@ -272,14 +274,14 @@ fn main() {
         // other shape, and every root, config or environment the gates reject, is delegated inside `info::run`.
         "info" | "view" if !surface::asks_for_help(&args) => info::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
-        "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
+        "pm" => pm::run(&args, &raw_args),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),
-        // delegating in-process/re-exec edge cases to Node. Pass the FULL argv so
-        // the delegation path can replay it.
-        "x" => x::run(&args),
-        // pm translate-and-exec family: detect PM, map flags, exec. Pass the FULL
-        // argv so the config-delegation path can replay it.
-        "remove" | "dedupe" | "link" | "unlink" | "outdated" | "why" => pm_family::run(first, &args),
+        // delegating in-process/re-exec edge cases to Node. The full argv, raw bytes included,
+        // goes along so the delegation path can replay it.
+        "x" => x::run(&args, &raw_args),
+        // pm translate-and-exec family: detect PM, map flags, exec. The full argv, raw bytes
+        // included, goes along so the config-delegation path can replay it.
+        "remove" | "dedupe" | "link" | "unlink" | "outdated" | "why" => pm_family::run(&args, &raw_args),
         // Native command routing is added here as commands are ported off Node.
         // Not a native command above: bare `vis`, `--help`, `<command> --help` and
         // `help <command>` are rendered from the generated manifest, a word that is no
@@ -379,28 +381,30 @@ pub fn run_in_place(command: &mut Command) -> std::io::Error {
     #[cfg(not(unix))]
     {
         match command.status() {
-            Ok(status) => exit(forward_code(status)),
+            Ok(status) => exit(node_exit_code(status)),
             Err(error) => error,
         }
     }
 }
 
-/// Translate a child `ExitStatus` into the exit code this process should adopt,
-/// following the shell convention of `128 + signal` for signal-terminated
-/// children.
-fn forward_code(status: ExitStatus) -> i32 {
-    if let Some(code) = status.code() {
-        return code;
+/// The exit code Node ends with for a child it ran with `spawnSync`: the child's own status, and 1 for one
+/// that was killed by a signal (`result.status ?? 1`). The commands that mirror a Node handler use this.
+pub(crate) fn node_exit_code(status: ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::node_exit_code;
+
+    #[test]
+    fn a_child_ends_with_its_status_and_a_killed_child_with_one() {
+        assert_eq!(node_exit_code(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(node_exit_code(ExitStatus::from_raw(0)), 0);
+        // Killed by SIGKILL: Node's `result.status` is null, which its handlers turn into 1.
+        assert_eq!(node_exit_code(ExitStatus::from_raw(9)), 1);
     }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-
-        if let Some(signal) = status.signal() {
-            return 128 + signal;
-        }
-    }
-
-    1
 }

@@ -13,7 +13,7 @@
 //! are never native: they touch the network or delete files.
 
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -89,12 +89,12 @@ fn parse(args: &[String]) -> Option<String> {
     cache_dir
 }
 
-/// Answer the invocation, or delegate to Node. Never returns.
-pub fn run(args: &[String]) -> ! {
+/// Answer the invocation, or delegate to Node, with the raw argv so no byte changes on the way. Never returns.
+pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let planned = parse(args).filter(|_| native_context());
 
     let Some(cache_dir) = planned else {
-        crate::delegate(args);
+        crate::delegate(raw_args);
     };
 
     match status_json(Path::new(&cache_dir)) {
@@ -108,7 +108,7 @@ pub fn run(args: &[String]) -> ! {
                 Err(error) => WrapperError::write("advisories", "the status", error).exit(),
             }
         }
-        None => crate::delegate(args),
+        None => crate::delegate(raw_args),
     }
 }
 

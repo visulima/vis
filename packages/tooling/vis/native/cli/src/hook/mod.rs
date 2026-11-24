@@ -40,6 +40,7 @@ pub mod list;
 pub mod validate;
 
 use std::env;
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
@@ -319,10 +320,11 @@ fn execute(plan: Plan) -> ! {
     exit(0);
 }
 
-/// Entry point for `vis hook run …`. Never returns.
-pub fn run(args: &[String]) -> ! {
+/// Entry point for `vis hook run …`; `raw_args` is the same argv as the OS gave it, for the hand-off to Node.
+/// Never returns.
+pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     match prepare(args) {
-        None => crate::delegate(args),
+        None => crate::delegate(raw_args),
         Some(Prepared::NoHooks(stage)) => {
             println!("No hooks configured for stage \"{stage}\".");
             exit(0);

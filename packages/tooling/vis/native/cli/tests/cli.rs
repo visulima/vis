@@ -136,12 +136,12 @@ fn pm_passthrough_resolves_and_forwards_flags() {
 
     // `cache dir` -> pnpm store path; flags after the subcommand forwarded.
     let cache = run(&["cache", "dir"]);
-    let publish = run(&["publish", "--dry-run"]);
+    let pack = run(&["pack", "--dry-run"]);
 
     std::fs::remove_dir_all(&base).ok();
 
     assert_eq!(cache, "PNPM:store path");
-    assert_eq!(publish, "PNPM:publish --dry-run");
+    assert_eq!(pack, "PNPM:pack --dry-run");
 }
 
 #[cfg(unix)]
@@ -303,7 +303,8 @@ fn x_rejects_an_unsupported_explicit_runtime() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("unsupported runtime 'python'"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--runtime requested unknown runtime \"python\". Supported: bun, node."),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
