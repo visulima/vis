@@ -9,6 +9,7 @@
 //
 // node:fs / node:child_process are used directly (no toolbox in this lean path).
 
+import type { SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 
@@ -116,6 +117,22 @@ export const decideShim = (invoked: string, pinned: Pm | undefined, firstVerb: s
     return mismatch && !transparent && !nested ? "refuse" : "dispatch";
 };
 
+/**
+ * How the shim ends once the real manager ran: its own status, 1 for one a signal killed, and 1 with a message for
+ * one that could not be started (`spawnSync` then reports neither a status nor a signal, only `error`). The native
+ * shim (`exec_real` in `native/cli/src/pm_shim.rs`) prints the same `vis shim: could not start &lt;name>: &lt;reason>`.
+ */
+export const shimExit = (
+    invoked: string,
+    result: Pick<SpawnSyncReturns<Buffer>, "error" | "signal" | "status">,
+): { code: number; message?: string } => {
+    if (result.error !== undefined) {
+        return { code: 1, message: `vis shim: could not start ${invoked}: ${result.error.message}` };
+    }
+
+    return { code: result.status ?? 1 };
+};
+
 /** Find the real PM on PATH, skipping any `.vis/shims` dir (the recursion guard). */
 const findRealPm = (name: string): string | undefined => {
     const candidates = process.platform === "win32" ? [`${name}.cmd`, `${name}.exe`, name] : [name];
@@ -168,5 +185,11 @@ export const dispatchShim = (invoked: string, args: string[]): void => {
 
     const result = spawnSync(real, args, { stdio: "inherit" });
 
-    process.exit(result.status ?? (result.signal === null ? 0 : 1));
+    const { code, message } = shimExit(invoked, result);
+
+    if (message !== undefined) {
+        process.stderr.write(`${message}\n`);
+    }
+
+    process.exit(code);
 };

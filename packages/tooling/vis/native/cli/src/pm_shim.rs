@@ -140,17 +140,13 @@ fn find_real_pm(invoked: &str) -> Option<PathBuf> {
 }
 
 /// Exec the real PM with inherited stdio and end with its exit status. Never returns. The status is Node's
-/// `process.exit(result.status ?? (result.signal === null ? 0 : 1))`: the manager's own, and 1, not
-/// `128 + signal`, for one a signal killed. A manager that cannot be started is reported on stderr. Node's
-/// `spawnSync` reports that as neither a status nor a signal, so Node's dispatcher says nothing and exits 0;
-/// the exit status stays 0 here.
-fn exec_real(real: &Path, args: &[String]) -> ! {
+/// `shimExit` (`src/commands/shim/dispatch.ts`): the manager's own, and 1, not `128 + signal`, for one a signal
+/// killed. A manager that cannot be started ends with 1 and `vis shim: could not start <name>: <reason>` on stderr,
+/// the line Node prints.
+fn exec_real(invoked: &str, real: &Path, args: &[String]) -> ! {
     match Command::new(real).args(args).status() {
         Ok(status) => exit(crate::node_exit_code(status)),
-        Err(source) => {
-            eprintln!("{}", WrapperError::spawn("__pm-shim", &real.to_string_lossy(), source));
-            exit(0)
-        }
+        Err(source) => WrapperError::usage("shim", format!("could not start {invoked}: {source}")).exit(),
     }
 }
 
@@ -174,7 +170,7 @@ pub fn dispatch(invoked: &str, args: &[String]) -> ! {
     }
 
     match find_real_pm(invoked) {
-        Some(real) => exec_real(&real, args),
+        Some(real) => exec_real(invoked, &real, args),
         None => {
             eprintln!("vis: `{invoked}` was not found on PATH (outside the shim dir).");
             exit(1);
