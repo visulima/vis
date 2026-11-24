@@ -29,13 +29,11 @@ pub(crate) fn spawn_process(
     shell_path: Option<&str>,
 ) -> Result<ProcessInfo, std::io::Error> {
     let mut cmd = build_command(config, shell_path);
-    // If the JS-side `run_concurrent` future is dropped (Promise GC'd,
-    // AbortController cancellation, Node shutdown), tokio tears down
-    // its task tree: the completion-waiter task is aborted and the
-    // owned `Child` is dropped. With the default `kill_on_drop = false`
-    // that would leave the OS-level process running as an orphan
-    // re-parented to PID 1. Force-killing on drop ensures the JS side
-    // can never abandon spawned children.
+    // If the runtime is torn down mid-run (Node shutdown), its task tree is
+    // dropped: the completion-waiter task is aborted and the owned `Child` is
+    // dropped. With the default `kill_on_drop = false` that would leave the
+    // OS-level process running as an orphan re-parented to PID 1. Force-killing
+    // on drop ensures the JS side can never abandon spawned children.
     cmd.kill_on_drop(true);
     let mut child = cmd.spawn()?;
     let start_time = Instant::now();

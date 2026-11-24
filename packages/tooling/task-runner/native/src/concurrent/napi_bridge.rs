@@ -65,13 +65,12 @@ fn launch(runner: ConcurrentRunner, on_event: Option<EventCallback>, with_output
 
 /// Wait for the result of a launched run. May be called any number of times.
 async fn wait_for_result(mut result: watch::Receiver<Option<ConcurrentRunResult>>) -> Result<ConcurrentRunResult> {
-    let outcome = result
+    let ready = result
         .wait_for(Option::is_some)
         .await
-        .map_err(|_| Error::new(Status::GenericFailure, "the concurrent run ended without a result"))?
-        .clone();
+        .map_err(|_| Error::new(Status::GenericFailure, "the concurrent run ended without a result"))?;
 
-    outcome.ok_or_else(|| Error::new(Status::GenericFailure, "the concurrent run ended without a result"))
+    Ok(ready.clone().expect("wait_for only returns once the result is set"))
 }
 
 /// Run commands concurrently with real-time event streaming.
