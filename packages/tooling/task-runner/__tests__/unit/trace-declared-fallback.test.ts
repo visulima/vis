@@ -71,9 +71,9 @@ describe("trace-mode declared fallback", () => {
      * The predicted tracker is stubbed to the same kind, so a stored entry is
      * validated against the tracker the stubbed run records, on every host.
      */
-    const stubTracker = (accesses: TrackedExecutionResult["accesses"], tracker: TrackedExecutionResult["tracker"] = "preload") => {
+    const stubTracker = (accesses: TrackedExecutionResult["accesses"], tracker: TrackedExecutionResult["tracker"] = "preload", incomplete = false) => {
         vi.spyOn(TrackedTaskExecutor.prototype, "execute").mockImplementation(async () => {
-            return { accesses, code: 0, hints: emptyHints(), terminalOutput: "done", tracker };
+            return { accesses, code: 0, hints: emptyHints(), ...(incomplete && { incomplete }), terminalOutput: "done", tracker };
         });
         vi.spyOn(TrackedTaskExecutor.prototype, "trackerKindFor").mockReturnValue(tracker);
     };
@@ -206,6 +206,69 @@ describe("trace-mode declared fallback", () => {
 
         expect(second?.status).toBe("success");
         expect(lifeCycle.warnings).toHaveLength(2);
+    });
+
+    describe("a trace the tracker reports as incomplete", () => {
+        // The tracker saw a workspace file but also knows it missed accesses: the observed set is
+        // a lower bound, so keying the cache on it could hide an input and give a false hit.
+        const seen = (): TrackedExecutionResult["accesses"] => [{ path: join(workspaceRoot, "packages/app/src/index.ts"), type: "read" }];
+
+        it("is not cached when the target declares no inputs", async () => {
+            expect.assertions(6);
+
+            stubTracker(seen(), "seccomp", true);
+
+            const first = await run({ declared: false });
+
+            expect(first?.status).toBe("success");
+            expect(first?.emptyFingerprint).toBe(true);
+            expect(lifeCycle.warnings).toHaveLength(1);
+            expect(lifeCycle.warnings[0]).toContain("could not record every file access");
+
+            const second = await run({ declared: false });
+
+            expect(second?.status).toBe("success");
+            expect(second?.status).not.toBe("local-cache");
+        });
+
+        it("falls back to the declared hash, never a trace key, when the target declares inputs", async () => {
+            expect.assertions(5);
+
+            stubTracker(seen(), "seccomp", true);
+
+            const first = await run({ declared: true });
+
+            expect(first?.hashSource).toBe("declared-fallback");
+            expect(first?.emptyFingerprint).toBeUndefined();
+            expect(lifeCycle.fallbacks).toStrictEqual(["app:build"]);
+
+            // Declared inputs are unchanged, so the declared hash legitimately hits.
+            const second = await run({ declared: true });
+
+            expect(second?.status).toBe("local-cache");
+
+            // Editing a declared input invalidates the entry (a trace key would not see it if the
+            // trace had missed that read).
+            await writeFile(join(workspaceRoot, "packages/app/src/index.ts"), "const x = 2;");
+
+            const third = await run({ declared: true });
+
+            expect(third?.status).toBe("success");
+        });
+
+        it("stores no trace for a complete trace of the same run (control)", async () => {
+            expect.assertions(2);
+
+            stubTracker(seen(), "seccomp", false);
+
+            const first = await run({ declared: false });
+
+            expect(first?.emptyFingerprint).toBeUndefined();
+
+            const second = await run({ declared: false });
+
+            expect(second?.status).toBe("local-cache");
+        });
     });
 
     it("does no declared hashing when the tracker observed workspace files", async () => {

@@ -198,6 +198,13 @@ interface NativeSeccompFileAccess {
 interface NativeSeccompTrackingResult {
     accesses: NativeSeccompFileAccess[];
     exitCode: number;
+
+    /**
+     * Some accesses could not be recorded (an argument of a tracked syscall was unreadable, or a
+     * process ran under an ABI the tracker does not decode), so `accesses` is a lower bound.
+     * Absent on an addon built before the field existed.
+     */
+    incomplete?: boolean;
     stderr: Buffer;
     stdout: Buffer;
 }
