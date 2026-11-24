@@ -1,5 +1,5 @@
 {
-    "$comment": "Maximum median wall time in milliseconds per command and variant: the larger of twice the median and the median plus 10 ms, from the runs on the machine named in `machine` (a new run is merged into an existing file, keeping the larger limit). Machine-relative: re-derive them with `run-commands.sh --write-budgets` on another machine. Not checked in CI (timings on shared runners are too noisy); run `run-commands.sh --check-budgets` locally.",
+    "$comment": "Maximum median wall time in milliseconds per command and variant: the larger of twice the median and the median plus 10 ms, from the runs on the machine named in `machine` (a new run is merged into an existing file: entries it did not measure stay, and where both exist the larger limit is kept). Machine-relative: re-derive them with `run-commands.sh --write-budgets` on another machine. Not checked in CI (timings on shared runners are too noisy); run `run-commands.sh --check-budgets` locally.",
     "machine": "Apple M4, 10 cores, Darwin arm64, Node v22.23.4, hyperfine 2.0.0, bun 1.4.4, pnpm 11.28.2, 2026-11-24",
     "headroom": 2,
     "budgets": {

@@ -403,6 +403,26 @@ def measured(rows):
     return found
 
 
+def limit_for(cell):
+    """The budget of one measurement: the larger of twice the median and the median plus 10 ms, rounded up."""
+    return int(-(-max(cell["ms"] * 2, cell["ms"] + 10) // 1))
+
+
+def merged_budgets(existing, found):
+    """The existing limits with this run's merged in. A key or variant this run did not measure (a partial run with
+    `--only` or `--sizes`) keeps its limit; where both exist the larger limit stays, so two runs on a noisy machine
+    give limits that hold for both."""
+    budgets = {key: dict(limits) for key, limits in existing.items()}
+    for key, variants in found.items():
+        for variant, cell in variants.items():
+            # The native variants are budgeted when they answered natively; Node always.
+            if variant != "node" and cell["node"]:
+                continue
+            limits = budgets.setdefault(key, {})
+            limits[variant] = max(limit_for(cell), limits.get(variant, 0))
+    return {key: budgets[key] for key in sorted(budgets)}
+
+
 def command_budgets(argv):
     results = argv[0]
     rows = gather(results)
@@ -411,24 +431,14 @@ def command_budgets(argv):
         path = argv[argv.index("--write") + 1]
         with open(os.path.join(results, "run.json"), "r", encoding="utf-8") as handle:
             run = json.load(handle)
-        budgets = {}
-        for key, variants in sorted(found.items()):
-            budgets[key] = {}
-            for variant, cell in variants.items():
-                # The native variants are budgeted when they answered natively; Node always.
-                if variant == "node" or not cell["node"]:
-                    budgets[key][variant] = int(-(-max(cell["ms"] * 2, cell["ms"] + 10) // 1))
-        # An existing file is merged, keeping the larger limit: two runs on a noisy machine give limits that hold for both.
         try:
             with open(path, "r", encoding="utf-8") as handle:
-                for key, limits in json.load(handle).get("budgets", {}).items():
-                    for variant, limit in limits.items():
-                        if variant in budgets.get(key, {}):
-                            budgets[key][variant] = max(budgets[key][variant], limit)
+                existing = json.load(handle).get("budgets", {})
         except (OSError, ValueError):
-            pass
+            existing = {}
+        budgets = merged_budgets(existing, found)
         document = {
-            "$comment": "Maximum median wall time in milliseconds per command and variant: the larger of twice the median and the median plus 10 ms, from the runs on the machine named in `machine` (a new run is merged into an existing file, keeping the larger limit). Machine-relative: re-derive them with `run-commands.sh --write-budgets` on another machine. Not checked in CI (timings on shared runners are too noisy); run `run-commands.sh --check-budgets` locally.",
+            "$comment": "Maximum median wall time in milliseconds per command and variant: the larger of twice the median and the median plus 10 ms, from the runs on the machine named in `machine` (a new run is merged into an existing file: entries it did not measure stay, and where both exist the larger limit is kept). Machine-relative: re-derive them with `run-commands.sh --write-budgets` on another machine. Not checked in CI (timings on shared runners are too noisy); run `run-commands.sh --check-budgets` locally.",
             "machine": run["environment"],
             "headroom": 2,
             "budgets": budgets,
