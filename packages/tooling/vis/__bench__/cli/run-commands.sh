@@ -274,7 +274,7 @@ bench_scenario() {
   routed="$("${ROUTES[@]}" route "$("${LIB[@]}" routepayload "$dir" "$argtext" "${ENV_WORDS[@]}")" | tr -d '[] \n')"
   if [[ "$routed" != true && "$mode" != cold ]]; then
     record "$cap" binary skipped - - "not routed to the native binary on this base: the routing table sends it to Node (nothing to compare)"
-    record "$cap" launcher skipped - - "same"
+    record "$cap" launcher skipped - - "not routed to the native binary on this base: the launcher sends it to Node"
     record "$cap" node skipped - - "not run: no native variant to compare with"
     "${LIB[@]}" meta "$cap" "$RESULTS_DIR/$key.meta.json" "$id" "$label_size" "$argtext" "$scenario_label" "$order"
     printf '  %-34s not routed natively on this base (skipped)\n' "$key"

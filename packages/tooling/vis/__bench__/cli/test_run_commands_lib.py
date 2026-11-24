@@ -6,7 +6,10 @@
 
 import importlib.util
 import os
+import sys
 import unittest
+
+sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = importlib.util.spec_from_file_location("run_commands_lib", os.path.join(HERE, "run-commands-lib.py"))
@@ -56,13 +59,14 @@ class CheckBudgets(unittest.TestCase):
         # The routing stopped sending `list` to the binary: every variant of the attempted scenario was skipped.
         reason = "not routed to the native binary on this base"
         rows = [
-            meta("list", 20, binary=("skipped", reason), launcher=("skipped", "same"), node=("skipped", "not run")),
+            meta("list", 20, binary=("skipped", reason), launcher=("skipped", reason), node=("skipped", "not run")),
             meta("version", None, binary=("ok", "")),
         ]
         found = {"version": {"binary": cell(3.0)}}
         failures, _, checked = LIB.check_budgets(BUDGETS, found, rows)
         self.assertEqual(checked, 1)
         self.assertEqual(len(failures), 3)
+        self.assertIn("list@20 launcher: budgeted but not measured: " + reason, failures)
         self.assertIn("list@20 binary: budgeted but not measured: " + reason, failures)
 
     def test_a_native_variant_that_delegates_to_node_still_fails(self):
