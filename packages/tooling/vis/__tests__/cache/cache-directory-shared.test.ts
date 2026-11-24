@@ -124,6 +124,55 @@ describe(resolveSharedCacheDirectory, () => {
         }
     });
 
+    it("keeps a submodule's cache inside the submodule, not in the superproject's .git/modules", () => {
+        expect.assertions(3);
+
+        // eslint-disable-next-line vitest/no-conditional-in-test -- skip when git is missing
+        if (!hasGit) {
+            return;
+        }
+
+        const lib = join(canonical(scratch), "lib");
+        const superproject = join(canonical(scratch), "super");
+
+        mkdirSync(lib);
+        initRepo(lib);
+        mkdirSync(superproject);
+        initRepo(superproject);
+        execFileSync("git", ["-c", "protocol.file.allow=always", "submodule", "add", lib, "mod"], { cwd: superproject, stdio: "ignore" });
+
+        const submodule = join(superproject, "mod");
+
+        expect(existsSync(join(submodule, ".git"))).toBe(true);
+        expect(resolveSharedCacheDirectory(submodule, undefined, undefined, true)).toBe(resolve(submodule, DEFAULT_WORKSPACE_CACHE_DIRECTORY));
+
+        // A linked worktree of the submodule shares the submodule's cache.
+        const linked = join(canonical(scratch), "modfeat");
+
+        execFileSync("git", ["worktree", "add", "-b", "feat", linked], { cwd: submodule, stdio: "ignore" });
+
+        expect(resolveSharedCacheDirectory(linked, undefined, undefined, true)).toBe(resolve(submodule, DEFAULT_WORKSPACE_CACHE_DIRECTORY));
+    });
+
+    it("keeps the cache of a --separate-git-dir checkout in the checkout, not beside its git dir", () => {
+        expect.assertions(2);
+
+        // eslint-disable-next-line vitest/no-conditional-in-test -- skip when git is missing
+        if (!hasGit) {
+            return;
+        }
+
+        const repo = join(canonical(scratch), "repo");
+        const gitDirectoryParent = join(canonical(scratch), "elsewhere");
+
+        mkdirSync(repo);
+        mkdirSync(gitDirectoryParent);
+        execFileSync("git", ["init", "--initial-branch=main", "--separate-git-dir", join(gitDirectoryParent, "repo.git")], { cwd: repo, stdio: "ignore" });
+
+        expect(existsSync(join(repo, ".git"))).toBe(true);
+        expect(resolveSharedCacheDirectory(repo, undefined, undefined, true)).toBe(resolve(repo, DEFAULT_WORKSPACE_CACHE_DIRECTORY));
+    });
+
     it("uses the linked checkout's cache when sharedWorktreeCache is false", () => {
         expect.assertions(1);
 
