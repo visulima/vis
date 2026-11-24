@@ -48,7 +48,7 @@ struct Flags {
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args, raw) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     plan.run_inherited(raw, |code| code)

@@ -145,7 +145,7 @@ fn find_real_pm(invoked: &str) -> Option<PathBuf> {
 /// the line Node prints.
 fn exec_real(invoked: &str, real: &Path, args: &[String]) -> ! {
     match Command::new(real).args(args).status() {
-        Ok(status) => exit(crate::node_exit_code(status)),
+        Ok(status) => exit(crate::process::node_exit_code(status)),
         Err(source) => WrapperError::usage("shim", format!("could not start {invoked}: {source}")).exit(),
     }
 }

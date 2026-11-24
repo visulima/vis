@@ -884,7 +884,7 @@ fn leave_to_node(raw_args: &[OsString]) -> ! {
         exit(HANDBACK_STATUS);
     }
 
-    crate::delegate(raw_args)
+    crate::process::delegate(raw_args)
 }
 
 /// Answers `vis run <target>` natively when every task hits, or hands the whole invocation to Node.

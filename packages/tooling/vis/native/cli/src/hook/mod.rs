@@ -11,7 +11,7 @@
 //! config it accepts, so it is deliberately conservative. [`prepare`] builds the
 //! whole plan before ANY hook runs (a fixer may rewrite files, so there is no
 //! switching halfway); anything it is not certain about makes [`run`] hand the
-//! original argv to the Node CLI via [`crate::delegate`]:
+//! original argv to the Node CLI via [`crate::process::delegate`]:
 //!
 //! - an argv shape other than `hook run [stage] [extra…] [known flags]`, or an
 //!   absolute `--hooks-dir`;
@@ -324,7 +324,7 @@ fn execute(plan: Plan) -> ! {
 /// Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     match prepare(args) {
-        None => crate::delegate(raw_args),
+        None => crate::process::delegate(raw_args),
         Some(Prepared::NoHooks(stage)) => {
             println!("No hooks configured for stage \"{stage}\".");
             exit(0);

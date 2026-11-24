@@ -928,7 +928,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let output = parse(args).and_then(|plan| answer(&plan, &context(args)?));
 
     let Some(output) = output else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     write_streams("secrets", &output.stdout, &output.stderr);

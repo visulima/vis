@@ -233,7 +233,7 @@ fn answer(args: &[String]) -> Option<(String, i32)> {
 
 /// Answers `vis deps` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some((text, status)) = answer(args) else { crate::delegate(raw_args) };
+    let Some((text, status)) = answer(args) else { crate::process::delegate(raw_args) };
 
     write_stdout("deps", "the dependency report", &text);
 

@@ -8,7 +8,7 @@
 //! The command answers only the context it can prove, like `clean` and `secrets`: CI, no terminal, no
 //! `vis.config.*`, a pnpm workspace whose root is the working directory, and pail output the binary can
 //! reproduce. Every flag of the command is native except where its value leaves the subset below.
-//! Everything else goes to Node through [`crate::delegate`], and so do:
+//! Everything else goes to Node through [`crate::process::delegate`], and so do:
 //!
 //! - an error of any kind (an unreadable or invalid file, a failing sorter, a bad flag value), because the
 //!   messages and source excerpts come from Node's parsers;
@@ -89,19 +89,19 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
         Some((options, layout, cwd))
     }) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let Some(discovery) = discover(&cwd, &options) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let Some(entries) = discovery.files.iter().map(|path| inspect(path, &options)).collect::<Option<Vec<_>>>() else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     if entries.iter().any(|entry| !is_plain(&entry.path)) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let mut out = Output::default();
@@ -516,7 +516,7 @@ fn report(layout: Layout, options: &Options, entries: Vec<Entry>, raw_args: &[Os
             if let Verdict::Rewrite(text) = &entry.verdict {
                 // Opened without truncating, so a refusal leaves the file as it was and Node can still take over.
                 let Ok(file) = crate::ignore::open_for_write(&entry.path) else {
-                    crate::delegate(raw_args);
+                    crate::process::delegate(raw_args);
                 };
 
                 writes.push((file, text));

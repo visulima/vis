@@ -56,11 +56,11 @@ enum Verdict {
 /// Answer `vis self-update` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let (Some(options), Some(current)) = (parse(args), native_context()) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let Some((latest, query_stderr)) = query_latest() else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let target = options.version.clone().unwrap_or(latest);
@@ -70,7 +70,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         Verdict::UpToDate(lines) => lines,
         Verdict::Found(text) => vec![text],
         // Nothing is printed yet, so Node can take over and repeat the (read-only) query.
-        Verdict::Install => crate::delegate(raw),
+        Verdict::Install => crate::process::delegate(raw),
     };
 
     say("info: checking for updates...");

@@ -92,6 +92,8 @@ mod width_tables;
 mod workspace;
 mod x;
 
+use process::delegate;
+
 /// Internal, additive diagnostic command. Used to validate the
 /// launcher → binary → native-output path without touching any existing
 /// command surface.
@@ -325,5 +327,3 @@ fn native_info() {
     println!("  fallback-entry : {}", env::var("VIS_FALLBACK_ENTRY").unwrap_or_else(|_| unset()));
     println!("  pkg-version    : {}", env::var("VIS_VERSION").unwrap_or_else(|_| unset()));
 }
-
-pub(crate) use process::{delegate, delegate_because, node_exit_code, run_in_place};

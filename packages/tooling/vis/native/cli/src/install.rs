@@ -75,7 +75,7 @@ struct Plan {
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args, raw) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let mut command = plan.manager.command();
@@ -84,7 +84,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 
     // Nothing has been printed yet, so a package manager that cannot start is Node's to report.
     let Ok(mut child) = command.spawn() else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let mut stderr = io::stderr().lock();
@@ -111,7 +111,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     }
 
     // Node reports a child without an exit code (a signal) as 1.
-    let code = child.wait().map_or(1, crate::node_exit_code);
+    let code = child.wait().map_or(1, crate::process::node_exit_code);
 
     for reader in readers {
         let _ = reader.join();

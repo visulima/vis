@@ -266,8 +266,8 @@ impl ManagerRun {
 
         match self.command().stdout(Stdio::inherit()).stderr(Stdio::inherit()).status() {
             // Node reports a child without an exit code (a signal) as 1.
-            Ok(status) => exit(exit_code(crate::node_exit_code(status))),
-            Err(_) if self.notices.is_empty() => crate::delegate(raw),
+            Ok(status) => exit(exit_code(crate::process::node_exit_code(status))),
+            Err(_) if self.notices.is_empty() => crate::process::delegate(raw),
             Err(error) => {
                 eprintln!("Error: Failed to execute '{}': {error}", self.bin);
 
@@ -288,7 +288,7 @@ pub(crate) fn run_resolved(verb: &str, resolved: &ResolvedCommand, cwd: &Path) -
         .args(&resolved.args)
         .current_dir(cwd)
         .status()
-        .map(crate::node_exit_code)
+        .map(crate::process::node_exit_code)
         .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))
 }
 

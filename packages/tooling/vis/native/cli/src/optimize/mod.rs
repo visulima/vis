@@ -72,16 +72,16 @@ struct Socket<'a> {
 /// `raw_args` the untouched argv handed to Node. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(options) = parse(args) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
     let Some((layout, cwd)) = context(args) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
     let Some(tables) = serde_json::from_str::<Tables>(TABLES_JSON).ok() else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
     let Some(output) = report(&options, layout, &cwd, &tables) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     write_stdout("optimize", "the output", &output);

@@ -60,7 +60,7 @@ struct DriftInput {
 /// Answer `vis security list --json` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(output) = args_are_native(args).then(report).flatten() else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     write_stdout("security", "the output", &output);

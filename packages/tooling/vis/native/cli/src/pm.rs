@@ -66,7 +66,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
 
     if left_to_node(args, subcommand, &cwd) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let cwd = cwd.to_string_lossy().into_owned();

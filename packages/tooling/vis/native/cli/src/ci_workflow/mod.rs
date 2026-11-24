@@ -362,7 +362,7 @@ fn answer(args: &[String]) -> Option<Outcome> {
 /// view used for parsing; `raw_args` is the untouched argv handed to Node. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(outcome) = answer(args) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let written = outcome.lines.iter().try_for_each(|line| {

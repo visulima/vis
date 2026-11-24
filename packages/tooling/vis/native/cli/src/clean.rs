@@ -55,7 +55,7 @@ pub fn run(raw: &[OsString]) -> ! {
     let args: Vec<String> = raw.iter().map(|argument| argument.to_string_lossy().into_owned()).collect();
 
     let Some(plan) = plan(&args) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let mut out = Output::default();

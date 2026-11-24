@@ -112,7 +112,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
@@ -162,7 +162,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
                 || uses_global_option(full_args)
                 || ancestor_pins_package_manager(&cwd)))
     {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };

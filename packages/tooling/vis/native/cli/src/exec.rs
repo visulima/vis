@@ -77,7 +77,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let directory = env::current_dir().unwrap_or_else(|_| ".".into());
 
     if left_to_node(&parsed, &directory) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let Parsed { runtime, opts } = parsed;

@@ -53,7 +53,7 @@ struct Plan {
 /// Answer `vis implode` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let Some(profiles) = &plan.profiles else {
@@ -62,7 +62,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     };
 
     let Some(staged) = stage(profiles) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let mut out = String::from("This will remove:\n");

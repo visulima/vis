@@ -498,7 +498,7 @@ fn native(args: &[String]) -> Option<Output> {
 /// Answers `vis cache why` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(out) = native(args) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     emit("cache why", &out)
