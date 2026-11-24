@@ -104,6 +104,11 @@ pub fn complete(manifest: &Manifest, words: &[String]) -> String {
 }
 
 /// Entry for `vis complete -- <words…>`; `args` is the full argv after `vis`.
+///
+/// The generated bash and zsh scripts send the words after the program name (`vis complete -- ${words[@]:1}`),
+/// so the first word is the command being typed, never `vis`. A leading `vis` is an unknown command word and
+/// gets no candidates (`:0`, file completion). The Node CLI has no `complete` command at all, so every
+/// `vis complete -- …` exits 1 there with no output; only this binary answers the endpoint.
 pub fn run(args: &[String]) -> i32 {
     let words =
         args.iter().skip(1).skip_while(|argument| argument.as_str() != "--").skip(1).cloned().collect::<Vec<_>>();
@@ -182,6 +187,14 @@ mod tests {
 
         assert!(out.starts_with("prune\t"), "{out}");
         assert_eq!(out, complete(&manifest, &words(&["cache", "pr"])));
+    }
+
+    #[test]
+    fn a_leading_program_word_is_an_unknown_command() {
+        let manifest = Manifest::load();
+
+        assert_eq!(complete(&manifest, &words(&["vis", ""])), ":0\n");
+        assert_eq!(complete(&manifest, &words(&["vis", "ca"])), ":0\n");
     }
 
     #[test]
