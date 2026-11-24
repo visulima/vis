@@ -103,14 +103,7 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
                 args.extend(opts.args);
             } else {
                 if opts.recursive || !opts.filter.is_empty() {
-                    args.push("workspaces".into());
-                    args.push("foreach".into());
-                    args.push("--all".into());
-
-                    for f in &opts.filter {
-                        args.push("--include".into());
-                        args.push(f.clone());
-                    }
+                    yarn_foreach_prefix(&opts.filter, &mut args);
 
                     if opts.parallel {
                         args.push("--parallel".into());
@@ -139,7 +132,7 @@ pub fn resolve_pm_command(
     pm: &str,
     version: &str,
     subcommand: &str,
-    extra_args: Vec<String>,
+    mut extra_args: Vec<String>,
 ) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
 
@@ -160,114 +153,43 @@ pub fn resolve_pm_command(
         return Ok(ResolvedCommand { args, bin: "npm".into(), warnings });
     }
 
-    if subcommand == "cache" {
-        match pm {
-            "pnpm" => {
-                match extra_args.first().map(String::as_str) {
-                    Some("dir") => {
-                        args.push("store".into());
-                        args.push("path".into());
-                    }
-                    Some("clean") => {
-                        args.push("store".into());
-                        args.push("prune".into());
-                        args.extend(extra_args.into_iter().skip(1));
-                    }
-                    _ => {
-                        args.push("store".into());
-                        args.extend(extra_args);
-                    }
+    match (subcommand, pm) {
+        ("cache", "pnpm") => {
+            args.push("store".into());
+
+            match extra_args.first().map(String::as_str) {
+                Some("dir") => {
+                    args.push("path".into());
+                    extra_args.clear();
                 }
-
-                return Ok(ResolvedCommand { args, bin: "pnpm".into(), warnings });
-            }
-            "bun" => {
-                args.push("pm".into());
-                args.push("cache".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("cache".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "list" || subcommand == "ls" {
-        match pm {
-            "bun" => {
-                args.push("pm".into());
-                args.push("ls".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("list".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "pack" {
-        match pm {
-            "bun" => {
-                args.push("pm".into());
-                args.push("pack".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: "bun".into(), warnings });
-            }
-            _ => {
-                args.push("pack".into());
-                args.extend(extra_args);
-
-                return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
-            }
-        }
-    }
-
-    if subcommand == "view" || subcommand == "info" {
-        match pm {
-            "yarn" => {
-                if version.starts_with("1.") {
-                    args.push("info".into());
-                } else {
-                    args.push("npm".into());
-                    args.push("info".into());
+                Some("clean") => {
+                    args.push("prune".into());
+                    extra_args.remove(0);
                 }
-
-                args.extend(extra_args);
-            }
-            "bun" => {
-                args.push("pm".into());
-                args.push("view".into());
-                args.extend(extra_args);
-            }
-            _ => {
-                args.push("view".into());
-                args.extend(extra_args);
+                _ => {}
             }
         }
+        ("cache", "bun") => args.extend(["pm".into(), "cache".into()]),
+        ("list" | "ls", "bun") => args.extend(["pm".into(), "ls".into()]),
+        ("list" | "ls", _) => args.push("list".into()),
+        ("pack", "bun") => args.extend(["pm".into(), "pack".into()]),
+        ("view" | "info", "yarn") if version.starts_with("1.") => args.push("info".into()),
+        ("view" | "info", "yarn") => args.extend(["npm".into(), "info".into()]),
+        ("view" | "info", "bun") => args.extend(["pm".into(), "view".into()]),
+        ("view" | "info", _) => args.push("view".into()),
+        _ => {
+            if subcommand == "prune" && (pm == "yarn" || pm == "bun") {
+                warnings.push(format!("{pm} does not support 'prune'. It prunes automatically on install."));
+            }
 
-        return Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings });
+            if subcommand == "rebuild" && (pm == "yarn" || pm == "bun") {
+                warnings.push(format!("{pm} does not support 'rebuild'."));
+            }
+
+            args.push(subcommand.to_owned());
+        }
     }
 
-    if subcommand == "prune" && (pm == "yarn" || pm == "bun") {
-        warnings.push(format!("{pm} does not support 'prune'. It prunes automatically on install."));
-    }
-
-    if subcommand == "rebuild" && (pm == "yarn" || pm == "bun") {
-        warnings.push(format!("{pm} does not support 'rebuild'."));
-    }
-
-    args.push(subcommand.to_owned());
     args.extend(extra_args);
 
     Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
@@ -372,10 +294,6 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
                 args.push("-D".into());
             }
 
-            if opts.global {
-                args.push("-g".into());
-            }
-
             if opts.recursive {
                 args.push("--recursive".into());
             }
@@ -387,10 +305,6 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
             if opts.save_dev {
                 args.push("--save-dev".into());
-            }
-
-            if opts.global {
-                args.push("--global".into());
             }
 
             for f in &opts.filter {
@@ -1020,7 +934,7 @@ pub struct AddOptions {
 pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
 
     // Global packages use npm exclusively (except bun, which ships a
     // native global-install path).
@@ -1059,9 +973,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             if opts.optional {
                 args.push("-O".into());
             }
-            if opts.global {
-                args.push("-g".into());
-            }
             if opts.workspace {
                 args.push("--workspace".into());
             }
@@ -1081,9 +992,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             if opts.optional {
                 args.push("--save-optional".into());
             }
-            if opts.global {
-                args.push("--global".into());
-            }
             for f in &opts.filter {
                 args.push("--workspace".into());
                 args.push(f.clone());
@@ -1099,9 +1007,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
         }
         "yarn" => {
             if version.starts_with("1.") {
-                if opts.global {
-                    args.push("global".into());
-                }
                 yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("add".into());
                 if opts.save_dev {
@@ -1121,12 +1026,6 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                 }
                 args.extend(opts.packages);
             } else {
-                if opts.global {
-                    warnings.push("yarn berry does not support global packages. Using npm.".into());
-                    let mut a = vec!["install".into(), "--global".into()];
-                    a.extend(opts.packages);
-                    return Ok(ResolvedCommand { bin: "npm".into(), args: a, warnings });
-                }
                 if opts.filter.len() > 1 {
                     yarn_foreach_prefix(&opts.filter, &mut args);
                 } else {
@@ -1183,7 +1082,6 @@ pub struct DlxOptions {
     pub silent: bool,
 }
 
-/// Resolve `vis dlx`.
 /// The executable `npm exec` runs for a package spec: the package name without its scope and
 /// version (`@scope/pkg@1.0` -> `pkg`, `create-vite@6.0.0` -> `create-vite`). A spec with a `:`
 /// is a git, URL or file location, where an `@` belongs to the location (`git@host`,
@@ -1198,6 +1096,7 @@ fn npm_bin_name(spec: &str) -> String {
     name.rsplit('/').next().unwrap_or_default().to_string()
 }
 
+/// Resolve `vis dlx`.
 pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
     validate_pm(pm)?;
     let mut args = Vec::new();
