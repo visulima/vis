@@ -243,34 +243,68 @@ fn first_version(text: &str) -> Option<&str> {
     None
 }
 
+/// The most a probe may print: a version string is a few dozen bytes, so more than this is a tool that is not
+/// answering the question, and the probe fails like any other it cannot decide.
+const PROBE_OUTPUT_LIMIT: usize = 4096;
+
+/// Ends a probe that is not wanted any more: the child and, on unix, everything it started in its group, so no
+/// descendant keeps the output pipe (and the reader thread) alive.
+fn stop(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    if let Ok(group) = i32::try_from(child.id()) {
+        // SAFETY: `killpg` takes plain integers; the child is its own group leader (see `query_output`).
+        unsafe { libc::killpg(group, libc::SIGKILL) };
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Runs `<binary> --version` in the working directory with nothing on stdin and stderr discarded, waits two
-/// seconds at most, and returns what it printed. `None` for a failure to start, a non-zero exit, a timeout, or
-/// output that is not UTF-8.
+/// seconds at most, and returns what it printed. `None` for a failure to start, a non-zero exit, a timeout, more
+/// than [`PROBE_OUTPUT_LIMIT`] bytes of output, or output that is not UTF-8.
 fn query_output(binary: &Path) -> Option<String> {
     let started = Instant::now();
-    let mut child = Command::new(binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut stdout = child.stdout.take()?;
+    let mut command = Command::new(binary);
+
+    command.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+
+    // Its own process group, so that a timeout can end the tool's descendants as well.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+
+    let mut child = command.spawn().ok()?;
+    let stdout = child.stdout.take()?;
     let (sender, receiver) = std::sync::mpsc::channel();
 
+    // The reader takes one byte past the limit and lets go of the pipe, so it never holds more than that.
     std::thread::spawn(move || {
-        let mut text = String::new();
+        let mut bytes = Vec::new();
+        let read = stdout.take(PROBE_OUTPUT_LIMIT as u64 + 1).read_to_end(&mut bytes);
 
-        let _ = sender.send(stdout.read_to_string(&mut text).ok().map(|_| text));
+        let _ = sender.send(read.ok().filter(|_| bytes.len() <= PROBE_OUTPUT_LIMIT).map(|_| bytes));
     });
 
+    let mut output = None;
     let status = loop {
+        // The reader is done at the end of the output or at the limit: too much output ends the probe at once.
+        if output.is_none() {
+            if let Ok(bytes) = receiver.try_recv() {
+                if bytes.is_none() {
+                    stop(&mut child);
+
+                    return None;
+                }
+
+                output = Some(bytes);
+            }
+        }
+
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < PROBE_TIMEOUT => std::thread::sleep(Duration::from_micros(500)),
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop(&mut child);
 
                 return None;
             }
@@ -278,11 +312,23 @@ fn query_output(binary: &Path) -> Option<String> {
     };
 
     // The pipe closes with the process unless a child of it keeps it open; that is bounded by the same two seconds.
-    let text = receiver
-        .recv_timeout(PROBE_TIMEOUT.saturating_sub(started.elapsed()).max(Duration::from_millis(50)))
-        .ok()??;
+    let bytes = match output {
+        Some(bytes) => bytes,
+        None => {
+            let remaining = PROBE_TIMEOUT.saturating_sub(started.elapsed()).max(Duration::from_millis(50));
 
-    status.success().then_some(text)
+            match receiver.recv_timeout(remaining) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    stop(&mut child);
+
+                    return None;
+                }
+            }
+        }
+    };
+
+    status.success().then_some(bytes).flatten().and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
 /// What `<binary> --version` printed, keyed by the binary's file and the name it is invoked by. A multi-call binary
@@ -672,6 +718,67 @@ mod tests {
 
         assert_eq!(launcher.output(&root.join("node")).as_deref(), Some("v1.2.3\n"));
         assert_eq!(launcher.output(&root.join("npm")).as_deref(), Some("10.5.0\n"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    fn script(root: &Path, name: &str, body: &str) -> PathBuf {
+        let path = root.join(name);
+
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_that_prints_too_much_fails_at_once() {
+        let root = scratch("noisy");
+        // Ends only when the reader lets go of the pipe; without a limit it would print for a long time first.
+        let tool = script(&root, "noisy", "while :; do echo v1.2.3 v1.2.3 v1.2.3 v1.2.3 v1.2.3 v1.2.3; done");
+        let started = Instant::now();
+
+        assert_eq!(query_output(&tool), None);
+        assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
+
+        // A short answer is unaffected, and so is one at the limit.
+        let short = script(&root, "short", "echo v1.2.3");
+
+        assert_eq!(query_output(&short).as_deref(), Some("v1.2.3\n"));
+
+        let exact = script(&root, "exact", &format!("head -c {PROBE_OUTPUT_LIMIT} /dev/zero | tr '\\0' 'a'"));
+
+        assert_eq!(query_output(&exact).map(|text| text.len()), Some(PROBE_OUTPUT_LIMIT));
+
+        let over = script(&root, "over", &format!("head -c {} /dev/zero | tr '\\0' 'a'", PROBE_OUTPUT_LIMIT + 1));
+
+        assert_eq!(query_output(&over), None);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_descendant_that_keeps_the_pipe_open_is_ended_with_the_probe() {
+        let root = scratch("holder");
+        let pid_file = root.join("holder.pid");
+        // The tool answers and exits at once; the sleep it left behind holds the pipe's write end.
+        let tool = script(&root, "holder", &format!("sleep 30 &\necho $! > {}\necho v1.2.3", pid_file.display()));
+        let started = Instant::now();
+
+        assert_eq!(query_output(&tool), None);
+        assert!(started.elapsed() < Duration::from_millis(3500), "{:?}", started.elapsed());
+
+        let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
+
+        // Give the kernel a moment to reap it; the group was killed with the probe.
+        std::thread::sleep(Duration::from_millis(200));
+
+        let alive = Command::new("kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success();
+
+        assert!(!alive, "the descendant {pid} is still running");
 
         let _ = fs::remove_dir_all(&root);
     }
