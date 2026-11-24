@@ -264,7 +264,7 @@ fn lines(hooks_directory: &str, stages: &[Stage]) -> Vec<String> {
 
 /// Whether Node would reach the same answer from the working directory: a unix CI run off a terminal at the root of a
 /// pnpm workspace, with none of the settings that change what Node prints.
-pub(super) fn context_is_native() -> bool {
+pub(crate) fn context_is_native() -> bool {
     cfg!(unix) && output_settings_are_default() && !io::stdout().is_terminal() && native_context()
 }
 

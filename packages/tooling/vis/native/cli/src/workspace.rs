@@ -409,11 +409,15 @@ fn valid_path(path: &str) -> bool {
 /// [`project_directories`], no project name, overlay or other ecosystem matters. `None` delegates: no pattern
 /// list in the workspace YAML, a pattern or `.gitignore` line outside the shapes above, or a non-ASCII name.
 pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> {
+    directories_for_patterns(root, &yaml_workspace_patterns(root)?)
+}
+
+/// The `packages` patterns of the first workspace YAML that lists any, read as [`yaml_packages`] does. `None` when
+/// there is no such YAML, when it is not ASCII or when `root` is not a path this module reads.
+pub(crate) fn yaml_workspace_patterns(root: &Path) -> Option<Vec<String>> {
     if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
         return None;
     }
-
-    let mut patterns = None;
 
     for file in WORKSPACE_YAML_NAMES {
         let path = root.join(file);
@@ -428,14 +432,19 @@ pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> 
             let found = yaml_packages(&text);
 
             if !found.is_empty() {
-                patterns = Some(found);
-
-                break;
+                return Some(found);
             }
         }
     }
 
-    let directories = expand_patterns(root, &patterns?, &|directory| directory.join("package.json").exists())?;
+    None
+}
+
+/// What `resolveWorkspacePatterns(root, patterns)` returns: the directories the patterns name that hold a
+/// `package.json`, deduplicated, minus those the built-in excludes and the root `.gitignore` drop. `None` delegates,
+/// as for [`directories_with_package_json`].
+pub(crate) fn directories_for_patterns(root: &Path, patterns: &[String]) -> Option<Vec<String>> {
+    let directories = expand_patterns(root, patterns, &|directory| directory.join("package.json").exists())?;
     let mut unique: Vec<String> = Vec::new();
 
     for directory in directories {
@@ -458,6 +467,11 @@ pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> 
     }
 
     Some(kept)
+}
+
+/// The directory names directly under `directory`, in the order `walkSync` yields them (see [`list_dirs`]).
+pub(crate) fn child_directories(directory: &Path) -> Option<Vec<String>> {
+    list_dirs(directory, Some(1))
 }
 
 fn star_match(pattern: &str, text: &str) -> bool {
