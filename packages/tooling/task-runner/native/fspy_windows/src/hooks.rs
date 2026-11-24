@@ -82,22 +82,33 @@ fn classify(access: u32) -> u8 {
     }
 }
 
+/// Run reporting code so a panic can never unwind out of a hook. The hooks are
+/// `extern "system"` functions called from arbitrary host code; unwinding across
+/// that boundary aborts the host process. The crate keeps the default
+/// `panic = "unwind"` (see `Cargo.toml`), which is what makes this effective —
+/// `panic = "abort"` would turn the same panic into an immediate host crash.
+fn guarded(f: impl FnOnce()) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+}
+
 fn report_w(path: *const u16, kind: u8) {
     if path.is_null() {
         return;
     }
 
-    // Read the NUL-terminated UTF-16 string.
-    let mut len = 0usize;
-    unsafe {
-        while *path.add(len) != 0 {
-            len += 1;
+    guarded(|| {
+        // Read the NUL-terminated UTF-16 string.
+        let mut len = 0usize;
+        unsafe {
+            while *path.add(len) != 0 {
+                len += 1;
+            }
         }
-    }
-    let slice = unsafe { std::slice::from_raw_parts(path, len) };
-    let s = String::from_utf16_lossy(slice);
+        let slice = unsafe { std::slice::from_raw_parts(path, len) };
+        let s = String::from_utf16_lossy(slice);
 
-    pipe::send(kind, &normalize_win(&s));
+        pipe::send(kind, &normalize_win(&s));
+    });
 }
 
 fn report_a(path: *const u8, kind: u8) {
@@ -105,16 +116,18 @@ fn report_a(path: *const u8, kind: u8) {
         return;
     }
 
-    let mut len = 0usize;
-    unsafe {
-        while *path.add(len) != 0 {
-            len += 1;
+    guarded(|| {
+        let mut len = 0usize;
+        unsafe {
+            while *path.add(len) != 0 {
+                len += 1;
+            }
         }
-    }
-    let slice = unsafe { std::slice::from_raw_parts(path, len) };
-    let s = String::from_utf8_lossy(slice).into_owned();
+        let slice = unsafe { std::slice::from_raw_parts(path, len) };
+        let s = String::from_utf8_lossy(slice).into_owned();
 
-    pipe::send(kind, &normalize_win(&s));
+        pipe::send(kind, &normalize_win(&s));
+    });
 }
 
 unsafe extern "system" fn hook_CreateFileW(

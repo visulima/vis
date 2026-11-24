@@ -35,6 +35,10 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [profile.release]
+# Keep `panic = "unwind"` (the default): the hooks wrap their reporting in
+# `catch_unwind` so a panic can never reach the host process, and that only
+# works when panics unwind. `abort` would crash the host instead.
+panic = "unwind"
 lto = true
 codegen-units = 1
 opt-level = 3
