@@ -16,23 +16,8 @@ use tokio::sync::mpsc;
 async fn a_non_unicode_parent_variable_does_not_panic_the_run() {
     std::env::set_var("TASK_RUNNER_NON_UNICODE", OsStr::from_bytes(b"caf\xe9"));
 
-    let commands = vec![ConcurrentCommandConfig {
-        command: "echo ok".to_string(),
-        name: None,
-        cwd: None,
-        env: None,
-        shell: None,
-        stdin: None,
-    }];
-    let options = ConcurrentRunnerOptions {
-        max_processes: None,
-        kill_signal: None,
-        kill_others: None,
-        success_condition: None,
-        kill_timeout: None,
-        shell_path: None,
-    };
-    let runner = ConcurrentRunner::new(commands, &options);
+    let commands = vec![ConcurrentCommandConfig { command: "echo ok".to_string(), ..Default::default() }];
+    let runner = ConcurrentRunner::new(commands, &ConcurrentRunnerOptions::default());
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
     let result = runner.run(event_tx).await;

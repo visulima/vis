@@ -21,9 +21,18 @@ pub struct ConcurrentCommandConfig {
     pub stdin: Option<String>,
 }
 
-impl From<ConcurrentCommandConfig> for core::ConcurrentCommandConfig {
-    fn from(v: ConcurrentCommandConfig) -> Self {
-        Self { command: v.command, name: v.name, cwd: v.cwd, env: v.env, shell: v.shell, stdin: v.stdin }
+/// An unknown option value is reported to the caller as an invalid argument.
+fn invalid_arg(error: core::InvalidOption) -> napi::Error {
+    napi::Error::new(napi::Status::InvalidArg, error.to_string())
+}
+
+impl TryFrom<ConcurrentCommandConfig> for core::ConcurrentCommandConfig {
+    type Error = napi::Error;
+
+    fn try_from(v: ConcurrentCommandConfig) -> napi::Result<Self> {
+        let stdin = v.stdin.as_deref().map(str::parse).transpose().map_err(invalid_arg)?.unwrap_or_default();
+
+        Ok(Self { command: v.command, name: v.name, cwd: v.cwd, env: v.env, shell: v.shell, stdin })
     }
 }
 
@@ -34,12 +43,13 @@ pub struct ConcurrentRunnerOptions {
     /// Maximum number of processes to run simultaneously.
     /// 0 or absent means unlimited.
     pub max_processes: Option<u32>,
-    /// Signal to send when killing processes (default: "SIGTERM").
+    /// Signal to send when killing processes (default: "SIGTERM"). An unknown name is an error.
     pub kill_signal: Option<String>,
     /// Conditions under which to kill other processes.
-    /// Values: "success", "failure". Empty = never kill others.
+    /// Values: "success", "failure" (anything else is an error). Empty = never kill others.
     pub kill_others: Option<Vec<String>>,
-    /// Success condition: "first", "last", "all", or "command-<name|index>".
+    /// Success condition: "first", "last", "all", or "command-<name|index>" (an optional leading "!"
+    /// negates the command form). Anything else is an error.
     pub success_condition: Option<String>,
     /// Milliseconds to wait after sending kill signal before sending SIGKILL.
     pub kill_timeout: Option<u32>,
@@ -49,16 +59,30 @@ pub struct ConcurrentRunnerOptions {
     pub shell_path: Option<String>,
 }
 
-impl From<ConcurrentRunnerOptions> for core::ConcurrentRunnerOptions {
-    fn from(v: ConcurrentRunnerOptions) -> Self {
-        Self {
+impl TryFrom<ConcurrentRunnerOptions> for core::ConcurrentRunnerOptions {
+    type Error = napi::Error;
+
+    fn try_from(v: ConcurrentRunnerOptions) -> napi::Result<Self> {
+        Ok(Self {
             max_processes: v.max_processes,
-            kill_signal: v.kill_signal,
-            kill_others: v.kill_others,
-            success_condition: v.success_condition,
+            kill_signal: v.kill_signal.as_deref().map(str::parse).transpose().map_err(invalid_arg)?.unwrap_or_default(),
+            kill_others: v
+                .kill_others
+                .unwrap_or_default()
+                .iter()
+                .map(|condition| condition.parse())
+                .collect::<Result<_, _>>()
+                .map_err(invalid_arg)?,
+            success_condition: v
+                .success_condition
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .map_err(invalid_arg)?
+                .unwrap_or_default(),
             kill_timeout: v.kill_timeout,
             shell_path: v.shell_path,
-        }
+        })
     }
 }
 

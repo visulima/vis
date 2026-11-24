@@ -6,15 +6,16 @@ use super::completion::SuccessCondition;
 use super::process::{spawn_process, CompletionMessage, ProcessInfo};
 use super::signal;
 use super::types::{
-    ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent,
+    ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, KillOthers,
+    KillSignal, ProcessEvent,
 };
 
 /// Orchestrates concurrent execution of multiple commands.
 pub struct ConcurrentRunner {
     commands: Vec<ConcurrentCommandConfig>,
     max_processes: usize,
-    kill_signal: String,
-    kill_others: Vec<String>,
+    kill_signal: KillSignal,
+    kill_others: Vec<KillOthers>,
     success_condition: SuccessCondition,
     kill_timeout_ms: u64,
     shell_path: Option<String>,
@@ -28,13 +29,9 @@ impl ConcurrentRunner {
         Self {
             commands,
             max_processes,
-            kill_signal: options.kill_signal.clone().unwrap_or_else(|| "SIGTERM".to_string()),
-            kill_others: options.kill_others.clone().unwrap_or_default(),
-            success_condition: options
-                .success_condition
-                .as_deref()
-                .map(SuccessCondition::parse)
-                .unwrap_or(SuccessCondition::All),
+            kill_signal: options.kill_signal,
+            kill_others: options.kill_others.clone(),
+            success_condition: options.success_condition.clone(),
             kill_timeout_ms: options.kill_timeout.unwrap_or(5000) as u64,
             shell_path: options.shell_path.clone(),
         }
@@ -210,7 +207,7 @@ impl ConcurrentRunner {
                 // Fallback when Job Object creation failed at spawn time:
                 // taskkill /F /T via kill_tree.
                 if let Some(pid) = info.pid {
-                    let _ = super::process_group::kill_tree(pid, &self.kill_signal);
+                    let _ = super::process_group::kill_tree(pid, self.kill_signal);
                 }
             }
 
@@ -227,7 +224,7 @@ impl ConcurrentRunner {
             {
                 let _ = graceful;
                 if let Some(pid) = info.pid {
-                    let _ = super::process_group::kill_tree(pid, &self.kill_signal);
+                    let _ = super::process_group::kill_tree(pid, self.kill_signal);
                 }
             }
         }
@@ -261,20 +258,16 @@ impl ConcurrentRunner {
                     if terminated.load(Ordering::Acquire) {
                         continue;
                     }
-                    let _ = super::process_group::kill_tree(pid, "SIGKILL");
+                    let _ = super::process_group::kill_tree(pid, KillSignal::Kill);
                 }
             });
         }
     }
 
     fn should_kill_others(&self, event: &ConcurrentCloseEvent) -> bool {
-        for condition in &self.kill_others {
-            match condition.as_str() {
-                "failure" if event.exit_code != 0 => return true,
-                "success" if event.exit_code == 0 => return true,
-                _ => {}
-            }
-        }
-        false
+        self.kill_others.iter().any(|condition| match condition {
+            KillOthers::Failure => event.exit_code != 0,
+            KillOthers::Success => event.exit_code == 0,
+        })
     }
 }

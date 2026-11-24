@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use super::process_group;
-use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, ProcessEvent};
+use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, ProcessEvent, StdinMode};
 
 /// Spawn a child process and stream its output.
 ///
@@ -88,7 +88,7 @@ pub(crate) fn spawn_process(
         if drained.is_err() {
             // Reap the group and drop the readers so nothing keeps the pipes alive.
             if let Some(pid) = pid {
-                let _ = process_group::kill_tree(pid, "SIGKILL");
+                let _ = process_group::kill_tree(pid, KillSignal::Kill);
             }
             for handle in [&stdout_handle, &stderr_handle].into_iter().flatten() {
                 handle.abort();
@@ -379,12 +379,10 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    // Stdin mode: "null" (default), "pipe", or "inherit"
-    let stdin_mode = config.stdin.as_deref().unwrap_or("null");
-    cmd.stdin(match stdin_mode {
-        "pipe" => std::process::Stdio::piped(),
-        "inherit" => std::process::Stdio::inherit(),
-        _ => std::process::Stdio::null(),
+    cmd.stdin(match config.stdin {
+        StdinMode::Pipe => std::process::Stdio::piped(),
+        StdinMode::Inherit => std::process::Stdio::inherit(),
+        StdinMode::Null => std::process::Stdio::null(),
     });
 
     // Unix: create new process group via setsid

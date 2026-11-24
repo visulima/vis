@@ -3,6 +3,8 @@
 //! Unix: spawn children in new process groups via `setsid`, kill via `killpg`.
 //! Windows: assign children to Job Objects, terminate via `TerminateJobObject`.
 
+use super::types::KillSignal;
+
 #[cfg(unix)]
 mod unix {
     use std::io;
@@ -10,6 +12,8 @@ mod unix {
     use nix::libc;
     use nix::sys::signal::{self, Signal};
     use nix::unistd::Pid;
+
+    use crate::concurrent::types::KillSignal;
 
     /// Pre-exec hook: call `setsid()` to create a new session/process group.
     ///
@@ -33,20 +37,22 @@ mod unix {
     /// package.json scripts (shells, node, vitest, packem) don't do
     /// this, but it's worth knowing if a future bug report names a
     /// process being signalled that shouldn't have been.
-    pub(crate) fn kill_process_group(pid: u32, signal_name: &str) -> io::Result<()> {
-        let sig = parse_signal(signal_name).unwrap_or(Signal::SIGTERM);
+    pub(crate) fn kill_process_group(pid: u32, signal: KillSignal) -> io::Result<()> {
         let pgid = Pid::from_raw(-(pid as i32));
-        signal::kill(pgid, sig).map_err(io::Error::other)
+        signal::kill(pgid, to_signal(signal)).map_err(io::Error::other)
     }
 
-    fn parse_signal(name: &str) -> Option<Signal> {
-        match name.to_uppercase().as_str() {
-            "SIGTERM" | "TERM" => Some(Signal::SIGTERM),
-            "SIGKILL" | "KILL" => Some(Signal::SIGKILL),
-            "SIGINT" | "INT" => Some(Signal::SIGINT),
-            "SIGHUP" | "HUP" => Some(Signal::SIGHUP),
-            "SIGQUIT" | "QUIT" => Some(Signal::SIGQUIT),
-            _ => None,
+    fn to_signal(signal: KillSignal) -> Signal {
+        match signal {
+            KillSignal::Abrt => Signal::SIGABRT,
+            KillSignal::Alrm => Signal::SIGALRM,
+            KillSignal::Hup => Signal::SIGHUP,
+            KillSignal::Int => Signal::SIGINT,
+            KillSignal::Kill => Signal::SIGKILL,
+            KillSignal::Quit => Signal::SIGQUIT,
+            KillSignal::Term => Signal::SIGTERM,
+            KillSignal::Usr1 => Signal::SIGUSR1,
+            KillSignal::Usr2 => Signal::SIGUSR2,
         }
     }
 }
@@ -157,7 +163,7 @@ mod windows {
 }
 
 /// Kill a process tree by PID with the given signal.
-pub(crate) fn kill_tree(pid: u32, signal: &str) -> std::io::Result<()> {
+pub(crate) fn kill_tree(pid: u32, signal: KillSignal) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         unix::kill_process_group(pid, signal)

@@ -8,6 +8,13 @@ use task_runner_core::ConcurrentRunner;
 
 use super::types::{ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent};
 
+/// Parse the JS-side configuration once; an unknown option value is an error.
+fn new_runner(commands: Vec<ConcurrentCommandConfig>, options: ConcurrentRunnerOptions) -> Result<ConcurrentRunner> {
+    let commands = commands.into_iter().map(TryInto::try_into).collect::<Result<Vec<_>>>()?;
+
+    Ok(ConcurrentRunner::new(commands, &options.try_into()?))
+}
+
 /// Run commands concurrently with real-time event streaming.
 ///
 /// Each stdout/stderr line and process lifecycle event is sent to the
@@ -21,7 +28,7 @@ pub async fn run_concurrent(
     options: ConcurrentRunnerOptions,
     #[napi(ts_arg_type = "(event: ProcessEvent) => void")] on_event: ThreadsafeFunction<ProcessEvent>,
 ) -> Result<ConcurrentRunResult> {
-    let runner = ConcurrentRunner::new(commands.into_iter().map(Into::into).collect(), &options.into());
+    let runner = new_runner(commands, options)?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<CoreProcessEvent>();
 
@@ -58,7 +65,7 @@ pub async fn run_concurrent_batch(
         ThreadsafeFunction<ProcessEvent>,
     >,
 ) -> Result<ConcurrentRunResult> {
-    let runner = ConcurrentRunner::new(commands.into_iter().map(Into::into).collect(), &options.into());
+    let runner = new_runner(commands, options)?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<CoreProcessEvent>();
 

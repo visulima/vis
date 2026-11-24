@@ -1,4 +1,4 @@
-mod completion;
+pub mod completion;
 mod process;
 mod process_group;
 pub(crate) mod runner;

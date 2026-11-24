@@ -2,9 +2,10 @@
 mod tests {
     use tokio::sync::mpsc;
 
+    use crate::concurrent::completion::SuccessCondition;
     use crate::concurrent::runner::ConcurrentRunner;
     use crate::concurrent::types::{
-        ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent,
+        ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, KillOthers, ProcessEvent, StdinMode,
     };
 
     /// Run all commands and collect results without streaming events.
@@ -18,22 +19,12 @@ mod tests {
         ConcurrentCommandConfig {
             command: command.to_string(),
             name: name.map(|s| s.to_string()),
-            cwd: None,
-            env: None,
-            shell: None,
-            stdin: None,
+            ..Default::default()
         }
     }
 
     fn default_options() -> ConcurrentRunnerOptions {
-        ConcurrentRunnerOptions {
-            max_processes: None,
-            kill_signal: None,
-            kill_others: None,
-            success_condition: None,
-            kill_timeout: None,
-            shell_path: None,
-        }
+        ConcurrentRunnerOptions::default()
     }
 
     #[tokio::test]
@@ -142,7 +133,7 @@ mod tests {
     async fn test_success_condition_first() {
         let commands = vec![make_config("echo ok", Some("fast")), make_config("sleep 0.1 && exit 1", Some("slow"))];
         let mut opts = default_options();
-        opts.success_condition = Some("first".to_string());
+        opts.success_condition = SuccessCondition::First;
         let runner = ConcurrentRunner::new(commands, &opts);
         let result = run_batch(&runner).await;
 
@@ -172,7 +163,7 @@ mod tests {
     async fn test_kill_others_on_failure() {
         let commands = vec![make_config("exit 1", Some("fails-fast")), make_config("sleep 10", Some("long-running"))];
         let mut opts = default_options();
-        opts.kill_others = Some(vec!["failure".to_string()]);
+        opts.kill_others = vec![KillOthers::Failure];
         opts.kill_timeout = Some(1000);
         let runner = ConcurrentRunner::new(commands, &opts);
 
@@ -217,7 +208,7 @@ mod tests {
             cwd: None,
             env: Some(env),
             shell: None,
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -313,7 +304,7 @@ mod tests {
     async fn test_success_condition_command_by_name() {
         let commands = vec![make_config("exit 1", Some("irrelevant")), make_config("echo ok", Some("important"))];
         let mut opts = default_options();
-        opts.success_condition = Some("command-important".to_string());
+        opts.success_condition = SuccessCondition::Command("important".to_string());
         let runner = ConcurrentRunner::new(commands, &opts);
         let result = run_batch(&runner).await;
 
@@ -329,7 +320,7 @@ mod tests {
             cwd: Some("/tmp".to_string()),
             env: None,
             shell: None,
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -355,7 +346,7 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(false),
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -382,7 +373,7 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -409,7 +400,7 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: None, // defaults to "null"
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
         let result = run_batch(&runner).await;
@@ -428,7 +419,7 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: Some("pipe".to_string()),
+            stdin: StdinMode::Pipe,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
@@ -501,5 +492,60 @@ mod tests {
             "expected completion within the 2s drain grace + 1s, took {:?}",
             start.elapsed()
         );
+    }
+
+    #[test]
+    fn test_kill_signal_parses_node_and_bare_names_in_any_case() {
+        use crate::concurrent::types::KillSignal;
+
+        for (input, expected) in [
+            ("SIGTERM", KillSignal::Term),
+            ("sigkill", KillSignal::Kill),
+            ("INT", KillSignal::Int),
+            ("SIGHUP", KillSignal::Hup),
+            ("SIGQUIT", KillSignal::Quit),
+            ("SIGUSR1", KillSignal::Usr1),
+            ("SIGUSR2", KillSignal::Usr2),
+            ("SIGABRT", KillSignal::Abrt),
+            ("SIGALRM", KillSignal::Alrm),
+        ] {
+            assert_eq!(input.parse::<KillSignal>().unwrap(), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_unknown_option_values_are_errors_that_name_the_value() {
+        use crate::concurrent::types::{KillOthers, KillSignal};
+
+        let signal = "SIGBOGUS".parse::<KillSignal>().unwrap_err();
+        assert_eq!((signal.option, signal.value.as_str()), ("killSignal", "SIGBOGUS"));
+
+        let stdin = "telepathy".parse::<StdinMode>().unwrap_err();
+        assert_eq!((stdin.option, stdin.value.as_str()), ("stdin", "telepathy"));
+
+        let kill_others = "maybe".parse::<KillOthers>().unwrap_err();
+        assert_eq!((kill_others.option, kill_others.value.as_str()), ("killOthers", "maybe"));
+        assert!(kill_others.to_string().contains("\"maybe\""));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_signal_other_than_the_default_is_the_one_sent() {
+        use crate::concurrent::types::KillSignal;
+
+        // The child exits with 70 only if it receives SIGUSR1; SIGTERM would give 143.
+        let commands = vec![
+            make_config("trap 'exit 70' USR1; sleep 0.3 & wait", Some("trapper")),
+            make_config("sleep 0.1; exit 1", Some("fails")),
+        ];
+        let mut opts = default_options();
+        opts.kill_others = vec![KillOthers::Failure];
+        opts.kill_signal = KillSignal::Usr1;
+        let runner = ConcurrentRunner::new(commands, &opts);
+        let result = run_batch(&runner).await;
+
+        let trapper = result.close_events.iter().find(|e| e.index == 0).unwrap();
+        assert_eq!(trapper.exit_code, 70);
+        assert!(trapper.killed);
     }
 }
