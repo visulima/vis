@@ -21,8 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::run::is_js_whitespace;
-use crate::term::parse_int;
+use crate::js::{is_js_whitespace, parse_int};
 
 /// Pins of other tools and managers that Node reads from files this module does not parse.
 const UNSUPPORTED_FILES: [&str; 5] = [".tool-versions", ".prototools", ".mise.toml", "mise.toml", ".config/mise.toml"];

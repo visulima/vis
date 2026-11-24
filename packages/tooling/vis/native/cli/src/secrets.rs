@@ -28,10 +28,12 @@ use std::process::exit;
 
 use secret_scanner_core::{list_rules, scan_dirs, Finding, RuleInfo, ScanOptions, SkippedFile};
 use serde::{Serialize, Serializer};
+use serde_json::value::RawValue;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
+use crate::js::{is_truthy, js_number, json_number};
 use crate::pail::{Layout, Level as LogLevel};
 
 /// The tool version Node stamps into SARIF (`toolVersion` in the secrets handler).
@@ -213,10 +215,8 @@ fn bundled_config(path: &Path) -> Option<(Value, HashSet<String>)> {
     let mut checksum_rules = HashSet::new();
 
     for rule in rules.iter() {
-        let truthy =
-            |value: Option<&Value>| value.is_some_and(|value| !matches!(value, Value::Null | Value::Bool(false)));
-
-        if truthy(rule.get("patternRequirements").and_then(|requirements| requirements.get("checksum"))) {
+        if rule.get("patternRequirements").and_then(|requirements| requirements.get("checksum")).is_some_and(is_truthy)
+        {
             checksum_rules.insert(rule.get("id")?.as_str()?.to_owned());
         }
     }
@@ -261,21 +261,6 @@ fn baseline_keys(finding: &Finding) -> [String; 3] {
     ]
 }
 
-/// A JSON number as JS `String(number)` prints it, for the integral values a baseline line holds.
-fn js_integer(number: &serde_json::Number) -> Option<String> {
-    if let Some(value) = number.as_i64() {
-        return Some(value.to_string());
-    }
-
-    if let Some(value) = number.as_u64() {
-        return Some(value.to_string());
-    }
-
-    let value = number.as_f64()?;
-
-    (value.fract() == 0.0 && value.abs() < 1e15).then(|| format!("{}", value as i64))
-}
-
 /// The suppression set of a baseline file: each entry under its content hash and its line-based
 /// form. A missing file is an empty baseline. A file Node would complain about (unreadable, not
 /// JSON, not an array) is `None`: Node prints its own diagnostic for it.
@@ -301,7 +286,7 @@ fn load_baseline(path: &Path) -> Option<HashSet<String>> {
         let secret = entry.get("secret").and_then(Value::as_str).unwrap_or("");
 
         set.insert(fingerprint(secret, rule_id, file));
-        set.insert(legacy_fingerprint(file, rule_id, &js_integer(line)?));
+        set.insert(legacy_fingerprint(file, rule_id, &js_number(line.as_f64()?)));
     }
 
     Some(set)
@@ -450,16 +435,12 @@ fn shown(found: Vec<Finding>, baseline: &HashSet<String>) -> Vec<Finding> {
         .collect()
 }
 
-/// A JS number: an integral value prints without a fraction (`0`, not `0.0`).
+/// A JS number: written as `Number#toString` writes it (`0`, not `0.0`).
 struct JsNumber(f64);
 
 impl Serialize for JsNumber {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.0.fract() == 0.0 && self.0.abs() < 1e15 {
-            serializer.serialize_i64(self.0 as i64)
-        } else {
-            serializer.serialize_f64(self.0)
-        }
+        RawValue::from_string(json_number(self.0)).map_err(serde::ser::Error::custom)?.serialize(serializer)
     }
 }
 
@@ -1228,6 +1209,72 @@ mod tests {
         fs::remove_file(&path).unwrap();
         assert_eq!(load_baseline(&path), Some(HashSet::new()));
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_baseline_line_is_written_as_javascript_writes_a_number() {
+        let directory = std::env::temp_dir().join(format!("vis-secrets-baseline-numbers-{}", std::process::id()));
+
+        fs::create_dir_all(&directory).unwrap();
+
+        let path = directory.join("baseline.json");
+        let entry = |line: &str| format!(r#"[{{"ruleId":"r","file":"a","startLine":{line},"secret":"s"}}]"#);
+        let keys = |line: &str| {
+            fs::write(&path, entry(line)).unwrap();
+            load_baseline(&path).unwrap()
+        };
+
+        // Past 2^53 the line is the nearest double, as JSON.parse reads it, not the digits that were written.
+        assert!(keys("9007199254740993").contains("a:r:9007199254740992"));
+        // A line that is not whole, or that is big, has the text Number#toString gives it.
+        assert!(keys("1.5").contains("a:r:1.5"));
+        assert!(keys("1e21").contains("a:r:1e+21"));
+        assert!(keys("1e-7").contains("a:r:1e-7"));
+        assert!(keys("2e0").contains("a:r:2"));
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_checksum_requirement_is_found_where_javascript_finds_it_truthy() {
+        let directory = std::env::temp_dir().join(format!("vis-secrets-checksum-{}", std::process::id()));
+
+        fs::create_dir_all(&directory).unwrap();
+
+        let path = directory.join("rules.json");
+        let rule =
+            |id: &str, checksum: &str| format!(r#"{{"id":"{id}","patternRequirements":{{"checksum":{checksum}}}}}"#);
+        let rules = [
+            rule("object", r#"{"expected":"x"}"#),
+            rule("string", r#""x""#),
+            rule("one", "1"),
+            rule("zero", "0"),
+            rule("empty", r#""""#),
+            rule("no", "false"),
+            rule("null", "null"),
+        ];
+
+        fs::write(&path, format!(r#"{{"rules":[{}]}}"#, rules.join(","))).unwrap();
+
+        let (_, checksum_rules) = bundled_config(&path).unwrap();
+        let mut found: Vec<_> = checksum_rules.into_iter().collect();
+
+        found.sort();
+        assert_eq!(found, ["object", "one", "string"]);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_finding_prints_its_entropy_as_a_javascript_number() {
+        let mut row = finding("s", "a");
+
+        for (entropy, text) in [(0.0, "0"), (4.5, "4.5"), (3.0, "3"), (1e-7, "1e-7"), (2.5e21, "2.5e+21")] {
+            row.entropy = entropy;
+            assert!(
+                render_json(std::slice::from_ref(&row)).unwrap().contains(&format!("\"entropy\": {text},")),
+                "{entropy}"
+            );
+        }
     }
 
     #[test]

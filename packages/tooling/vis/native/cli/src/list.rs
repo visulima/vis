@@ -22,6 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::advisories::monorepo_root;
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
+use crate::js::RESERVED_NAMES;
 use crate::vis_config;
 
 /// Detector trigger files and dependency names, generated from `BUILT_IN_DETECTORS`.
@@ -79,25 +80,6 @@ impl<'de> Deserialize<'de> for Scripts {
     }
 }
 
-/// Script names the Node path treats specially. `__proto__` is assigned through the prototype
-/// setter, so it never becomes a listed target. The rest name `Object.prototype` members that
-/// `projectTargets[name]` and `defaults[name]` resolve to inherited values. Node answers for them.
-const RESERVED_SCRIPT_NAMES: &[&str] = &[
-    "__proto__",
-    "constructor",
-    "prototype",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toString",
-    "valueOf",
-    "toLocaleString",
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-];
-
 struct ScriptsVisitor;
 
 impl<'de> Visitor<'de> for ScriptsVisitor {
@@ -119,7 +101,7 @@ impl<'de> Visitor<'de> for ScriptsVisitor {
                 return Err(de::Error::custom("script name left to Node"));
             }
 
-            if value.is_empty() || RESERVED_SCRIPT_NAMES.contains(&key.as_str()) {
+            if value.is_empty() || RESERVED_NAMES.contains(&key.as_str()) {
                 return Err(de::Error::custom("script left to Node"));
             }
 
@@ -525,7 +507,7 @@ mod tests {
         assert!(parses(r#"{"build":"tsc","lint":"eslint ."}"#));
         assert!(!parses(r#"{"build":"tsc","lint":""}"#));
 
-        for name in RESERVED_SCRIPT_NAMES {
+        for name in RESERVED_NAMES {
             assert!(!parses(&format!(r#"{{"{name}":"echo"}}"#)), "{name}");
         }
     }

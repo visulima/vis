@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use crate::file_hasher::{collect_files, hash_files_batch};
-use crate::key_parts::{hash_global_inputs, hash_task_command, js_json_string};
+use crate::js::json_string;
+use crate::key_parts::{hash_global_inputs, hash_task_command};
 use crate::run_graph::{
     build_task_graph, has_glob_magic, unkeyed_tasks, DependsOn, NotReproducible, RunProject, RunTask, RunTaskGraph,
 };
@@ -46,7 +47,7 @@ impl TaskKeys {
 /// The command hash of a plain script task: the overrides the run builds for it are
 /// `{"command":…,"visOptions":{}}` and its outputs are always empty in this shape.
 fn command_hash(task: &RunTask, target: &str) -> String {
-    let command = js_json_string(&task.command);
+    let command = json_string(&task.command);
 
     hash_task_command(
         &task.project,
@@ -281,15 +282,6 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn json_strings_are_escaped_like_js() {
-        assert_eq!(js_json_string("plain"), "\"plain\"");
-        assert_eq!(js_json_string("a\"b\\c"), r#""a\"b\\c""#);
-        assert_eq!(js_json_string("l1\nl2\r\t\u{8}\u{c}"), r#""l1\nl2\r\t\b\f""#);
-        assert_eq!(js_json_string("\u{0}\u{1f}\u{b}"), r#""\u0000\u001f\u000b""#);
-        assert_eq!(js_json_string("é€😀\u{7f}\u{2028}"), "\"é€😀\u{7f}\u{2028}\"");
     }
 
     /// Golden values of a real `vis run build` (a script `true`, no outputs, a

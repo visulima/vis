@@ -4,6 +4,8 @@
 use std::env;
 use std::io::IsTerminal;
 
+use crate::js::parse_int;
+
 /// A standard stream the help text can be written to.
 #[derive(Clone, Copy)]
 pub enum Stream {
@@ -117,26 +119,6 @@ fn is_colour_flag(argument: &str) -> bool {
     let name = argument.trim_start_matches('-');
 
     argument.starts_with('-') && (name.starts_with("color") || name.starts_with("no-color"))
-}
-
-/// JavaScript's `Number.parseInt(text, 10)`: optional leading whitespace, optional sign, then the
-/// leading digits. `None` is `NaN`.
-pub(crate) fn parse_int(text: &str) -> Option<i64> {
-    let text = text.trim_start();
-    let (negative, digits) = match text.as_bytes().first() {
-        Some(b'-') => (true, &text[1..]),
-        Some(b'+') => (false, &text[1..]),
-        _ => (false, text),
-    };
-    let end = digits.bytes().position(|byte| !byte.is_ascii_digit()).unwrap_or(digits.len());
-
-    if end == 0 {
-        return None;
-    }
-
-    let magnitude = digits[..end].parse::<i64>().unwrap_or(i64::MAX);
-
-    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// `/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/`: the TeamCity versions that print colour.

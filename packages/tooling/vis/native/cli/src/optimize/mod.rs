@@ -30,6 +30,7 @@ use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
 use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context, write_stdout};
+use crate::js::is_js_whitespace;
 use crate::pail::{Layout, Level};
 use crate::sort_package_json::json::Json;
 use crate::vis_config::{self, ConfigState};
@@ -391,15 +392,6 @@ fn lockfile_contains(text: &str, package: &str) -> bool {
 
         boundary && after
     })
-}
-
-/// The characters `\s` matches in a JavaScript regular expression.
-fn is_js_whitespace(character: char) -> bool {
-    matches!(
-        character,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
-    )
 }
 
 #[cfg(test)]

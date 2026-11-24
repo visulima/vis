@@ -14,6 +14,8 @@ use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::js::is_truthy;
+
 /// The lifecycle hooks vis inspects, in the order the report lists them.
 const BUILD_HOOKS: [&str; 4] = ["preinstall", "install", "postinstall", "prepare"];
 
@@ -296,16 +298,6 @@ fn js_key_order(keys: Vec<String>) -> Vec<String> {
     indices.extend(names);
 
     indices
-}
-
-/// JavaScript truthiness of a JSON value.
-pub(super) fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null | Value::Bool(false) => false,
-        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
-        Value::String(text) => !text.is_empty(),
-        _ => true,
-    }
 }
 
 impl Found {

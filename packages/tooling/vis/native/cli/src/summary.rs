@@ -22,10 +22,8 @@ use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::cache::{mtime_ms, sorted_entries};
 use crate::cache_hash::{Output, Probe, ProbeId, Summary};
 use crate::error::WrapperError;
+use crate::js::{is_index_like, MAX_SAFE_INTEGER};
 use crate::pail::{pail_width, Layout};
-
-/// The largest integer a JavaScript number holds exactly.
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// The workspace root and pail layout of a run the native path may answer, or `None` when Node has
 /// to: Windows (pail's clock is unix-only there and its paths come from `@visulima/path`), a
@@ -126,8 +124,7 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Ordered<V> {
                 let mut seen = HashSet::new();
 
                 while let Some((key, value)) = map.next_entry::<String, V>()? {
-                    if key == "__proto__" || key.bytes().all(|byte| byte.is_ascii_digit()) || !seen.insert(key.clone())
-                    {
+                    if key.is_empty() || is_index_like(&key) || !seen.insert(key.clone()) {
                         return Err(de::Error::custom("key left to Node"));
                     }
 
@@ -282,6 +279,19 @@ pub(crate) fn format_duration(ms: Option<JsInt>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ordered_map_declines_the_keys_javascript_reorders_and_the_empty_key() {
+        let parses = |json: &str| serde_json::from_str::<Ordered<String>>(json).is_ok();
+
+        assert!(parses(r#"{"b":"1","a":"2","007":"3"}"#));
+
+        for key in ["", "7", "0", "__proto__"] {
+            assert!(!parses(&format!(r#"{{"{key}":"x"}}"#)), "{key:?}");
+        }
+
+        assert!(!parses(r#"{"a":"1","a":"2"}"#));
+    }
 
     #[test]
     fn seconds_round_like_to_fixed() {

@@ -26,24 +26,9 @@ use crate::cache_hash::{
     json_text, parse, plain, printable, summary_path, Details, FailureJson, Loaded, Output, Probe, ProbeId, Request,
     Summary, Task,
 };
+use crate::js::PROTOTYPE_NAMES;
 use crate::pail::{Layout, Level};
 use crate::summary::{context, emit, find_task, load_summary, present, read_run_file, run_files, utf16_order, Ordered};
-
-/// `Object.prototype` members: `key in {}` is true for these, so a bucket holding one diffs differently.
-const PROTOTYPE_KEYS: [&str; 12] = [
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
-];
 
 /// The message of the "first run" block holds an em dash, which pail's wrap measures differently from the
 /// byte-counting wrap here (it fits one line at a width where this one would wrap), so it is only printed
@@ -178,7 +163,7 @@ fn has_prototype_key(details: Option<&Details>) -> bool {
     details.is_some_and(|details| {
         ["nodes", "runtime", "implicitDeps"]
             .iter()
-            .any(|name| details.0.bucket(name).iter().any(|(key, _)| PROTOTYPE_KEYS.contains(&key.as_str())))
+            .any(|name| details.0.bucket(name).iter().any(|(key, _)| PROTOTYPE_NAMES.contains(&key.as_str())))
     })
 }
 

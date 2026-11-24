@@ -13,7 +13,8 @@ use std::path::Path;
 use oxc_ast::ast::{ArrayExpressionElement, Expression, UnaryOperator};
 
 use super::github::{RunStep, Uses};
-use super::yaml::{is_index_like, printable, Yaml};
+use super::yaml::{printable, Yaml};
+use crate::js::{is_index_like, RESERVED_NAMES};
 use crate::vis_config::{config_file_in, convert_default_export, object_properties};
 
 /// Top-level keys that cannot change the projects, their targets or anything the workflow prints, apart
@@ -249,7 +250,7 @@ fn task_defaults(tasks: &Yaml) -> Option<BTreeMap<String, Vec<String>>> {
     let mut result = BTreeMap::new();
 
     for (name, task) in entries(tasks)? {
-        if crate::targets::PROTOTYPE_NAMES.contains(&name.as_str()) || name == "prototype" {
+        if RESERVED_NAMES.contains(&name.as_str()) {
             return None;
         }
 

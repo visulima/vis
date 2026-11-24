@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 use rayon::prelude::*;
 use serde_json::{Map, Value};
 
+use crate::js::PROTOTYPE_NAMES;
 use crate::workspace::{self, Membership};
 
 /// The config-file names and dependency names of the JS inference detectors, read from the same
@@ -22,22 +23,6 @@ const MARKERS_JSON: &str = include_str!("inference-markers.json");
 
 /// Dependency fields `hasDependency` consults.
 const DEPENDENCY_FIELDS: [&str; 4] = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
-
-/// Script names that `defaults[name]` would resolve through `Object.prototype` in the Node path.
-pub(crate) const PROTOTYPE_NAMES: [&str; 12] = [
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toString",
-    "valueOf",
-    "toLocaleString",
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-];
 
 #[derive(Debug, PartialEq)]
 pub struct ProjectTargets {

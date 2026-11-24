@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use regex::bytes::Regex;
 
+use crate::js::PROTOTYPE_NAMES;
+
 /// `name -> specifiers`, in the order the lockfile gives them.
 pub(super) type DependencyMap = Vec<(String, Vec<String>)>;
 
@@ -28,23 +30,6 @@ pub(super) struct Entry {
     pub(super) peer_dependencies: DependencyMap,
     pub(super) optional_dependencies: DependencyMap,
 }
-
-/// Property names of `Object.prototype`. The parser keeps maps in plain objects, where a dependency
-/// of one of these names reads the inherited member and the result differs.
-const PROTOTYPE_KEYS: [&str; 12] = [
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
-];
 
 /// Whether the text is one the expressions give the same answer on as in JavaScript: valid UTF-8, no
 /// carriage return, line or paragraph separator, and no whitespace character beyond ASCII (JavaScript's `\s`
@@ -245,7 +230,7 @@ fn dependency_map(patterns: &Patterns, block: &[u8], field: usize) -> Option<Opt
             _ => value,
         };
 
-        if PROTOTYPE_KEYS.contains(&name) {
+        if PROTOTYPE_NAMES.contains(&name) {
             return None;
         }
 

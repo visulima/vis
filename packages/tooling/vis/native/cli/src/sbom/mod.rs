@@ -22,7 +22,7 @@ mod semver;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,8 +30,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::cache_hash::root_collation;
 use crate::graph::{project_graph, GraphResult};
+use crate::js;
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
+use vis_core::date::iso_from_millis;
 
 /// Lock and manifest files of the other ecosystems `vis sbom` reads from the root, which Node adds to the BOM
 /// or reports on stderr as found-but-not-included.
@@ -168,40 +170,9 @@ fn context(cwd: &Path) -> bool {
 
 /// `new Date().toISOString()`.
 fn timestamp() -> String {
-    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let (days, seconds) = (elapsed.as_secs() / 86_400, elapsed.as_secs() % 86_400);
-
-    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
-    let shifted = i64::try_from(days).unwrap_or(0) + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        seconds / 3600,
-        seconds % 3600 / 60,
-        seconds % 60,
-        elapsed.subsec_millis()
+    iso_from_millis(
+        i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0),
     )
-}
-
-/// `crypto.randomUUID()`: a version 4 UUID.
-fn random_uuid() -> Option<String> {
-    let mut bytes = [0u8; 16];
-
-    fs::File::open("/dev/urandom").ok()?.read_exact(&mut bytes).ok()?;
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-
-    Some(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
 }
 
 /// Whether the file can be written where Node writes it. `ensureDirSync` looks at the directory with `lstat`: one
@@ -279,7 +250,7 @@ fn answer(args: &[String]) -> Option<i32> {
 
     let options = bom::Options { focus: &plan.focus, include_dev: plan.include_dev };
     let bom = bom::build(&cwd, &graph, &options).ok()?;
-    let text = bom.to_json(&timestamp(), &format!("urn:uuid:{}", random_uuid()?));
+    let text = bom.to_json(&timestamp(), &format!("urn:uuid:{}", js::random_uuid()?));
 
     let Some(layout) = layout else {
         // A document that Node would cut short on a pipe is Node's to cut short.

@@ -6,6 +6,7 @@
 //! ends share one implementation. The per-function unit tests pin the argv output.
 
 pub mod clean;
+pub mod date;
 pub mod detect;
 pub mod editorconfig;
 pub mod resolve;

@@ -22,6 +22,7 @@ use std::process::exit;
 use serde_json::Value;
 
 use crate::error::WrapperError;
+use crate::js::{js_number, json_string};
 use crate::pm_family::has_vis_config;
 
 /// Keys of the manifest object, in the order `parseManifest` returns them, with the upstream
@@ -265,7 +266,7 @@ pub(crate) fn any_ancestor_has(directory: &Path, names: &[&str]) -> bool {
 /// holds something this module will not reason about (Node then decides).
 fn status_json(cache_dir: &Path) -> Option<String> {
     let cache_dir_text = cache_dir.to_string_lossy();
-    let mut pairs: Vec<(&str, String)> = vec![("cacheDir", json_string(&cache_dir_text)?)];
+    let mut pairs: Vec<(&str, String)> = vec![("cacheDir", json_string(&cache_dir_text))];
 
     if !cache_dir.join("filter.bin").exists() {
         pairs.push(("present", "false".to_owned()));
@@ -278,14 +279,14 @@ fn status_json(cache_dir: &Path) -> Option<String> {
         let state = read_state(&cache_dir.join("state.json"))?;
 
         if let Some(fetched) = state {
-            pairs.push(("fetchedAtIso", json_string(&fetched)?));
+            pairs.push(("fetchedAtIso", json_string(&fetched)));
         }
 
         pairs.push(("manifest", object(&manifest)));
     } else {
         // An unreadable manifest is absent (Node drops the key), but state still counts.
         if let Some(fetched) = read_state(&cache_dir.join("state.json"))? {
-            pairs.push(("fetchedAtIso", json_string(&fetched)?));
+            pairs.push(("fetchedAtIso", json_string(&fetched)));
         }
     }
 
@@ -318,7 +319,7 @@ fn read_manifest(path: &Path) -> Option<Option<Vec<(&'static str, String)>>> {
 
     for (key, upstream) in MANIFEST_STRINGS {
         match map.get(upstream).and_then(Value::as_str) {
-            Some(text) if !text.is_empty() => fields.push((key, json_string(text)?)),
+            Some(text) if !text.is_empty() => fields.push((key, json_string(text))),
             _ => complete = false,
         }
     }
@@ -387,49 +388,6 @@ fn finish(pairs: &[(&str, String)]) -> String {
     let body: Vec<String> = pairs.iter().map(|(key, value)| format!("  \"{key}\": {value}")).collect();
 
     format!("{{\n{}\n}}\n", body.join(",\n"))
-}
-
-/// `JSON.stringify` of a string. serde_json escapes the same characters: quotes, backslashes and
-/// control characters. Returns `None` only if serde_json rejects the input, which Node would not.
-fn json_string(text: &str) -> Option<String> {
-    serde_json::to_string(text).ok()
-}
-
-/// `JSON.stringify` of a finite JavaScript number: the shortest digits that round-trip, written
-/// the way `Number.prototype.toString` writes them (exponent form outside [1e-6, 1e21)).
-pub(crate) fn js_number(value: f64) -> String {
-    if value == 0.0 {
-        return "0".to_owned();
-    }
-
-    let sign = if value < 0.0 { "-" } else { "" };
-
-    // `{:e}` yields the shortest round-trip digits, the same digits JavaScript picks.
-    let scientific = format!("{:e}", value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((scientific.as_str(), "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let digits: String = mantissa.chars().filter(|character| *character != '.').collect();
-    let count = digits.len() as i32;
-    let point = exponent + 1;
-
-    let body = if count <= point && point <= 21 {
-        format!("{digits}{}", "0".repeat((point - count) as usize))
-    } else if 0 < point && point <= 21 {
-        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
-    } else if -6 < point && point <= 0 {
-        format!("0.{}{digits}", "0".repeat((-point) as usize))
-    } else {
-        let power = point - 1;
-        let power_sign = if power < 0 { "-" } else { "+" };
-
-        if count == 1 {
-            format!("{digits}e{power_sign}{}", power.abs())
-        } else {
-            format!("{}.{}e{power_sign}{}", &digits[..1], &digits[1..], power.abs())
-        }
-    };
-
-    format!("{sign}{body}")
 }
 
 #[cfg(test)]
@@ -513,29 +471,6 @@ mod tests {
 
         assert!(!native_root_is_cwd(&base, Some(base.as_os_str())));
         assert!(!native_root_is_cwd(&base, None));
-    }
-
-    #[test]
-    fn js_number_matches_javascript_number_to_string() {
-        // Expected values are what `JSON.stringify` prints for the same doubles.
-        let cases: [(f64, &str); 12] = [
-            (0.0, "0"),
-            (-0.0, "0"),
-            (1.0, "1"),
-            (100.0, "100"),
-            (1.5, "1.5"),
-            (0.001, "0.001"),
-            (0.000001, "0.000001"),
-            (1e-7, "1e-7"),
-            (1.5e-7, "1.5e-7"),
-            (1e21, "1e+21"),
-            (123_456_789_012_345_680_000.0, "123456789012345680000"),
-            (-2.5, "-2.5"),
-        ];
-
-        for (value, expected) in cases {
-            assert_eq!(js_number(value), expected, "value {value:?}");
-        }
     }
 
     #[test]

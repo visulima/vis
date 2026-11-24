@@ -7,6 +7,7 @@ use super::ecosystems::Ecosystem;
 use super::plan::{vis_drift_check_command, vis_target_command, Plan, GENERATED_NOTE};
 use super::tables::Tables;
 use super::yaml::{self, Yaml};
+use crate::js::json_string;
 
 pub const GITLAB_CI_WORKFLOW_PATH: &str = ".gitlab/vis-ci.gitlab-ci.yml";
 
@@ -32,7 +33,7 @@ fn is_regex_special(character: char) -> bool {
 /// pattern uses `*` (`*` stays within a path segment, `**` crosses them).
 fn branch_rule(branch: &str) -> String {
     if !branch.contains('*') {
-        return format!("$CI_COMMIT_BRANCH == {}", yaml::string(branch));
+        return format!("$CI_COMMIT_BRANCH == {}", json_string(branch));
     }
 
     let pattern: Vec<String> = branch
@@ -138,14 +139,14 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
 
     let cache_paths: Vec<String> = std::iter::once(cache_directory.as_str())
         .chain(ecosystem_caches.iter().map(|(path, _)| *path))
-        .map(|path| format!("            - {}", yaml::string(&format!("{path}/"))))
+        .map(|path| format!("            - {}", json_string(&format!("{path}/"))))
         .collect();
     let mut install: Vec<String> = pm.setup.clone();
 
     install.push(pm.install.clone());
     install.extend(plan.gitlab_before_script.iter().cloned());
 
-    let before_script: Vec<String> = install.iter().map(|line| format!("        - {}", yaml::string(line))).collect();
+    let before_script: Vec<String> = install.iter().map(|line| format!("        - {}", json_string(line))).collect();
     let mut base_extras: Vec<String> = Vec::new();
 
     for (name, value) in
@@ -171,7 +172,7 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
     if plan.check_drift {
         jobs.push_str(&format!(
             "\n\"vis:workflow\":\n    extends: \".vis-ci-base\"\n    needs: []\n    script:\n        - {}\n",
-            yaml::string(&vis_drift_check_command(plan, &pm.exec))
+            json_string(&vis_drift_check_command(plan, &pm.exec))
         ));
     }
 
@@ -188,7 +189,7 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
             } else {
                 vec!["--partition=$CI_NODE_INDEX/$CI_NODE_TOTAL".to_owned()]
             };
-            let needs: Vec<String> = previous.iter().map(|job| yaml::string(job)).collect();
+            let needs: Vec<String> = previous.iter().map(|job| json_string(job)).collect();
             let parallel =
                 if target.shards == 1 { String::new() } else { format!("    parallel: {}\n", target.shards) };
             let env = match &target.env {
@@ -198,9 +199,9 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
 
             jobs.push_str(&format!(
                 "\n{}:\n    extends: \".vis-ci-base\"\n    needs: [{}]\n{parallel}{env}    script:\n        - {}\n",
-                yaml::string(&job_name(&target.name)),
+                json_string(&job_name(&target.name)),
                 needs.join(", "),
-                yaml::string(&vis_target_command(plan, &pm.exec, &target.name, &flags))
+                json_string(&vis_target_command(plan, &pm.exec, &target.name, &flags))
             ));
         }
 
@@ -237,8 +238,8 @@ pub fn render(plan: &Plan, tables: &Tables) -> Option<String> {
 {extras}{jobs}",
         note = GENERATED_NOTE,
         path = GITLAB_CI_WORKFLOW_PATH,
-        stage = yaml::string(plan.gitlab_stage.as_deref().unwrap_or("test")),
-        image = yaml::string(&plan.gitlab_image.clone().unwrap_or_else(|| format!("node:{}", plan.node_version))),
+        stage = json_string(plan.gitlab_stage.as_deref().unwrap_or("test")),
+        image = json_string(&plan.gitlab_image.clone().unwrap_or_else(|| format!("node:{}", plan.node_version))),
         timeout = plan.timeout_minutes,
         variables = variables.join("\n"),
         cache_paths = cache_paths.join("\n"),

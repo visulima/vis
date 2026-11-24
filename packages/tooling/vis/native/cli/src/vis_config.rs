@@ -17,6 +17,8 @@ use oxc_parser::Parser;
 use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
 
+use crate::js::is_truthy;
+
 /// Top-level keys the native path must leave to Node. `runtime` and `extends` change what
 /// the Node loader resolves, `versionConstraint` can fail the run, `security` makes the Node
 /// hook report policy errors for package-manager commands, and the four removed keys
@@ -149,7 +151,9 @@ pub fn node_config_root(cwd: &Path) -> Option<PathBuf> {
         if directory.join("lerna.json").is_file() {
             let lerna = read_json(&directory.join("lerna.json"))?;
 
-            if lerna.is_object() && (is_truthy(lerna.get("useWorkspaces")) || is_truthy(lerna.get("packages"))) {
+            if lerna.is_object()
+                && (lerna.get("useWorkspaces").is_some_and(is_truthy) || lerna.get("packages").is_some_and(is_truthy))
+            {
                 return Some(directory.to_path_buf());
             }
 
@@ -257,16 +261,6 @@ fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> 
 
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
-}
-
-/// JavaScript truthiness of an optional JSON value, as Node's lookup tests `useWorkspaces || packages`.
-fn is_truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
-        Some(Value::Number(number)) => number.as_f64().is_some_and(|number| number != 0.0),
-        Some(Value::String(text)) => !text.is_empty(),
-        Some(_) => true,
-    }
 }
 
 /// The config file of each directory from `cwd` up to the root, nearest first.

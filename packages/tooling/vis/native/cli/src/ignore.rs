@@ -18,6 +18,7 @@ use std::process::exit;
 
 use crate::advisories::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
 use crate::error::WrapperError;
+use crate::js::trim;
 use crate::pm_family::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
@@ -294,16 +295,6 @@ fn build_patterns(extras: &[&'static str]) -> Vec<&'static str> {
     result
 }
 
-/// JavaScript's `String.prototype.trim`. It strips U+FEFF but not U+0085, which Rust's
-/// `char::is_whitespace` gets the other way round.
-fn is_js_space(character: char) -> bool {
-    character == '\u{FEFF}' || (character.is_whitespace() && character != '\u{85}')
-}
-
-fn js_trim(text: &str) -> &str {
-    text.trim_matches(is_js_space)
-}
-
 struct Merged<'a> {
     added: Vec<&'a str>,
     content: String,
@@ -315,7 +306,7 @@ fn merge<'a>(existing: &str, patterns: &[&'a str]) -> Merged<'a> {
     let mut present: HashSet<&str> = HashSet::new();
 
     for line in existing.split('\n') {
-        let normalized = js_trim(line);
+        let normalized = trim(line);
 
         if !normalized.is_empty() && !normalized.starts_with('#') {
             present.insert(normalized);
@@ -342,7 +333,7 @@ fn merge<'a>(existing: &str, patterns: &[&'a str]) -> Merged<'a> {
         block.push_str(pattern);
     }
 
-    let content = if js_trim(existing).is_empty() {
+    let content = if trim(existing).is_empty() {
         format!("{block}{eol}")
     } else {
         let separator = if existing.ends_with('\n') { eol.to_owned() } else { format!("{eol}{eol}") };
@@ -418,7 +409,7 @@ mod tests {
 
     #[test]
     fn js_trim_strips_bom_but_not_next_line() {
-        assert_eq!(js_trim("\u{FEFF}x\u{85}"), "x\u{85}");
+        assert_eq!(trim("\u{FEFF}x\u{85}"), "x\u{85}");
     }
 
     #[test]

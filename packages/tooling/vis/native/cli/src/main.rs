@@ -52,6 +52,7 @@ mod ignore;
 mod implode;
 mod info;
 mod install;
+mod js;
 mod keys_refresh;
 mod list;
 mod manifest;
