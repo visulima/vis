@@ -272,10 +272,9 @@ describe.skipIf(process.platform === "win32" || !nodeAddonLoads())("vis task-why
     const prepare = ({ args, directory, env, notCi, workspace }: Case) => {
         const root = workspaceFor(workspace ?? PLAIN);
         const cwd = directory === undefined ? root : join(root, directory);
-        const extra = env ?? {};
-        const vars = environment(extra, notCi !== true);
+        const vars = environment(env ?? {}, notCi !== true);
 
-        return { args, cwd, extra, root, vars };
+        return { args, cwd, root, vars };
     };
 
     const label = (entry: Case): string => `${JSON.stringify(entry.args)} (${entry.workspace?.name ?? "plain"}${entry.directory ? `, in ${entry.directory}` : ""}${entry.notCi ? ", not CI" : ""}${entry.env ? `, ${JSON.stringify(entry.env)}` : ""})`;
