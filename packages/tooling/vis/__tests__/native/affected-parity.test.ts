@@ -55,7 +55,7 @@ interface Case {
     args: string[];
     /** Working directory inside the repository; defaults to its root. */
     cwd?: string;
-    /** Extra environment; values may use `{sha:&lt;tag>}` and `{payload}`. */
+    /** Extra environment; values may use `{sha:&lt;tag>}`, `{payload}` and `{payload:&lt;name>}`. */
     env?: Record<string, string>;
     /** The repository the case runs in; defaults to the main one. */
     fixture?: Fixture;
@@ -99,6 +99,10 @@ const cases: Case[] = [
     // CI providers.
     { args: [...sparse], env: { GITHUB_ACTIONS: "true", GITHUB_BASE_REF: "dev", GITHUB_SHA: "{sha:v5}" }, native: true },
     { args: [...sparse], env: { GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: "{payload}" }, native: true },
+    // A merge queue payload names its base in `merge_group.base_sha`, which wins over `before`.
+    { args: [...sparse], env: { GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: "{payload:merge-group}", GITHUB_SHA: "{sha:v5}" }, native: true },
+    { args: [...sparse], env: { GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: "{payload:merge-group-only}" }, native: true },
+    { args: [...sparse], env: { GITHUB_ACTIONS: "true", GITHUB_EVENT_PATH: "{payload:merge-group-zero}" }, native: true },
     { args: [...sparse], env: { GITHUB_ACTIONS: "true" }, native: true },
     { args: [...sparse], env: { CI_COMMIT_BEFORE_SHA: "{sha:v3}", CI_COMMIT_SHA: "{sha:v5}", GITLAB_CI: "true" }, native: true },
     { args: [...sparse], env: { CI_MERGE_REQUEST_TARGET_BRANCH_NAME: "dev", CI_PIPELINE_SOURCE: "merge_request_event", GITLAB_CI: "true" }, native: true },
@@ -136,7 +140,7 @@ const cases: Case[] = [
 ];
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis affected: native vs Node", () => {
-    const paths = { fixtures: {} as Record<Fixture, string>, payload: "", repository: "", scratch: "", shared: "", stub: "" };
+    const paths = { fixtures: {} as Record<Fixture, string>, payload: "", payloads: {} as Record<string, string>, repository: "", scratch: "", shared: "", stub: "" };
     const shas: Record<string, string> = {};
 
     const git = (args: string[], cwd = paths.repository): string => {
@@ -252,6 +256,17 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         writeFileSync(paths.payload, JSON.stringify({ before: shas["v3"] }));
 
+        const zero = "0".repeat(40);
+
+        for (const [name, payload] of Object.entries({
+            "merge-group": { before: shas["v3"], merge_group: { base_sha: shas["v2"] } },
+            "merge-group-only": { merge_group: { base_sha: shas["v2"] } },
+            "merge-group-zero": { before: shas["v3"], merge_group: { base_sha: zero } },
+        })) {
+            paths.payloads[name] = join(paths.scratch, `event-${name}.json`);
+            writeFileSync(paths.payloads[name] as string, JSON.stringify(payload));
+        }
+
         paths.shared = join(paths.scratch, "shared");
         mkdirSync(paths.shared);
         writeFileSync(join(paths.shared, "data.txt"), "shared input\n");
@@ -274,7 +289,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         }
 
         for (const [key, value] of Object.entries(testCase.env ?? {})) {
-            env[key] = value.replace(/\{sha:(\w+)\}/u, (_, tag: string) => shas[tag] as string).replace("{payload}", paths.payload);
+            env[key] = value.replace(/\{sha:(\w+)\}/u, (_, tag: string) => shas[tag] as string).replace(/\{payload:([\w-]+)\}/u, (_, name: string) => paths.payloads[name] as string).replace("{payload}", paths.payload);
         }
 
         return env;
