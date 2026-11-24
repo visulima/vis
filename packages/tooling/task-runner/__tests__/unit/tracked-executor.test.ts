@@ -346,6 +346,24 @@ describe(TrackedTaskExecutor, () => {
 
                 expect(result.tracker).toBe("strace");
             });
+
+            it("carries an incomplete trace through so the orchestrator will not key the cache on it", async () => {
+                expect.assertions(2);
+
+                vi.spyOn(FileAccessTracker.prototype, "isSupported").mockReturnValue(true);
+                vi.spyOn(FileAccessTracker.prototype, "linuxTrackerKind").mockReturnValue("seccomp");
+                vi.spyOn(FileAccessTracker.prototype, "track").mockResolvedValue({ accesses: [], code: 0, incomplete: true, output: "" });
+
+                const incomplete = await executor.execute(createTask(), { cwd: workspaceRoot }, "node -e 0 && true");
+
+                expect(incomplete.incomplete).toBe(true);
+
+                vi.spyOn(FileAccessTracker.prototype, "track").mockResolvedValue(noAccesses);
+
+                const complete = await executor.execute(createTask(), { cwd: workspaceRoot }, "node -e 0 && true");
+
+                expect(complete.incomplete).toBeUndefined();
+            });
         });
     });
 });

@@ -396,6 +396,14 @@ export interface TrackingResult {
     accesses: FileAccess[];
     /** The command exit code */
     code: number;
+
+    /**
+     * `true` when the tracker knows it missed some accesses (the seccomp tracker could not read a
+     * syscall argument from the target, or a process ran under an ABI it does not decode), so
+     * {@link TrackingResult.accesses} is a lower bound. Consumers must not derive a cache key from
+     * it as if it were the complete set of inputs. Left unset when the trace is complete.
+     */
+    incomplete?: boolean;
     /** The command stdout + stderr output */
     output: string;
 }
@@ -792,7 +800,9 @@ export class FileAccessTracker {
             // added by widening TrackingResult later.
             const output = `${result.stdout.toString("utf8")}${result.stderr.toString("utf8")}`;
 
-            return { accesses, code: result.exitCode, output };
+            // An incomplete trace is returned, not retried untracked: the command already ran,
+            // and running it again would repeat its side effects.
+            return { accesses, code: result.exitCode, ...(result.incomplete === true && { incomplete: true }), output };
         } catch {
             // Helper failure shouldn't fail the task — degrade to
             // the no-tracking path so the orchestrator marks the

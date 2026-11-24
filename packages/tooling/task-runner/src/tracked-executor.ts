@@ -29,6 +29,12 @@ export interface TrackedExecutionResult {
      */
     hints: CollectedHints;
 
+    /**
+     * Set when the tracker knows it missed some accesses (see `TrackingResult.incomplete`): the
+     * trace is a lower bound and must not be cached as the task's complete input set.
+     */
+    incomplete?: boolean;
+
     /** The command stdout + stderr output */
     terminalOutput: string;
     /** Mechanism that produced {@link TrackedExecutionResult.accesses}. Folded into the trace key. */
@@ -165,6 +171,7 @@ export class TrackedTaskExecutor {
                 base = {
                     accesses: trackingResult.accesses,
                     code: trackingResult.code,
+                    ...(trackingResult.incomplete === true && { incomplete: true }),
                     terminalOutput: trackingResult.output,
                     tracker: this.#tracker.linuxTrackerKind(),
                 };

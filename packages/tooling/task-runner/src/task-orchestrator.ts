@@ -142,6 +142,9 @@ const isAutoOnlyOutputs = (outputs: OutputSpec[] | undefined): boolean =>
 const AUTO_OUTPUTS_UNAVAILABLE_REASON
     = "Outputs are `{ auto: true }` only, but no file writes were captured (write tracking unavailable for this task) — not caching, so a later hit can't restore a missing build artifact.";
 
+const INCOMPLETE_TRACE_REASON
+    = "Tracker could not record every file access (a syscall argument was unreadable, or a process used an ABI it does not decode). Caching on the trace is skipped to avoid false cache hits.";
+
 /**
  * A simple deferred promise that can be resolved externally.
  */
@@ -1005,6 +1008,9 @@ class TaskOrchestrator {
             let fingerprint: TaskFingerprint | undefined;
             let trackerAccessCount = 0;
             let usedRealTracker = false;
+            // Set when the tracker reported that it missed some accesses: the trace is a lower
+            // bound and cannot key the cache (see `#describeEmptyFingerprint`).
+            let trackerIncomplete = false;
             // Populated only by the non-tracked branch — the strace/preload
             // tracker bypasses the user-supplied executor and so never goes
             // through the restart loop.
@@ -1049,7 +1055,10 @@ class TaskOrchestrator {
 
                 trackerAccessCount = accesses.length;
                 usedRealTracker = true;
-                autoWrites = accesses.filter((a) => a.type === "write").map((a) => a.path);
+                trackerIncomplete = trackedResult.incomplete === true;
+                // Writes seen by a tracker that knows it missed some are a lower bound: restoring
+                // `{ auto: true }` outputs from them would restore only part of the task's output.
+                autoWrites = trackerIncomplete ? undefined : accesses.filter((a) => a.type === "write").map((a) => a.path);
 
                 fingerprint = await this.#fingerprintManager.createFingerprint(
                     accesses,
@@ -1115,7 +1124,7 @@ class TaskOrchestrator {
             // Same abort-gate as the declared path — see `#executeTask`.
             if (code === 0 && task.cache !== false && fingerprint && chainKey !== null && !skipCacheOnWarning && !this.#aborted) {
                 const modified = this.#detectSelfModifiedFingerprint(fingerprint);
-                const emptyFingerprintReason = this.#describeEmptyFingerprint(fingerprint, usedRealTracker, trackerAccessCount);
+                const emptyFingerprintReason = this.#describeEmptyFingerprint(fingerprint, usedRealTracker, trackerAccessCount, trackerIncomplete);
 
                 if (cacheDisabledByTask) {
                     result.cacheDisabledByTask = true;
@@ -1191,9 +1200,16 @@ class TaskOrchestrator {
      * path legitimately produces wide fingerprints and isn't at risk.
      */
     // eslint-disable-next-line class-methods-use-this
-    #describeEmptyFingerprint(fingerprint: TaskFingerprint, usedRealTracker: boolean, trackerAccessCount: number): string | undefined {
+    #describeEmptyFingerprint(fingerprint: TaskFingerprint, usedRealTracker: boolean, trackerAccessCount: number, trackerIncomplete: boolean): string | undefined {
         if (!usedRealTracker) {
             return undefined;
+        }
+
+        // A tracker that knows it missed accesses yields a fingerprint that looks valid but can
+        // hide an input; it is treated like an empty one: never stored, declared hash when the
+        // task declares inputs.
+        if (trackerIncomplete) {
+            return INCOMPLETE_TRACE_REASON;
         }
 
         const hasAnyAccess

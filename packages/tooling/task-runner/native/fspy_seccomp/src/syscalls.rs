@@ -10,8 +10,6 @@
 //! (e.g. legacy `open`/`stat`/`unlink` on aarch64) are `None` there
 //! and skipped at filter-install time.
 
-use std::path::PathBuf;
-
 use libc::seccomp_notif;
 
 use crate::peer;
@@ -117,6 +115,33 @@ pub fn openat_kind_from_flags(flags: u64) -> AccessKind {
     }
 }
 
+/// What one notification contributed to the trace.
+#[derive(Debug, Default)]
+pub struct Classified {
+    pub accesses: Vec<FileAccess>,
+    /// The tracked process made an access that could not be recorded
+    /// because its arguments could not be read (`process_vm_readv` refused:
+    /// non-dumpable process, Yama `ptrace_scope`, bad pointer, process gone).
+    /// A trace with such a gap must not be trusted as a complete input set.
+    pub incomplete: bool,
+}
+
+impl Classified {
+    fn one(path: std::path::PathBuf, kind: AccessKind) -> Self {
+        Self { accesses: vec![FileAccess { path, kind }], incomplete: false }
+    }
+
+    fn lost() -> Self {
+        Self { accesses: Vec::new(), incomplete: true }
+    }
+
+    fn merge(mut self, other: Self) -> Self {
+        self.accesses.extend(other.accesses);
+        self.incomplete |= other.incomplete;
+        self
+    }
+}
+
 /// Map one seccomp notification to zero or more accesses. The
 /// per-syscall arms handle their own arg layout; everything routes
 /// through `peer::read_path` and `peer::resolve_at` for the actual
@@ -129,13 +154,13 @@ pub fn openat_kind_from_flags(flags: u64) -> AccessKind {
 /// would record `foo` while `openat(AT_FDCWD, "foo")` records
 /// `/cwd/foo`, leaving downstream consumers with a mix of
 /// relative and absolute paths for equivalent operations.
-pub fn classify(notif: &seccomp_notif, pid: i32) -> Vec<FileAccess> {
+pub fn classify(notif: &seccomp_notif, pid: i32) -> Classified {
     // Map the notif's nr back to a TrackedSyscall by walking the
     // table. The table is small (~25 entries) and the dispatch
     // runs once per notification, so linear search is fine.
     let nr = notif.data.nr;
     let Some(entry) = tracked().iter().find(|s| s.nr() == Some(nr)) else {
-        return Vec::new();
+        return Classified::default();
     };
 
     let args = &notif.data.args;
@@ -150,18 +175,17 @@ pub fn classify(notif: &seccomp_notif, pid: i32) -> Vec<FileAccess> {
         // (a write misclassified as read is safer than treating a
         // random pointer's bits as a flag mask).
         "openat2" => {
-            let flags = peer::read_u64(pid, args[2]).unwrap_or(0);
+            let (flags, flags_lost) = match peer::read_u64(pid, args[2]) {
+                Ok(flags) => (flags, false),
+                Err(_) => (0, true),
+            };
+            let mut classified = decode_at_with_flags(pid, args[0] as i32, args[1], flags);
 
-            decode_at_with_flags(pid, args[0] as i32, args[1], flags)
+            classified.incomplete |= flags_lost;
+            classified
         }
         // (*pathname, flags, mode)
-        "open" => match peer::read_path(pid, args[0]) {
-            Ok(path) => vec![FileAccess {
-                path: peer::resolve_at(pid, libc::AT_FDCWD, &path),
-                kind: openat_kind_from_flags(args[1]),
-            }],
-            Err(_) => Vec::new(),
-        },
+        "open" => decode_at_with_flags(pid, libc::AT_FDCWD, args[0], args[1]),
         // (*pathname, *statbuf)
         "stat" | "lstat" => decode_direct(pid, args[0], AccessKind::Stat),
         // (*pathname, mode)
@@ -197,62 +221,140 @@ pub fn classify(notif: &seccomp_notif, pid: i32) -> Vec<FileAccess> {
         "symlinkat" => decode_at(pid, args[1] as i32, args[2], AccessKind::Write),
         // chdir / fchdir don't record an access today — they only
         // matter as cwd-cache invalidation triggers (future work).
-        "chdir" | "fchdir" => Vec::new(),
-        _ => Vec::new(),
+        "chdir" | "fchdir" => Classified::default(),
+        _ => Classified::default(),
     }
 }
 
 /// Non-`*at` syscall handler. Resolves the read path against the
 /// child's cwd so callers see absolute paths consistently — see the
 /// note at the top of `classify`.
-fn decode_direct(pid: i32, addr: u64, kind: AccessKind) -> Vec<FileAccess> {
+fn decode_direct(pid: i32, addr: u64, kind: AccessKind) -> Classified {
+    decode_at(pid, libc::AT_FDCWD, addr, kind)
+}
+
+fn decode_at(pid: i32, dirfd: i32, addr: u64, kind: AccessKind) -> Classified {
     match peer::read_path(pid, addr) {
-        Ok(raw) => vec![FileAccess { path: peer::resolve_at(pid, libc::AT_FDCWD, &raw), kind }],
-        Err(_) => Vec::new(),
+        Ok(raw) => Classified::one(peer::resolve_at(pid, dirfd, &raw), kind),
+        Err(_) => Classified::lost(),
     }
 }
 
-fn decode_at(pid: i32, dirfd: i32, addr: u64, kind: AccessKind) -> Vec<FileAccess> {
-    match peer::read_path(pid, addr) {
-        Ok(raw) => vec![FileAccess { path: peer::resolve_at(pid, dirfd, &raw), kind }],
-        Err(_) => Vec::new(),
-    }
+fn decode_at_with_flags(pid: i32, dirfd: i32, addr: u64, flags: u64) -> Classified {
+    decode_at(pid, dirfd, addr, openat_kind_from_flags(flags))
 }
 
-fn decode_at_with_flags(pid: i32, dirfd: i32, addr: u64, flags: u64) -> Vec<FileAccess> {
-    match peer::read_path(pid, addr) {
-        Ok(raw) => {
-            vec![FileAccess { path: peer::resolve_at(pid, dirfd, &raw), kind: openat_kind_from_flags(flags) }]
-        }
-        Err(_) => Vec::new(),
-    }
-}
-
-fn decode_from_fd(pid: i32, fd: i32, kind: AccessKind) -> Vec<FileAccess> {
+fn decode_from_fd(pid: i32, fd: i32, kind: AccessKind) -> Classified {
     match peer::path_of_fd(pid, fd) {
-        Ok(path) => vec![FileAccess { path, kind }],
-        Err(_) => Vec::new(),
+        Ok(path) => Classified::one(path, kind),
+        Err(_) => Classified::lost(),
     }
 }
 
-fn decode_pair_direct(pid: i32, a: u64, b: u64, kind: AccessKind) -> Vec<FileAccess> {
-    let mut out = Vec::with_capacity(2);
-    out.extend(decode_direct(pid, a, kind));
-    out.extend(decode_direct(pid, b, kind));
-    out
+fn decode_pair_direct(pid: i32, a: u64, b: u64, kind: AccessKind) -> Classified {
+    decode_direct(pid, a, kind).merge(decode_direct(pid, b, kind))
 }
 
-fn decode_pair_at(pid: i32, old_dirfd: i32, old_addr: u64, new_dirfd: i32, new_addr: u64) -> Vec<FileAccess> {
-    let mut out = Vec::with_capacity(2);
-    out.extend(decode_at(pid, old_dirfd, old_addr, AccessKind::Write));
-    out.extend(decode_at(pid, new_dirfd, new_addr, AccessKind::Write));
-    out
+fn decode_pair_at(pid: i32, old_dirfd: i32, old_addr: u64, new_dirfd: i32, new_addr: u64) -> Classified {
+    decode_at(pid, old_dirfd, old_addr, AccessKind::Write).merge(decode_at(pid, new_dirfd, new_addr, AccessKind::Write))
 }
 
-/// Forces `PathBuf` to count as used — the import lives in this
-/// module for forward compatibility with handlers that build paths
-/// from non-peer sources.
-#[allow(dead_code)]
-fn _force_pathbuf_import() -> PathBuf {
-    PathBuf::new()
+#[cfg(test)]
+mod tests {
+    use std::ffi::CString;
+    use std::path::Path;
+
+    use super::*;
+
+    /// A pid no process can have (above `PID_MAX_LIMIT`), so `process_vm_readv`
+    /// and `/proc/<pid>/...` fail with `ESRCH` / `ENOENT`.
+    const GONE_PID: i32 = i32::MAX;
+
+    fn notif(syscall: &str, args: [u64; 6]) -> seccomp_notif {
+        let nr = tracked()
+            .iter()
+            .find(|s| s.name == syscall)
+            .and_then(TrackedSyscall::nr)
+            .expect("syscall exists on this arch");
+        let mut notif: seccomp_notif = unsafe { std::mem::zeroed() };
+
+        notif.data.nr = nr;
+        notif.data.args = args;
+        notif
+    }
+
+    fn own_pid() -> i32 {
+        std::process::id() as i32
+    }
+
+    fn ptr(c: &CString) -> u64 {
+        c.as_ptr() as u64
+    }
+
+    #[test]
+    fn a_readable_path_is_recorded_and_the_trace_stays_complete() {
+        let path = CString::new("/etc/passwd").unwrap();
+        let got = classify(&notif("openat", [libc::AT_FDCWD as u64, ptr(&path), 0, 0, 0, 0]), own_pid());
+
+        assert!(!got.incomplete);
+        assert_eq!(got.accesses.len(), 1);
+        assert_eq!(got.accesses[0].path, Path::new("/etc/passwd"));
+        assert_eq!(got.accesses[0].kind, AccessKind::Read);
+    }
+
+    #[test]
+    fn an_unreadable_path_argument_marks_the_trace_incomplete() {
+        // The target is gone / not dumpable / the pointer is bad: nothing can be recorded.
+        let path = CString::new("/etc/passwd").unwrap();
+        let got = classify(&notif("openat", [libc::AT_FDCWD as u64, ptr(&path), 0, 0, 0, 0]), GONE_PID);
+
+        assert!(got.accesses.is_empty());
+        assert!(got.incomplete, "a dropped access must be reported, not silently ignored");
+    }
+
+    #[test]
+    fn a_bad_pointer_in_the_target_marks_the_trace_incomplete() {
+        let got = classify(&notif("openat", [libc::AT_FDCWD as u64, 8, 0, 0, 0, 0]), own_pid());
+
+        assert!(got.accesses.is_empty());
+        assert!(got.incomplete);
+    }
+
+    #[test]
+    fn an_unreadable_open_how_is_incomplete_even_though_the_path_is_recorded() {
+        // openat2's flags live behind a pointer; if they cannot be read a write may be
+        // recorded as a read, so the trace is flagged instead of trusted.
+        let path = CString::new("/etc/passwd").unwrap();
+        let got = classify(&notif("openat2", [libc::AT_FDCWD as u64, ptr(&path), 8, 24, 0, 0]), own_pid());
+
+        assert_eq!(got.accesses.len(), 1);
+        assert!(got.incomplete);
+    }
+
+    #[test]
+    fn one_unreadable_path_of_a_pair_keeps_the_other_and_flags_the_trace() {
+        let old = CString::new("/tmp/fspy-old").unwrap();
+        let got =
+            classify(&notif("renameat", [libc::AT_FDCWD as u64, ptr(&old), libc::AT_FDCWD as u64, 8, 0, 0]), own_pid());
+
+        assert_eq!(got.accesses.len(), 1);
+        assert_eq!(got.accesses[0].path, Path::new("/tmp/fspy-old"));
+        assert!(got.incomplete);
+    }
+
+    #[test]
+    fn an_unresolvable_directory_fd_marks_the_trace_incomplete() {
+        let got = classify(&notif("getdents64", [1_000_000, 0, 0, 0, 0, 0]), own_pid());
+
+        assert!(got.accesses.is_empty());
+        assert!(got.incomplete);
+    }
+
+    #[test]
+    fn a_syscall_that_records_nothing_is_not_incomplete() {
+        let got = classify(&notif("chdir", [0; 6]), GONE_PID);
+
+        assert!(got.accesses.is_empty());
+        assert!(!got.incomplete);
+    }
 }
