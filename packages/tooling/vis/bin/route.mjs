@@ -1122,6 +1122,87 @@ const shimStatusMayRunNatively = (platform, environment, args, cwd, interactive,
     return outputSettingsAreDefault(environment) && args.length === 2;
 };
 
+// The lint selectors of `vis deps`, `--quiet` and `--format`: the flags `deps::parse` (`native/cli/src/deps/mod.rs`) answers, each at most once.
+const DEPS_SELECTORS = new Set([
+    "--banned-deps",
+    "--custom-types",
+    "--dead-workspace-patterns",
+    "--empty-deps",
+    "--missing-package-json",
+    "--redefine-root",
+    "--root-deps",
+    "--root-package-manager",
+    "--root-private",
+    "--similar-deps",
+    "--types-in-deps",
+    "--workspace-protocol",
+    "--workspace-versions",
+]);
+
+const DEPS_FORMATS = new Set(["human", "json", "minimal"]);
+
+// The `--format` option at `flags[index]`: the format it names and where the flags continue, or `undefined` when it is another argument, or `false` when it is not one the binary answers.
+const depsFormat = (flags, index) => {
+    const flag = flags[index];
+
+    if (flag === "--format") {
+        return DEPS_FORMATS.has(flags[index + 1]) ? [flags[index + 1], index + 2] : false;
+    }
+
+    if (flag.startsWith("--format=")) {
+        return DEPS_FORMATS.has(flag.slice("--format=".length)) ? [flag.slice("--format=".length), index + 1] : false;
+    }
+
+    return undefined;
+};
+
+// The shape of the arguments after `deps`: `{ format, quiet }`, or `undefined` when the binary would delegate them.
+const depsShape = (flags) => {
+    const seen = new Set();
+    let format;
+    let index = 0;
+
+    while (index < flags.length) {
+        const given = depsFormat(flags, index);
+
+        if (given === false || (given !== undefined && format !== undefined)) {
+            return undefined;
+        }
+
+        if (given === undefined && ((!DEPS_SELECTORS.has(flags[index]) && flags[index] !== "--quiet") || seen.has(flags[index]))) {
+            return undefined;
+        }
+
+        if (given === undefined) {
+            seen.add(flags[index]);
+            index += 1;
+        } else {
+            [format, index] = given;
+        }
+    }
+
+    // Node warns on stderr that there is no `policy.bannedDeps` to check.
+    return seen.has("--banned-deps") && !seen.has("--quiet") ? undefined : { format: format ?? "human", quiet: seen.has("--quiet") };
+};
+
+// Whether `vis deps` can pass the binary's native gate (`parse` and `answer` in `deps/mod.rs`): the lint selectors, `--quiet` and `--format`,
+// at the root of a pnpm workspace in a CI context off a terminal, with a colour the binary can tell when it prints the human format. The binary
+// re-checks everything, including the manifests and any drift between packages, so this only skips the extra process when it would delegate
+// anyway. `--fix` and every flag that takes a policy stay in Node. Windows stays in Node.
+const depsMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    const shape = depsShape(args.slice(1));
+
+    if (shape === undefined || !outputSettingsAreDefault(environment)) {
+        return false;
+    }
+
+    return shape.format !== "human" || shape.quiet || colourIsDecidable(environment, args);
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -1162,6 +1243,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ],
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
+    // The dependency-policy lints: the selectors, `--quiet` and `--format`.
+    ["deps", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => depsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
     // `hook list` and `hook validate` (which the binary answers only when it has nothing to report); `hook run` is native for every shape
     // (`alwaysNative`) and the other `hook` subcommands are Node's.

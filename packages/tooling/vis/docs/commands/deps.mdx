@@ -272,3 +272,7 @@ workspace-versions	packages/b/package.json	dependencies	react	^18.0.0 → ^18.2.
 - `1` — issues found and not fixed (or autofix denied by `policy.*.autofix: false`)
 
 CI typically runs `vis deps` with no `--fix` flag; the non-zero exit fails the build on drift. `--fix` is for local developer machines and pre-commit hooks.
+
+## Native fast path
+
+In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, the Rust binary runs the lint selectors (all of them, or the ones given), `--quiet` and `--format human|json|minimal` without starting Node. It hands everything else to the Node implementation before anything is printed: `--fix`, `--ban`, `--pin`, `--dep`, `--resolve`, `--fix-specifier`, `--propose-min`, `--banned-deps` without `--quiet`, a `workspaces` field next to `pnpm-workspace.yaml`, `overrides` in the workspace file, a `package.json` that is not strict JSON, and any drift found by `workspace-versions` or `custom-types` (the canonical specifier comes from a semver order that only the Node implementation reproduces).

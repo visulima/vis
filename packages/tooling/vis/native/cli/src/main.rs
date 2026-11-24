@@ -39,6 +39,7 @@ mod ci_workflow;
 mod clean;
 mod complete;
 mod config_cache;
+mod deps;
 mod dlx;
 mod error;
 mod exec;
@@ -241,6 +242,10 @@ fn main() {
         "shim" if args.get(1).map(String::as_str) == Some("status") && !surface::asks_for_help(&args) => {
             shim_status::run(&args, &raw_args)
         }
+        // `vis deps` — the dependency-policy lints of a pnpm workspace, native for the lint selectors, `--quiet` and
+        // `--format` in a CI context. Every other shape, and every workspace or input it cannot reproduce exactly, is
+        // delegated inside `deps::run`, before anything is printed; help is left to the arm below.
+        "deps" if !surface::asks_for_help(&args) => deps::run(&args, &raw_args),
         // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and the verdicts that need
         // no install, native in a CI context; an install, every other shape and `--help` (left to the arm
         // below) go to Node.
