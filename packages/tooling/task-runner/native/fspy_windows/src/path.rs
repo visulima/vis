@@ -45,9 +45,16 @@ fn normalize_str(raw: &str) -> String {
 
 /// Case-insensitive `strip_prefix` — Windows path prefixes are
 /// case-insensitive (`\\?\unc\` vs `\\?\UNC\`).
+///
+/// Compares bytes: slicing `s[..prefix.len()]` panics when that index falls
+/// inside a multi-byte character, and a panic here runs inside an injected hook.
+/// `prefix` is ASCII, so a matching byte prefix ends on a character boundary and
+/// `s.get(n..)` is always `Some` on a match.
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&s[prefix.len()..])
+    let n = prefix.len();
+
+    if s.as_bytes().get(..n)?.eq_ignore_ascii_case(prefix.as_bytes()) {
+        s.get(n..)
     } else {
         None
     }
@@ -56,6 +63,33 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::normalize_str;
+
+    // `\\?\UNC\` is 8 bytes; a multi-byte character straddling byte 8 used to
+    // make `&s[..8]` panic inside the injected hook, aborting the host.
+    #[test]
+    fn non_ascii_path_straddling_the_prefix_boundary() {
+        assert_eq!(normalize_str(r"C:\a\äö"), "C:/a/äö");
+        assert_eq!(normalize_str(r"C:\ab\ö"), "C:/ab/ö");
+    }
+
+    #[test]
+    fn non_ascii_paths_of_every_shape() {
+        assert_eq!(normalize_str(r"\\?\C:\ünï\日本語.txt"), "C:/ünï/日本語.txt");
+        assert_eq!(normalize_str(r"\\?\UNC\srv\shäre\日本"), "//srv/shäre/日本");
+        assert_eq!(normalize_str(r"\\srv\sh\😀"), "//srv/sh/😀");
+        assert_eq!(normalize_str("😀"), "😀");
+        assert_eq!(normalize_str(""), "");
+    }
+
+    #[test]
+    fn every_truncation_point_of_a_multibyte_path_is_safe() {
+        // The ANSI hook decodes arbitrary bytes lossily, so cut at every byte.
+        for s in [r"\\?\UNC\äö", "ä\\ö\\日本語\\😀", r"\\?\ÜNC\x"] {
+            for end in 0..=s.len() {
+                let _ = normalize_str(&String::from_utf8_lossy(&s.as_bytes()[..end]));
+            }
+        }
+    }
 
     #[test]
     fn strips_extended_length_prefix() {

@@ -238,6 +238,13 @@ const isInterposeAvailable = (): boolean => {
 };
 
 /**
+ * Joins an argv into one `sh -c` command line, single-quoting every element so
+ * paths with spaces (`C:\Program Files\nodejs\node.exe`) and quotes survive
+ * the untracked fallback, which re-parses the line.
+ */
+const shellJoin = (argv: string[]): string => argv.map((arg) => `'${arg.replaceAll("'", String.raw`'\''`)}'`).join(" ");
+
+/**
  * Lazily resolves the bundled `fspy-windows.dll` (the IAT-hook tracker
  * injected into directly-exec'd children on Windows). Mirrors
  * {@link resolveInterposeDylibPath} for the win32 binding packages, with
@@ -926,7 +933,7 @@ export class FileAccessTracker {
         const dllPath = resolveWindowsDllPath();
 
         if (!native?.trackWithIatHook || !dllPath || argv.length === 0) {
-            return this.#runWithoutTracking(argv.join(" "), options);
+            return this.#runWithoutTracking(shellJoin(argv), options);
         }
 
         const cwd = options.cwd ?? this.#workspaceRoot;
@@ -1000,7 +1007,7 @@ export class FileAccessTracker {
 
             return { accesses, code: result.exitCode, output };
         } catch {
-            return this.#runWithoutTracking(argv.join(" "), options);
+            return this.#runWithoutTracking(shellJoin(argv), options);
         } finally {
             if (killable) {
                 this.#activeProcesses.delete(killable);

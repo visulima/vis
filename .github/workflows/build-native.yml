@@ -389,6 +389,14 @@ jobs:
                       cp "native/fspy_windows/target/$TARGET/release/fspy_windows.dll" "npm/$binding/fspy-windows.dll"
                   fi
 
+            # The fspy_windows crate is not a workspace member, so no other job runs
+            # its tests. Only the host-matching x64 leg can execute them.
+            - name: "Test fspy_windows"
+              if: "matrix.settings.testable && contains(matrix.settings.target, 'windows')"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner"
+              run: "cargo test --manifest-path native/fspy_windows/Cargo.toml --target ${{ matrix.settings.target }}"
+
             # Build the vis CLI front-end binary (the Rust startup + dispatch
             # shell) for this target and drop it into the matching binding package
             # so its `files` array publishes it. `-p vis-cli` compiles ONLY the

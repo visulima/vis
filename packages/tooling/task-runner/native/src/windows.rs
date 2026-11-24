@@ -7,7 +7,11 @@
 //! 3. Inject `fspy_windows.dll` via `VirtualAllocEx` + `WriteProcessMemory` +
 //!    `CreateRemoteThread(LoadLibraryW)`; the DLL's `DllMain` connects the pipe
 //!    (derived from its own PID) and installs the IAT hooks.
-//! 4. Resume the main thread; drain `[mode][path]` messages off the pipe until
+//! 4. Wait (bounded) for the DLL to connect to the pipe. If the injection fails,
+//!    the DLL does not load, or it never connects, the suspended child is
+//!    terminated before it runs and the call fails, so the caller can run the
+//!    command untracked instead of hanging.
+//! 5. Resume the main thread; drain `[mode][path]` messages off the pipe until
 //!    the child exits.
 //!
 //! Pure Win32 (no Detours/vcpkg). IAT pointer-swapping in the DLL is
@@ -21,7 +25,6 @@
 #![allow(clippy::too_many_lines)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
@@ -29,9 +32,10 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0,
+    CloseHandle, GetLastError, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Storage::FileSystem::{ReadFile, PIPE_ACCESS_INBOUND};
+use windows_sys::Win32::Storage::FileSystem::{ReadFile, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_INBOUND};
 use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Memory::{
@@ -41,9 +45,19 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, CreateRemoteThread, GetExitCodeProcess, ResumeThread, WaitForSingleObject, CREATE_SUSPENDED,
-    CREATE_UNICODE_ENVIRONMENT, INFINITE, LPTHREAD_START_ROUTINE, PROCESS_INFORMATION, STARTUPINFOW,
+    CreateEventW, CreateProcessW, CreateRemoteThread, GetExitCodeProcess, GetExitCodeThread, ResumeThread,
+    TerminateProcess, WaitForMultipleObjects, WaitForSingleObject, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    INFINITE, LPTHREAD_START_ROUTINE, PROCESS_INFORMATION, STARTUPINFOW,
 };
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+
+/// How long `LoadLibraryW` may take in the suspended child before we give up.
+const LOAD_TIMEOUT_MS: u32 = 10_000;
+
+/// How long to wait for the DLL's pipe connection once `LoadLibraryW` has
+/// returned. `DllMain` connects synchronously, so by then the connection either
+/// exists or never will; the slack only covers scheduler lag.
+const CONNECT_TIMEOUT_MS: u32 = 3_000;
 
 #[napi(object)]
 pub struct WinFileAccess {
@@ -121,19 +135,19 @@ fn quote_arg(arg: &str) -> String {
                 backslashes += 1;
             }
             '"' => {
-                out.extend(std::iter::repeat('\\').take(backslashes * 2 + 1));
+                out.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
                 out.push('"');
                 backslashes = 0;
             }
             _ => {
-                out.extend(std::iter::repeat('\\').take(backslashes));
+                out.extend(std::iter::repeat_n('\\', backslashes));
                 backslashes = 0;
                 out.push(ch);
             }
         }
     }
 
-    out.extend(std::iter::repeat('\\').take(backslashes * 2));
+    out.extend(std::iter::repeat_n('\\', backslashes * 2));
     out.push('"');
     out
 }
@@ -203,36 +217,23 @@ fn run(
     let child_pid = info.dwProcessId;
     let _ = pid_tx.send(child_pid);
 
-    // Create the per-spawn pipe server BEFORE injecting, so the DLL's connect
-    // (on attach, before resume) always finds it.
-    let pipe_name = wide(&format!(r"\\.\pipe\fspy-{child_pid}"));
-    let pipe = unsafe {
-        CreateNamedPipeW(
-            pipe_name.as_ptr(),
-            PIPE_ACCESS_INBOUND,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1,
-            0,
-            64 * 1024,
-            0,
-            std::ptr::null(),
-        )
+    // Create the pipe server, inject the DLL and wait for it to connect, all
+    // while the child is still suspended. Any failure means the child cannot be
+    // tracked: terminate it before it runs a single instruction of its own and
+    // report the error, so the caller can run the command untracked, once.
+    let pipe = match attach_tracker(info.hProcess, child_pid, &dll_path) {
+        Ok(pipe) => pipe,
+        Err(error) => {
+            unsafe { TerminateProcess(info.hProcess, 1) };
+            close(info.hThread);
+            close(info.hProcess);
+            return Err(error);
+        }
     };
-
-    // Inject the DLL. Failures here degrade to "no tracking": resume the child
-    // so it still runs, just untracked.
-    let injected = pipe != INVALID_HANDLE_VALUE && inject_dll(info.hProcess, &dll_path);
 
     // Reader thread drains the pipe until the child closes its write end (EOF).
-    let reader = if injected {
-        let handle = pipe as isize;
-        Some(thread::spawn(move || drain_pipe(handle as HANDLE)))
-    } else {
-        if pipe != INVALID_HANDLE_VALUE {
-            close(pipe);
-        }
-        None
-    };
+    let handle = pipe as isize;
+    let reader = thread::spawn(move || drain_pipe(handle as HANDLE));
 
     unsafe { ResumeThread(info.hThread) };
     unsafe { WaitForSingleObject(info.hProcess, INFINITE) };
@@ -240,7 +241,7 @@ fn run(
     let mut exit_code: u32 = 1;
     unsafe { GetExitCodeProcess(info.hProcess, &mut exit_code) };
 
-    let accesses = reader.map(|r| r.join().unwrap_or_default()).unwrap_or_default();
+    let accesses = reader.join().unwrap_or_default();
 
     close(info.hThread);
     close(info.hProcess);
@@ -253,69 +254,221 @@ fn run(
     })
 }
 
+fn last_error(context: &str) -> std::io::Error {
+    let code = unsafe { GetLastError() };
+    let os = std::io::Error::from_raw_os_error(code as i32);
+
+    std::io::Error::new(os.kind(), format!("{context}: {os}"))
+}
+
+fn failure(message: &str) -> std::io::Error {
+    std::io::Error::other(message.to_string())
+}
+
+/// Create the per-spawn pipe server, inject the DLL and wait until it has
+/// connected. Returns the connected (overlapped) pipe handle.
+///
+/// The server is created BEFORE injecting so the DLL's connect (on attach,
+/// before resume) always finds it, and its connect is armed before injecting too,
+/// so the wait below observes it. The connect is overlapped so it can be bounded
+/// by a timeout and by the child exiting; a blocking `ConnectNamedPipe` hangs
+/// forever when the DLL fails to load or never connects.
+fn attach_tracker(process: HANDLE, child_pid: u32, dll_path: &str) -> std::io::Result<HANDLE> {
+    let pipe_name = wide(&format!(r"\\.\pipe\fspy-{child_pid}"));
+    let pipe = unsafe {
+        CreateNamedPipeW(
+            pipe_name.as_ptr(),
+            PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            1,
+            0,
+            64 * 1024,
+            0,
+            std::ptr::null(),
+        )
+    };
+
+    if pipe == INVALID_HANDLE_VALUE {
+        return Err(last_error("CreateNamedPipeW failed"));
+    }
+
+    match inject_and_connect(pipe, process, dll_path) {
+        Ok(()) => Ok(pipe),
+        Err(error) => {
+            close(pipe);
+            Err(error)
+        }
+    }
+}
+
+fn inject_and_connect(pipe: HANDLE, process: HANDLE, dll_path: &str) -> std::io::Result<()> {
+    let event = unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) };
+    if event.is_null() {
+        return Err(last_error("CreateEventW failed"));
+    }
+
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.hEvent = event;
+
+    let pending = match begin_connect(pipe, &mut overlapped) {
+        Ok(pending) => pending,
+        Err(error) => {
+            close(event);
+            return Err(error);
+        }
+    };
+
+    let result =
+        inject_dll(process, dll_path).and_then(|()| if pending { wait_connected(event, process) } else { Ok(()) });
+
+    // A connect that is still outstanding must be cancelled and drained before
+    // `overlapped` goes out of scope: the kernel writes to it on completion.
+    if pending {
+        finish_connect(pipe, &mut overlapped, result.is_err());
+    }
+
+    close(event);
+    result
+}
+
+/// Arm an overlapped `ConnectNamedPipe`. `Ok(true)` when it is pending, `Ok(false)`
+/// when the client had already connected.
+fn begin_connect(pipe: HANDLE, overlapped: &mut OVERLAPPED) -> std::io::Result<bool> {
+    // An overlapped connect normally returns FALSE and reports its state in the
+    // last error; a TRUE return would mean it already completed.
+    if unsafe { ConnectNamedPipe(pipe, overlapped) } != FALSE {
+        return Ok(false);
+    }
+
+    match unsafe { GetLastError() } {
+        ERROR_IO_PENDING => Ok(true),
+        ERROR_PIPE_CONNECTED => Ok(false),
+        _ => Err(last_error("ConnectNamedPipe failed")),
+    }
+}
+
+/// Wait until the connect completes, the child exits, or the timeout passes.
+fn wait_connected(event: HANDLE, process: HANDLE) -> std::io::Result<()> {
+    let handles = [event, process];
+    let waited = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), FALSE, CONNECT_TIMEOUT_MS) };
+
+    match waited {
+        WAIT_OBJECT_0 => Ok(()),
+        w if w == WAIT_OBJECT_0 + 1 => Err(failure("the tracked process exited before the tracker DLL connected")),
+        WAIT_TIMEOUT => Err(failure("the tracker DLL did not connect to the pipe in time")),
+        _ => Err(last_error("waiting for the tracker DLL to connect failed")),
+    }
+}
+
+/// Finish an armed overlapped connect so its `OVERLAPPED` can be dropped.
+/// `cancel` aborts it first (the failure paths); otherwise it has completed.
+fn finish_connect(pipe: HANDLE, overlapped: &mut OVERLAPPED, cancel: bool) {
+    if cancel {
+        unsafe { CancelIoEx(pipe, overlapped) };
+    }
+
+    let mut transferred = 0u32;
+    unsafe { GetOverlappedResult(pipe, overlapped, &mut transferred, TRUE) };
+}
+
 /// `VirtualAllocEx` + `WriteProcessMemory` the wide DLL path into the child,
-/// then `CreateRemoteThread(LoadLibraryW)` to load it. Returns true on success.
-fn inject_dll(process: HANDLE, dll_path: &str) -> bool {
+/// then `CreateRemoteThread(LoadLibraryW)` to load it. Succeeds only when
+/// `LoadLibraryW` itself returned a module handle: it is the remote thread's
+/// exit code, so zero means the DLL did not load (missing file or dependency, a
+/// bitness mismatch, a failing `DllMain`).
+fn inject_dll(process: HANDLE, dll_path: &str) -> std::io::Result<()> {
     let path_wide = wide(dll_path);
     let bytes = path_wide.len() * std::mem::size_of::<u16>();
 
     unsafe {
         let remote = VirtualAllocEx(process, std::ptr::null(), bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if remote.is_null() {
-            return false;
+            return Err(last_error("VirtualAllocEx failed"));
         }
 
         let mut written = 0usize;
         let wrote = WriteProcessMemory(process, remote, path_wide.as_ptr().cast(), bytes, &mut written);
         if wrote == FALSE {
+            let error = last_error("WriteProcessMemory failed");
             VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-            return false;
+            return Err(error);
         }
 
         let kernel32 = GetModuleHandleW(wide("kernel32.dll").as_ptr());
-        if kernel32.is_null() {
-            VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-            return false;
-        }
-
-        let load_library = GetProcAddress(kernel32, c"LoadLibraryW".as_ptr().cast());
+        let load_library =
+            if kernel32.is_null() { None } else { GetProcAddress(kernel32, c"LoadLibraryW".as_ptr().cast()) };
         let Some(load_library) = load_library else {
             VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-            return false;
+            return Err(failure("could not resolve LoadLibraryW"));
         };
 
         // LoadLibraryW(LPCWSTR) matches the LPTHREAD_START_ROUTINE shape
         // (one pointer arg); the remote allocation is that arg.
-        let start: LPTHREAD_START_ROUTINE = Some(std::mem::transmute(load_library));
+        let start: LPTHREAD_START_ROUTINE = Some(std::mem::transmute::<
+            unsafe extern "system" fn() -> isize,
+            unsafe extern "system" fn(*mut std::ffi::c_void) -> u32,
+        >(load_library));
         let thread = CreateRemoteThread(process, std::ptr::null(), 0, start, remote, 0, std::ptr::null_mut());
 
         if thread == INVALID_HANDLE_VALUE || thread.is_null() {
+            let error = last_error("CreateRemoteThread failed");
             VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-            return false;
+            return Err(error);
         }
 
-        WaitForSingleObject(thread, INFINITE);
+        if WaitForSingleObject(thread, LOAD_TIMEOUT_MS) != WAIT_OBJECT_0 {
+            // The thread may still be reading `remote`, so leave it allocated;
+            // the caller terminates the process.
+            close(thread);
+            return Err(failure("LoadLibraryW did not return in time"));
+        }
+
+        let mut exit_code = 0u32;
+        let got_exit_code = GetExitCodeThread(thread, &mut exit_code);
         close(thread);
         VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-        true
+
+        if got_exit_code == FALSE {
+            return Err(last_error("GetExitCodeThread failed"));
+        }
+
+        // `LoadLibraryW` returns the module handle, truncated to the thread's
+        // 32-bit exit code; NULL (0) means it failed. A loaded module whose base
+        // happens to have zero low 32 bits also reads as 0; that is a rare false
+        // failure and only costs an untracked run.
+        if exit_code == 0 {
+            return Err(failure("LoadLibraryW failed to load the tracker DLL in the target process"));
+        }
+
+        Ok(())
     }
 }
 
-/// Read `[u8 mode][utf-8 path]` messages off the pipe until EOF, de-duplicating.
+/// Read `[u8 mode][utf-8 path]` messages off the (already connected) pipe until
+/// EOF, de-duplicating.
 fn drain_pipe(pipe: HANDLE) -> Vec<WinFileAccess> {
     let mut seen = std::collections::HashSet::<(String, u8)>::new();
     let mut out = Vec::new();
 
-    // Block until the injected DLL connects (or the child exited without it).
-    unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) };
-
     let mut buf = [0u8; 1 + 32 * 1024];
 
-    loop {
-        let mut read: u32 = 0;
-        let ok = unsafe { ReadFile(pipe, buf.as_mut_ptr().cast(), buf.len() as u32, &mut read, std::ptr::null_mut()) };
+    // The pipe is overlapped, so every read needs an OVERLAPPED; we block on it.
+    let event = unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) };
 
-        if ok == FALSE || read == 0 {
+    while !event.is_null() {
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = event;
+
+        let mut read: u32 = 0;
+        let started = unsafe { ReadFile(pipe, buf.as_mut_ptr().cast(), buf.len() as u32, &mut read, &mut overlapped) };
+
+        let finished = if started == FALSE && unsafe { GetLastError() } == ERROR_IO_PENDING {
+            unsafe { GetOverlappedResult(pipe, &overlapped, &mut read, TRUE) }
+        } else {
+            started
+        };
+
+        if finished == FALSE || read == 0 {
             break; // pipe closed (child + DLL gone) or error.
         }
 
@@ -332,6 +485,7 @@ fn drain_pipe(pipe: HANDLE) -> Vec<WinFileAccess> {
         }
     }
 
+    close(event);
     close(pipe);
     out
 }
@@ -343,12 +497,4 @@ fn kind_str(mode: u8) -> &'static str {
         3 => "readdir",
         _ => "read",
     }
-}
-
-// Touch otherwise-unused imports referenced only in specific control-flow
-// branches so the windows-gnu check stays warning-clean.
-#[allow(dead_code)]
-fn _anchors() {
-    let _ = WAIT_OBJECT_0;
-    let _ = TRUE;
 }
