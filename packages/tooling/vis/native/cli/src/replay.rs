@@ -19,8 +19,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::iso;
-use crate::cache_hash::{json_text, plain, printable, summary_path, Output, Probe, ProbeId};
-use crate::pail::{Layout, Level};
+use crate::cache_hash::{json_text, summary_path, Output, Probe, ProbeId};
+use crate::pail::{plain, printable, Layout, Level};
 use crate::summary::{context, emit, format_duration, is_object, load_summary, present, run_files, JsInt, Ordered};
 
 /// What the user asked for.

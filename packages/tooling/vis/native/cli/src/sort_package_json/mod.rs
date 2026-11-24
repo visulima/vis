@@ -33,7 +33,7 @@ use sort_package_json::{sort_package_json_with_options, SortOptions};
 
 use crate::node_context::{ci_root_context, quiet_context};
 use crate::output::write_streams;
-use crate::pail::{Layout, Level};
+use crate::pail::{plain_path, Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::{expand_patterns, yaml_packages, WORKSPACE_YAML_NAMES};
 
@@ -100,7 +100,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::process::delegate(raw_args);
     };
 
-    if entries.iter().any(|entry| !is_plain(&entry.path)) {
+    if entries.iter().any(|entry| !plain_path(&entry.path)) {
         crate::process::delegate(raw_args);
     }
 
@@ -600,11 +600,6 @@ fn pail(layout: Layout, out: &mut Output, level: Level, message: &str) {
     let buffer = if level.to_stderr() { &mut out.stderr } else { &mut out.stdout };
 
     buffer.push_str(&layout.block(level, message));
-}
-
-/// A path pail can print exactly: ASCII, no spaces, no control characters.
-fn is_plain(path: &Path) -> bool {
-    path.to_str().is_some_and(|text| text.bytes().all(|byte| byte.is_ascii_graphic()))
 }
 
 /// Prints what the run produced and exits with `exit_code`.

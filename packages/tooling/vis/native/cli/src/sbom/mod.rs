@@ -32,7 +32,7 @@ use crate::graph::{project_graph, GraphResult};
 use crate::js;
 use crate::node_context::{ci_root_context, quiet_context};
 use crate::output::write_stdout;
-use crate::pail::{Layout, Level};
+use crate::pail::{plain_path, Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use vis_core::date::iso_from_millis;
 
@@ -201,11 +201,6 @@ fn stdout_is_stream() -> bool {
     true
 }
 
-/// A path the pail message can hold without wrapping differently from a word: ASCII with no spaces.
-fn printable(path: &Path) -> bool {
-    path.to_str().is_some_and(|text| text.bytes().all(|byte| byte.is_ascii_graphic()))
-}
-
 /// Answer `vis sbom` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     match answer(args) {
@@ -248,7 +243,7 @@ fn answer(args: &[String]) -> Option<i32> {
     let target: PathBuf =
         if plan.output.starts_with('/') { PathBuf::from(&plan.output) } else { cwd.join(&plan.output) };
 
-    if !printable(&target) || !writable(&target) {
+    if !plain_path(&target) || !writable(&target) {
         return None;
     }
 

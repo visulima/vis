@@ -33,7 +33,7 @@ use crate::cache::{
 };
 use crate::node_context::output_settings_are_default;
 use crate::output::write_streams;
-use crate::pail::{Layout, Level};
+use crate::pail::{plain, Layout, Level};
 use crate::removal::{removable_directory, removable_file};
 
 /// What the user asked for.
@@ -221,11 +221,6 @@ fn say(layout: Layout, output: &mut Output, level: Level, message: &str) {
     buffer.push_str(&layout.block(level, message));
 }
 
-/// A path pail can print exactly: ASCII, no spaces, no control characters.
-fn printable(path: &str) -> bool {
-    path.bytes().all(|byte| byte.is_ascii_graphic())
-}
-
 /// `isCacheDirectoryInsideWorkspace`: a proper descendant of the root, both normalised the way `@visulima/path` does.
 fn inside_workspace(directory: &str, root: &str) -> bool {
     let directory = resolve(directory, &[]);
@@ -256,7 +251,7 @@ fn task_cache(
 ) -> Option<()> {
     let root_text = root.to_str()?;
 
-    if !printable(directory) || !printable(root_text) {
+    if !plain(directory) || !plain(root_text) {
         return None;
     }
 

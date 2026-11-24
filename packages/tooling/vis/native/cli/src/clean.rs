@@ -27,7 +27,7 @@ use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remo
 
 use crate::node_context::{any_ancestor_has, in_ci, DENO_FILES};
 use crate::output::write_streams;
-use crate::pail::{Layout, Level};
+use crate::pail::{plain_path, Layout, Level};
 use crate::vis_config::{self, ConfigState};
 
 /// What one run prints, split the way pail splits it: error blocks go to stderr, the rest to
@@ -101,7 +101,7 @@ fn plan(args: &[String]) -> Option<Plan> {
     let directories = if dry_run { list_node_modules(&root) } else { removal_order(find_node_modules(&root), &root) };
     let lockfiles = if lockfile { find_lockfiles(&root) } else { Vec::new() };
 
-    let printable = directories.iter().chain(lockfiles.iter()).all(|path| is_plain(path));
+    let printable = directories.iter().chain(lockfiles.iter()).all(|path| plain_path(path));
 
     if !printable {
         return None;
@@ -162,11 +162,6 @@ fn removal_order(mut directories: Vec<PathBuf>, root: &Path) -> Vec<PathBuf> {
     directories.sort_by_key(|directory| *directory == root_node_modules);
 
     directories
-}
-
-/// A path pail can print exactly: ASCII, no spaces, no control characters.
-fn is_plain(path: &Path) -> bool {
-    path.to_str().is_some_and(|text| text.bytes().all(|byte| byte.is_ascii_graphic()))
 }
 
 fn dry_run_output(plan: &Plan, out: &mut Output) {

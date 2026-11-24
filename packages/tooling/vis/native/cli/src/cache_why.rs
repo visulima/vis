@@ -23,11 +23,10 @@ use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 
 use crate::cache_hash::{
-    json_text, parse, plain, printable, summary_path, Details, FailureJson, Loaded, Output, Probe, ProbeId, Request,
-    Summary, Task,
+    json_text, parse, summary_path, Details, FailureJson, Loaded, Output, Probe, ProbeId, Request, Summary, Task,
 };
 use crate::js::PROTOTYPE_NAMES;
-use crate::pail::{Layout, Level};
+use crate::pail::{plain, printable, Layout, Level};
 use crate::summary::{context, emit, find_task, load_summary, present, read_run_file, run_files, utf16_order, Ordered};
 
 /// The message of the "first run" block holds an em dash, which pail's wrap measures differently from the

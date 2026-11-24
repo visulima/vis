@@ -37,7 +37,7 @@ use serde_json::value::RawValue;
 use crate::error::WrapperError;
 use crate::js::is_index_like;
 use crate::node_context::{in_ci, monorepo_root, quiet_context};
-use crate::pail::{pail_width, Layout, Level};
+use crate::pail::{pail_width, plain, printable, Layout, Level};
 
 /// A recorded hash is cut to this many characters in the table, then `…` follows.
 const HASH_DISPLAY_PREFIX: usize = 16;
@@ -528,11 +528,6 @@ pub(crate) struct Output {
     pub(crate) exit_code: i32,
 }
 
-/// A string pail and `padEnd` handle exactly: printable ASCII, no space.
-pub(crate) fn plain(text: &str) -> bool {
-    text.bytes().all(|byte| byte.is_ascii_graphic())
-}
-
 /// Whether Node's `localeCompare` orders ASCII like the root collation [`collate`] reproduces. A
 /// tailored locale (`da`, `cs`, …) orders some letter pairs differently, and Node takes its default
 /// locale from these variables.
@@ -609,11 +604,6 @@ fn render_bucket(out: &mut String, label: &str, entries: &[(String, String)]) ->
     }
 
     Some(())
-}
-
-/// Printable ASCII, spaces included: the bytes `padEnd` and the slice treat as one unit each.
-pub(crate) fn printable(text: &str) -> bool {
-    text.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
 }
 
 /// The table for a task found in the summary. `None` when Node has to answer.
