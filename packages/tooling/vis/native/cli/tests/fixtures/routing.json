@@ -957,6 +957,24 @@
         { "args": ["hook", "validate"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
         { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1" }, "directory": "packages/a" },
         { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1", "NODE_ENV": "test" } },
-        { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } }
+        { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "native", "env": { "CI": "1" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "native", "env": { "CI": "1", "GITHUB_ACTIONS": "true" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "native", "env": { "CI": "1", "FORCE_COLOR": "1" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "native", "env": { "CI": "1", "NODE_ENV": "production" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "native", "env": { "CI": "1" }, "files": { ".vis/shims/npm": "x" } },
+        { "args": ["shim", "status"], "launcher": "native", "binary": "node", "env": { "CI": "1" }, "files": { "vis.config.ts": "export default {};\n" } },
+        { "args": ["shim", "status", "--help"], "launcher": "native", "binary": "native" },
+        { "args": ["shim", "status", "--json"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["shim", "install"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["shim", "uninstall"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node" },
+        { "args": ["shim", "status"], "launcher": "node", "env": { "CI": "1" }, "interactive": true },
+        { "args": ["shim", "status"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node", "env": { "CI": "1" }, "directory": "packages/a" },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node", "env": { "CI": "1", "NODE_ENV": "test" } },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node", "env": { "CI": "1", "DEBUG": "1" } },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node", "env": { "CI": "1", "CEREBRO_OUTPUT_LEVEL": "16" } },
+        { "args": ["shim", "status"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } }
     ]
 }

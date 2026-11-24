@@ -1090,6 +1090,17 @@ const hookMayRunNatively = (platform, environment, args, cwd, interactive, holds
     return outputSettingsAreDefault(environment) && hookShapeIsNative(args);
 };
 
+// Whether `vis shim status` can pass the binary's native gate (`answer` in `shim_status.rs`): exactly `shim status`, at the root of a pnpm
+// workspace in a CI context off a terminal. The binary re-checks everything, so this only skips the extra process when it would delegate anyway.
+// `shim install` and `shim uninstall` write files and stay in Node. Windows stays in Node.
+const shimStatusMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && args.length === 2;
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -1174,6 +1185,17 @@ const NATIVE_SHAPE_GATES = new Map([
     ],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
     ["self-update", ({ args, environment, interactive, platform }) => helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive))],
+    // `shim status`; the other `shim` subcommands install and remove files and are Node's.
+    [
+        "shim",
+        ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
+            if (subcommand !== "status") {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => shimStatusMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+        },
+    ],
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
     ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.

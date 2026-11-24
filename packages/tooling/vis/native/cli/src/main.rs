@@ -64,6 +64,7 @@ mod sbom;
 mod secrets;
 mod security_list;
 mod self_update;
+mod shim_status;
 mod sort_package_json;
 mod summary;
 mod surface;
@@ -224,6 +225,12 @@ fn main() {
         // is printed; help is left to the arm below.
         "security" if args.get(1).map(String::as_str) == Some("list") && !surface::asks_for_help(&args) => {
             security_list::run(&args, &raw_args)
+        }
+        // `vis shim status` — the shim directory and `PATH`, native in a CI context at the root of a pnpm workspace.
+        // Every other shape and `shim install|uninstall` (Node's) are delegated inside `shim_status::run`; help is left
+        // to the arm below.
+        "shim" if args.get(1).map(String::as_str) == Some("status") && !surface::asks_for_help(&args) => {
+            shim_status::run(&args, &raw_args)
         }
         // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and the verdicts that need
         // no install, native in a CI context; an install, every other shape and `--help` (left to the arm
