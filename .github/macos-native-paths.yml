@@ -1,0 +1,17 @@
+# Paths whose changes need the macOS native build on a pull request.
+#
+# Read by dorny/paths-filter in build-native.yml (`files-changed` job) and
+# install-smoke.yml (`plan` job); both must agree, because the install smoke
+# waits for the Build Native run of the same commit and runs its macOS leg only
+# when that run built the macOS targets. Policy: see the header of
+# .github/workflows/build-native.yml.
+macos:
+    - "packages/tooling/task-runner/native/fspy_macos/**"
+    - "packages/tooling/task-runner/native/src/macos.rs"
+    - "packages/tooling/task-runner/__tests__/unit/file-access-tracker-interpose.test.ts"
+    # vis CLI sources that carry `cfg(target_os = "macos")` branches.
+    - "packages/tooling/vis/native/cli/src/removal.rs"
+    - "packages/tooling/vis/native/cli/src/http/tls.rs"
+    - "packages/tooling/vis/native/cli/src/http/tests.rs"
+    - ".github/macos-native-paths.yml"
+    - ".github/workflows/build-native.yml"

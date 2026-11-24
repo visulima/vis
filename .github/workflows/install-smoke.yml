@@ -32,6 +32,7 @@ on: # yamllint disable-line rule:truthy
             - ".github/actions/native-test-artifacts/**"
             - ".github/workflows/build-native.yml"
             - ".github/workflows/install-smoke.yml"
+            - ".github/macos-native-paths.yml"
     push:
         branches:
             - "main"
@@ -51,6 +52,7 @@ on: # yamllint disable-line rule:truthy
             - ".github/actions/native-test-artifacts/**"
             - ".github/workflows/build-native.yml"
             - ".github/workflows/install-smoke.yml"
+            - ".github/macos-native-paths.yml"
 
 concurrency:
     group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
@@ -62,8 +64,60 @@ permissions:
     contents: "read"
 
 jobs:
+    # Decides whether the macOS leg runs. The smoke waits for this commit's Build Native
+    # run and lays out its artifacts, and that run builds the darwin targets only for
+    # pushes, dispatches, pull requests into `main` and pull requests that touch macOS
+    # code (see build-native.yml). Without darwin artifacts the macOS leg is left out of
+    # the matrix, so it never occupies a macOS runner. Uses the same path list as Build
+    # Native, so both always agree.
+    plan:
+        name: "Plan install smoke"
+        if: "github.repository == 'visulima/vis'"
+        runs-on: "ubuntu-24.04"
+        timeout-minutes: 5
+        outputs:
+            os: "${{ steps.plan.outputs.os }}"
+            skip-platforms: "${{ steps.plan.outputs.skip-platforms }}"
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43" # v2.22.3
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: "Check for macOS native file changes"
+              if: "github.event_name == 'pull_request'"
+              uses: "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d" # v4.0.3
+              id: "macos"
+              with:
+                  filters: ".github/macos-native-paths.yml"
+
+            - name: "Select operating systems"
+              id: "plan"
+              shell: "bash"
+              env:
+                  EVENT_NAME: "${{ github.event_name }}"
+                  BASE_REF: "${{ github.base_ref }}"
+                  MACOS_CHANGED: "${{ steps.macos.outputs.macos }}"
+              run: |
+                  set -euo pipefail
+                  skip_platforms=""
+                  os='["ubuntu-24.04","macos-latest","windows-latest"]'
+                  if [ "$EVENT_NAME" = "pull_request" ] && [ "$BASE_REF" != "main" ] && [ "$MACOS_CHANGED" != "true" ]; then
+                    skip_platforms="darwin-"
+                    os='["ubuntu-24.04","windows-latest"]'
+                    echo "::notice::macOS leg skipped: Build Native did not build the macOS targets for this pull request"
+                  fi
+                  echo "skip-platforms=$skip_platforms" >> "$GITHUB_OUTPUT"
+                  echo "os=$os" >> "$GITHUB_OUTPUT"
+
     smoke:
         name: "Install smoke (${{ matrix.os }})"
+        needs: "plan"
         # Fork PRs are skipped: the artifact download only accepts runs from this repository.
         if: "github.repository == 'visulima/vis' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
         runs-on: "${{ matrix.os }}"
@@ -73,8 +127,9 @@ jobs:
             fail-fast: false
             matrix:
                 # Windows installs through npm only: the generated `.cmd` shim runs the Node
-                # launcher there, and that is what the row proves.
-                os: ["ubuntu-24.04", "macos-latest", "windows-latest"]
+                # launcher there, and that is what the row proves. macOS is dropped by
+                # the `plan` job for pull requests whose Build Native run skipped it.
+                os: "${{ fromJSON(needs.plan.outputs.os) }}"
         steps:
             - name: "Harden Runner"
               if: "runner.os == 'Linux'"
@@ -109,6 +164,9 @@ jobs:
             - name: "Native release artifacts"
               uses: "./.github/actions/native-release-artifacts"
               with:
+                  # Darwin packages stay incomplete when Build Native skipped the macOS targets;
+                  # the legs that do run here never install them.
+                  skip-platforms: "${{ needs.plan.outputs.skip-platforms }}"
                   ref: "${{ github.event.pull_request.head.sha || github.sha }}"
                   github-token: "${{ secrets.GITHUB_TOKEN }}"
 

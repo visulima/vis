@@ -19,6 +19,8 @@ jobs:
     # build-native.yml runs on its own for every push and pull request. The test job
     # waits for its check run on this commit and downloads the host-matching bindings,
     # because the secret-scanner, task-runner, tui and vis suites load a compiled binding.
+    # This job runs on Linux, so it needs only the Linux bindings: pull requests into `next`
+    # that do not touch macOS code do not build the darwin targets (see build-native.yml).
     test:
         name: "Test"
         runs-on: "ubuntu-24.04"
