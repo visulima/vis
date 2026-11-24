@@ -22,14 +22,13 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::path::Path;
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::lockfiles::LOCKFILES;
 use vis_core::resolve::{resolve_dlx, DlxOptions, ResolvedCommand};
 
-use crate::pm_run::{node_startup_environment, on_path};
+use crate::pm_run::{on_path, ManagerRun};
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -48,31 +47,15 @@ struct Flags {
 ///
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
-    let Some((resolved, cwd)) = plan(args, raw) else {
+    let Some(plan) = plan(args, raw) else {
         crate::delegate(raw);
     };
 
-    let mut command = Command::new(&resolved.bin);
-
-    command
-        .args(&resolved.args)
-        .current_dir(&cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    node_startup_environment(&mut command, None);
-
-    match command.status() {
-        // Node reports a child without an exit code (a signal) as 1.
-        Ok(status) => exit(crate::node_exit_code(status)),
-        // Found on `PATH` but could not start; nothing has been printed, so Node reports it.
-        Err(_) => crate::delegate(raw),
-    }
+    plan.run_inherited(raw, |code| code)
 }
 
 /// The command to run and where, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)> {
+fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
     // Windows keeps the Node path: it runs the package manager through a shell there.
     if !cfg!(unix) || raw.iter().any(|argument| argument.to_str().is_none()) {
         return None;
@@ -126,7 +109,13 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     }
 
     // A manager that is not on `PATH` fails in Node with its own report.
-    on_path(&resolved.bin).then_some((resolved, cwd))
+    on_path(&resolved.bin).then(|| ManagerRun {
+        bin: resolved.bin,
+        args: resolved.args,
+        cwd,
+        root: None,
+        notices: Vec::new(),
+    })
 }
 
 /// The manager Node's `resolveInstaller` picks for the lean entry, which reads no config: a bun lockfile

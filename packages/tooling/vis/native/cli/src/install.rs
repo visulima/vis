@@ -23,8 +23,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::path::Path;
+use std::process::{exit, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
@@ -33,7 +33,7 @@ use serde_json::Value;
 use vis_core::resolve::{resolve_install, InstallOptions};
 
 use crate::pail::{Layout, Level};
-use crate::pm_run::{filter_value, security_notices, setup, Root};
+use crate::pm_run::{filter_value, security_notices, setup, ManagerRun, Root};
 use crate::typosquat::{self, Scan};
 
 /// The hint Node prints after an install whose output has peer-dependency warnings
@@ -65,13 +65,7 @@ struct Flags {
 }
 
 struct Plan {
-    bin: String,
-    args: Vec<String>,
-    /// Lines for stderr, before the package manager starts: the security-enforcement notice and the resolver's warnings.
-    notices: Vec<String>,
-    cwd: PathBuf,
-    /// Node puts the root it found into the environment of everything it runs.
-    root: Option<PathBuf>,
+    manager: ManagerRun,
     silent: bool,
     layout: Layout,
 }
@@ -84,22 +78,9 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         crate::delegate(raw);
     };
 
-    let mut command = Command::new(&plan.bin);
+    let mut command = plan.manager.command();
 
-    command
-        .args(&plan.args)
-        .current_dir(&plan.cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    // What Node's own startup adds to the environment of everything it runs: cerebro's default output level,
-    // and the root it found. (Any `CEREBRO_*` of the caller's has kept the command in Node.)
-    command.env("CEREBRO_OUTPUT_LEVEL", "32");
-
-    if let Some(root) = &plan.root {
-        command.env("VIS_MONOREPO_ROOT", root);
-    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     // Nothing has been printed yet, so a package manager that cannot start is Node's to report.
     let Ok(mut child) = command.spawn() else {
@@ -108,7 +89,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 
     let mut stderr = io::stderr().lock();
 
-    for notice in &plan.notices {
+    for notice in &plan.manager.notices {
         let _ = writeln!(stderr, "{notice}");
     }
 
@@ -245,11 +226,13 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     notices.extend(resolved.warnings.iter().map(|warning| format!("warning: {warning}")));
 
     Some(Plan {
-        args: resolved.args,
-        bin: resolved.bin,
-        cwd: setup.cwd.clone(),
-        notices,
-        root: (setup.root == Root::Here).then_some(setup.cwd),
+        manager: ManagerRun {
+            args: resolved.args,
+            bin: resolved.bin,
+            cwd: setup.cwd.clone(),
+            notices,
+            root: (setup.root == Root::Here).then_some(setup.cwd),
+        },
         silent: flags.silent,
         layout: setup.layout,
     })

@@ -5,9 +5,9 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{exit, Command, Stdio};
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::lockfiles::LOCKFILES;
@@ -218,14 +218,100 @@ pub(crate) fn on_path(bin: &str) -> bool {
     env::var_os("PATH").is_some_and(|path| env::split_paths(&path).any(|directory| executable(&directory.join(bin))))
 }
 
-/// What Node's own startup adds to the environment of everything it runs: cerebro's default output level and
-/// the monorepo root it found, if any. (Any `CEREBRO_*` of the caller's has kept the command in Node.) The
-/// launcher's own variables (`VIS_NODE`, `VIS_FALLBACK_ENTRY`, `VIS_VERSION`, `VIS_LAUNCHER`) stay in the
-/// environment, as for every native command that runs a child.
-pub(crate) fn node_startup_environment(command: &mut Command, root: Option<&Path>) {
-    command.env("CEREBRO_OUTPUT_LEVEL", "32");
+/// A package-manager command the native path has decided to run, and what Node does around it.
+pub(crate) struct ManagerRun {
+    pub(crate) bin: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) cwd: PathBuf,
+    /// Node puts the root it found into the environment of everything it runs.
+    pub(crate) root: Option<PathBuf>,
+    /// Lines for stderr, before the package manager starts: the security-enforcement notice and the resolver's warnings.
+    pub(crate) notices: Vec<String>,
+}
 
-    if let Some(root) = root {
-        command.env("VIS_MONOREPO_ROOT", root);
+impl ManagerRun {
+    /// The command, with the working directory, the inherited stdin and what Node's own startup adds to the
+    /// environment of everything it runs: cerebro's default output level and the monorepo root it found, if any. (Any
+    /// `CEREBRO_*` of the caller's has kept the command in Node.) The launcher's own variables (`VIS_NODE`,
+    /// `VIS_FALLBACK_ENTRY`, `VIS_VERSION`, `VIS_LAUNCHER`) stay in the environment, as for every native command that
+    /// runs a child. The caller chooses what stdout and stderr are.
+    pub(crate) fn command(&self) -> Command {
+        let mut command = Command::new(&self.bin);
+
+        command.args(&self.args).current_dir(&self.cwd).stdin(Stdio::inherit()).env("CEREBRO_OUTPUT_LEVEL", "32");
+
+        if let Some(root) = &self.root {
+            command.env("VIS_MONOREPO_ROOT", root);
+        }
+
+        command
+    }
+
+    /// Runs the manager on the caller's own stdio and ends the process with `exit_code` of its status. The notices go
+    /// out first, because the manager inherits the terminal. A manager that was found on `PATH` but cannot start is
+    /// Node's to report while nothing has been printed; after a notice a second run in Node would print it twice.
+    pub(crate) fn run_inherited(self, raw: &[OsString], exit_code: fn(i32) -> i32) -> ! {
+        let mut stderr = io::stderr().lock();
+
+        for notice in &self.notices {
+            let _ = writeln!(stderr, "{notice}");
+        }
+
+        let _ = stderr.flush();
+
+        drop(stderr);
+
+        match self.command().stdout(Stdio::inherit()).stderr(Stdio::inherit()).status() {
+            // Node reports a child without an exit code (a signal) as 1.
+            Ok(status) => exit(exit_code(crate::node_exit_code(status))),
+            Err(_) if self.notices.is_empty() => crate::delegate(raw),
+            Err(error) => {
+                eprintln!("Error: Failed to execute '{}': {error}", self.bin);
+
+                exit(1)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::*;
+
+    fn run(root: Option<&str>) -> ManagerRun {
+        ManagerRun {
+            bin: "pnpm".to_owned(),
+            args: vec!["install".to_owned()],
+            cwd: PathBuf::from("/work"),
+            root: root.map(PathBuf::from),
+            notices: Vec::new(),
+        }
+    }
+
+    fn env_of(command: &Command, name: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new(name))
+            .and_then(|(_, value)| value?.to_str().map(str::to_owned))
+    }
+
+    #[test]
+    fn the_manager_gets_the_environment_node_gives_it() {
+        let command = run(Some("/work")).command();
+
+        assert_eq!(command.get_program(), "pnpm");
+        assert_eq!(command.get_current_dir(), Some(Path::new("/work")));
+        assert_eq!(env_of(&command, "CEREBRO_OUTPUT_LEVEL").as_deref(), Some("32"));
+        assert_eq!(env_of(&command, "VIS_MONOREPO_ROOT").as_deref(), Some("/work"));
+    }
+
+    #[test]
+    fn no_root_found_means_no_root_in_the_environment() {
+        let command = run(None).command();
+
+        assert_eq!(env_of(&command, "CEREBRO_OUTPUT_LEVEL").as_deref(), Some("32"));
+        assert_eq!(env_of(&command, "VIS_MONOREPO_ROOT"), None);
     }
 }
