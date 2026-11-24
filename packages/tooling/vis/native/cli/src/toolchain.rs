@@ -102,10 +102,19 @@ fn read_pins(root: &Path) -> Option<BTreeMap<Tool, String>> {
     }
 
     if let Some(engines) = manifest.get("engines").filter(|value| !falsy(value)) {
+        // The map holds the keys sorted, Node walks them in file order and the last alias of a tool wins
+        // (`nodejs` and `node` are one tool); two string-valued aliases are left to Node.
+        let mut seen = Vec::new();
+
         for (name, version) in engines.as_object()? {
             match named(name) {
                 Named::Known(tool) => {
                     if let Some(version) = version.as_str() {
+                        if seen.contains(&tool) {
+                            return None;
+                        }
+
+                        seen.push(tool);
                         pins.insert(tool, version.to_owned());
                     }
                 }
@@ -587,5 +596,41 @@ mod tests {
         assert!(matches!(named("yarn"), Named::Unsupported));
         assert!(matches!(named("golang"), Named::Unsupported));
         assert!(matches!(named("vscode"), Named::Ignored));
+    }
+
+    /// A fresh directory under the system temp directory.
+    fn scratch(name: &str) -> PathBuf {
+        let directory = env::temp_dir().join(format!("vis-toolchain-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+
+        directory
+    }
+
+    #[test]
+    fn two_aliases_of_one_tool_are_left_to_node() {
+        let root = scratch("aliases");
+
+        for engines in [
+            r#"{"nodejs": ">=20", "node": ">=99"}"#,
+            r#"{"node": ">=99", "nodejs": ">=20"}"#,
+            r#"{"node": ">=20", "Node": ">=20"}"#,
+        ] {
+            fs::write(root.join("package.json"), format!(r#"{{"engines": {engines}}}"#)).unwrap();
+
+            assert!(read_pins(&root).is_none(), "{engines}");
+        }
+
+        // One alias, or an alias whose value Node ignores, is a plain pin.
+        for engines in
+            [r#"{"nodejs": ">=20"}"#, r#"{"nodejs": ">=20", "node": 22}"#, r#"{"node": ">=20", "npm": ">=9"}"#]
+        {
+            fs::write(root.join("package.json"), format!(r#"{{"engines": {engines}}}"#)).unwrap();
+
+            assert!(read_pins(&root).is_some(), "{engines}");
+        }
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
