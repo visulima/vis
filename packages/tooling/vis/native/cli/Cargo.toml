@@ -65,3 +65,6 @@ oxc_parser = "=0.154.0"
 oxc_span = "=0.154.0"
 # Terminal width for help layout (the tty size, like the Node CLI's own lookup).
 terminal_size = "0.4"
+# Spike: blocking HTTPS client (rustls + ring + bundled Mozilla roots, gzip). Linked only by the hidden
+# `__http-probe` developer subcommand (src/http_probe.rs).
+ureq = { version = "3.5.2", default-features = false, features = ["rustls", "gzip"] }

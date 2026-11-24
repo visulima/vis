@@ -12,6 +12,8 @@ allow = [
   "Unicode-3.0",
   "BSL-1.0",
   "Zlib",
+  # The bundled Mozilla root store (`webpki-roots`), pulled in by the HTTP client spike.
+  "CDLA-Permissive-2.0",
 ]
 
 [bans]

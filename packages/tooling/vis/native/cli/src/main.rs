@@ -45,6 +45,7 @@ mod exec;
 mod graph;
 mod help;
 mod hook;
+mod http_probe;
 mod ignore;
 #[cfg(unix)]
 mod implode;
@@ -110,6 +111,8 @@ fn main() {
         // command). NOTE: `-v` is cerebro's *verbose* flag, not version, so it is
         // intentionally NOT routed here and falls through to Node.
         "--version" | "-V" => print_version(),
+        // Spike only: hidden developer probe that links the HTTP client. Not in the manifest.
+        "__http-probe" => exit(http_probe::run(&args)),
         // `vis complete -- <words…>` — dynamic shell completion, answered from the
         // command manifest (the endpoint the generated completion scripts call).
         "complete" if args.get(1).map(String::as_str) == Some("--") => exit(complete::run(&args)),
