@@ -73,8 +73,9 @@ fn capture_streams(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Pat
         .current_dir(cwd)
         .env_remove("NO_COLOR")
         .env_remove("FORCE_COLOR")
-        .env_remove("LINES")
         .env_remove("CEREBRO_TERMINAL_WIDTH")
+        // `COLUMNS` counts as a width only together with `LINES`.
+        .env("LINES", "24")
         .env("COLUMNS", width.to_string())
         .env("VIS_VERSION", GOLDEN_VERSION)
         .env("VIS_NO_UPDATE_CHECK", "1")

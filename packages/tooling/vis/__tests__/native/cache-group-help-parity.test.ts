@@ -32,6 +32,8 @@ const shapes: [string[], number][] = [
 const environment = (columns: string, color: boolean): Record<string, string> => {
     const env: Record<string, string> = {
         COLUMNS: columns,
+        // The width lookup reads `COLUMNS` only together with `LINES`.
+        LINES: "30",
         PATH: process.env["PATH"] ?? "",
         VIS_CLI_TEST: "1",
         VIS_NO_MCP_PROMOTE: "1",

@@ -193,7 +193,7 @@ const TERMS_WITH_DEFAULT_SIZE: [&str; 26] = [
 /// `COLUMNS` and `LINES` together, then the controlling terminal (`/dev/tty`), then `tput` under the inherited
 /// `TERM`. A process with a controlling terminal, or a `TERM` outside [`TERMS_WITH_DEFAULT_SIZE`], can therefore
 /// get a width from outside the environment even when both streams are redirected.
-fn environment_decides_width() -> bool {
+pub(crate) fn environment_decides_width() -> bool {
     #[cfg(unix)]
     if std::fs::File::open("/dev/tty").is_ok() {
         return false;

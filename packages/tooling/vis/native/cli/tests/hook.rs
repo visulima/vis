@@ -62,6 +62,9 @@ impl Repo {
             .current_dir(&self.root)
             .env("VIS_NODE", "sh")
             .env("VIS_FALLBACK_ENTRY", &stub)
+            // A terminal size, so help is not handed to Node to look the width up.
+            .env("COLUMNS", "80")
+            .env("LINES", "24")
             .envs(extra.iter().copied())
             .env_remove("VIS_HOOK_TRACE")
             .output()

@@ -89,6 +89,12 @@ pub fn asks_for_help(args: &[String]) -> bool {
 /// Answer the invocation natively, returning the exit code, or `None` to let the
 /// caller delegate it.
 pub fn answer(args: &[String]) -> Option<i32> {
+    // A leading `--version` / `-V` does not matter once help is asked for: cerebro checks help first.
+    let invoked = args;
+    let args = match args.first().map(String::as_str) {
+        Some("--version" | "-V") if asks_for_help(args) => &args[1..],
+        _ => args,
+    };
     let request = Request::parse(args);
 
     let bare = args.is_empty();
@@ -103,12 +109,13 @@ pub fn answer(args: &[String]) -> Option<i32> {
 
     let manifest = Manifest::load();
     let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
-    // The bare group's listing goes to stderr, so its colour follows that stream.
-    let to_stderr = group_listing && !request.wants_help();
+    // The bare group's listing goes to stderr but takes its colour from stdout, as in the Node CLI. A colour or
+    // width only Node can decide (a width asked of a terminal) hands the run to it before any output.
+    let destination = if group_listing && !request.wants_help() { term::Stream::Stderr } else { term::Stream::Stdout };
     let help = Help {
         manifest: &manifest,
-        style: Style { color: if to_stderr { term::color_enabled_stderr(args) } else { term::color_enabled(args) } },
-        width: term::terminal_width(),
+        style: Style { color: term::help_colour(args, destination)? },
+        width: term::terminal_width()?,
         version: &version,
     };
 
@@ -140,7 +147,7 @@ pub fn answer(args: &[String]) -> Option<i32> {
     let command = manifest::resolve(&manifest.commands, &request.words)?;
 
     // The lean entry only serves `dlx`/`exec` when they are the first argument.
-    emit(&help.command(command, command.lean && args.first().map(String::as_str) == request.words.first().copied()));
+    emit(&help.command(command, command.lean && invoked.first().map(String::as_str) == request.words.first().copied()));
 
     Some(0)
 }
