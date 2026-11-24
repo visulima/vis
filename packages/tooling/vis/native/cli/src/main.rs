@@ -42,6 +42,8 @@ mod graph;
 mod help;
 mod hook;
 mod ignore;
+#[cfg(unix)]
+mod implode;
 mod info;
 mod install;
 mod list;
@@ -135,6 +137,11 @@ fn main() {
         // `vis clean` — the default and `--dry-run`/`--lockfile` shapes are answered natively;
         // every other shape (and `--help`, left to the arm below) goes to Node.
         "clean" if !surface::asks_for_help(&args) => clean::run(&raw_args),
+        // `vis implode [--yes]` — the self-uninstall in a CI context, with the same listing, profile edits and removal
+        // as the Node handler. Every other shape, and every home, profile or environment it cannot reproduce, is
+        // delegated inside `implode::run`, before anything is printed or changed; help is left to the arm below.
+        #[cfg(unix)]
+        "implode" if !surface::asks_for_help(&args) => implode::run(&args, &raw_args),
         // `vis cache list` / `vis cache size` — read-only cache inspection, native for the plain shapes in
         // a CI context. Every other shape is delegated inside `cache::run`.
         "cache"

@@ -214,14 +214,14 @@ fn has_config_file(directory: &Path) -> bool {
 
 /// Whether `@visulima/path` treats `path` like a plain POSIX path: no separators it rewrites, no drive
 /// letter, no UNC form. Anything else is Node's.
-fn is_plain(path: &str) -> bool {
+pub(crate) fn is_plain(path: &str) -> bool {
     let drive = path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && path.as_bytes().get(1) == Some(&b':');
 
     !path.contains(['\\', '\0']) && !path.starts_with("//") && !drive
 }
 
 /// `resolve(base, ...)` on POSIX for an absolute `base`: joins, then drops `.`, empty and resolved `..`.
-fn resolve(base: &str, relative: &[&str]) -> String {
+pub(crate) fn resolve(base: &str, relative: &[&str]) -> String {
     let mut parts: Vec<&str> = Vec::new();
 
     for segment in std::iter::once(base).chain(relative.iter().copied()).flat_map(|text| text.split('/')) {
@@ -935,11 +935,11 @@ fn size_output(options: &Options, directories: &[String]) -> Option<String> {
     Some(out)
 }
 
-/// The text to print, or `None` when Node must answer.
-fn answer(args: &[String]) -> Option<String> {
-    let options = parse(args)?;
-    let cwd = env::current_dir().ok()?;
-    let root = monorepo_root(&cwd)?;
+/// The workspace root of a run the cache commands can answer, or `None` when Node must: the pnpm root
+/// [`monorepo_root`] finds, with CI set, a quiet stderr, no Deno file and no inherited root for another
+/// directory. The commands that print pail blocks add their own layout checks on top.
+pub(crate) fn quiet_workspace_root(cwd: &Path) -> Option<PathBuf> {
+    let root = monorepo_root(cwd)?;
 
     if !in_ci() || io::stderr().is_terminal() || crate::term::node_warns_about_colour() {
         return None;
@@ -956,9 +956,18 @@ fn answer(args: &[String]) -> Option<String> {
         return None;
     }
 
-    if [cwd.as_path(), root.as_path()].iter().any(|directory| any_ancestor_has(directory, &DENO_FILES)) {
+    if [cwd, root.as_path()].iter().any(|directory| any_ancestor_has(directory, &DENO_FILES)) {
         return None;
     }
+
+    Some(root)
+}
+
+/// The text to print, or `None` when Node must answer.
+fn answer(args: &[String]) -> Option<String> {
+    let options = parse(args)?;
+    let cwd = env::current_dir().ok()?;
+    let root = quiet_workspace_root(&cwd)?;
 
     let settings = read_settings(&cwd, &root)?;
     let directories = read_directories(&root, &options, &settings)?;
