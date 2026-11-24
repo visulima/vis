@@ -15,7 +15,6 @@
 //! (`<cache dir>/config`) forgets every stored result.
 
 use std::env;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -204,7 +203,7 @@ fn read_entry(entry: &Path, config_path: &Path, version: &str) -> Option<Resolve
 /// silent too, and Node reports the error.
 fn emit(config_path: &Path) -> Option<Emitted> {
     let entry = env::var_os("VIS_FALLBACK_ENTRY").filter(|value| !value.is_empty())?;
-    let node = env::var_os("VIS_NODE").filter(|value| !value.is_empty()).unwrap_or_else(|| OsStr::new("node").into());
+    let node = crate::process::node_program();
     let out = env::temp_dir().join(format!(
         "vis-config-{}-{}.json",
         std::process::id(),

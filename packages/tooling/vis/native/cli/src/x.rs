@@ -256,8 +256,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
                 crate::delegate(raw_args);
             };
 
-            let node = env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned());
-            let mut command = Command::new(node);
+            let mut command = Command::new(crate::process::node_program());
 
             command.arg("--import").arg(&specifier).arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
 
