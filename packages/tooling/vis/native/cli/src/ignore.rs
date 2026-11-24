@@ -247,14 +247,14 @@ fn write_target(path: &Path) -> Option<PathBuf> {
 /// so its inode, owner, hard links, ACLs and xattrs stay as they were, and a new file gets the default
 /// mode. It does not truncate, so a refused open (read-only file, a directory) leaves the file as it
 /// was and the caller can still hand the command to Node.
-fn open_for_write(path: &Path) -> io::Result<File> {
+pub(crate) fn open_for_write(path: &Path) -> io::Result<File> {
     OpenOptions::new().write(true).create(true).truncate(false).open(path)
 }
 
 /// Replaces the contents of the file opened by `open_for_write`. Nothing is staged in a sibling, so
 /// no copy of the contents exists with a looser mode than the destination's. A failure here can
 /// leave the file truncated, as it can under Node.
-fn overwrite(file: &mut File, contents: &str) -> io::Result<()> {
+pub(crate) fn overwrite(file: &mut File, contents: &str) -> io::Result<()> {
     file.set_len(0)?;
     file.write_all(contents.as_bytes())
 }

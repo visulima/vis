@@ -60,7 +60,7 @@ const OVERLAY_NAMES: [&str; 7] =
     ["vis.task.ts", "vis.task.mts", "vis.task.cts", "vis.task.js", "vis.task.mjs", "vis.task.cjs", "vis.task.json"];
 
 /// Workspace-config YAML names in precedence order (`WORKSPACE_YAML_NAMES`).
-const WORKSPACE_YAML_NAMES: [&str; 2] = ["aube-workspace.yaml", "pnpm-workspace.yaml"];
+pub(crate) const WORKSPACE_YAML_NAMES: [&str; 2] = ["aube-workspace.yaml", "pnpm-workspace.yaml"];
 
 /// Resolves the project directories of the workspace rooted at `root`, or delegates.
 ///
@@ -97,68 +97,7 @@ fn resolve(root: &Path, config_vetted: bool) -> Option<Membership> {
     }
 
     let patterns = workspace_patterns(root)?;
-    let mut directories: Vec<String> = Vec::new();
-
-    for pattern in &patterns {
-        match classify(pattern)? {
-            Shape::Exact(path) => {
-                if is_candidate(&root.join(path)) {
-                    directories.push(path.to_string());
-                }
-            }
-            Shape::Simple(base) => {
-                let dir = root.join(base);
-
-                if !dir.exists() {
-                    continue;
-                }
-
-                if !dir.is_dir() {
-                    return None;
-                }
-
-                for child in list_dirs(&dir, Some(1))? {
-                    if is_candidate(&dir.join(&child)) {
-                        directories.push(format!("{base}/{child}"));
-                    }
-                }
-            }
-            Shape::Double { base, star_star } => {
-                let dir = root.join(base);
-
-                if !dir.exists() {
-                    continue;
-                }
-
-                if !dir.is_dir() {
-                    return None;
-                }
-
-                // `dir/**` matches `dir` itself; `dir/*/*` does not. The check is kept even when
-                // `dir` is inside a skipped segment, as the Node path does.
-                if star_star && is_candidate(&dir) {
-                    directories.push(base.to_string());
-                }
-
-                for relative in list_dirs(&dir, None)? {
-                    if is_candidate(&dir.join(&relative)) {
-                        directories.push(format!("{base}/{relative}"));
-                    }
-                }
-            }
-            Shape::Bare(glob) => {
-                for name in list_dirs(root, Some(1))? {
-                    if name.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
-                        return None;
-                    }
-
-                    if star_match(glob, &name) && is_candidate(&root.join(&name)) {
-                        directories.push(name);
-                    }
-                }
-            }
-        }
-    }
+    let directories = expand_patterns(root, &patterns, &is_candidate)?;
 
     if directories.is_empty() {
         return Some(Membership::Native(directories));
@@ -200,6 +139,80 @@ fn resolve(root: &Path, config_vetted: bool) -> Option<Membership> {
     }
 
     Some(Membership::Native(kept))
+}
+
+/// The directories the workspace `patterns` name, in discovery order, each a candidate when `is_project` says
+/// so. A pattern outside the shapes this module reproduces (see [`classify`]) or an unreadable directory is `None`.
+/// The result may list a directory twice, and no ignore rule has been applied to it yet.
+pub(crate) fn expand_patterns(
+    root: &Path,
+    patterns: &[String],
+    is_project: &dyn Fn(&Path) -> bool,
+) -> Option<Vec<String>> {
+    let mut directories: Vec<String> = Vec::new();
+
+    for pattern in patterns {
+        match classify(pattern)? {
+            Shape::Exact(path) => {
+                if is_project(&root.join(path)) {
+                    directories.push(path.to_string());
+                }
+            }
+            Shape::Simple(base) => {
+                let dir = root.join(base);
+
+                if !dir.exists() {
+                    continue;
+                }
+
+                if !dir.is_dir() {
+                    return None;
+                }
+
+                for child in list_dirs(&dir, Some(1))? {
+                    if is_project(&dir.join(&child)) {
+                        directories.push(format!("{base}/{child}"));
+                    }
+                }
+            }
+            Shape::Double { base, star_star } => {
+                let dir = root.join(base);
+
+                if !dir.exists() {
+                    continue;
+                }
+
+                if !dir.is_dir() {
+                    return None;
+                }
+
+                // `dir/**` matches `dir` itself; `dir/*/*` does not. The check is kept even when
+                // `dir` is inside a skipped segment, as the Node path does.
+                if star_star && is_project(&dir) {
+                    directories.push(base.to_string());
+                }
+
+                for relative in list_dirs(&dir, None)? {
+                    if is_project(&dir.join(&relative)) {
+                        directories.push(format!("{base}/{relative}"));
+                    }
+                }
+            }
+            Shape::Bare(glob) => {
+                for name in list_dirs(root, Some(1))? {
+                    if name.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
+                        return None;
+                    }
+
+                    if star_match(glob, &name) && is_project(&root.join(&name)) {
+                        directories.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    Some(directories)
 }
 
 /// Whether `directory/package.json` parses and has a non-empty string `name` other than `__proto__`.
@@ -290,7 +303,7 @@ fn workspace_patterns(root: &Path) -> Option<Vec<String>> {
 
 /// Port of `readWorkspaceYamlPatterns`: a line scanner, not a YAML parser. It reads the
 /// `- ` entries under a bare `packages:` line and stops at the next non-comment line.
-fn yaml_packages(text: &str) -> Vec<String> {
+pub(crate) fn yaml_packages(text: &str) -> Vec<String> {
     let mut patterns = Vec::new();
     let mut in_packages = false;
 

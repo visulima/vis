@@ -52,6 +52,7 @@ mod pm_shim;
 mod replay;
 mod secrets;
 mod self_update;
+mod sort_package_json;
 mod summary;
 mod surface;
 mod table;
@@ -155,6 +156,10 @@ fn main() {
         // `vis secrets` — the working-tree scan with `--format json|sarif`, `--quiet` and `--baseline`.
         // Every other shape is delegated inside `secrets::run`; help is left to the arm below.
         "secrets" if !surface::asks_for_help(&args) => secrets::run(&args, &raw_args),
+        // `vis sort-package-json` — every flag, native for a pnpm workspace in CI. Every shape and file it cannot
+        // reproduce byte for byte (any error included) is delegated inside `sort_package_json::run`; help is left to
+        // the arm below.
+        "sort-package-json" if !surface::asks_for_help(&args) => sort_package_json::run(&args, &raw_args),
         // `vis sync ci-workflow` — the generator and its `--check`, native for a JS-only pnpm workspace in CI.
         // Every other shape, and every input it cannot reproduce byte for byte, is delegated inside
         // `ci_workflow::run`; help is left to the arm below.

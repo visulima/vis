@@ -596,6 +596,80 @@ const syncCiWorkflowMayRunNatively = (platform, environment, args, cwd, interact
     return true;
 };
 
+// The flags `vis sort-package-json` takes natively (`parse` in `sort_package_json/mod.rs`): the boolean ones at most
+// once each, and the ones with a value (`--name value` or `--name=value`, the value neither empty nor a flag). The
+// list flags may repeat, the other two may not.
+const SORT_PACKAGE_JSON_BOOLEAN_FLAGS = [
+    ["--check", "-c"],
+    ["--sort-scripts"],
+    ["--no-editorconfig"],
+    ["--no-final-newline"],
+    ["--no-format-bugs"],
+    ["--no-format-repository"],
+    ["--no-sort-exports"],
+];
+const SORT_PACKAGE_JSON_LIST_FLAGS = ["--ignore", "--sort-order", "--unsorted"];
+const SORT_PACKAGE_JSON_SINGLE_FLAGS = ["--indent", "--line-ending"];
+
+// The flag at `flags[index]`: its name and the index after it (and its value), or `undefined` when the binary does not take it.
+const sortPackageJsonFlagAt = (flags, index) => {
+    const booleanFlag = SORT_PACKAGE_JSON_BOOLEAN_FLAGS.find((names) => names.includes(flags[index]));
+
+    if (booleanFlag !== undefined) {
+        return [booleanFlag[0], index + 1];
+    }
+
+    for (const name of [...SORT_PACKAGE_JSON_LIST_FLAGS, ...SORT_PACKAGE_JSON_SINGLE_FLAGS]) {
+        const given = optionValue(flags, index, name);
+
+        if (Array.isArray(given)) {
+            return [name, given[1]];
+        }
+    }
+
+    return undefined;
+};
+
+const sortPackageJsonShapeIsNative = (flags) => {
+    const seen = new Set();
+    let index = 0;
+
+    while (index < flags.length) {
+        const flag = sortPackageJsonFlagAt(flags, index);
+
+        if (flag === undefined || (seen.has(flag[0]) && !SORT_PACKAGE_JSON_LIST_FLAGS.includes(flag[0]))) {
+            return false;
+        }
+
+        seen.add(flag[0]);
+        [, index] = flag;
+    }
+
+    return true;
+};
+
+// Whether `vis sort-package-json` can pass the binary's native gate (`context` and `parse` in
+// `sort_package_json/mod.rs`): a pnpm workspace whose root is the working directory, in a CI context off a terminal,
+// with no `vis.config`, and none of the variables that change what pail prints. The binary re-checks everything,
+// including the workspace patterns, the ignore files and every file's JSON; this only skips the extra process when it
+// would delegate anyway. It stays in Node on Windows.
+const sortPackageJsonMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    if (
+        ["debug", "test"].includes(environment.NODE_ENV)
+        || environment.DEBUG !== undefined
+        || environment.PAIL_LOG_LEVEL !== undefined
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    return sortPackageJsonShapeIsNative(args.slice(1));
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -646,6 +720,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
     ["self-update", ({ args, environment, interactive, platform }) => helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive))],
+    // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
+    ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
     [
         "sync",
