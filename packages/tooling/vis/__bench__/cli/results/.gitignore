@@ -1,3 +1,4 @@
 # benchmark exports are not committed
 *.json
 *.md
+commands-*/
