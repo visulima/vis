@@ -211,8 +211,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     describe("shapes handed to Node", () => {
-        const base = (): Files => rich();
-
         it.each([
             [["--json"]],
             [["--format", "xml"]],
@@ -226,19 +224,19 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ])("`optimize %s` is declined", (args: string[]) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(base(), args);
+            harness.expectDelegation(rich(), args);
         });
 
         it("a run outside CI is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(base(), [], {}, false);
+            harness.expectDelegation(rich(), [], {}, false);
         });
 
         it.each(DELEGATED_COLOUR_ENVIRONMENTS)("%j is declined", (environment) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(base(), [], environment);
+            harness.expectDelegation(rich(), [], environment);
         });
 
         it.each([{ NODE_ENV: "test" }, { NODE_ENV: "debug" }, { DEBUG: "vis" }, { PAIL_LOG_LEVEL: "debug" }, { CEREBRO_OUTPUT_LEVEL: "4" }, { COLUMNS: "20" }, { TERM: "xterm-ghostty-wide" }])(
@@ -246,14 +244,14 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             (environment) => {
                 expect.hasAssertions();
 
-                harness.expectDelegation(base(), [], environment);
+                harness.expectDelegation(rich(), [], environment);
             },
         );
 
         it("a colour flag is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(base(), ["--no-color"]);
+            harness.expectDelegation(rich(), ["--no-color"]);
         });
 
         it("another package manager is declined", () => {
@@ -265,47 +263,47 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it("a workspace with exclusions is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  - "!packages/b"\n' }, []);
+            harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  - "!packages/b"\n' }, []);
         });
 
         it("a workspace without a pattern list is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - x\n" }, []);
+            harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - x\n" }, []);
         });
 
         it("a vis.config is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "vis.config.ts": "export default {};\n" }, []);
+            harness.expectDelegation({ ...rich(), "vis.config.ts": "export default {};\n" }, []);
         });
 
         it("a manifest that is not strict JSON is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "packages/a/package.json": `{ "name": "a", // note\n "dependencies": { "${packages[0]}": "1" } }\n` }, []);
-            harness.expectDelegation({ ...base(), "packages/a/package.json": "{ not json" }, []);
+            harness.expectDelegation({ ...rich(), "packages/a/package.json": `{ "name": "a", // note\n "dependencies": { "${packages[0]}": "1" } }\n` }, []);
+            harness.expectDelegation({ ...rich(), "packages/a/package.json": "{ not json" }, []);
         });
 
         it("a dependency map JavaScript reads as something else is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "packages/a/package.json": json({ name: "a", dependencies: "abc" }) }, []);
-            harness.expectDelegation({ ...base(), "packages/a/package.json": json({ name: "a", dependencies: [packages[0]] }) }, []);
-            harness.expectDelegation({ ...base(), "packages/a/package.json": json({ name: "a", dependencies: 5 }) }, []);
+            harness.expectDelegation({ ...rich(), "packages/a/package.json": json({ name: "a", dependencies: "abc" }) }, []);
+            harness.expectDelegation({ ...rich(), "packages/a/package.json": json({ name: "a", dependencies: [packages[0]] }) }, []);
+            harness.expectDelegation({ ...rich(), "packages/a/package.json": json({ name: "a", dependencies: 5 }) }, []);
         });
 
         it("a pattern outside the supported shapes is declined", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...base(), "pnpm-workspace.yaml": 'packages:\n  - "packages/{a,b}"\n' }, []);
-            harness.expectDelegation({ ...base(), ".gitignore": "*.log\n" }, []);
+            harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": 'packages:\n  - "packages/{a,b}"\n' }, []);
+            harness.expectDelegation({ ...rich(), ".gitignore": "*.log\n" }, []);
         });
 
         it("a workspace that is not rooted at the working directory is declined", () => {
             expect.hasAssertions();
 
-            const [nodeRoot, nativeRoot] = harness.pair(base());
+            const [nodeRoot, nativeRoot] = harness.pair(rich());
             const directory = "packages/a";
 
             expect(harness.runNative([], join(nativeRoot, directory)).status).toBe(70);

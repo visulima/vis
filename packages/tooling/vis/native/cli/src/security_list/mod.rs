@@ -213,11 +213,6 @@ fn property<'a, 'b>(expression: &'b Expression<'a>, key: &str) -> Option<&'b Exp
     vis_config::object_properties(object)?.into_iter().find(|(name, _)| name == key).map(|(_, value)| value)
 }
 
-/// JavaScript truthiness of a config value.
-fn is_truthy(value: &Value) -> bool {
-    scan::is_truthy(value)
-}
-
 /// A key a JavaScript object does not list in insertion order (array indices) or treats specially.
 fn is_order_sensitive(key: &str) -> bool {
     key == "__proto__" || (!key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()))
@@ -318,7 +313,7 @@ fn config(cwd: &Path) -> Option<Config> {
         return None;
     }
 
-    config.allow = ordered.iter().map(|key| (key.clone(), is_truthy(&allow[key]))).collect();
+    config.allow = ordered.iter().map(|key| (key.clone(), scan::is_truthy(&allow[key]))).collect();
     config.drift.allow =
         Some(config.allow.iter().filter(|(_, allowed)| *allowed).map(|(key, _)| key.clone()).collect());
 
