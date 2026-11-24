@@ -8,7 +8,7 @@ use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use crate::pm_family::has_vis_config;
+use crate::vis_config::has_vis_config;
 
 /// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads in a
 /// directory. Node stops at the nearest one, so any of them above the working directory means the
@@ -26,12 +26,52 @@ pub(crate) const ROOT_MARKERS: [&str; 10] = [
     "bun.lockb",
 ];
 
+/// Whether an inherited `VIS_MONOREPO_ROOT` leaves `cwd` as the root: it is unset, empty or names `cwd`. Node reads it
+/// as `process.env.VIS_MONOREPO_ROOT || process.cwd()`, so an empty value is no value.
+pub(crate) fn inherited_root_allows(cwd: &Path, env_root: Option<&OsStr>) -> bool {
+    env_root.is_none_or(|root| root.is_empty() || Path::new(root) == cwd)
+}
+
+/// Why Node would not reach the same answer from the working directory for a read-only command, or `None` when it
+/// would: a unix CI run off a terminal at the root of a pnpm workspace, with none of the settings that change what
+/// Node prints.
+pub(crate) fn context_decline() -> Option<&'static str> {
+    [
+        (!cfg!(unix), "not a unix platform"),
+        (!output_settings_are_default(), "an output setting (NODE_ENV, DEBUG, PAIL_LOG_LEVEL, CEREBRO_*) is set"),
+        (io::stdout().is_terminal(), "stdout is a terminal"),
+        (!native_context(), "not a CI run at the root of a pnpm workspace with a quiet stderr"),
+    ]
+    .into_iter()
+    .find_map(|(declined, reason)| declined.then_some(reason))
+}
+
+/// Whether [`context_decline`] has nothing to say.
+pub(crate) fn context_is_native() -> bool {
+    context_decline().is_none()
+}
+
+/// Whether Node would reach the same answer from the workspace root `cwd`: a unix CI run with no terminal on either
+/// stream, none of the settings that change what Node prints ([`output_settings_are_default`]), `cwd` as the root of a
+/// pnpm workspace and no inherited root for another directory. What a command still has to check for itself is its
+/// config and Deno files, which differ between commands.
+pub(crate) fn ci_root_context(cwd: &Path) -> bool {
+    cfg!(unix)
+        && in_ci()
+        && !io::stdout().is_terminal()
+        && !io::stderr().is_terminal()
+        && !crate::term::node_warns_about_colour()
+        && output_settings_are_default()
+        && monorepo_root(cwd).as_deref() == Some(cwd)
+        && inherited_root_allows(cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
+}
+
 /// Whether Node's root search would return `cwd` itself. Node walks up from `cwd` and stops at the
 /// first marker, so `cwd` is the root only when it holds one and no ancestor does. `env_root` is the
 /// inherited `VIS_MONOREPO_ROOT`: it is never trusted to name the root, only to delegate when it
 /// names another directory, since a parent process may have computed it for its own working directory.
 pub(crate) fn native_root_is_cwd(cwd: &Path, env_root: Option<&OsStr>) -> bool {
-    if env_root.is_some_and(|root| !root.is_empty() && Path::new(root) != cwd) {
+    if !inherited_root_allows(cwd, env_root) {
         return false;
     }
 
@@ -150,6 +190,16 @@ mod tests {
         }
 
         app
+    }
+
+    #[test]
+    fn an_inherited_root_is_only_a_reason_to_delegate_when_it_names_another_directory() {
+        let cwd = Path::new("/work/app");
+
+        assert!(inherited_root_allows(cwd, None));
+        assert!(inherited_root_allows(cwd, Some(OsStr::new(""))), "Node reads `VIS_MONOREPO_ROOT || cwd`");
+        assert!(inherited_root_allows(cwd, Some(OsStr::new("/work/app"))));
+        assert!(!inherited_root_allows(cwd, Some(OsStr::new("/work"))));
     }
 
     #[test]

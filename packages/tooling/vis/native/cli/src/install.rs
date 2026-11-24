@@ -439,21 +439,14 @@ fn context_allows_native() -> bool {
         return false;
     }
 
-    // pail's level comes from NODE_ENV, DEBUG and PAIL_LOG_LEVEL, and cerebro's output from CEREBRO_*.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-    {
+    if !crate::node_context::output_settings_are_default() {
         return false;
     }
 
     // `MARSHALL_*` switches off the typosquat scan and the security notice, `VIS_SECURITY_WARNINGS` turns
     // on a summary line in CI, and an inherited `VIS_MONOREPO_ROOT` replaces Node's own root search.
-    let changes_node = env::vars_os().any(|(name, _)| {
-        let name = name.to_string_lossy();
-
-        name.starts_with("CEREBRO_") || name.starts_with("MARSHALL_")
-    }) || env::var_os("VIS_SECURITY_WARNINGS").is_some()
+    let changes_node = env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("MARSHALL_"))
+        || env::var_os("VIS_SECURITY_WARNINGS").is_some()
         || env::var_os("VIS_MONOREPO_ROOT").is_some();
 
     !changes_node && !crate::pm_family::installer_selected_by_environment()

@@ -18,6 +18,7 @@ use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
 
 use crate::js::is_truthy;
+use crate::node_context::any_ancestor_has;
 
 /// Top-level keys the native path must leave to Node. `runtime` and `extends` change what
 /// the Node loader resolves, `versionConstraint` can fail the run, `security` makes the Node
@@ -38,7 +39,8 @@ const NODE_ONLY_KEYS: [&str; 8] = [
 /// from it is allowed, and only a `defineConfig` bound to it is unwrapped.
 const VIS_CONFIG_MODULE: &str = "@visulima/vis/config";
 
-/// Config file names in the order the Node loader tries them within one directory.
+/// Config file names in the order the Node loader tries them within one directory (`CONFIG_FILES` in
+/// `src/config/config.ts`), plus the `.json` form, a deliberate extra that Node does not load.
 const NAMES: [&str; 7] = [
     "vis.config.ts",
     "vis.config.mts",
@@ -265,18 +267,12 @@ fn read_json(path: &Path) -> Option<Value> {
 
 /// The config file of each directory from `cwd` up to the root, nearest first.
 fn configs(cwd: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut current = Some(cwd.to_path_buf());
+    cwd.ancestors().filter_map(config_file_in).collect()
+}
 
-    while let Some(directory) = current {
-        if let Some(path) = NAMES.iter().map(|name| directory.join(name)).find(|path| path.exists()) {
-            found.push(path);
-        }
-
-        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
-    }
-
-    found
+/// Whether `cwd` or one of its ancestors holds a `vis.config.*` file.
+pub(crate) fn has_vis_config(cwd: &Path) -> bool {
+    any_ancestor_has(cwd, &NAMES)
 }
 
 /// The value of the single `export default`, with an optional `defineConfig(...)` wrapper.
@@ -496,6 +492,23 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         dir
+    }
+
+    #[test]
+    fn every_config_name_is_found_in_the_directory_and_above_it() {
+        for name in NAMES {
+            let dir = scratch(&format!("names-{name}"));
+            let below = dir.join("packages").join("app");
+
+            fs::create_dir_all(&below).unwrap();
+            fs::write(dir.join(name), "{}").unwrap();
+
+            assert_eq!(config_file_in(&dir), Some(dir.join(name)), "{name}");
+            assert!(has_vis_config(&below), "{name}");
+            assert_eq!(configs(&below).first(), Some(&dir.join(name)), "{name}");
+
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     fn config(name: &str, file: &str, source: &str) -> ConfigState {

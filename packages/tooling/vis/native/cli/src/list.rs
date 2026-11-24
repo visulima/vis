@@ -23,6 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
 use crate::js::RESERVED_NAMES;
 use crate::node_context::monorepo_root;
+use crate::output::write_stdout;
 use crate::vis_config;
 
 /// Detector trigger files and dependency names, generated from `BUILT_IN_DETECTORS`.
@@ -442,11 +443,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
     match answer() {
         Some(text) => {
-            use std::io::Write;
-
-            if std::io::stdout().write_all(text.as_bytes()).and_then(|()| std::io::stdout().flush()).is_err() {
-                std::process::exit(1);
-            }
+            write_stdout("list", "the listing", &text);
 
             std::process::exit(0);
         }

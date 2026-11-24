@@ -19,7 +19,7 @@ use std::process::exit;
 
 use serde_json::Value;
 
-use crate::js::{js_number, json_string};
+use crate::js::{js_number, json_string, pretty_document};
 use crate::node_context::native_context;
 use crate::output::write_stdout;
 
@@ -114,7 +114,7 @@ fn status_json(cache_dir: &Path) -> Option<String> {
     if !cache_dir.join("filter.bin").exists() {
         pairs.push(("present", "false".to_owned()));
 
-        return Some(finish(&pairs));
+        return Some(pretty_document(&pairs));
     }
 
     if let Some(manifest) = read_manifest(&cache_dir.join("manifest.json"))? {
@@ -135,7 +135,7 @@ fn status_json(cache_dir: &Path) -> Option<String> {
 
     pairs.push(("present", "true".to_owned()));
 
-    Some(finish(&pairs))
+    Some(pretty_document(&pairs))
 }
 
 /// The manifest fields, rendered, or `None` when Node would drop the manifest. The outer
@@ -224,13 +224,6 @@ fn object(pairs: &[(&str, String)]) -> String {
     let body: Vec<String> = pairs.iter().map(|(key, value)| format!("    \"{key}\": {value}")).collect();
 
     format!("{{\n{}\n  }}", body.join(",\n"))
-}
-
-/// The top-level object, pretty-printed as `JSON.stringify(status, undefined, 2)` does.
-fn finish(pairs: &[(&str, String)]) -> String {
-    let body: Vec<String> = pairs.iter().map(|(key, value)| format!("  \"{key}\": {value}")).collect();
-
-    format!("{{\n{}\n}}\n", body.join(",\n"))
 }
 
 #[cfg(test)]

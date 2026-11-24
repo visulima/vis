@@ -68,6 +68,13 @@ pub(crate) fn is_index_like(key: &str) -> bool {
         || (!key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()) && (key == "0" || !key.starts_with('0')))
 }
 
+/// `JSON.stringify(object, undefined, 2)` and a newline, for fields whose values are already written as JSON.
+pub(crate) fn pretty_document(fields: &[(&str, String)]) -> String {
+    let lines: Vec<String> = fields.iter().map(|(name, value)| format!("  \"{name}\": {value}")).collect();
+
+    format!("{{\n{}\n}}\n", lines.join(",\n"))
+}
+
 /// `Number.prototype.toString` for a double: the shortest digits that read back as the same double, in decimal from
 /// 1e-6 up to 1e21 and in exponent form beyond.
 pub(crate) fn js_number(value: f64) -> String {
@@ -242,6 +249,14 @@ mod tests {
         for (value, expected) in cases {
             assert_eq!(js_number(value), expected, "value {value:?}");
         }
+    }
+
+    #[test]
+    fn a_document_is_stringified_with_two_spaces_and_a_final_newline() {
+        assert_eq!(
+            pretty_document(&[("a", "1".to_owned()), ("b", "\"x\"".to_owned())]),
+            "{\n  \"a\": 1,\n  \"b\": \"x\"\n}\n"
+        );
     }
 
     #[test]

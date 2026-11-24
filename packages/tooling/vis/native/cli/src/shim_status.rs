@@ -8,11 +8,10 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::process::exit;
 
-use crate::node_context::{native_context, output_settings_are_default};
+use crate::node_context::context_is_native;
 use crate::output::write_stdout;
 
 /// The package managers the shim directory intercepts, `SHIM_NAMES` in `src/commands/shim/handler.ts`.
@@ -49,12 +48,7 @@ fn text(directory: &Path, path: &str) -> Option<String> {
 
 /// The text Node prints, or `None` when Node has to answer.
 fn answer(args: &[String]) -> Option<String> {
-    if args != ["shim", "status"]
-        || !cfg!(unix)
-        || !output_settings_are_default()
-        || io::stdout().is_terminal()
-        || !native_context()
-    {
+    if args != ["shim", "status"] || !context_is_native() {
         return None;
     }
 

@@ -20,7 +20,8 @@ use std::process::{exit, Command, Stdio};
 use serde_json::Value;
 
 use super::config;
-use super::list::{context_is_native, parse, STAGES};
+use super::list::{parse, STAGES};
+use crate::node_context::context_is_native;
 use crate::output::write_stdout;
 
 /// Entries of the hooks directory that are neither stage scripts nor an issue.

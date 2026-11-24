@@ -26,14 +26,13 @@ pub(crate) mod json;
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use sort_package_json::{sort_package_json_with_options, SortOptions};
 
-use crate::error::WrapperError;
-use crate::node_context::{in_ci, monorepo_root, quiet_context};
+use crate::node_context::{ci_root_context, quiet_context};
+use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::{expand_patterns, yaml_packages, WORKSPACE_YAML_NAMES};
@@ -246,30 +245,12 @@ fn indent_override(raw: &str) -> Option<String> {
 
 /// Whether Node would reach the same answer, and the layout pail prints in. `None` is a delegation.
 fn context(args: &[String]) -> Option<(Layout, PathBuf)> {
-    if !cfg!(unix) || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
-        return None;
-    }
-
-    // pail's level comes from NODE_ENV (`test` hides the success lines, `debug` shows more), `DEBUG` and
-    // `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`. Node answers for those.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-    {
-        return None;
-    }
-
     let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // Node works from the workspace root, which this crate finds for a pnpm workspace; the file paths it
     // prints are the same only when that root is the working directory.
-    if monorepo_root(&cwd).as_deref() != Some(cwd.as_path())
-        || env::var_os("VIS_MONOREPO_ROOT").is_some_and(|inherited| Path::new(&inherited) != cwd)
-        || !quiet_context(&cwd, &cwd)
-        || vis_config::read(&cwd) != ConfigState::Absent
-    {
+    if !ci_root_context(&cwd) || !quiet_context(&cwd, &cwd) || vis_config::read(&cwd) != ConfigState::Absent {
         return None;
     }
 
@@ -626,25 +607,9 @@ fn is_plain(path: &Path) -> bool {
     path.to_str().is_some_and(|text| text.bytes().all(|byte| byte.is_ascii_graphic()))
 }
 
-fn write_stream(stream: &mut impl Write, text: &str) -> io::Result<()> {
-    stream.write_all(text.as_bytes())?;
-    stream.flush()
-}
-
 /// Prints what the run produced and exits with `exit_code`.
 fn finish(out: &Output, exit_code: i32) -> ! {
-    // Each stream is written even when the other fails, so a closed stdout does not hide errors.
-    let stdout = write_stream(&mut io::stdout().lock(), &out.stdout);
-    let stderr = write_stream(&mut io::stderr().lock(), &out.stderr);
-
-    for result in [stdout, stderr] {
-        match result {
-            Ok(()) => {}
-            // A closed pipe is not an error worth reporting.
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-            Err(error) => WrapperError::write("sort-package-json", "the output", error).exit(),
-        }
-    }
+    write_streams("sort-package-json", &out.stdout, &out.stderr);
 
     exit(exit_code)
 }

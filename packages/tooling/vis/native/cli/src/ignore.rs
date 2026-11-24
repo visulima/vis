@@ -19,7 +19,8 @@ use std::process::exit;
 use crate::error::WrapperError;
 use crate::js::trim;
 use crate::node_context::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
-use crate::pm_family::has_vis_config;
+use crate::output::write_stdout;
+use crate::vis_config::has_vis_config;
 
 /// Shared by every target. Order matters: it is the output order.
 const BASE_PATTERNS: [&str; 39] = [
@@ -176,14 +177,9 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::delegate(raw_args);
     };
 
-    let mut stdout = io::stdout().lock();
+    write_stdout("ignore", "the output", &text);
 
-    match stdout.write_all(text.as_bytes()).and_then(|()| stdout.flush()) {
-        Ok(()) => exit(0),
-        // A closed pipe is not an error worth reporting.
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit(0),
-        Err(error) => WrapperError::write("ignore", "the output", error).exit(),
-    }
+    exit(0)
 }
 
 /// The stdout text for the invocation, or `None` to hand the command to Node. Nothing is written

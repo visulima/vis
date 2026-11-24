@@ -37,17 +37,6 @@ const DEFAULT_CACHE_DIRECTORY: &str = "node_modules/.cache/vis";
 /// `BRANCH_SCOPE_DIRECTORY` in `src/commands/cache/entries.ts`.
 const BRANCH_SCOPE_DIRECTORY: &str = "branches";
 
-/// Config files Node loads from the workspace root, in `findVisConfigFile`'s priority order.
-const CONFIG_NAMES: [&str; 7] = [
-    "vis.config.ts",
-    "vis.config.mts",
-    "vis.config.cts",
-    "vis.config.js",
-    "vis.config.mjs",
-    "vis.config.cjs",
-    "vis.config.json",
-];
-
 #[derive(Clone, Copy, PartialEq)]
 enum Format {
     Table,
@@ -171,14 +160,18 @@ pub(crate) struct Settings {
 /// one this path cannot tell Node's treatment of. At the root the config must be a literal, and free of the
 /// keys that change what Node does before the command runs.
 pub(crate) fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
-    let others = cwd.ancestors().chain(root.ancestors()).filter(|directory| *directory != root).any(has_config_file);
+    let others = cwd
+        .ancestors()
+        .chain(root.ancestors())
+        .filter(|directory| *directory != root)
+        .any(|directory| vis_config::config_file_in(directory).is_some());
 
     if others || root.join("vis.config.json").exists() {
         return None;
     }
 
     // A config that has to be evaluated is Node's: evaluating it would cost the Node start this path avoids.
-    let state = if has_config_file(root) { vis_config::read(root) } else { ConfigState::Absent };
+    let state = if vis_config::config_file_in(root).is_some() { vis_config::read(root) } else { ConfigState::Absent };
 
     let config = match state {
         ConfigState::Absent => {
@@ -204,10 +197,6 @@ pub(crate) fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
         shared_worktree: config.get("sharedWorktreeCache") != Some(&Value::Bool(false)),
         cache_directory,
     })
-}
-
-fn has_config_file(directory: &Path) -> bool {
-    CONFIG_NAMES.iter().any(|name| directory.join(name).exists())
 }
 
 // ---------------------------------------------------------------------------------------------
