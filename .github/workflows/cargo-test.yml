@@ -8,6 +8,9 @@ on: # yamllint disable-line rule:truthy
         types: ["opened", "synchronize"]
         paths:
             - "packages/tooling/task-runner/native/**"
+            - "packages/tooling/task-runner/src/concurrent*.ts"
+            - "packages/tooling/task-runner/src/force-color.ts"
+            - "packages/tooling/task-runner/__tests__/parity/**"
             - "packages/terminal/tui/native/**"
             - "packages/tooling/vis/native/**"
             - "packages/tooling/secret-scanner/native/**"
@@ -17,6 +20,9 @@ on: # yamllint disable-line rule:truthy
             - "main"
         paths:
             - "packages/tooling/task-runner/native/**"
+            - "packages/tooling/task-runner/src/concurrent*.ts"
+            - "packages/tooling/task-runner/src/force-color.ts"
+            - "packages/tooling/task-runner/__tests__/parity/**"
             - "packages/terminal/tui/native/**"
             - "packages/tooling/vis/native/**"
             - "packages/tooling/secret-scanner/native/**"
@@ -68,6 +74,9 @@ jobs:
                         - 'packages/tooling/task-runner/native/core/benches/**'
                         - 'packages/tooling/task-runner/native/Cargo.toml'
                         - 'packages/tooling/task-runner/native/Cargo.lock'
+                        - 'packages/tooling/task-runner/src/concurrent*.ts'
+                        - 'packages/tooling/task-runner/src/force-color.ts'
+                        - 'packages/tooling/task-runner/__tests__/parity/**'
                       tui:
                         - 'packages/terminal/tui/native/src/**'
                         - 'packages/terminal/tui/native/Cargo.toml'
@@ -106,6 +115,9 @@ jobs:
                         - 'packages/tooling/task-runner/native/core/benches/**'
                         - 'packages/tooling/task-runner/native/Cargo.toml'
                         - 'packages/tooling/task-runner/native/Cargo.lock'
+                        - 'packages/tooling/task-runner/src/concurrent*.ts'
+                        - 'packages/tooling/task-runner/src/force-color.ts'
+                        - 'packages/tooling/task-runner/__tests__/parity/**'
                       tui:
                         - 'packages/terminal/tui/native/src/**'
                         - 'packages/terminal/tui/native/Cargo.toml'
@@ -263,6 +275,30 @@ jobs:
               shell: "bash"
               working-directory: "packages/tooling/task-runner/native"
               run: "cargo clippy -p task-runner-core --all-targets -- -D warnings"
+
+            # The parity suite runs the JS spawner and the native runner side by side, so it
+            # needs the built addon. It is the only place the two are compared on macOS and
+            # Windows (fork path, cmd.exe quoting, ConPTY, Job Objects).
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "vis"
+                  skip-playwright: "true"
+                  upgrade-npm-version: false
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            - name: "Build the native addon"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner"
+              run: "pnpm build:native:debug"
+
+            - name: "Run the concurrent runner parity suite"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner"
+              run: "pnpm exec vitest run __tests__/parity __tests__/unit/concurrent-native.test.ts __tests__/unit/native-concurrent-run.test.ts"
 
     # Native criterion benches tracked on CodSpeed. Separate from the JS
     # benches in codspeed.yml (those run each package's bench script under the
