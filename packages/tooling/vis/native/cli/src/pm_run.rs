@@ -12,6 +12,9 @@ use std::process::{exit, Command, Stdio};
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::lockfiles::LOCKFILES;
 
+use vis_core::resolve::ResolvedCommand;
+
+use crate::error::WrapperError;
 use crate::pail::Layout;
 use crate::vis_config::{self, read_json, ConfigState};
 
@@ -272,6 +275,21 @@ impl ManagerRun {
             }
         }
     }
+}
+
+/// Surfaces the resolver's warnings as `vis <verb>: <warning>`, runs the resolved command in `cwd` on the caller's own
+/// stdio and returns the exit status to adopt (Node's: 1 for a child killed by a signal).
+pub(crate) fn run_resolved(verb: &str, resolved: &ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
+    for warning in &resolved.warnings {
+        eprintln!("vis {verb}: {warning}");
+    }
+
+    Command::new(&resolved.bin)
+        .args(&resolved.args)
+        .current_dir(cwd)
+        .status()
+        .map(crate::node_exit_code)
+        .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))
 }
 
 #[cfg(test)]

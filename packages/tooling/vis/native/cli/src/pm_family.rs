@@ -9,39 +9,16 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
     resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
-    RemoveOptions, ResolvedCommand, WhyOptions,
+    RemoveOptions, WhyOptions,
 };
 
 use crate::error::{self, WrapperError};
 use crate::pm_detect::{ancestor_pins_package_manager, installer_selected_by_environment};
-
-/// Surface warnings, exec the resolved command, and return the exit status to forward.
-fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
-    for warning in &resolved.warnings {
-        eprintln!("vis {verb}: {warning}");
-    }
-
-    let status = Command::new(&resolved.bin)
-        .args(&resolved.args)
-        .current_dir(cwd)
-        .status()
-        .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))?;
-    let mut code = crate::node_exit_code(status);
-
-    // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
-    // non-error case the Node handlers suppress. Match that so the native
-    // path doesn't break `&&` chains / CI on the common case.
-    if (verb == "outdated" || verb == "why") && code == 1 {
-        code = 0;
-    }
-
-    Ok(code)
-}
+use crate::pm_run::run_resolved;
 
 /// A token is a "known" flag if it matches one of `bools` (a switch) or `values`
 /// (consumes the next token). Returns the parsed switches/values plus the
@@ -311,7 +288,15 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
     };
 
     let outcome = match resolved {
-        Ok(command) => run_resolved(verb, command, &cwd),
+        // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND, a non-error case the Node handlers suppress.
+        // Match that so the native path doesn't break `&&` chains / CI on the common case.
+        Ok(command) => run_resolved(verb, &command, &cwd).map(|code| {
+            if matches!(verb, "outdated" | "why") && code == 1 {
+                0
+            } else {
+                code
+            }
+        }),
         Err(message) => Err(WrapperError::usage(verb, message)),
     };
 
