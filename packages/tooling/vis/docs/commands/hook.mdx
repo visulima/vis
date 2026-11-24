@@ -68,6 +68,8 @@ Print the hooks currently installed in the hooks directory, grouped by stage. Ea
 vis hook list
 ```
 
+`vis hook list` is also implemented natively. In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, it prints the list without starting Node. A stage script that is not plain ASCII (or has carriage returns), a hooks directory that is not a directory, a `--hooks-dir` value other than a plain relative path, and every other flag are handed to the Node implementation before anything is printed.
+
 ### validate
 
 Sanity-check the hooks directory: verifies `core.hooksPath`, the dispatcher scripts (in this checkout and in every linked worktree), each stage script's shell syntax (`sh -n`), executable permissions, and — if any stage references the bundled `prek-runner.mjs` — that the runner exists and parses with `node --check`. Exits non-zero on any error.

@@ -1,4 +1,4 @@
-//! `vis hook run` — the native fast path.
+//! `vis hook run` — the native fast path. (`vis hook list` has its own module, [`list`].)
 //!
 //! A git hook fires on every commit, so its wall-clock is paid constantly. The
 //! Node runner spends ~130 ms just booting before it looks at the config; this
@@ -35,6 +35,7 @@ mod builtins;
 mod config;
 mod exec;
 mod filter;
+pub mod list;
 
 use std::env;
 use std::io::Write;
