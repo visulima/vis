@@ -64,6 +64,7 @@ mod pail;
 mod pm;
 mod pm_detect;
 mod pm_family;
+mod pm_run;
 mod pm_shim;
 #[cfg(unix)]
 mod removal;

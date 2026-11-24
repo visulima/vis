@@ -22,12 +22,12 @@
 use std::env;
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{exit, Command, Stdio};
 
 use vis_core::resolve::{resolve_add, AddOptions};
 
-use crate::install::{self, Root};
+use crate::pm_run::{filter_value, on_path, security_notices, setup, Root};
 use crate::typosquat;
 
 /// What the flags asked for.
@@ -116,7 +116,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         return None;
     }
 
-    let setup = install::setup(args, raw)?;
+    let setup = setup(args, raw)?;
 
     // Its output has only been compared with Node's where no colour is on and `TERM` leaves the terminal unknown.
     let plain_term = env::var("TERM").map_or(true, |term| {
@@ -137,7 +137,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
 
     // The security-enforcement plugin acts on the typed command name `add`.
     if setup.root == Root::Here {
-        notices.extend(install::security_notices(&setup.manager, &setup.cwd)?);
+        notices.extend(security_notices(&setup.manager, &setup.cwd)?);
     }
 
     let resolved = resolve_add(
@@ -178,23 +178,6 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         notices,
         root: (setup.root == Root::Here).then_some(setup.cwd),
     })
-}
-
-/// Whether `bin` is an executable file in a directory of `PATH`, as `execvp` looks it up.
-pub(crate) fn on_path(bin: &str) -> bool {
-    #[cfg(unix)]
-    fn executable(path: &Path) -> bool {
-        use std::os::unix::fs::PermissionsExt;
-
-        path.metadata().is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-    }
-
-    #[cfg(not(unix))]
-    fn executable(path: &Path) -> bool {
-        path.is_file()
-    }
-
-    env::var_os("PATH").is_some_and(|path| env::split_paths(&path).any(|directory| executable(&directory.join(bin))))
 }
 
 /// The flags and packages after `add`: exact tokens, each flag at most once. Anything else is `None`.
@@ -254,13 +237,13 @@ fn parse(args: &[String]) -> Option<Flags> {
             }
             "-F" | "--filter" => {
                 index += 1;
-                flags.filter.push(install::filter_value(args.get(index)?)?);
+                flags.filter.push(filter_value(args.get(index)?)?);
                 index += 1;
 
                 continue;
             }
             _ if token.starts_with("--filter=") => {
-                flags.filter.push(install::filter_value(&token["--filter=".len()..])?);
+                flags.filter.push(filter_value(&token["--filter=".len()..])?);
                 index += 1;
 
                 continue;

@@ -19,7 +19,7 @@ use std::process::{exit, Command, Stdio};
 
 use vis_core::resolve::ResolvedCommand;
 
-use crate::install::{self, Root};
+use crate::pm_run::{node_startup_environment, on_path, setup, Root};
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    crate::dlx::node_startup_environment(&mut command, plan.root.as_deref());
+    node_startup_environment(&mut command, plan.root.as_deref());
 
     match command.status() {
         // Node treats exit 1 ("not found", an empty result) as an ordinary outcome and forwards any other
@@ -71,11 +71,11 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
 /// The plan for this invocation, or `None` to delegate.
 fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     let flags = parse(args)?;
-    let setup = install::setup(args, raw)?;
+    let setup = setup(args, raw)?;
     let resolved = resolve_info(&setup.manager, &setup.version, &flags)?;
 
     // A manager that is not on `PATH` fails in Node with its own report.
-    if !crate::add::on_path(&resolved.bin) {
+    if !on_path(&resolved.bin) {
         return None;
     }
 

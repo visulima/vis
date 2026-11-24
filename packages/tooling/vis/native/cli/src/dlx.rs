@@ -29,6 +29,8 @@ use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::lockfiles::LOCKFILES;
 use vis_core::resolve::{resolve_dlx, DlxOptions, ResolvedCommand};
 
+use crate::pm_run::{node_startup_environment, on_path};
+
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Flags {
@@ -66,18 +68,6 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         Ok(status) => exit(crate::node_exit_code(status)),
         // Found on `PATH` but could not start; nothing has been printed, so Node reports it.
         Err(_) => crate::delegate(raw),
-    }
-}
-
-/// What Node's own startup adds to the environment of everything it runs: cerebro's default output level and
-/// the monorepo root it found, if any. (Any `CEREBRO_*` of the caller's has kept the command in Node.) The
-/// launcher's own variables (`VIS_NODE`, `VIS_FALLBACK_ENTRY`, `VIS_VERSION`, `VIS_LAUNCHER`) stay in the
-/// environment, as for every native command that runs a child.
-pub(crate) fn node_startup_environment(command: &mut Command, root: Option<&Path>) {
-    command.env("CEREBRO_OUTPUT_LEVEL", "32");
-
-    if let Some(root) = root {
-        command.env("VIS_MONOREPO_ROOT", root);
     }
 }
 
@@ -136,7 +126,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     }
 
     // A manager that is not on `PATH` fails in Node with its own report.
-    crate::add::on_path(&resolved.bin).then_some((resolved, cwd))
+    on_path(&resolved.bin).then_some((resolved, cwd))
 }
 
 /// The manager Node's `resolveInstaller` picks for the lean entry, which reads no config: a bun lockfile
