@@ -22,11 +22,11 @@ use std::process::exit;
 
 use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 
-const DEFAULT_HOOKS_DIRECTORY: &str = ".vis/hooks";
+pub(super) const DEFAULT_HOOKS_DIRECTORY: &str = ".vis/hooks";
 
 /// The standard git hooks, `HOOKS` in `src/commands/hook/constants.ts`. Sorted by byte order, which is also the
 /// order `localeCompare` gives these names (the parity suite lists all of them).
-const STAGES: [&str; 14] = [
+pub(super) const STAGES: [&str; 14] = [
     "applypatch-msg",
     "commit-msg",
     "post-applypatch",
@@ -60,14 +60,15 @@ struct Stage {
     stage: &'static str,
 }
 
-/// The hooks directory the arguments ask for, or `None` when the invocation is not a shape this module answers.
-fn parse(args: &[String]) -> Option<String> {
+/// The hooks directory the arguments of `hook <subcommand>` ask for, or `None` when the invocation is not a shape this
+/// module (or `validate`, which takes the same option) answers.
+pub(super) fn parse(args: &[String], subcommand: &str) -> Option<String> {
     match args {
-        [command, subcommand] if command == "hook" && subcommand == "list" => Some(DEFAULT_HOOKS_DIRECTORY.to_owned()),
-        [command, subcommand, flag, value] if command == "hook" && subcommand == "list" && flag == "--hooks-dir" => {
+        [command, name] if command == "hook" && name == subcommand => Some(DEFAULT_HOOKS_DIRECTORY.to_owned()),
+        [command, name, flag, value] if command == "hook" && name == subcommand && flag == "--hooks-dir" => {
             is_plain_directory(value).then(|| value.clone())
         }
-        [command, subcommand, flag] if command == "hook" && subcommand == "list" => {
+        [command, name, flag] if command == "hook" && name == subcommand => {
             let value = flag.strip_prefix("--hooks-dir=")?;
 
             is_plain_directory(value).then(|| value.to_owned())
@@ -261,11 +262,17 @@ fn lines(hooks_directory: &str, stages: &[Stage]) -> Vec<String> {
     lines
 }
 
+/// Whether Node would reach the same answer from the working directory: a unix CI run off a terminal at the root of a
+/// pnpm workspace, with none of the settings that change what Node prints.
+pub(super) fn context_is_native() -> bool {
+    cfg!(unix) && output_settings_are_default() && !io::stdout().is_terminal() && native_context()
+}
+
 /// The text Node prints, or `None` when Node has to answer.
 fn answer(args: &[String]) -> Option<String> {
-    let hooks_directory = parse(args)?;
+    let hooks_directory = parse(args, "list")?;
 
-    if !cfg!(unix) || !output_settings_are_default() || io::stdout().is_terminal() || !native_context() {
+    if !context_is_native() {
         return None;
     }
 
@@ -294,9 +301,9 @@ mod tests {
 
     #[test]
     fn the_hooks_directory_is_the_only_option() {
-        assert_eq!(parse(&argv(&["hook", "list"])).as_deref(), Some(".vis/hooks"));
-        assert_eq!(parse(&argv(&["hook", "list", "--hooks-dir", ".githooks"])).as_deref(), Some(".githooks"));
-        assert_eq!(parse(&argv(&["hook", "list", "--hooks-dir=ci/hooks"])).as_deref(), Some("ci/hooks"));
+        assert_eq!(parse(&argv(&["hook", "list"]), "list").as_deref(), Some(".vis/hooks"));
+        assert_eq!(parse(&argv(&["hook", "list", "--hooks-dir", ".githooks"]), "list").as_deref(), Some(".githooks"));
+        assert_eq!(parse(&argv(&["hook", "list", "--hooks-dir=ci/hooks"]), "list").as_deref(), Some("ci/hooks"));
     }
 
     #[test]
@@ -320,7 +327,7 @@ mod tests {
             &["hook", "validate"],
             &["hook"],
         ] {
-            assert_eq!(parse(&argv(shape)), None, "{shape:?}");
+            assert_eq!(parse(&argv(shape), "list"), None, "{shape:?}");
         }
     }
 
