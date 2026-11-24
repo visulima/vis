@@ -1,5 +1,7 @@
 use rusqlite::{params, Connection};
 
+use super::meta;
+
 /// Schema version that this build of `vis-native` writes.
 pub const NATIVE_KNOWN_VERSION: u32 = 2;
 /// Oldest schema version this build can still read.
@@ -74,21 +76,18 @@ impl std::error::Error for AdvisorySchemaError {}
 pub fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_SQL)?;
     conn.execute(
-        "INSERT OR IGNORE INTO meta (ecosystem, key, value) VALUES ('', 'schema_version', ?1)",
-        params![NATIVE_KNOWN_VERSION.to_string()],
+        "INSERT OR IGNORE INTO meta (ecosystem, key, value) VALUES (?1, ?2, ?3)",
+        params![meta::GLOBAL, meta::SCHEMA_VERSION, NATIVE_KNOWN_VERSION.to_string()],
     )?;
     Ok(())
 }
 
 pub fn read_schema_version(conn: &Connection) -> Result<u32, AdvisorySchemaError> {
-    let value: Result<String, rusqlite::Error> =
-        conn.query_row("SELECT value FROM meta WHERE ecosystem = '' AND key = 'schema_version'", [], |row| row.get(0));
-
-    match value {
-        Ok(s) => s.parse::<u32>().map_err(|e| AdvisorySchemaError::Corrupt(format!("non-numeric schema_version: {e}"))),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            Err(AdvisorySchemaError::Corrupt("missing schema_version meta row".to_string()))
+    match meta::read(conn, meta::GLOBAL, meta::SCHEMA_VERSION) {
+        Ok(Some(s)) => {
+            s.parse::<u32>().map_err(|e| AdvisorySchemaError::Corrupt(format!("non-numeric schema_version: {e}")))
         }
+        Ok(None) => Err(AdvisorySchemaError::Corrupt("missing schema_version meta row".to_string())),
         Err(e) => Err(AdvisorySchemaError::Corrupt(e.to_string())),
     }
 }

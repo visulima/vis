@@ -11,8 +11,11 @@ use napi_derive::napi;
 
 use crate::advisories::{
     self, ingest::IngestProgress, query::NativeVulnerability, AdvisoryHit, DbStatus, EcosystemStatus, QueryInput,
-    NATIVE_KNOWN_VERSION,
 };
+
+/// Progress callback called as `(current, total)`. `CalleeHandled = false` skips the error-first
+/// `(err, value)` convention, so the JS function receives exactly the two numbers it declares.
+type ProgressCallback = ThreadsafeFunction<FnArgs<(u32, u32)>, (), FnArgs<(u32, u32)>, Status, false>;
 
 #[napi(object)]
 pub struct AdvisoryIngestOptions {
@@ -78,7 +81,7 @@ pub struct AdvisoryDbStatus {
 #[napi]
 pub async fn advisories_ingest(
     options: AdvisoryIngestOptions,
-    #[napi(ts_arg_type = "(current: number, total: number) => void")] on_progress: ThreadsafeFunction<ProgressPayload>,
+    #[napi(ts_arg_type = "(current: number, total: number) => void")] on_progress: ProgressCallback,
 ) -> Result<AdvisoryIngestResult> {
     let zip_path = options.zip_path;
     let db_path = options.db_path;
@@ -89,16 +92,13 @@ pub async fn advisories_ingest(
     // IngestProgress trait. Wrapping in Arc<Mutex<_>> lets the closure live for
     // 'static while still being called from any thread.
     struct Bridge {
-        cb: Arc<Mutex<Option<ThreadsafeFunction<ProgressPayload>>>>,
+        cb: Arc<Mutex<Option<ProgressCallback>>>,
     }
     impl IngestProgress for Bridge {
         fn emit(&mut self, current: usize, total: usize) {
             if let Ok(guard) = self.cb.lock() {
                 if let Some(cb) = guard.as_ref() {
-                    cb.call(
-                        Ok(ProgressPayload { current: current as u32, total: total as u32 }),
-                        ThreadsafeFunctionCallMode::NonBlocking,
-                    );
+                    cb.call((current as u32, total as u32).into(), ThreadsafeFunctionCallMode::NonBlocking);
                 }
             }
         }
@@ -150,12 +150,6 @@ pub fn advisories_status(db_path: String) -> Result<AdvisoryDbStatus> {
     })
 }
 
-#[napi(object)]
-pub struct ProgressPayload {
-    pub current: u32,
-    pub total: u32,
-}
-
 fn hit_to_js(hit: AdvisoryHit) -> AdvisoryQueryResult {
     AdvisoryQueryResult {
         name: hit.name,
@@ -185,6 +179,3 @@ fn eco_to_js(e: EcosystemStatus) -> AdvisoryEcosystemStatus {
         manifest_etag: e.manifest_etag,
     }
 }
-
-/// Re-export so doc tooling sees the value next to the binding constant.
-pub const NATIVE_BINDING_VERSION_HINT: u32 = NATIVE_KNOWN_VERSION;

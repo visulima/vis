@@ -65,7 +65,7 @@ pub(crate) fn build_for_tests(seed: [u8; 32], m: u64, k: u32, entries: &[(&str, 
         }
     }
 
-    BloomFilter { format_version: 1, m, k, n: entries.len() as u32, built_at_unix_seconds: 0, seed, bitset }
+    BloomFilter { m, k, seed, bitset }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use napi_derive::napi;
-use sort_package_json::{sort_package_json, sort_package_json_with_options, SortOptions};
+use sort_package_json::{sort_package_json_with_options, SortOptions};
 
 #[napi(object)]
 pub struct NativeSortPackageJsonOptions {
@@ -7,11 +7,6 @@ pub struct NativeSortPackageJsonOptions {
     pub pretty: Option<bool>,
     /// Alphabetize script commands (default: false)
     pub sort_scripts: Option<bool>,
-}
-
-#[napi(catch_unwind)]
-pub fn sort_package_json_string(contents: String) -> napi::Result<String> {
-    sort_package_json(&contents).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi(catch_unwind)]

@@ -172,3 +172,26 @@ describeHooked("ts-loader tsconfig paths resolution", () => {
         expect(value).toBe("extends-works");
     });
 });
+
+describeHooked("ts-loader syntax errors", () => {
+    it("fails an import of a broken .ts file with the file, line and column", () => {
+        expect.hasAssertions();
+
+        const result = runInLoader(
+            [
+                `const { mkdtempSync, realpathSync, rmSync, writeFileSync } = await import("node:fs");`,
+                `const { tmpdir } = await import("node:os");`,
+                `const dir = realpathSync(mkdtempSync(tmpdir() + "/vis-ts-loader-"));`,
+                `const file = dir + "/broken.ts";`,
+                String.raw`writeFileSync(file, "export default {\n  value: ,\n};\n");`,
+                `let message = "";`,
+                `try { await import(pathToFileURL(file).href); } catch (error) { message = error.message; }`,
+                `rmSync(dir, { force: true, recursive: true });`,
+                `console.log(JSON.stringify({ file, message }));`,
+            ].join("\n"),
+        ) as { file: string; message: string };
+
+        expect(result.message.split("\n")[0]).toBe(`vis-native: failed to parse ${result.file}`);
+        expect(result.message).toContain(`${result.file}:2:10: `);
+    });
+});

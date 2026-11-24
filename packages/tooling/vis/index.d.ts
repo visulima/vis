@@ -2,36 +2,11 @@
 /* eslint-disable */
 /**
  * Opaque handle wrapping a decoded `BloomFilter`. JS calls back into
- * `osv_bloom_probe` / `osv_bloom_probe_batch` with this handle. Arc so
+ * `osv_bloom_probe_batch` with this handle. Arc so
  * the same filter can fan out to multiple probe calls without copying
  * the bitset.
  */
 export declare class OsvBloomHandle {
-    /**
-     * `n` field from the filter header — entry count the upstream
-     * builder inserted. Exposed for `vis advisories bloom status`.
-     */
-    get entriesInserted(): number;
-    /**
-     * `m` field — bit count. Returned as a decimal string so the full
-     * u64 round-trips without JS-Number precision loss; today's filter
-     * is ~3.1M bits but the wire format reserves 64-bit headroom.
-     */
-    get bitCountString(): string;
-    /** `k` field — hash-function count per probe. */
-    get hashCount(): number;
-    /**
-     * `built_at_unix_seconds` — UNIX seconds the upstream builder
-     * recorded, as a decimal string. JS reconstructs via
-     * `new Date(Number(s) * 1000)`. Use this in status output rather
-     * than the local fetch time.
-     */
-    get builtAtUnixSecondsString(): string;
-    /**
-     * `format_version` — currently 1. Surfaced so JS can flag a
-     * version-mismatch warning without re-decoding.
-     */
-    get formatVersion(): number;
 }
 
 export interface AddOptions {
@@ -204,26 +179,10 @@ export interface ExecOptions {
 }
 
 /**
- * Executes a package manager command synchronously.
- * Uses Rust's std::process::Command for maximum performance.
- * Only allowed binaries can be executed (see ALLOWED_BINS).
- *
- * Returns `napi::Result<ExecResult>` -- throws a JS error for disallowed
- * binaries or spawn failures, returns ExecResult with exit code otherwise.
- */
-export declare function execPmCommand(bin: string, args: Array<string>, cwd: string): ExecResult;
-
-/**
  * Executes a package manager command with inherited stdio (interactive).
  * Returns exit code. Throws JS error for disallowed binaries or spawn failures.
  */
 export declare function execPmCommandInteractive(bin: string, args: Array<string>, cwd: string): number;
-
-export interface ExecResult {
-    code: number;
-    stdout: string;
-    stderr: string;
-}
 
 export interface InstallOptions {
     frozenLockfile: boolean;
@@ -257,6 +216,10 @@ export interface InstallOptions {
  *       `osv_bloom_probe_batch`. Backed by `blake3` keyed-hash double-hashing.
  *   6 — added `transform_ts`: oxc-based TS/JSX → JS transpile for the runtime
  *       loader (config / generators / `vis x`), replacing the `jiti` dependency.
+ *   7 — removed the exports nothing in production called (`exec_pm_command`,
+ *       `tags_from_path`, `parse_shebang`, `osv_bloom_probe`, `sort_package_json_string`,
+ *       `resolve_outdated` wrapper, the `OsvBloomHandle` getters). `advisories_ingest`'s
+ *       progress callback now receives `(current, total)` instead of `(null, payload)`.
  */
 export const NATIVE_BINDING_VERSION: number;
 
@@ -300,18 +263,6 @@ export interface OsvBloomBatchQuery {
 export declare function osvBloomDecode(bytes: Buffer): OsvBloomHandle;
 
 /**
- * Probe a single `(name, version)` pair. Returns `true` when the pair
- * *might* be a known-malicious advisory — callers must escalate to an
- * authoritative source for `(name, version)` confirmation.
- *
- * The version is encoded into a semver-major bucket per the upstream
- * scheme; the wildcard bucket is also probed so advisories with
- * unbounded ranges still match. Unparseable versions probe only the
- * wildcard bucket.
- */
-export declare function osvBloomProbe(handle: OsvBloomHandle, name: string, version: string): boolean;
-
-/**
  * Batch variant. Returns only the hits, with their original index — the
  * expected hit rate is well under 1%, so allocating one bool per input
  * (`Vec<bool>` of length N) would dominate the cost. Order of returned
@@ -331,20 +282,6 @@ export interface OutdatedOptions {
     noOptional: boolean;
     compatible: boolean;
     global: boolean;
-}
-
-/**
- * Parses the shebang line of an executable file, returning the
- * interpreter argv (e.g. `["python3"]`, `["env", "node"]`). Returns an
- * empty vector when the file has no shebang or cannot be read — mirrors
- * pre-commit's behavior of treating "no shebang" as "no interpreter
- * tags" rather than as an error.
- */
-export declare function parseShebang(path: string): Array<string>;
-
-export interface ProgressPayload {
-    current: number;
-    total: number;
 }
 
 export interface RemoveOptions {
@@ -384,8 +321,6 @@ export declare function resolveInstall(pm: string, version: string, opts: Instal
 
 export declare function resolveLink(pm: string, version: string, target?: string | undefined | null): ResolvedCommand;
 
-export declare function resolveOutdated(pm: string, version: string, opts: OutdatedOptions): ResolvedCommand;
-
 export declare function resolvePmCommand(pm: string, version: string, subcommand: string, extraArgs: Array<string>): ResolvedCommand;
 
 export declare function resolveRemove(pm: string, version: string, opts: RemoveOptions): ResolvedCommand;
@@ -394,25 +329,15 @@ export declare function resolveUnlink(pm: string, version: string, packages: Arr
 
 export declare function resolveWhy(pm: string, version: string, opts: WhyOptions): ResolvedCommand;
 
-export declare function sortPackageJsonString(contents: string): string;
-
 export declare function sortPackageJsonStringWithOptions(contents: string, options: NativeSortPackageJsonOptions): string;
 
 /**
- * Classifies a single file path using `prek-identify`. Returns the set of
- * tags (extensions, interpreters, metadata) that pre-commit / prek would
- * associate with the file. Errors collapse to an empty vector so callers
- * don't need try/catch — the vis hook runtime treats "unclassified" and
- * "no tags" identically.
- */
-export declare function tagsFromPath(path: string): Array<string>;
-
-/**
- * Batch variant of [`tags_from_path`]. Returns one tag list per input
- * path in the same order. Errors for individual paths collapse to empty
- * vectors so partial classification failures don't fail the whole batch
- * (the same behavior pre-commit applies when stat-ing a deleted staged
- * file mid-run).
+ * Classifies each path using `prek-identify`. Returns one tag list per input
+ * path in the same order, covering the extensions, interpreters and metadata
+ * tags that pre-commit / prek would associate with the file. Errors for
+ * individual paths collapse to empty vectors so partial classification
+ * failures don't fail the whole batch (the same behavior pre-commit applies
+ * when stat-ing a deleted staged file mid-run).
  */
 export declare function tagsFromPaths(paths: Array<string>): Array<Array<string>>;
 

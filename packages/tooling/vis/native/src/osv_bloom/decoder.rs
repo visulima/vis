@@ -73,16 +73,10 @@ impl std::error::Error for BloomDecodeError {}
 /// Decoded bloom filter. Owns its bitset so the source buffer can drop.
 #[derive(Debug, Clone)]
 pub struct BloomFilter {
-    pub format_version: u32,
     /// Bit count. Probe indices reduce modulo this value.
     pub m: u64,
     /// Hash-function count. Each probe runs `k` rounds of double-hashing.
     pub k: u32,
-    /// Entry count the builder inserted. Not load-bearing for probes; we
-    /// expose it so `vis advisories bloom status` can report it.
-    pub n: u32,
-    /// Build timestamp recorded by the upstream builder.
-    pub built_at_unix_seconds: u64,
     /// 32-byte BLAKE3 keyed-hash key. Public + deterministic upstream; we
     /// hash the key bytes into a `blake3::Hash` only at probe time.
     pub seed: [u8; 32],
@@ -127,9 +121,7 @@ impl BloomFilter {
             return Err(BloomDecodeError::NoHashFunctions);
         }
 
-        let n = u32::from_le_bytes(bytes[20..24].try_into().expect("4 bytes"));
-        let built_at_unix_seconds = u64::from_le_bytes(bytes[24..32].try_into().expect("8 bytes"));
-
+        // Bytes 20..32 hold the entry count and build timestamp. Probes need neither.
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&bytes[32..64]);
 
@@ -142,7 +134,7 @@ impl BloomFilter {
 
         let bitset = bytes[HEADER_BYTES..].to_vec();
 
-        Ok(Self { format_version, m, k, n, built_at_unix_seconds, seed, bitset })
+        Ok(Self { m, k, seed, bitset })
     }
 }
 
@@ -174,11 +166,8 @@ mod tests {
         let buf = synthetic_filter(64);
         let decoded = BloomFilter::decode(&buf).expect("decode");
 
-        assert_eq!(decoded.format_version, 1);
         assert_eq!(decoded.m, 64);
         assert_eq!(decoded.k, 7);
-        assert_eq!(decoded.n, 0);
-        assert_eq!(decoded.built_at_unix_seconds, 1_700_000_000);
         assert_eq!(decoded.seed, [0xAB; 32]);
         assert_eq!(decoded.bitset.len(), 8);
     }
