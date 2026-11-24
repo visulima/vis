@@ -2,11 +2,14 @@
 // `maxSatisfying(versions, range, { includePrerelease: true })` answers for each, which the Rust unit test
 // `sbom::semver::tests::agrees_with_node_semver` replays. Run from `packages/tooling/vis`:
 //   node native/cli/tests/fixtures/sbom/generate-semver-corpus.mjs
+import { createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import semver from "semver";
+
+const { version: semverVersion } = createRequire(import.meta.url)("semver/package.json");
 
 let seed = Number(process.env.SEED ?? 0x2f6e2b1);
 const random = () => {
@@ -72,6 +75,6 @@ for (let index = 0; index < Number(process.env.COUNT ?? 1500); index += 1) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-writeFileSync(process.env.OUT ?? join(here, "semver-corpus.json"), `${JSON.stringify({ semver: semver.SEMVER_SPEC_VERSION, cases })}\n`);
+writeFileSync(process.env.OUT ?? join(here, "semver-corpus.json"), `${JSON.stringify({ semver: semverVersion, cases })}\n`);
 // eslint-disable-next-line no-console
 console.log(`${cases.length} cases, ${cases.filter((entry) => entry.expected === null).length} without a match`);

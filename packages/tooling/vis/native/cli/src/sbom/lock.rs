@@ -7,6 +7,8 @@
 //! text must therefore hold nothing that a JavaScript `\s`, `^` or `$` treats differently from them
 //! (see [`readable`]).
 
+use std::collections::{HashMap, HashSet};
+
 use regex::bytes::Regex;
 
 /// `name -> specifiers`, in the order the lockfile gives them.
@@ -97,19 +99,20 @@ pub(super) fn parse(bytes: &[u8]) -> Option<Vec<Entry>> {
 
     let snapshots = snapshots(&patterns, bytes)?;
     let mut entries: Vec<Entry> = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
 
     for captures in patterns.entry.captures_iter(packages) {
         let Some((name, version)) = split_key(&captures[1]) else {
             continue;
         };
 
-        if entries.iter().any(|entry| entry.name == name && entry.version == version) {
+        if !seen.insert((name.clone(), version.clone())) {
             continue;
         }
 
         let block = &captures[2];
         let hash = patterns.resolution.captures(block).and_then(|found| decode_integrity(&found[1]));
-        let snapshot = snapshots.iter().find(|(key, _)| key.0 == name && key.1 == version).map(|(_, maps)| maps);
+        let snapshot = snapshots.get(&(name.clone(), version.clone()));
         let mut maps: [Option<DependencyMap>; 3] = [None, None, None];
 
         for (index, slot) in maps.iter_mut().enumerate() {
@@ -136,12 +139,12 @@ pub(super) fn parse(bytes: &[u8]) -> Option<Vec<Entry>> {
 
 const FIELDS: [&str; 3] = ["dependencies", "peerDependencies", "optionalDependencies"];
 
-type Snapshot = ((String, String), [Option<DependencyMap>; 3]);
+type Snapshots = HashMap<(String, String), [Option<DependencyMap>; 3]>;
 
 /// The `snapshots` section, which holds each package's own dependency maps in lockfile version 9.
 /// `None` when a map in it cannot be reproduced.
-fn snapshots(patterns: &Patterns, bytes: &[u8]) -> Option<Vec<Snapshot>> {
-    let mut found: Vec<Snapshot> = Vec::new();
+fn snapshots(patterns: &Patterns, bytes: &[u8]) -> Option<Snapshots> {
+    let mut found: Snapshots = HashMap::new();
 
     let Some(text) = section(patterns, bytes, 1) else {
         return Some(found);
@@ -152,21 +155,12 @@ fn snapshots(patterns: &Patterns, bytes: &[u8]) -> Option<Vec<Snapshot>> {
             continue;
         };
 
-        let position = found.iter().position(|(existing, _)| *existing == key);
-        let slot = match position {
-            Some(position) => position,
-            None => {
-                found.push((key, [None, None, None]));
-                found.len() - 1
-            }
-        };
-
-        for index in 0..FIELDS.len() {
+        for (index, slot) in found.entry(key).or_default().iter_mut().enumerate() {
             let Some(map) = dependency_map(patterns, &captures[2], index)? else {
                 continue;
             };
 
-            let target = found[slot].1[index].get_or_insert_with(Vec::new);
+            let target = slot.get_or_insert_with(Vec::new);
 
             for (name, specifiers) in map {
                 merge(target, name, specifiers);

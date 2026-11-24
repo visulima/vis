@@ -71,13 +71,16 @@ fn value_of<'a>(argument: &'a str, name: &str, rest: &mut impl Iterator<Item = &
     (!value.is_empty() && (value == "-" || !value.starts_with('-'))).then_some(Some(value))
 }
 
-/// `output` as a path Node's `resolve` leaves as it is: plain ASCII, no spaces, no `.` or `..` segment.
+/// `output` as a path Node's `resolve` leaves as it is: plain ASCII, no spaces, one leading slash at most (`resolve`
+/// folds `//a` into `/a`, which the message then shows), no `.` or `..` segment.
 fn plain_output(output: &str) -> bool {
     output == "-"
         || (output.bytes().all(|byte| byte.is_ascii_graphic() && byte != b'\\')
+            && !output.starts_with("//")
             && !output.ends_with('/')
             && output
-                .trim_start_matches('/')
+                .strip_prefix('/')
+                .unwrap_or(output)
                 .split('/')
                 .all(|segment| !segment.is_empty() && segment != "." && segment != ".."))
 }
@@ -201,8 +204,9 @@ fn random_uuid() -> Option<String> {
     Some(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
 }
 
-/// Whether the file can be written where Node writes it: every directory it needs either exists or can be
-/// made, and the target is not something other than a file.
+/// Whether the file can be written where Node writes it. `ensureDirSync` looks at the directory with `lstat`: one
+/// that exists must be a real directory (a symlink to one is an error in Node), and one that is missing is made
+/// with its parents, which must lead to a directory. The target itself must be a file or not exist.
 fn writable(target: &Path) -> bool {
     if target.exists() && !target.is_file() {
         return false;
@@ -212,7 +216,36 @@ fn writable(target: &Path) -> bool {
         return false;
     };
 
-    parent.ancestors().find(|directory| directory.exists()).is_some_and(Path::is_dir)
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) => metadata.is_dir(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            parent.ancestors().find(|directory| directory.exists()).is_some_and(Path::is_dir)
+        }
+        Err(_) => false,
+    }
+}
+
+/// The largest document Node reliably delivers to a pipe or socket. Its stdout is asynchronous there and the process
+/// exits right after writing, so what the reader has not yet taken from the pipe's buffer (64 KiB) is lost: a
+/// larger document arrives cut short, at a length that depends on how fast the reader is.
+const STREAM_LIMIT: usize = 64 * 1024;
+
+/// Whether stdout is a pipe or a socket.
+#[cfg(unix)]
+fn stdout_is_stream() -> bool {
+    // SAFETY: `fstat` only writes the `stat` it is given.
+    let mut status: libc::stat = unsafe { std::mem::zeroed() };
+
+    if unsafe { libc::fstat(libc::STDOUT_FILENO, &mut status) } != 0 {
+        return true;
+    }
+
+    matches!(status.st_mode & libc::S_IFMT, libc::S_IFIFO | libc::S_IFSOCK)
+}
+
+#[cfg(not(unix))]
+fn stdout_is_stream() -> bool {
+    true
 }
 
 /// A path the pail message can hold without wrapping differently from a word: ASCII with no spaces.
@@ -249,6 +282,11 @@ fn answer(args: &[String]) -> Option<i32> {
     let text = bom.to_json(&timestamp(), &format!("urn:uuid:{}", random_uuid()?));
 
     let Some(layout) = layout else {
+        // A document that Node would cut short on a pipe is Node's to cut short.
+        if text.len() > STREAM_LIMIT && stdout_is_stream() {
+            return None;
+        }
+
         let mut stdout = io::stdout().lock();
 
         return stdout
@@ -326,7 +364,13 @@ mod tests {
     #[test]
     fn only_plain_paths_are_resolved_the_same() {
         assert!(plain_output("out/sbom.json") && plain_output("/tmp/sbom.json") && plain_output("-"));
-        assert!(!plain_output("out//x") && !plain_output("./x") && !plain_output("out/") && !plain_output("a\\b"));
+        assert!(
+            !plain_output("out//x")
+                && !plain_output("./x")
+                && !plain_output("out/")
+                && !plain_output("a\\b")
+                && !plain_output("//tmp/x")
+        );
     }
 
     #[test]

@@ -768,6 +768,7 @@
         { "args": ["sbom", "--output", "--include-dev"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["sbom", "--output", "../x.json"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["sbom", "--output", "a b.json"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
+        { "args": ["sbom", "--output", "//tmp/x.json"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["sbom", "--focus"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["sbom", "--focus="], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },
         { "args": ["sbom", "--output", "-", "--output", "-"], "launcher": "node", "binary": "node", "env": { "CI": "1", "COLUMNS": "80" } },

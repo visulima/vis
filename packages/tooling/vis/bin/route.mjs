@@ -847,12 +847,13 @@ const sbomValue = (flags, index, name) => {
 };
 
 const SBOM_PRINTABLE_ASCII = /^[\u0021-\u007E]+$/;
-const LEADING_SLASHES = /^\/+/;
+const LEADING_SLASH = /^\//;
 
-// A path `resolve` of `@visulima/path` leaves as typed: printable ASCII, no `\\`, no empty, `.` or `..` segment, no trailing `/`.
+// A path `resolve` of `@visulima/path` leaves as typed: printable ASCII, no `\\`, one leading `/` at most (it folds `//a` into
+// `/a`), no empty, `.` or `..` segment, no trailing `/`.
 const sbomOutputIsPlain = (output) =>
     output === "-"
-    || (SBOM_PRINTABLE_ASCII.test(output) && !output.includes("\\") && !output.endsWith("/") && output.replace(LEADING_SLASHES, "").split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."));
+    || (SBOM_PRINTABLE_ASCII.test(output) && !output.includes("\\") && !output.startsWith("//") && !output.endsWith("/") && output.replace(LEADING_SLASH, "").split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."));
 
 const sbomValueIsNative = (name, value) => {
     if (name === "--format") {

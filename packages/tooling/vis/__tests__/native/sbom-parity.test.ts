@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -423,6 +423,19 @@ const monorepoLock = (root: string): void => {
     }
 };
 
+/** The monorepo's lockfile over this checkout's own install: the virtual store and the hoisted copies are real. */
+const monorepoInstalled = (root: string): void => {
+    monorepoLock(root);
+    symlinkSync(join(packageRoot, "..", "..", "..", "node_modules"), join(root, "node_modules"));
+};
+
+/** A directory that is a symlink: `ensureDirSync` of the Node handler refuses it, so the binary must not write through it. */
+const symlinkDirectory = (root: string): void => {
+    basic(root);
+    mkdirSync(join(root, "real"));
+    symlinkSync(join(root, "real"), join(root, "link"));
+};
+
 // Fixtures the native path hands to Node. Each one still has a plain lockfile, so only the named thing differs.
 const plain = (root: string, extra: (root: string) => void = () => undefined): void => {
     basic(root);
@@ -482,6 +495,7 @@ const FIXTURES: Record<string, (root: string) => void> = {
     installed,
     legacy,
     metadata,
+    monorepoInstalled,
     monorepoLock,
     nonAsciiLicense,
     nonAsciiName,
@@ -490,6 +504,7 @@ const FIXTURES: Record<string, (root: string) => void> = {
     protoDependency,
     ranges,
     resolutions,
+    symlinkDirectory,
     unicodeSpace,
     unsupportedRange,
     withCargoLock,
@@ -547,7 +562,13 @@ const snapshot = (root: string): Record<string, string> => {
                 continue;
             }
 
-            if (statSync(path).isDirectory()) {
+            const info = lstatSync(path);
+
+            if (info.isSymbolicLink()) {
+                continue;
+            }
+
+            if (info.isDirectory()) {
                 visit(path);
             } else {
                 found[relative(root, path)] = readFileSync(path, "utf8");
@@ -712,6 +733,9 @@ const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] 
     ["monorepoLock", ["--output", "-"]],
     ["monorepoLock", ["--output", "-", "--include-dev"]],
     ["monorepoLock", ["--output", "{root}/out/monorepo.json"]],
+    ["monorepoInstalled", ["--output", "-"]],
+    ["monorepoInstalled", ["--output", "-", "--include-dev"]],
+    ["monorepoInstalled", []],
 ];
 
 /** Shapes the native path hands to Node; the fallback entry then makes Node answer, and its output must be Node's. */
@@ -729,6 +753,9 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     ["basic", ["--output", "dir/../x.json"]],
     ["basic", ["--output", "./x.json"]],
     ["basic", ["--output", "{root}/dir/"]],
+    // `resolve` folds the double slash, which the message then shows.
+    ["basic", ["--output", "/{root}/x.json"]],
+    ["symlinkDirectory", ["--output", "link/x.json"]],
     ["basic", ["--output", "with space.json"]],
     ["basic", ["--output", "package.json/x.json"]],
     ["basic", ["--output", "packages"]],
@@ -761,9 +788,6 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     ["brokenInstalled", ["--output", "-"]],
     ["conflictingInstalled", ["--output", "-"]],
 ];
-
-/** Node's output for a few of these differs from run to run in a way no mask covers; they are only checked for delegating. */
-const DELEGATED_ONLY: [fixture: string, args: string[], env?: Record<string, string>][] = [["basic", ["--output", "-"], { FORCE_COLOR: "1", NO_COLOR: "1" }]];
 
 const probe = (): boolean => {
     if (!binary || process.platform === "win32" || !existsSync(nodeEntry)) {
@@ -823,11 +847,31 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
         expect(native.run.files).toStrictEqual(node.run.files);
     }, 120_000);
 
-    it.each(DELEGATED_ONLY.map(([fixture, args, env]) => [label(fixture, args, env), fixture, args, env] as const))("%s exits 70 without a fallback and writes nothing", (_name, fixture, args, env) => {
-        const bare = runNative(fixture, args, true, env);
+    // Node writes to a pipe asynchronously and exits right after, so a document larger than the pipe's buffer (64 KiB)
+    // reaches the reader cut short, at a length that depends on the reader. A small one arrives whole, and the binary
+    // writes the same bytes; a larger one is left to Node, whose answer is then Node's own.
+    it("writes a small document to a pipe like Node", () => {
+        expect.hasAssertions();
 
-        expect(bare.run.status).toBe(70);
-        expect(bare.run.files).toStrictEqual({});
+        const nodeRoot = fresh("basic");
+        const nativeRoot = fresh("basic");
+        const node = spawnSync(process.execPath, [nodeEntry, "sbom", "--output", "-"], { cwd: nodeRoot, encoding: "utf8", env: environment(true) });
+        const native = spawnSync(nativeBinary, ["sbom", "--output", "-"], { cwd: nativeRoot, encoding: "utf8", env: environment(true) });
+
+        expect(native.status).toBe(node.status);
+        expect(mask(native.stdout, nativeRoot)).toBe(mask(node.stdout, nodeRoot));
+        expect(native.stderr).toBe(node.stderr);
+        expect(Buffer.byteLength(native.stdout)).toBeLessThan(64 * 1024);
+    }, 120_000);
+
+    it("leaves a document that does not fit a pipe to Node", () => {
+        expect.hasAssertions();
+
+        const root = fresh("monorepoLock");
+        const bare = spawnSync(nativeBinary, ["sbom", "--output", "-"], { cwd: root, encoding: "utf8", env: environment(true) });
+
+        expect(bare.status).toBe(70);
+        expect(bare.stdout).toBe("");
     }, 120_000);
 
     it("declines outside CI, where Node adds notices of its own", () => {
