@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { scanGitHistory, scanGitHistoryDetailed, scanGitStaged } from "../src/git-scan";
 import { scanFiles, scanString } from "../src/index";
@@ -45,6 +45,9 @@ const createRepo = (): { git: (...arguments_: string[]) => string; repo: string;
 const objectPath = (repo: string, oid: string): string => join(repo, ".git", "objects", oid.slice(0, 2), oid.slice(2));
 
 const secretsOf = (findings: { secret: string }[], secret: string): number => findings.filter((finding) => finding.secret === secret).length;
+
+// A scan with inline config compiles the whole ruleset (~3s on an idle machine, several times that on a loaded CI runner), and each test does it more than once.
+vi.setConfig({ testTimeout: 120_000 });
 
 beforeAll(async () => {
     // Warm the Rust regex JIT once so the first scan doesn't time out.
