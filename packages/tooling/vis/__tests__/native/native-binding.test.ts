@@ -1,6 +1,5 @@
 import {
     detectPackageManager,
-    execPmCommand,
     NATIVE_BINDING_VERSION,
     resolveAdd,
     resolveDedupe,
@@ -8,7 +7,6 @@ import {
     resolveExec,
     resolveInstall,
     resolveLink,
-    resolveOutdated,
     resolvePmCommand,
     resolveRemove,
     resolveUnlink,
@@ -32,9 +30,9 @@ describe("native addon integration", () => {
             expect.assertions(1);
 
             // If this fails, bump NATIVE_BINDING_VERSION in native/src/lib.rs
-            // together with this test. v6 added `transform_ts` (oxc TS/JSX
-            // transpile for the runtime loader, replacing jiti).
-            expect(NATIVE_BINDING_VERSION).toBe(6);
+            // together with this test. v7 dropped the exports with no production
+            // caller and made the ingest progress callback receive (current, total).
+            expect(NATIVE_BINDING_VERSION).toBe(7);
         });
     });
 
@@ -518,49 +516,6 @@ describe("native addon integration", () => {
         });
     });
 
-    describe(resolveOutdated, () => {
-        it("should resolve pnpm outdated with --format json", () => {
-            expect.assertions(2);
-
-            const result = resolveOutdated("pnpm", "10.0.0", {
-                compatible: false,
-                dev: false,
-                filter: [],
-                format: "json",
-                global: false,
-                long: false,
-                noOptional: false,
-                packages: [],
-                prod: false,
-                recursive: false,
-                workspaceRoot: false,
-            });
-
-            expect(result.bin).toBe("pnpm");
-            expect(result.args).toContain("json");
-        });
-
-        it("should warn about yarn berry upgrade-interactive", () => {
-            expect.assertions(1);
-
-            const result = resolveOutdated("yarn", "4.0.0", {
-                compatible: false,
-                dev: false,
-                filter: [],
-                format: "table",
-                global: false,
-                long: false,
-                noOptional: false,
-                packages: [],
-                prod: false,
-                recursive: false,
-                workspaceRoot: false,
-            });
-
-            expect(result.warnings.length).toBeGreaterThan(0);
-        });
-    });
-
     describe(resolvePmCommand, () => {
         it("should map pnpm cache dir to store path", () => {
             expect.assertions(2);
@@ -745,25 +700,6 @@ describe("native addon integration", () => {
             const result = resolveUnlink("npm", "11.0.0", [], true);
 
             expect(result.warnings.length).toBeGreaterThan(0);
-        });
-    });
-
-    describe(execPmCommand, () => {
-        it("should execute allowed binaries", () => {
-            expect.assertions(2);
-
-            const result = execPmCommand("echo", ["hello"], process.cwd());
-
-            expect(result.code).toBe(0);
-            expect(result.stdout.trim()).toBe("hello");
-        });
-
-        it("should block disallowed binaries", () => {
-            // The Rust side now validates the binary allow-list before spawning and
-            // throws a JS error, rather than returning exit 126 with stderr text.
-            expect.assertions(1);
-
-            expect(() => execPmCommand("/bin/bash", ["-c", "echo hacked"], process.cwd())).toThrow(/Disallowed binary/);
         });
     });
 

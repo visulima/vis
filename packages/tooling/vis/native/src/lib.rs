@@ -40,5 +40,9 @@ pub use transform::*;
 ///       `osv_bloom_probe_batch`. Backed by `blake3` keyed-hash double-hashing.
 ///   6 — added `transform_ts`: oxc-based TS/JSX → JS transpile for the runtime
 ///       loader (config / generators / `vis x`), replacing the `jiti` dependency.
+///   7 — removed the exports nothing in production called (`exec_pm_command`,
+///       `tags_from_path`, `parse_shebang`, `osv_bloom_probe`, `sort_package_json_string`,
+///       `resolve_outdated` wrapper, the `OsvBloomHandle` getters). `advisories_ingest`'s
+///       progress callback now receives `(current, total)` instead of `(null, payload)`.
 #[napi]
-pub const NATIVE_BINDING_VERSION: u32 = 6;
+pub const NATIVE_BINDING_VERSION: u32 = 7;

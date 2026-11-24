@@ -1,8 +1,8 @@
-import { sortPackageJsonString, sortPackageJsonStringWithOptions } from "@visulima/vis/native";
+import { sortPackageJsonStringWithOptions } from "@visulima/vis/native";
 import { describe, expect, it } from "vitest";
 
 describe("sort-package-json native integration", () => {
-    describe(sortPackageJsonString, () => {
+    describe("default options", () => {
         it("should sort package.json fields into conventional order", () => {
             expect.assertions(2);
 
@@ -12,7 +12,7 @@ describe("sort-package-json native integration", () => {
                 version: "1.0.0",
             });
 
-            const result = sortPackageJsonString(input);
+            const result = sortPackageJsonStringWithOptions(input, {});
             const keys = Object.keys(JSON.parse(result) as Record<string, unknown>);
 
             expect(keys.indexOf("name")).toBeLessThan(keys.indexOf("version"));
@@ -27,7 +27,7 @@ describe("sort-package-json native integration", () => {
                 name: "test",
             });
 
-            const result = sortPackageJsonString(input);
+            const result = sortPackageJsonStringWithOptions(input, {});
             const parsed = JSON.parse(result) as { dependencies: Record<string, string> };
 
             expect(Object.keys(parsed.dependencies)).toStrictEqual(["a", "b", "c"]);
@@ -37,7 +37,7 @@ describe("sort-package-json native integration", () => {
             expect.assertions(1);
 
             const input = JSON.stringify({ name: "test", version: "1.0.0" });
-            const result = sortPackageJsonString(input);
+            const result = sortPackageJsonStringWithOptions(input, {});
 
             expect(result).toContain("\n");
         });
@@ -52,7 +52,7 @@ describe("sort-package-json native integration", () => {
                 version: "1.0.0",
             });
 
-            const result = sortPackageJsonString(input);
+            const result = sortPackageJsonStringWithOptions(input, {});
             const parsed = JSON.parse(result) as Record<string, unknown>;
 
             expect(parsed).toHaveProperty("name", "test");
@@ -64,7 +64,7 @@ describe("sort-package-json native integration", () => {
         it("should handle empty object", () => {
             expect.assertions(1);
 
-            const result = sortPackageJsonString("{}");
+            const result = sortPackageJsonStringWithOptions("{}", {});
 
             expect(JSON.parse(result)).toStrictEqual({});
         });

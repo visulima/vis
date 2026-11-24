@@ -207,11 +207,6 @@ impl From<OutdatedOptions> for core::OutdatedOptions {
 }
 
 #[napi(catch_unwind)]
-pub fn resolve_outdated(pm: String, version: String, opts: OutdatedOptions) -> napi::Result<ResolvedCommand> {
-    core::resolve_outdated(&pm, &version, opts.into()).map(Into::into).map_err(invalid_arg)
-}
-
-#[napi(catch_unwind)]
 pub fn resolve_link(pm: String, version: String, target: Option<String>) -> napi::Result<ResolvedCommand> {
     core::resolve_link(&pm, &version, target).map(Into::into).map_err(invalid_arg)
 }

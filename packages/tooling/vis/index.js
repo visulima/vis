@@ -716,7 +716,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { OsvBloomHandle, advisoriesIngest, advisoriesQuery, advisoriesStatus, allKnownTags, cleanWorkspace, detectPackageManager, execPmCommand, execPmCommandInteractive, NATIVE_BINDING_VERSION, osvBloomDecode, osvBloomProbe, osvBloomProbeBatch, parseShebang, resolveAdd, resolveDedupe, resolveDlx, resolveEditorconfigDefaults, resolveExec, resolveInstall, resolveLink, resolveOutdated, resolvePmCommand, resolveRemove, resolveUnlink, resolveWhy, sortPackageJsonString, sortPackageJsonStringWithOptions, tagsFromPath, tagsFromPaths, transformTs, whichBin } = nativeBinding
+const { OsvBloomHandle, advisoriesIngest, advisoriesQuery, advisoriesStatus, allKnownTags, cleanWorkspace, detectPackageManager, execPmCommandInteractive, NATIVE_BINDING_VERSION, osvBloomDecode, osvBloomProbeBatch, resolveAdd, resolveDedupe, resolveDlx, resolveEditorconfigDefaults, resolveExec, resolveInstall, resolveLink, resolvePmCommand, resolveRemove, resolveUnlink, resolveWhy, sortPackageJsonStringWithOptions, tagsFromPaths, transformTs, whichBin } = nativeBinding
 export { OsvBloomHandle }
 export { advisoriesIngest }
 export { advisoriesQuery }
@@ -724,13 +724,10 @@ export { advisoriesStatus }
 export { allKnownTags }
 export { cleanWorkspace }
 export { detectPackageManager }
-export { execPmCommand }
 export { execPmCommandInteractive }
 export { NATIVE_BINDING_VERSION }
 export { osvBloomDecode }
-export { osvBloomProbe }
 export { osvBloomProbeBatch }
-export { parseShebang }
 export { resolveAdd }
 export { resolveDedupe }
 export { resolveDlx }
@@ -738,14 +735,11 @@ export { resolveEditorconfigDefaults }
 export { resolveExec }
 export { resolveInstall }
 export { resolveLink }
-export { resolveOutdated }
 export { resolvePmCommand }
 export { resolveRemove }
 export { resolveUnlink }
 export { resolveWhy }
-export { sortPackageJsonString }
 export { sortPackageJsonStringWithOptions }
-export { tagsFromPath }
 export { tagsFromPaths }
 export { transformTs }
 export { whichBin }

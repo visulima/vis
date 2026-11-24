@@ -22,7 +22,7 @@ import { advisoriesIngest, advisoriesQuery as nativeQuery, advisoriesStatus as n
 
 import { VisUserError } from "../errors/vis-user-error";
 
-const EXPECTED_BINDING_VERSION = 6;
+const EXPECTED_BINDING_VERSION = 7;
 
 if (NATIVE_BINDING_VERSION !== EXPECTED_BINDING_VERSION) {
     throw new Error(

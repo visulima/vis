@@ -24,7 +24,7 @@ import { basename } from "node:path";
 
 import { allKnownTags, NATIVE_BINDING_VERSION, tagsFromPaths as tagsFromPathsNative } from "#native";
 
-const EXPECTED_BINDING_VERSION = 6;
+const EXPECTED_BINDING_VERSION = 7;
 
 if (NATIVE_BINDING_VERSION !== EXPECTED_BINDING_VERSION) {
     throw new Error(

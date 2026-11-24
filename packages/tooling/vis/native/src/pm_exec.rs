@@ -20,36 +20,6 @@ fn validate_bin(bin: &str) -> napi::Result<()> {
     }
 }
 
-#[napi(object, object_from_js = false)]
-pub struct ExecResult {
-    pub code: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-/// Executes a package manager command synchronously.
-/// Uses Rust's std::process::Command for maximum performance.
-/// Only allowed binaries can be executed (see ALLOWED_BINS).
-///
-/// Returns `napi::Result<ExecResult>` -- throws a JS error for disallowed
-/// binaries or spawn failures, returns ExecResult with exit code otherwise.
-#[napi(catch_unwind)]
-pub fn exec_pm_command(bin: String, args: Vec<String>, cwd: String) -> napi::Result<ExecResult> {
-    validate_bin(&bin)?;
-
-    let output = Command::new(&bin)
-        .args(&args)
-        .current_dir(&cwd)
-        .output()
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to execute '{}': {}", bin, e)))?;
-
-    Ok(ExecResult {
-        code: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
-}
-
 /// Executes a package manager command with inherited stdio (interactive).
 /// Returns exit code. Throws JS error for disallowed binaries or spawn failures.
 #[napi(catch_unwind)]

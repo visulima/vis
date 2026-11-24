@@ -2,7 +2,7 @@
 
 /**
  * JS adapter for the native osv-bloom prefilter (`osvBloomDecode` /
- * `osvBloomProbe` / `osvBloomProbeBatch`). Wraps:
+ * `osvBloomProbeBatch`). Wraps:
  *
  * - HTTPS fetch of `manifest.json` (cheap, ~400 bytes) and `filter.bin`
  *   (~380 KB at current dataset size) from `endevco.github.io/osv-bloom`.
@@ -30,7 +30,7 @@ import { findCacheDirSync } from "@visulima/find-cache-dir";
 import type { OsvBloomBatchHit, OsvBloomBatchQuery, OsvBloomHandle } from "#native";
 import { NATIVE_BINDING_VERSION, osvBloomDecode, osvBloomProbeBatch } from "#native";
 
-const EXPECTED_BINDING_VERSION = 6;
+const EXPECTED_BINDING_VERSION = 7;
 
 if (NATIVE_BINDING_VERSION !== EXPECTED_BINDING_VERSION) {
     throw new Error(
