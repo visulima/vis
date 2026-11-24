@@ -2,11 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants as fsConstants } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { FileAccessTracker } from "../../src/file-access-tracker";
+import { FingerprintManager } from "../../src/fingerprint";
 
 // Regression tests for the macOS DYLD-interpose tracker (`fspy_macos` +
 // `native/src/macos.rs`). Each one runs a real tracked child, so they only run
@@ -64,7 +66,7 @@ int main(int argc, char **argv) {
 `;
 
 const findDylib = (): string | undefined => {
-    const root = join(import.meta.dirname, "..", "..", "native", "fspy_macos", "target");
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "native", "fspy_macos", "target");
 
     return [join(root, "debug", "libfspy_macos.dylib"), join(root, "release", "libfspy_macos.dylib")].find((candidate) => {
         try {
@@ -83,9 +85,12 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
     let workspaceRoot: string;
     let tracker: FileAccessTracker;
 
+    /* eslint-disable no-bitwise -- permission bits */
+
     // The mode a file created with `requested` ends up with under this process's umask
     // (the tracked child inherits it).
     const expectedMode = (requested: number): number => {
+        // eslint-disable-next-line sonarjs/file-permissions -- briefly clears the umask to read it back
         const previous = process.umask(0);
 
         process.umask(previous);
@@ -93,7 +98,12 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
         return requested & ~previous & 0o777;
     };
 
-    const modeOf = async (path: string): Promise<number> => (await stat(path)).mode & 0o7777;
+    const modeOf = async (path: string): Promise<number> => {
+        const { mode } = await stat(path);
+
+        return mode & 0o7777;
+    };
+    /* eslint-enable no-bitwise */
 
     beforeAll(async () => {
         toolsDirectory = await realpath(await mkdtemp(join(tmpdir(), "interpose-tools-")));
@@ -129,7 +139,7 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
             const result = await track([probe, "create", target, "640"]);
 
             expect(result.code).toBe(0);
-            expect(await modeOf(target)).toBe(expectedMode(0o640));
+            await expect(modeOf(target)).resolves.toBe(expectedMode(0o640));
             expect(result.accesses.some((a) => a.path === target && a.type === "write")).toBe(true);
         });
 
@@ -144,7 +154,7 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
             const result = await track([probe, "openat-create", directory, "created-openat.txt", "754"]);
 
             expect(result.code).toBe(0);
-            expect(await modeOf(target)).toBe(expectedMode(0o754));
+            await expect(modeOf(target)).resolves.toBe(expectedMode(0o754));
         });
 
         it("creates a file with exactly the requested mode via Node fs.writeFileSync", async () => {
@@ -155,7 +165,7 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
             const result = await track([process.execPath, "-e", script]);
 
             expect(result.code).toBe(0);
-            expect(await modeOf(target)).toBe(expectedMode(0o600));
+            await expect(modeOf(target)).resolves.toBe(expectedMode(0o600));
             expect(result.accesses.some((a) => a.path === target && a.type === "write")).toBe(true);
         });
 
@@ -167,7 +177,7 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
             const result = await track([process.execPath, "-e", script]);
 
             expect(result.code).toBe(0);
-            expect(await modeOf(target)).toBe(expectedMode(0o640));
+            await expect(modeOf(target)).resolves.toBe(expectedMode(0o640));
         });
     });
 
@@ -191,6 +201,22 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
 
             expect(result.code).toBe(0);
             expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+        });
+    });
+
+    describe("tracked process that closed the report socket", () => {
+        it("can still spawn children", async () => {
+            expect.assertions(1);
+
+            const script = `
+                const { closeSync } = require("node:fs");
+                const { spawnSync } = require("node:child_process");
+                closeSync(Number(process.env.FSPY_MACOS_FD));
+                process.exit(spawnSync(process.execPath, ["-e", "0"], { stdio: "ignore" }).status);
+            `;
+            const result = await track([process.execPath, "-e", script]);
+
+            expect(result.code).toBe(0);
         });
     });
 
@@ -224,6 +250,28 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
             expect(result.code).toBe(0);
             expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
             expect(result.accesses.some((a) => a.path === join(workspaceRoot, "inside.txt"))).toBe(false);
+        });
+
+        it("keeps the caller's spelling of a workspace reached through a symlink", async () => {
+            expect.assertions(2);
+
+            // `os.tmpdir()` is `/var/...` on macOS while the kernel reports `/private/var/...`.
+            const linkedRoot = await mkdtemp(join(tmpdir(), "interpose-linked-"));
+            const directory = join(linkedRoot, "sub");
+            const target = join(directory, "inside.txt");
+
+            try {
+                await mkdir(directory);
+                await writeFile(target, "data");
+
+                const linkedTracker = new FileAccessTracker(linkedRoot, []);
+                const result = await linkedTracker.trackInterpose([probe, "chdir-read", directory, "inside.txt"], { cwd: linkedRoot });
+
+                expect(result.code).toBe(0);
+                expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+            } finally {
+                await rm(linkedRoot, { force: true, recursive: true });
+            }
         });
 
         it("resolves a relative path read by Node after process.chdir()", async () => {
@@ -289,4 +337,77 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
         });
     });
 
+    describe("failed lookups", () => {
+        it("reports a failed open() of a missing file as missing", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "no-such-open.txt");
+            const result = await track([probe, "open-missing", target]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses).toContainEqual({ path: target, type: "missing" });
+        });
+
+        it("reports a failed stat() of a missing file as missing", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "no-such-stat.txt");
+            const result = await track([probe, "stat-missing", target]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses).toContainEqual({ path: target, type: "missing" });
+        });
+
+        it("reports a Node existsSync() probe of a missing file as missing", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "no-such-exists.txt");
+            const script = `require("node:fs").existsSync(${JSON.stringify(target)})`;
+            const result = await track([process.execPath, "-e", script]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses).toContainEqual({ path: target, type: "missing" });
+        });
+
+        it("does not report a missing file for an open() that creates it", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "created-not-missing.txt");
+            const result = await track([probe, "create", target, "644"]);
+
+            expect(result.accesses.some((a) => a.path === target && a.type === "write")).toBe(true);
+            expect(result.accesses.some((a) => a.path === target && a.type === "missing")).toBe(false);
+        });
+
+        it("does not leave a probed directory as a missing input once the task creates it", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "probed-then-mkdir");
+            const script = `const fs = require("node:fs"); if (!fs.existsSync(${JSON.stringify(target)})) fs.mkdirSync(${JSON.stringify(target)})`;
+            const result = await track([process.execPath, "-e", script]);
+            const manager = new FingerprintManager(workspaceRoot);
+            const fingerprint = await manager.createFingerprint(result.accesses, "probe", {}, {}, [], [], "interpose");
+
+            expect(fingerprint.missingFiles).toStrictEqual([]);
+            await expect(manager.validate(fingerprint)).resolves.toBeUndefined();
+        });
+
+        it("invalidates a fingerprint when a probed path is created afterwards", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "probed-then-created.txt");
+            const script = `require("node:fs").existsSync(${JSON.stringify(target)})`;
+            const result = await track([process.execPath, "-e", script]);
+            const manager = new FingerprintManager(workspaceRoot);
+            const fingerprint = await manager.createFingerprint(result.accesses, "probe", {}, {}, [], [], "interpose");
+
+            expect(fingerprint.missingFiles).toContain("probed-then-created.txt");
+
+            await writeFile(target, "now it exists");
+
+            const reasons = await manager.validate(fingerprint);
+
+            expect(reasons?.some((r) => r.type === "file-created")).toBe(true);
+        });
+    });
 });

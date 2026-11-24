@@ -20,8 +20,8 @@
 //! directory descriptors via `F_GETPATH`, relative paths against the process's
 //! own current directory), since only the tracked process knows those. A path
 //! it could not resolve arrives relative and is joined against the spawn `cwd`
-//! here. The TypeScript caller does the
-//! workspace-root + exclusion filtering, identical to the seccomp path.
+//! here. The TypeScript caller does the workspace-root + exclusion filtering,
+//! identical to the seccomp path.
 
 #![cfg(target_os = "macos")]
 
@@ -399,8 +399,9 @@ fn signal_cancel(cancel_write: RawFd) {
     }
 }
 
-/// Join the (rare) unresolved relative paths against the spawn cwd; pass absolutes through. Lossy
-/// UTF-8 — non-UTF-8 paths are rare and the JS side compares as strings.
+/// Join the rare unresolved relative path against the spawn cwd; pass absolutes
+/// through. Lossy UTF-8 — non-UTF-8 paths are rare and the JS side compares as
+/// strings.
 fn normalize(bytes: &[u8], cwd: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
 
@@ -419,6 +420,7 @@ fn kind_str(mode: u8) -> &'static str {
         1 => "write",
         2 => "stat",
         3 => "readdir",
+        4 => "missing",
         _ => "read",
     }
 }

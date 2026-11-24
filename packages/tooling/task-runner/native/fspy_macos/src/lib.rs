@@ -14,7 +14,8 @@
 //! dyld maps this dylib first and runs [`init`] (via `ctor`) before the
 //! target's `main`. `init` adopts the socket fd. Every interposed libc call
 //! forwards to the real implementation and then best-effort `send(2)`s one
-//! datagram `[u8 mode][absolute path bytes]` to the parent.
+//! datagram `[u8 mode][absolute path bytes]` to the parent (`mode` is
+//! read/write/stat/readdir, or `missing` for a lookup that failed with `ENOENT`).
 //!
 //! ## `open`/`openat` are variadic
 //!
@@ -57,6 +58,8 @@ mod mode {
     pub const WRITE: u8 = 1;
     pub const STAT: u8 = 2;
     pub const READDIR: u8 = 3;
+    /// A lookup that failed with `ENOENT`: the path did not exist when probed.
+    pub const MISSING: u8 = 4;
 }
 
 /// Env var carrying the inherited reporting socket fd. Set by the parent.
@@ -236,6 +239,10 @@ unsafe fn report(path: *const c_char, dirfd: c_int, mode: u8) {
         return;
     }
 
+    // The hooks report right after the real call; the caller still has to see
+    // that call's `errno`, not whatever `getcwd`/`send` left behind.
+    let saved_errno = last_errno();
+
     // PATH_MAX (1024 on macOS) + 1 opcode byte. A path longer than this is
     // truncated for the wire; the parent treats it as a best-effort hint.
     const CAP: usize = 1 + 1024;
@@ -252,6 +259,24 @@ unsafe fn report(path: *const c_char, dirfd: c_int, mode: u8) {
     }
 
     IN_HOOK.with(|flag| flag.set(false));
+
+    // SAFETY: `__error` returns this thread's errno slot.
+    unsafe { *libc::__error() = saved_errno };
+}
+
+/// The calling thread's `errno`.
+fn last_errno() -> c_int {
+    // SAFETY: `__error` returns this thread's errno slot.
+    unsafe { *libc::__error() }
+}
+
+/// For a lookup that just failed: report the path as `missing` when the failure
+/// was `ENOENT`, so a later appearance of the path invalidates a fingerprint
+/// that probed it. Other failures (`EACCES`, `ENOTDIR`, …) are not reported.
+unsafe fn report_if_missing(path: *const c_char, dirfd: c_int) {
+    if last_errno() == libc::ENOENT {
+        unsafe { report(path, dirfd, mode::MISSING) };
+    }
 }
 
 /// `open(path, flags[, mode])` → classify by access flags.
@@ -267,7 +292,8 @@ fn open_mode(flags: c_int) -> u8 {
 // ---- hooks -----------------------------------------------------------------
 //
 // Each hook forwards to the real libc function (resolved within this image, so
-// not re-interposed) and reports on success. `extern "C"` + fixed arity.
+// not re-interposed) and reports on success, or as `missing` when a lookup
+// failed with `ENOENT`. `extern "C"` + fixed arity.
 
 /// `open(path, flags[, mode])`. `mode` is only meaningful (and only forwarded)
 /// with `O_CREAT`; see the module docs for how it reaches this fn on each arch.
@@ -280,6 +306,10 @@ unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -
 
     if fd >= 0 {
         unsafe { report(path, libc::AT_FDCWD, open_mode(flags)) };
+    } else if flags & libc::O_CREAT == 0 {
+        // A failed create says nothing about the path's prior state (the parent
+        // directory may be what is missing).
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     fd
@@ -294,6 +324,8 @@ unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int
 
     if fd >= 0 {
         unsafe { report(path, dirfd, open_mode(flags)) };
+    } else if flags & libc::O_CREAT == 0 {
+        unsafe { report_if_missing(path, dirfd) };
     }
 
     fd
@@ -304,6 +336,8 @@ unsafe extern "C" fn hook_stat(path: *const c_char, buf: *mut libc::stat) -> c_i
 
     if rc == 0 {
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -314,6 +348,8 @@ unsafe extern "C" fn hook_lstat(path: *const c_char, buf: *mut libc::stat) -> c_
 
     if rc == 0 {
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -324,6 +360,8 @@ unsafe extern "C" fn hook_access(path: *const c_char, amode: c_int) -> c_int {
 
     if rc == 0 {
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     rc
@@ -334,6 +372,8 @@ unsafe extern "C" fn hook_opendir(path: *const c_char) -> *mut DIR {
 
     if !dir.is_null() {
         unsafe { report(path, libc::AT_FDCWD, mode::READDIR) };
+    } else {
+        unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
     dir
@@ -345,6 +385,16 @@ unsafe extern "C" fn hook_rename(old: *const c_char, new: *const c_char) -> c_in
     if rc == 0 {
         unsafe { report(old, libc::AT_FDCWD, mode::WRITE) };
         unsafe { report(new, libc::AT_FDCWD, mode::WRITE) };
+    }
+
+    rc
+}
+
+unsafe extern "C" fn hook_mkdir(path: *const c_char, mode: libc::mode_t) -> c_int {
+    let rc = unsafe { libc::mkdir(path, mode) };
+
+    if rc == 0 {
+        unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
     rc
@@ -609,6 +659,7 @@ interpose!(I_ACCESS, hook_access, libc::access);
 interpose!(I_OPENDIR, hook_opendir, libc::opendir);
 interpose!(I_RENAME, hook_rename, libc::rename);
 interpose!(I_UNLINK, hook_unlink, libc::unlink);
+interpose!(I_MKDIR, hook_mkdir, libc::mkdir);
 // Child-process propagation: re-inject DYLD_INSERT_LIBRARIES + FSPY_MACOS_FD
 // into curated child environments so tracking follows the whole tree.
 interpose!(I_EXECVE, hook_execve, libc::execve);
