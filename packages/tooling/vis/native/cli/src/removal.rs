@@ -11,7 +11,7 @@ use std::path::Path;
 /// and the system versions of both), which `access(2)` does not report. Only macOS is checked: the equivalent on
 /// Linux (`chattr +i`) needs an `ioctl` on an open file.
 #[cfg(target_os = "macos")]
-pub(crate) fn locked(metadata: &Metadata) -> bool {
+fn locked(metadata: &Metadata) -> bool {
     use std::os::macos::fs::MetadataExt;
 
     // UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND
@@ -19,7 +19,7 @@ pub(crate) fn locked(metadata: &Metadata) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn locked(_metadata: &Metadata) -> bool {
+fn locked(_metadata: &Metadata) -> bool {
     false
 }
 
