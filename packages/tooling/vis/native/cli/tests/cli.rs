@@ -8,8 +8,14 @@
 
 use std::process::Command;
 
+/// The binary with a terminal size in its environment, so the help it renders has a width without asking
+/// a terminal (a run from a terminal would otherwise be handed to Node for it).
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_vis"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vis"));
+
+    command.env("COLUMNS", "80").env("LINES", "24");
+
+    command
 }
 
 #[test]
@@ -30,6 +36,48 @@ fn version_prints_bare_injected_semver() {
 
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), "1.2.3-alpha.7\n");
+}
+
+#[test]
+fn help_wins_over_the_version() {
+    for args in [&["--version", "--help"][..], &["-V", "-h"]] {
+        let output = binary().args(args).env("VIS_VERSION", "1.2.3").output().expect("run binary");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(output.status.success(), "{args:?}");
+        assert!(stdout.contains("Usage") && stdout.contains("Global Options"), "{args:?}: {stdout}");
+    }
+}
+
+#[test]
+fn a_width_only_node_can_look_up_is_handed_to_it_before_any_output() {
+    // `COLUMNS` without `LINES` is the `tput` step of the Node lookup, which this binary does not run.
+    let output = binary()
+        .arg("--help")
+        .env_remove("LINES")
+        .env_remove("CEREBRO_TERMINAL_WIDTH")
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .env("VIS_NODE", "/nonexistent-node")
+        .output()
+        .expect("run binary");
+
+    assert_eq!(output.status.code(), Some(70), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stdout.is_empty(), "nothing may be printed before the hand-off");
+}
+
+#[test]
+fn a_colour_variable_conflict_is_handed_to_node_before_any_output() {
+    let output = binary()
+        .arg("--help")
+        .env("FORCE_COLOR", "1")
+        .env("NO_COLOR", "1")
+        .env_remove("VIS_FALLBACK_ENTRY")
+        .env("VIS_NODE", "/nonexistent-node")
+        .output()
+        .expect("run binary");
+
+    assert_eq!(output.status.code(), Some(70));
+    assert!(output.stdout.is_empty());
 }
 
 #[test]

@@ -111,8 +111,10 @@ fn main() {
         NATIVE_INFO => native_info(),
         // `--version` / `-V` print the bare semver (same as cerebro's version
         // command). NOTE: `-v` is cerebro's *verbose* flag, not version, so it is
-        // intentionally NOT routed here and falls through to Node.
-        "--version" | "-V" => print_version(),
+        // intentionally NOT routed here and falls through to Node. Help wins over the
+        // version (cerebro checks it first), so `--version --help` is answered by the
+        // help surface below.
+        "--version" | "-V" if !surface::asks_for_help(&args) => print_version(),
         // `vis complete -- <words…>` — dynamic shell completion, answered from the
         // command manifest (the endpoint the generated completion scripts call).
         "complete" if args.get(1).map(String::as_str) == Some("--") => exit(complete::run(&args)),
