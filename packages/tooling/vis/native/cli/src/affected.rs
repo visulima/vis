@@ -297,18 +297,34 @@ fn parse_porcelain(raw: &str) -> Option<Vec<String>> {
     Some(files)
 }
 
+/// What `git <args>` did in a directory.
+enum GitRun {
+    /// It ran and exited zero; this is its stdout.
+    Done(Vec<u8>),
+    /// It did not start, or exited non-zero.
+    Failed,
+}
+
+fn git_output(root: &Path, args: &[&str]) -> GitRun {
+    match Command::new("git").args(args).current_dir(root).stdin(Stdio::null()).stderr(Stdio::null()).output() {
+        Ok(output) if output.status.success() => GitRun::Done(output.stdout),
+        _ => GitRun::Failed,
+    }
+}
+
 /// Runs `git <args>` in `root` and returns stdout as text. `None` on a launch failure, a non-zero
 /// exit, output at the `maxBuffer` limit or output that is not UTF-8: every one of those is an
 /// error path (or a decoding) Node owns.
 fn run_git(root: &Path, args: &[&str]) -> Option<String> {
-    let output =
-        Command::new("git").args(args).current_dir(root).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-
-    if !output.status.success() || output.stdout.len() >= MAX_BUFFER {
-        return None;
+    match git_output(root, args) {
+        GitRun::Done(stdout) if stdout.len() < MAX_BUFFER => String::from_utf8(stdout).ok(),
+        _ => None,
     }
+}
 
-    String::from_utf8(output.stdout).ok()
+/// Whether `file` is `directory` or lies below it (both `/`-separated, relative to the same root).
+fn is_within(file: &str, directory: &str) -> bool {
+    file == directory || file.strip_prefix(directory).is_some_and(|rest| rest.starts_with('/'))
 }
 
 struct RealSource<'a> {
@@ -355,35 +371,17 @@ fn changed_files(root: &Path, base: &str, head: &str) -> Option<Vec<String>> {
 /// The files of `git status --porcelain -z` that lie in a known project. A status that cannot be
 /// read is an empty list, as in Node.
 fn working_tree_files(root: &Path, project_roots: &[&str]) -> Option<Vec<String>> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain", "-z"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else { return Some(Vec::new()) };
-
-    if !output.status.success() {
+    let GitRun::Done(stdout) = git_output(root, &["status", "--porcelain", "-z"]) else {
         return Some(Vec::new());
-    }
+    };
 
-    if output.stdout.len() >= MAX_BUFFER {
+    if stdout.len() >= MAX_BUFFER {
         return None;
     }
 
-    let files = parse_porcelain(&String::from_utf8(output.stdout).ok()?)?;
+    let files = parse_porcelain(&String::from_utf8(stdout).ok()?)?;
 
-    Some(
-        files
-            .into_iter()
-            .filter(|file| {
-                project_roots.iter().any(|project| {
-                    file == project || file.strip_prefix(*project).is_some_and(|rest| rest.starts_with('/'))
-                })
-            })
-            .collect(),
-    )
+    Some(files.into_iter().filter(|file| project_roots.iter().any(|project| is_within(file, project))).collect())
 }
 
 /// The project that owns `file`: the deepest project root containing it.
@@ -391,9 +389,7 @@ fn owner<'a>(file: &str, roots: &'a BTreeMap<&'a str, &'a str>) -> Option<&'a st
     let mut best: Option<(&str, usize)> = None;
 
     for (name, root) in roots {
-        let inside = file == *root || file.strip_prefix(*root).is_some_and(|rest| rest.starts_with('/'));
-
-        if inside && root.len() > best.map_or(0, |(_, length)| length) {
+        if is_within(file, root) && root.len() > best.map_or(0, |(_, length)| length) {
             best = Some((name, root.len()));
         }
     }
