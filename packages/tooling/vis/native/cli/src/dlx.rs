@@ -2,9 +2,11 @@
 //!
 //! The Node handler (`src/commands/dlx/handler.ts`, run by the lean entry `cli-exec.ts`: no config, no
 //! workspace root, no plugins) shows a first-run info panel for a registry package before it runs the
-//! package manager's `dlx`. Because `--info` and the default both leave `options.info` true, that gate
-//! fetches package metadata and may prompt on every run unless it is switched off. This module answers
-//! only the runs where the gate does nothing, and hands everything else to Node before any output:
+//! package manager's `dlx`. The gate skips itself in CI, without a terminal and with `--yes`, and for a
+//! package it has seen; otherwise it fetches package metadata and may prompt. It decides that at run time
+//! from the terminal, the CI variables and a state file in the home directory, none of which this module
+//! reads. So it answers only the runs where the gate does nothing whatever those are, and hands everything
+//! else to Node before any output:
 //!
 //! - the gate is off: `--no-info` or a truthy `VIS_DLX_NO_INFO`, or none of the packages it would vet is a
 //!   registry spec (shell mode vets only the `-p` packages; paths, URLs and aliases are skipped);
