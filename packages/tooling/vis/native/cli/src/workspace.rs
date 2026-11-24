@@ -4,8 +4,11 @@
 //! the `package.json` filter produce in `packages/tooling/vis/src/config/workspace.ts`, for the
 //! pattern shapes below. Anything else returns `Membership::Delegate`, and the Node CLI answers it.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path};
+
+use rayon::prelude::*;
 
 /// Outcome of resolving a root's project directories.
 #[derive(Debug, PartialEq)]
@@ -68,18 +71,25 @@ pub(crate) const WORKSPACE_YAML_NAMES: [&str; 2] = ["aube-workspace.yaml", "pnpm
 /// `Native` only when every gate passes: no config or overlay that applies, no non-JS
 /// marker, and only the pattern shapes this module reproduces.
 pub fn project_directories(root: &Path) -> Membership {
-    resolve(root, false).unwrap_or(Membership::Delegate)
+    resolve(root, false, None).unwrap_or(Membership::Delegate)
+}
+
+/// Like [`project_directories`], but a workspace with `limit` directories or more (the patterns' matches, before
+/// the `.gitignore` and the manifest checks) is Node's, and none of its manifests is read: a caller that could not
+/// answer such a workspace anyway does not pay for reading it.
+pub fn project_directories_below(root: &Path, limit: usize) -> Membership {
+    resolve(root, false, Some(limit)).unwrap_or(Membership::Delegate)
 }
 
 /// Like [`project_directories`], but a `vis.config.*` at the root does not delegate. The caller
 /// has read that config and knows none of its keys can change which directories are projects.
 pub fn project_directories_vetted(root: &Path) -> Membership {
-    resolve(root, true).unwrap_or(Membership::Delegate)
+    resolve(root, true, None).unwrap_or(Membership::Delegate)
 }
 
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
-fn resolve(root: &Path, config_vetted: bool) -> Option<Membership> {
+fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Membership> {
     if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
         return None;
     }
@@ -104,39 +114,48 @@ fn resolve(root: &Path, config_vetted: bool) -> Option<Membership> {
     }
 
     // Overlapping patterns (`tools` and `tools/**`) resolve the same directory twice; keep the first.
-    let mut unique: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::with_capacity(directories.len());
+    let mut unique: Vec<String> = Vec::with_capacity(directories.len());
 
     for directory in directories {
-        if !unique.contains(&directory) {
+        if seen.insert(directory.clone()) {
             unique.push(directory);
         }
     }
 
-    let rules = gitignore_rules(root)?;
-    let mut kept = Vec::new();
-
-    for directory in unique {
-        if !directory.is_ascii() {
-            return None;
-        }
-
-        if is_ignored(&rules, &directory) {
-            continue;
-        }
-
-        let absolute = root.join(&directory);
-
-        // Node names a project from its package.json (or project.json, which wins) and drops a directory
-        // with no name, so a candidate that does not yield a name is left to Node.
-        if !has_package_name(&absolute)
-            || absolute.join("project.json").exists()
-            || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists())
-        {
-            return None;
-        }
-
-        kept.push(directory);
+    if limit.is_some_and(|limit| unique.len() >= limit) {
+        return None;
     }
+
+    let rules = gitignore_rules(root)?;
+    // Every directory is looked at on every core; one that sends the workspace to Node (`None`) does that whichever
+    // directory it is, and the ones that stay keep the order they were discovered in.
+    let kept: Vec<Option<String>> = unique
+        .into_par_iter()
+        .map(|directory| {
+            if !directory.is_ascii() {
+                return None;
+            }
+
+            if is_ignored(&rules, &directory) {
+                return Some(None);
+            }
+
+            let absolute = root.join(&directory);
+
+            // Node names a project from its package.json (or project.json, which wins) and drops a directory
+            // with no name, so a candidate that does not yield a name is left to Node.
+            if !has_package_name(&absolute)
+                || absolute.join("project.json").exists()
+                || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists())
+            {
+                return None;
+            }
+
+            Some(Some(directory))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let kept: Vec<String> = kept.into_iter().flatten().collect();
 
     Some(Membership::Native(kept))
 }
@@ -231,15 +250,20 @@ fn has_package_name(directory: &Path) -> bool {
 }
 
 pub(crate) fn has_non_js_marker(root: &Path) -> Option<bool> {
-    for entry in fs::read_dir(root).ok()? {
-        let name = entry.ok()?.file_name().into_string().ok()?;
+    let mut names = Vec::new();
 
-        if NON_JS_MARKERS.contains(&name.as_str()) || NON_JS_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
-            return Some(true);
-        }
+    for entry in fs::read_dir(root).ok()? {
+        names.push(entry.ok()?.file_name().into_string().ok()?);
     }
 
-    Some(false)
+    Some(names_hold_non_js_marker(&names))
+}
+
+/// Whether one of the entry names of a directory is a non-JS manifest (see [`has_non_js_marker`]).
+pub(crate) fn names_hold_non_js_marker(names: &[String]) -> bool {
+    names.iter().any(|name| {
+        NON_JS_MARKERS.contains(&name.as_str()) || NON_JS_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+    })
 }
 
 /// Whether a directory is a project candidate (`isProjectCandidate`).
@@ -839,5 +863,28 @@ mod gitignore_fixture_tests {
             project_directories(&root),
             Membership::Native(vec!["packages/a".to_string(), "nested/keep".to_string()])
         );
+    }
+
+    #[test]
+    fn a_workspace_at_the_limit_is_left_to_node_and_below_it_is_not() {
+        let root = std::env::temp_dir().join(format!("vis-workspace-limit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("package.json"), "{\"name\":\"root\",\"private\":true}").expect("root manifest");
+        fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - \"packages/*\"\n").expect("workspace");
+
+        for name in ["a", "b", "c"] {
+            fs::create_dir_all(root.join("packages").join(name)).expect("project");
+            fs::write(root.join("packages").join(name).join("package.json"), format!("{{\"name\":\"{name}\"}}"))
+                .expect("manifest");
+        }
+
+        let all = project_directories(&root);
+
+        assert!(matches!(&all, Membership::Native(directories) if directories.len() == 3));
+        assert_eq!(project_directories_below(&root, 4), all);
+        assert_eq!(project_directories_below(&root, 3), Membership::Delegate);
+        assert_eq!(project_directories_below(&root, 1), Membership::Delegate);
     }
 }

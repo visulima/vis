@@ -1,7 +1,8 @@
 //! Native `vis run <target>` for a run in which every task is a local cache hit.
 //!
-//! Everything else is Node's. The native attempt reads the workspace, keys every task and looks every
-//! key up in the cache **before it prints or writes anything**; the first thing that is not a clean hit
+//! Everything else is Node's. The native attempt reads the workspace, then keys each task and looks its key up in
+//! the cache (the tasks side by side, a task's key reading only its own project's files and the global inputs) **before
+//! it prints or writes anything**; the first thing that is not a clean hit
 //! (a miss, a key it cannot reproduce, an entry that holds outputs, an expired entry, a stale install, a
 //! toolchain pin that is not met, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
 //! does it write `.vis/last-summary.json` and print what the Node static renderer prints for such a run.
@@ -13,6 +14,7 @@
 //!   (GitHub Actions, GitLab CI, Buildkite, Azure Pipelines) the Node renderer prints for that environment;
 //!   the Node version the summary records is the launcher's `process.version` (`VIS_NODE_VERSION`) when it started
 //!   the binary, and otherwise the answer of `node --version` from the Node the run would be handed to;
+//! * fewer than 1000 project directories and fewer than 1000 tasks (a bigger one is Node's before its files are read);
 //! * a pnpm workspace of script-only JS projects (`targets::script_targets`), no `vis.config`, no
 //!   `dependsOn`, default inputs, no outputs, no `cache: false`;
 //! * a workspace whose startup preflights print nothing: no toolchain pin, or one that every pinned tool meets
@@ -31,10 +33,11 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use task_runner_core::{compute_task_keys, lookup_entry, CacheLookup, DependsOn, RunProject, TaskKey};
+use rayon::prelude::*;
+use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer};
 
 use crate::advisories::{in_ci, native_context};
-use crate::targets::{script_targets, Targets};
+use crate::targets::{script_targets_below, Targets};
 use crate::term;
 use crate::toolchain::{self, Pins, Versions};
 
@@ -73,6 +76,14 @@ const OTHER_LOCKFILES: [&str; 6] =
 
 /// `MTIME_SKEW_MS` of the lockfile preflight.
 const MTIME_SKEW_MS: f64 = 1000.0;
+
+/// Threads the workspace read, the keys and the lookups share. They are made of small file system calls that stop
+/// scaling past a few threads (a 200-project workspace is answered faster on 4 threads than on 10, where the extra
+/// threads wait on the file system or land on slow cores), so a many-core machine does not get more.
+const MAX_THREADS: usize = 4;
+
+/// A run of this many tasks or more is Node's: the summary line and the counts change layout.
+const MAX_TASKS: usize = 1000;
 
 /// The longest title the static header renders on one line (the rest wraps in Node).
 const MAX_TITLE_WIDTH: usize = 60;
@@ -544,26 +555,33 @@ struct Answer {
     node_version: String,
 }
 
-impl Answer {
-    fn description(&self) -> String {
-        let count = self.hits.len();
-
-        match self.hits.as_slice() {
-            [only] => format!(
-                "target {} for project {}",
-                self.target,
-                only.key.id.trim_end_matches(&format!(":{}", self.target))
-            ),
-            _ => format!("target {} for {count} projects", self.target),
-        }
+/// `target <target> for project <name>` for one task, `... for <count> projects` for more.
+fn describe(target: &str, count: usize, first_id: &str) -> String {
+    if count == 1 {
+        return format!("target {target} for project {}", first_id.trim_end_matches(&format!(":{target}")));
     }
 
-    /// Every line this module prints has to fit the 80 columns Node renders them in.
+    format!("target {target} for {count} projects")
+}
+
+/// Whether the lines of a run of `ids` fit what the renderer prints on one line, and the count stays below the one
+/// where Node's layout changes. Every line this module prints has to fit the 80 columns Node renders them in.
+fn layout_fits(target: &str, ids: &[&str]) -> bool {
+    ids.len() < MAX_TASKS
+        && ids.iter().all(|id| id.len() <= MAX_ID_WIDTH)
+        && ids.first().is_some_and(|first| {
+            format!("Successfully ran {}", describe(target, ids.len(), first)).len() <= MAX_TITLE_WIDTH
+        })
+}
+
+impl Answer {
+    fn description(&self) -> String {
+        describe(&self.target, self.hits.len(), &self.hits[0].key.id)
+    }
+
+    /// Whether the times fit what the renderer prints (`formatMs` below one second).
     fn fits(&self) -> bool {
-        self.hits.len() < 1000
-            && self.milliseconds < 1000
-            && self.hits.iter().all(|hit| hit.milliseconds < 1000 && hit.key.id.len() <= MAX_ID_WIDTH)
-            && format!("Successfully ran {}", self.description()).len() <= MAX_TITLE_WIDTH
+        self.milliseconds < 1000 && self.hits.iter().all(|hit| hit.milliseconds < 1000)
     }
 
     /// What the static renderer prints for a run whose tasks all hit, off a terminal, in the colour and
@@ -727,6 +745,68 @@ impl Answer {
     }
 }
 
+/// Sets the size of the thread pool the parallel parts below run on. The first call wins; a pool that already exists
+/// (an earlier call, or `RAYON_NUM_THREADS` read by a library) is left as it is.
+fn size_thread_pool() {
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get).min(MAX_THREADS);
+
+    // An error means a pool exists already, which is fine.
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
+}
+
+/// The key of every task, in project order, computed side by side. `None` for a key that cannot be reproduced.
+fn keys_of(keyer: &TaskKeyer) -> Option<Vec<String>> {
+    (0..keyer.tasks().len()).into_par_iter().map(|index| keyer.key(index).ok().map(|key| key.hash)).collect()
+}
+
+/// Keys each task and looks its key up, in project order in the result. Tasks depend on nothing in this shape, so a
+/// task's key reads only its own project's files and the global inputs, and the tasks are independent: they are
+/// worked on side by side and the first one that is not a clean hit stops the rest, which is `None`. Nothing
+/// is printed or written before every task has hit.
+fn look_up_all(keyer: &TaskKeyer, cache: &Path) -> Option<Vec<Hit>> {
+    (0..keyer.tasks().len())
+        .into_par_iter()
+        .map(|graph_index| {
+            let key = keyer.key(graph_index).ok()?;
+
+            if !key.keyed {
+                return None;
+            }
+
+            let lookup_started = SystemTime::now();
+            let lookup_clock = Instant::now();
+            let CacheLookup::Hit(entry) = lookup_entry(cache, &key.hash).ok()? else { return None };
+
+            // A stored failure is a hit with exit 0 in Node; that is not reproduced.
+            if entry.code != 0 {
+                return None;
+            }
+
+            Some(Hit {
+                key,
+                graph_index,
+                terminal_output: entry.terminal_output,
+                started: lookup_started,
+                ended: SystemTime::now(),
+                milliseconds: lookup_clock.elapsed().as_millis() as u64,
+            })
+        })
+        .collect()
+}
+
+/// Gives the tasks, in project order, the lookup times in the order the lookups began: the lookups ran side by side,
+/// and the summary lists tasks by start time.
+fn sort_times(hits: &mut [Hit]) {
+    let mut times: Vec<(SystemTime, SystemTime, u64)> =
+        hits.iter().map(|hit| (hit.started, hit.ended, hit.milliseconds)).collect();
+
+    times.sort_by_key(|time| time.0);
+
+    for (hit, (started, ended, milliseconds)) in hits.iter_mut().zip(times) {
+        (hit.started, hit.ended, hit.milliseconds) = (started, ended, milliseconds);
+    }
+}
+
 /// Reads the workspace, keys every task, and looks every key up. `None` means "Node answers".
 fn attempt(args: &[String]) -> Option<Answer> {
     let started = SystemTime::now();
@@ -765,7 +845,10 @@ fn attempt(args: &[String]) -> Option<Answer> {
         return None;
     }
 
-    let Targets::Native(workspace) = script_targets(&root) else { return None };
+    size_thread_pool();
+
+    // A run of `MAX_TASKS` tasks is Node's, so a workspace with that many projects is too, before its manifests are read.
+    let Targets::Native(workspace) = script_targets_below(&root, MAX_TASKS) else { return None };
     let mut projects = Vec::new();
 
     for project in workspace {
@@ -781,34 +864,17 @@ fn attempt(args: &[String]) -> Option<Answer> {
         });
     }
 
-    let keys = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
-    let hashes: Vec<String> = keys.keys.iter().map(|key| key.hash.clone()).collect();
-    let mut hits = Vec::with_capacity(keys.keys.len());
+    let keyer = TaskKeyer::new(root.to_str()?, &target, &projects).ok()?;
+    let ids: Vec<&str> = keyer.tasks().iter().map(|task| task.id.as_str()).collect();
 
-    for (graph_index, key) in keys.keys.into_iter().enumerate() {
-        let lookup_started = SystemTime::now();
-        let lookup_clock = Instant::now();
-
-        if !key.keyed || !plain(&key.id) {
-            return None;
-        }
-
-        let CacheLookup::Hit(entry) = lookup_entry(&cache, &key.hash).ok()? else { return None };
-
-        // A stored failure is a hit with exit 0 in Node; that is not reproduced.
-        if entry.code != 0 {
-            return None;
-        }
-
-        hits.push(Hit {
-            key,
-            graph_index,
-            terminal_output: entry.terminal_output,
-            started: lookup_started,
-            ended: SystemTime::now(),
-            milliseconds: lookup_clock.elapsed().as_millis() as u64,
-        });
+    // What the answer could not print is known before a file is read.
+    if !ids.iter().all(|id| plain(id)) || !layout_fits(&target, &ids) {
+        return None;
     }
+
+    let mut hits = look_up_all(&keyer, &cache)?;
+
+    sort_times(&mut hits);
 
     if !nothing_to_sweep(&cache) {
         return None;
@@ -839,9 +905,10 @@ fn attempt(args: &[String]) -> Option<Answer> {
     // answer moved them is Node's. Any executable asked after the hits can do that, the Node of a start without the
     // launcher included (a wrapper or a version manager's shim), so this does not depend on a pin.
     if !pins.is_empty() || node_command.is_some() {
-        let again = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
+        let again = TaskKeyer::new(root.to_str()?, &target, &projects).ok()?;
+        let keys = keys_of(&again)?;
 
-        if !lockfile_is_fresh(&root) || again.keys.iter().map(|key| &key.hash).ne(hashes.iter()) {
+        if !lockfile_is_fresh(&root) || keys.iter().ne(hits.iter().map(|hit| &hit.key.hash)) {
             return None;
         }
     }
@@ -992,6 +1059,161 @@ mod tests {
         assert_eq!(out, "::group::\u{2713} p:build\nout\n::endgroup::\n##[group]\u{1b}[32m\u{2713}\u{1b}[39m p:build\nout\n##[endgroup]\n");
         assert_eq!(plain.banner("37"), " VIS  \u{2022}");
         assert!(colour.banner("32").starts_with("\u{1b}[1m\u{1b}[7m VIS "));
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("vis-run-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("scratch directory");
+
+        directory.canonicalize().expect("canonical")
+    }
+
+    /// A workspace of `count` projects with one source file each, and a cache holding an entry for every task.
+    fn cached_workspace(name: &str, count: usize) -> (PathBuf, PathBuf, Vec<RunProject>) {
+        let root = scratch(name);
+        let cache = root.join("cache");
+        let mut projects = Vec::new();
+
+        fs::create_dir_all(&cache).expect("cache");
+
+        for index in 0..count {
+            let directory = format!("packages/p{index}");
+
+            fs::create_dir_all(root.join(&directory).join("src")).expect("project");
+            fs::write(root.join(&directory).join("package.json"), "{}").expect("manifest");
+            fs::write(root.join(&directory).join("src/index.ts"), format!("export const v = {index};"))
+                .expect("source");
+            projects.push(RunProject {
+                name: format!("p{index}"),
+                root: directory,
+                script: Some("true".to_owned()),
+                ..Default::default()
+            });
+        }
+
+        let keyer = TaskKeyer::new(root.to_str().expect("utf-8"), "build", &projects).expect("keyer");
+
+        for index in 0..count {
+            let entry = cache.join(keyer.key(index).expect("key").hash);
+
+            fs::create_dir_all(&entry).expect("entry");
+            fs::write(entry.join(".commit"), "").expect("commit");
+            fs::write(entry.join("code"), "0").expect("code");
+            fs::write(entry.join("terminalOutput"), format!("out {index}\n")).expect("output");
+        }
+
+        (root, cache, projects)
+    }
+
+    fn look_up(root: &Path, cache: &Path, projects: &[RunProject]) -> Option<Vec<Hit>> {
+        look_up_all(&TaskKeyer::new(root.to_str().expect("utf-8"), "build", projects).expect("keyer"), cache)
+    }
+
+    #[test]
+    fn every_hit_is_listed_in_project_order_with_its_own_output() {
+        let (root, cache, projects) = cached_workspace("order", 60);
+        let hits = look_up(&root, &cache, &projects).expect("every task hits");
+
+        assert_eq!(hits.len(), 60);
+
+        for (index, hit) in hits.iter().enumerate() {
+            assert_eq!(hit.graph_index, index);
+            assert_eq!(hit.key.id, format!("p{index}:build"));
+            assert_eq!(hit.terminal_output, format!("out {index}\n"));
+        }
+    }
+
+    #[test]
+    fn one_task_that_is_not_a_clean_hit_gives_no_answer_wherever_it_is() {
+        for position in [0, 1, 30, 58, 59] {
+            let (root, cache, projects) = cached_workspace(&format!("miss-{position}"), 60);
+
+            // A source change gives the project another key, with no entry.
+            fs::write(root.join(format!("packages/p{position}/src/index.ts")), "changed").expect("edit");
+            assert!(look_up(&root, &cache, &projects).is_none(), "changed source at {position}");
+
+            fs::write(root.join(format!("packages/p{position}/src/index.ts")), format!("export const v = {position};"))
+                .expect("restore");
+            assert!(look_up(&root, &cache, &projects).is_some(), "restored source at {position}");
+
+            let hash = TaskKeyer::new(root.to_str().expect("utf-8"), "build", &projects)
+                .expect("keyer")
+                .key(position)
+                .expect("key")
+                .hash;
+            let entry = cache.join(&hash);
+
+            fs::remove_file(entry.join(".commit")).expect("remove");
+            assert!(look_up(&root, &cache, &projects).is_none(), "half written entry at {position}");
+            fs::write(entry.join(".commit"), "").expect("commit");
+
+            fs::write(entry.join("code"), "1").expect("code");
+            assert!(look_up(&root, &cache, &projects).is_none(), "stored failure at {position}");
+            fs::write(entry.join("code"), "0").expect("code");
+
+            fs::write(entry.join("outputs-manifest.json"), "{}").expect("manifest");
+            assert!(look_up(&root, &cache, &projects).is_none(), "entry with outputs at {position}");
+            fs::remove_file(entry.join("outputs-manifest.json")).expect("remove");
+
+            fs::remove_dir_all(&entry).expect("remove entry");
+            assert!(look_up(&root, &cache, &projects).is_none(), "missing entry at {position}");
+        }
+    }
+
+    #[test]
+    fn a_project_without_input_files_gives_no_answer() {
+        let (root, cache, projects) = cached_workspace("no-files", 8);
+
+        fs::remove_dir_all(root.join("packages/p5")).expect("remove");
+        fs::create_dir_all(root.join("packages/p5")).expect("recreate");
+        fs::write(root.join("packages/p5/.hidden"), "x").expect("hidden");
+
+        assert!(look_up(&root, &cache, &projects).is_none());
+    }
+
+    #[test]
+    fn the_lookup_times_run_in_start_order_along_project_order() {
+        let (root, cache, projects) = cached_workspace("times", 40);
+        let mut hits = look_up(&root, &cache, &projects).expect("every task hits");
+
+        // Lookups that ran side by side finish in any order.
+        hits.reverse();
+        hits.sort_by_key(|hit| hit.graph_index);
+
+        let before: Vec<SystemTime> = hits.iter().map(|hit| hit.started).collect();
+
+        sort_times(&mut hits);
+
+        assert!(hits.windows(2).all(|pair| pair[0].started <= pair[1].started));
+        assert_eq!(hits.iter().map(|hit| hit.graph_index).collect::<Vec<_>>(), (0..40).collect::<Vec<_>>());
+        assert!(hits.iter().all(|hit| hit.ended >= hit.started));
+
+        let mut sorted = before;
+
+        sorted.sort();
+
+        assert_eq!(hits.iter().map(|hit| hit.started).collect::<Vec<_>>(), sorted);
+    }
+
+    #[test]
+    fn the_layout_is_checked_before_any_file_is_read() {
+        let ids = |count: usize| (0..count).map(|index| format!("p{index}:build")).collect::<Vec<_>>();
+        let fits =
+            |target: &str, ids: &[String]| layout_fits(target, &ids.iter().map(String::as_str).collect::<Vec<_>>());
+
+        assert!(fits("build", &ids(1)));
+        assert!(fits("build", &ids(999)));
+        assert!(!fits("build", &ids(1000)));
+        assert!(!fits("build", &[]));
+        assert!(fits("build", &["p:build".to_owned(), format!("{}:build", "a".repeat(44))]));
+        assert!(!fits("build", &["p:build".to_owned(), format!("{}:build", "a".repeat(45))]));
+        // The title `Successfully ran target <target> for <n> projects` has to stay on one line.
+        assert!(fits(&"t".repeat(20), &ids(10)));
+        assert!(!fits(&"t".repeat(40), &ids(10)));
+        assert_eq!(describe("build", 1, "p3:build"), "target build for project p3");
+        assert_eq!(describe("build", 12, "p3:build"), "target build for 12 projects");
     }
 
     #[test]
