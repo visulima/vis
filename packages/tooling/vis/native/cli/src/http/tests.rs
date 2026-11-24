@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use ureq::{Proxy, ProxyProtocol};
 
-use super::{host_of, tls, HttpClient, HttpConfig, HttpError};
+use super::{host_of, next_hop, resolve, tls, HttpClient, HttpConfig, HttpError};
 
 #[derive(Clone, Debug)]
 struct Seen {
@@ -208,6 +208,79 @@ fn get_follows_redirects() {
 }
 
 #[test]
+fn a_redirect_to_another_origin_keeps_no_header_but_accept() {
+    let far = spawn(|_| ok("far"));
+    let far_url = far.url("/landed");
+    let near = spawn(move |seen| {
+        if seen.request_line.starts_with("GET /back") {
+            reply("302 Found", &[("location", "/same")], b"")
+        } else if seen.request_line.starts_with("GET /same") {
+            ok("near")
+        } else {
+            reply("302 Found", &[("location", &far_url)], b"")
+        }
+    });
+    let headers = [("accept", "application/json"), ("x-api-key", "secret"), ("authorization", "Bearer t")];
+
+    assert_eq!(client().get(&near.url("/out"), &headers).unwrap().text().unwrap(), "far");
+
+    let landed = &far.requests()[0];
+
+    assert_eq!(landed.header("accept"), Some("application/json"));
+    assert_eq!(landed.header("x-api-key"), None);
+    assert_eq!(landed.header("authorization"), None);
+
+    // The same origin keeps all of them.
+    assert_eq!(client().get(&near.url("/back"), &headers).unwrap().text().unwrap(), "near");
+    assert_eq!(near.requests().last().unwrap().header("x-api-key"), Some("secret"));
+}
+
+#[test]
+fn a_post_redirected_with_303_becomes_a_get_and_with_307_is_not_sent_elsewhere() {
+    let target = spawn(|_| ok("target"));
+    let target_url = target.url("/t");
+    let origin = spawn(move |seen| {
+        let status = if seen.request_line.contains("/see-other") { "303 See Other" } else { "307 Temporary Redirect" };
+
+        reply(status, &[("location", &target_url)], b"")
+    });
+
+    let converted = client().post_json(&origin.url("/see-other"), &[], "{\"a\":1}").unwrap();
+
+    assert_eq!(converted.text().unwrap(), "target");
+    assert_eq!(target.requests()[0].request_line, "GET /t HTTP/1.1");
+    assert!(target.requests()[0].body.is_empty());
+
+    let refused = client().post_json(&origin.url("/temporary"), &[], "{\"a\":1}").unwrap_err();
+
+    assert_eq!(refused.to_string(), "request: redirect of a POST to another origin refused");
+    assert_eq!(target.requests().len(), 1);
+}
+
+#[test]
+fn a_redirect_from_https_to_http_is_refused() {
+    assert_eq!(
+        next_hop("https://a.test/x", "http://a.test/y", 302, false).err().unwrap().to_string(),
+        "request: redirect from https to http refused"
+    );
+    assert!(!next_hop("http://a.test/x", "https://a.test/y", 302, false).unwrap().keep_headers);
+    // A spelled-out default port is another origin here: the check errs on the side of dropping headers.
+    assert!(!next_hop("https://a.test/x", "https://A.test:443/y", 302, false).unwrap().keep_headers);
+    assert!(next_hop("https://a.test/x", "https://a.test/y", 302, false).unwrap().keep_headers);
+}
+
+#[test]
+fn a_location_is_resolved_against_the_url_it_came_from() {
+    let base = "https://reg.test:8443/a/b/c?q=1#f";
+
+    assert_eq!(resolve(base, "https://other.test/z"), "https://other.test/z");
+    assert_eq!(resolve(base, "//cdn.test/z"), "https://cdn.test/z");
+    assert_eq!(resolve(base, "/root?x=http://y"), "https://reg.test:8443/root?x=http://y");
+    assert_eq!(resolve(base, "d"), "https://reg.test:8443/a/b/d");
+    assert_eq!(resolve("https://reg.test", "d"), "https://reg.test/d");
+}
+
+#[test]
 fn a_redirect_loop_ends_in_an_error() {
     let stub = spawn(|_| reply("302 Found", &[("location", "/again")], b""));
 
@@ -305,6 +378,15 @@ fn a_refused_connection_is_a_connect_error() {
 }
 
 #[test]
+fn an_unresolvable_host_is_a_dns_error() {
+    // `.invalid` never resolves (RFC 6761), so the lookup fails without anything being reachable.
+    let error = client().get("http://nothing.invalid/", &[]).unwrap_err();
+
+    assert!(matches!(&error, HttpError::Dns { host } if host == "nothing.invalid"), "{error:?}");
+    assert_eq!(error.to_string(), "dns: could not resolve nothing.invalid");
+}
+
+#[test]
 fn ureq_errors_map_to_stable_messages() {
     use ureq::Timeout;
 
@@ -332,10 +414,13 @@ fn timeouts_come_from_one_variable_each() {
         let map: HashMap<String, OsString> =
             pairs.iter().map(|(key, value)| ((*key).to_owned(), OsString::from(value))).collect();
 
-        HttpConfig::from_lookup(&move |name| map.get(name).cloned())
+        HttpConfig::from_lookup(&move |name| map.get(name).cloned(), Duration::from_secs(30))
     };
 
     let defaults = from(&[]);
+    let own_default = HttpConfig::from_lookup(&|_| None, Duration::from_secs(15));
+
+    assert_eq!(own_default.global_timeout, Duration::from_secs(15));
 
     assert_eq!((defaults.global_timeout, defaults.connect_timeout), (Duration::from_secs(30), Duration::from_secs(10)));
     assert_eq!(defaults.max_body, 64 * 1024 * 1024);
@@ -407,7 +492,7 @@ fn a_request_goes_through_the_proxy_and_no_proxy_bypasses_it() {
 #[test]
 fn proxy_env_child() {
     let Ok(url) = std::env::var("VIS_HTTP_TEST_URL") else { return };
-    let response = HttpClient::new(HttpConfig::from_env()).get(&url, &[]).unwrap();
+    let response = HttpClient::new(HttpConfig::from_env(Duration::from_secs(30))).get(&url, &[]).unwrap();
 
     println!("BODY={}", response.text().unwrap());
 }

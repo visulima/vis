@@ -6,6 +6,11 @@
 //! `NODE_EXTRA_CA_CERTS`: the file adds to the default store. `ureq`'s own API only replaces the bundled roots
 //! with the list it is given, so the combined list is built here.
 //!
+//! `SSL_CERT_FILE` and `SSL_CERT_DIR` follow the OpenSSL convention that `rustls-native-certs` implements: when either
+//! is set, it names the trust store itself and stands in for the platform's (a Linux bundle such as
+//! `/etc/ssl/certs/ca-certificates.crt`), and the file is added to that. Setting only `NODE_EXTRA_CA_CERTS` adds the
+//! file to the platform's store.
+//!
 //! The OS store is read through `rustls-native-certs`, except on macOS: that crate links the Security and
 //! CoreFoundation frameworks, and the dynamic loader would then load them on every start (about +11 M
 //! instructions, +50%, for `vis --version`). There the `security` tool prints the keychains' certificates
