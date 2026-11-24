@@ -52,6 +52,11 @@ pub struct SeccompTrackingResult {
     pub exit_code: i32,
     pub stdout: Buffer,
     pub stderr: Buffer,
+    /// Some file accesses could not be recorded (an argument of a tracked
+    /// syscall was unreadable, or a process used an ABI the tracker does not
+    /// decode), so `accesses` is a lower bound and must not be cached as the
+    /// complete set of inputs.
+    pub incomplete: bool,
 }
 
 /// Optional spawn settings — undefined fields fall through to
@@ -136,6 +141,7 @@ pub async fn track_with_seccomp(
         exit_code: result.exit_code,
         stdout: Buffer::from(result.stdout),
         stderr: Buffer::from(result.stderr),
+        incomplete: result.incomplete,
     })
 }
 
