@@ -1,5 +1,5664 @@
 {
-    "e18e": [],
+    "e18e": [
+        [
+            "native",
+            "@babel/plugin-proposal-object-rest-spread",
+            "spread_syntax (Node 8.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "@babel/plugin-syntax-object-rest-spread",
+            "spread_syntax (Node 8.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "@babel/plugin-transform-object-rest-spread",
+            "spread_syntax (Node 8.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "a-sync-waterfall",
+            "await (Node 7.6.0+)",
+            false
+        ],
+        [
+            "native",
+            "abab",
+            "atob (Node 16.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "abort-controller",
+            "AbortController (Node 14.17.0+)",
+            true
+        ],
+        [
+            "native",
+            "aggregate-error",
+            "AggregateError (Node 15.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "airbnb-js-shims",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "any-promise",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "arr-filter",
+            "Array.prototype.filter (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "arr-map",
+            "Array.prototype.map (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "array-buffer-byte-length",
+            "ArrayBuffer.prototype.byteLength (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array-each",
+            "Array.prototype.forEach (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "array-every",
+            "Array.prototype.every (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array-includes",
+            "Array.prototype.includes (Node 6.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array-map",
+            "Array.prototype.map (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array-reduce",
+            "Array.prototype.reduce (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "array-slice",
+            "Array.prototype.slice (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "array.from",
+            "Array.from (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.of",
+            "Array.of (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.at",
+            "Array.prototype.at (Node 16.6.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.concat",
+            "Array.prototype.concat (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.copywithin",
+            "Array.prototype.copyWithin (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.entries",
+            "Array.prototype.entries (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.every",
+            "Array.prototype.every (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.filter",
+            "Array.prototype.filter (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.find",
+            "Array.prototype.find (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.findindex",
+            "Array.prototype.findIndex (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.findlast",
+            "Array.prototype.findLast (Node 18.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.findlastindex",
+            "Array.prototype.findLastIndex (Node 18.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.flat",
+            "Array.prototype.flat (Node 11.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.flatmap",
+            "Array.prototype.flatMap (Node 11.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.foreach",
+            "Array.prototype.forEach (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.indexof",
+            "Array.prototype.indexOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.join",
+            "Array.prototype.join (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.keys",
+            "Array.prototype.keys (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.lastindexof",
+            "Array.prototype.lastIndexOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.map",
+            "Array.prototype.map (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.push",
+            "Array.prototype.push (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.reduce",
+            "Array.prototype.reduce (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.reduceright",
+            "Array.prototype.reduceRight (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.slice",
+            "Array.prototype.slice (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.some",
+            "Array.prototype.some (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.splice",
+            "Array.prototype.splice (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.toreversed",
+            "Array.prototype.toReversed (Node 20.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.tosorted",
+            "Array.prototype.toSorted (Node 20.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.unshift",
+            "Array.prototype.unshift (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "array.prototype.values",
+            "Array.prototype.values (Node 10.9.0+)",
+            true
+        ],
+        [
+            "native",
+            "arraybuffer.prototype.slice",
+            "ArrayBuffer.prototype.slice (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "arraybuffer.slice",
+            "ArrayBuffer.prototype.slice (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "asap",
+            "queueMicrotask (Node 11.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "asynciterator.prototype",
+            "AsyncIterator.prototype (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "atob",
+            "atob (Node 16.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "atob-lite",
+            "atob (Node 16.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "auto-bind",
+            "class_field_arrow_functions (Node 12.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "big-integer",
+            "BigInt (Node 10.4.0+)",
+            false
+        ],
+        [
+            "native",
+            "btoa",
+            "btoa (Node 16.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "buffer-alloc",
+            "Buffer.alloc (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "buffer-alloc-unsafe",
+            "Buffer.allocUnsafe (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "buffer-crc32",
+            "zlib.crc32 (Node 20.15.0+)",
+            false
+        ],
+        [
+            "native",
+            "buffer-fill",
+            "Buffer.prototype.fill (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "buffer-from",
+            "Buffer.from (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "builtin-status-codes",
+            "http.STATUS_CODES (Node 0.1.22+)",
+            false
+        ],
+        [
+            "native",
+            "clone-deep",
+            "structuredClone (Node 17.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "collection-map",
+            "Array.prototype.map (Node 0.10.0+), Object.keys (Node 0.10.0+), Object.values (Node 7.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "concat-map",
+            "Array.prototype.flatMap (Node 11.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "concat-stream",
+            "streamConsumers",
+            false
+        ],
+        [
+            "native",
+            "crc",
+            "zlib.crc32 (Node 20.15.0+)",
+            false
+        ],
+        [
+            "native",
+            "crc-32",
+            "zlib.crc32 (Node 20.15.0+)",
+            false
+        ],
+        [
+            "native",
+            "data-view-buffer",
+            "DataView.prototype.buffer (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "data-view-byte-length",
+            "DataView.prototype.byteLength (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "data-view-byte-offset",
+            "DataView.prototype.byteOffset (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "date",
+            "Date (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "date-now",
+            "Date.now (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "dateformat",
+            "Intl.DateTimeFormat (Node 13.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "defaults",
+            "Object.assign (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "define-accessor-property",
+            "Object.defineProperty (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "define-data-property",
+            "Object.defineProperty (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "define-properties",
+            "Object.defineProperties (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "define-property",
+            "Object.defineProperty (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "desm",
+            "import.meta (Node 10.4.0+)",
+            false
+        ],
+        [
+            "native",
+            "duplexer",
+            "stream.Duplex (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "duplexer2",
+            "stream.Duplex (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "duplexer3",
+            "stream.Duplex (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "duplexify",
+            "stream.Duplex (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "encode-utf8",
+            "TextEncoder.encode (Node 8.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "ends-with",
+            "String.prototype.endsWith (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "error-cause",
+            "Error.prototype.cause (Node 16.9.0+)",
+            true
+        ],
+        [
+            "native",
+            "es-aggregate-error",
+            "AggregateError (Node 15.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "es-create-array-iterator",
+            "Array.prototype.entries (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es-define-property",
+            "Object.defineProperty (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "es-errors",
+            "no longer needed",
+            true
+        ],
+        [
+            "native",
+            "es-map",
+            "Map (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es-set",
+            "Set (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es-shim-unscopables",
+            "Array.prototype[Symbol.unscopables] (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "es-string-html-methods",
+            "no longer needed",
+            true
+        ],
+        [
+            "native",
+            "es5-ext",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "es5-shim",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "es6-error",
+            "Error (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-iterator",
+            "Iterator (Node 22.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-map",
+            "Map (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-promise",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-promisify",
+            "util.promisify (Node 8.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-set",
+            "Set (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-shim",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "es6-symbol",
+            "Symbol (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es6-weak-map",
+            "WeakMap (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "es7-shim",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "escape-string-regexp",
+            "RegExp.escape (Node 24.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "event-target-shim",
+            "EventTarget (Node 15.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "extend-shallow",
+            "Object.assign (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "fast-json-parse",
+            "JSON (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "filter-array",
+            "Array.prototype.filter (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "find-index",
+            "Array.prototype.findIndex (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "fn-name",
+            "Function.prototype.name (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "for-each",
+            "for...of (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "for-in",
+            "for...in (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "foreachasync",
+            "for...of (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "from",
+            "Readable.from (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "from2",
+            "Readable.from (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "from2-array",
+            "Readable.from (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "from2-string",
+            "Readable.from (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "fs-exists-sync",
+            "fs.existsSync (Node 0.1.21+)",
+            false
+        ],
+        [
+            "native",
+            "fs-then-native",
+            "fs.promises (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "fs.realpath",
+            "fs.realpath (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "function-bind",
+            "Function.prototype.bind (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "function.prototype.name",
+            "Function.prototype.name (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "functions-have-names",
+            "Function.prototype.name (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "get-proto",
+            "Object.getPrototypeOf (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "get-symbol-description",
+            "Symbol.prototype.description (Node 11.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "global",
+            "globalThis (Node 12.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "globalthis",
+            "globalThis (Node 12.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "gopd",
+            "Object.getOwnPropertyDescriptor (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "has",
+            "Object.prototype.hasOwnProperty (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "has-bigints",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "has-dynamic-import",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "has-optional-chaining",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "has-own-prop",
+            "Object.prototype.hasOwnProperty (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "has-property-descriptors",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "has-proto",
+            "no longer needed",
+            true
+        ],
+        [
+            "native",
+            "has-symbols",
+            "no longer needed",
+            true
+        ],
+        [
+            "native",
+            "has-template-literals",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "has-tostringtag",
+            "no longer needed",
+            true
+        ],
+        [
+            "native",
+            "has-typed-arrays",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "hasown",
+            "Object.prototype.hasOwnProperty (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "homedir-polyfill",
+            "os.homedir (Node 2.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "http-status-codes",
+            "http.STATUS_CODES (Node 0.1.22+)",
+            false
+        ],
+        [
+            "native",
+            "ieee754",
+            "DataView (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "index-of",
+            "Array.prototype.indexOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "indexof",
+            "Array.prototype.indexOf (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "inherits",
+            "extends (Node 6.0.0+), util.inherits (Node 0.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-arrayish",
+            "Array.isArray (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-buffer",
+            "Buffer.isBuffer (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "is-error",
+            "Error.isError (Node 24.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-finite",
+            "Number.isFinite (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-nan",
+            "Number.isNaN (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "is-path-in-cwd",
+            "path.relative (Node 0.5.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-path-inside",
+            "path.relative (Node 0.5.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-url-superb",
+            "URL.canParse (Node 19.9.0+)",
+            false
+        ],
+        [
+            "native",
+            "is-utf8",
+            "buffer.isUtf8 (Node 18.14.0+), TextDecoder (Node 11.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "isarray",
+            "Array.isArray (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "iserror",
+            "Error.isError (Node 24.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "iterate-iterator",
+            "for...of (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "iterate-value",
+            "for...of (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "iterator.prototype",
+            "Iterator (Node 22.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "jsonify",
+            "JSON (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "last-index-of",
+            "Array.prototype.lastIndexOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "left-pad",
+            "String.prototype.padStart (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "lie",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.at",
+            "Array.prototype.at (Node 16.6.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.clone",
+            "structuredClone (Node 17.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.escaperegexp",
+            "RegExp.escape (Node 24.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.fill",
+            "Array.prototype.fill (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.get",
+            "optional_chaining (Node 14.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.groupby",
+            "Object.groupBy (Node 21.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.isarray",
+            "Array.isArray (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.isbuffer",
+            "Buffer.isBuffer (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.iserror",
+            "Error.isError (Node 24.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.isfinite",
+            "Number.isFinite (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.isinteger",
+            "Number.isInteger (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.isnan",
+            "Number.isNaN (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.issafeinteger",
+            "Number.isSafeInteger (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.join",
+            "Array.prototype.join (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.lastindexof",
+            "Array.prototype.lastIndexOf (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.toarray",
+            "Array.from (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.tointeger",
+            "Math.trunc (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.tolower",
+            "String.prototype.toLowerCase (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.toupper",
+            "String.prototype.toUpperCase (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.trim",
+            "String.prototype.trim (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.trimend",
+            "String.prototype.trimEnd (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "lodash.trimstart",
+            "String.prototype.trimStart (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "long",
+            "BigInt (Node 10.4.0+)",
+            false
+        ],
+        [
+            "native",
+            "lower-case",
+            "String.prototype.toLowerCase (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "make-dir",
+            "fs.promises.mkdir (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "math-intrinsics",
+            "Math (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "math-log2",
+            "Math.log2 (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "math.acosh",
+            "Math.acosh (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.atanh",
+            "Math.atanh (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.cbrt",
+            "Math.cbrt (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.clz32",
+            "Math.clz32 (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.f16round",
+            "Math.f16round (Node 24.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.fround",
+            "Math.fround (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.imul",
+            "Math.imul (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.log10",
+            "Math.log10 (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.log1p",
+            "Math.log1p (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "math.sign",
+            "Math.sign (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "max-safe-int",
+            "Number.MAX_SAFE_INTEGER (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "micromatch",
+            "path.matchesGlob (Node 20.17.0+), picomatch, zeptomatch",
+            false
+        ],
+        [
+            "native",
+            "mkdirp",
+            "fs.promises.mkdir (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "mkdirp-classic",
+            "fs.promises.mkdir (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "native-promise-only",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "node-domexception",
+            "DOMException (Node 17.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "node-environment-flags",
+            "process.allowedNodeEnvironmentFlags (Node 10.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "node-int64",
+            "BigInt (Node 10.4.0+)",
+            false
+        ],
+        [
+            "native",
+            "node.extend",
+            "Object.assign (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "number-is-integer",
+            "Number.isInteger (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "number.isfinite",
+            "Number.isFinite (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.isinteger",
+            "Number.isInteger (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.isnan",
+            "Number.isNaN (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.issafeinteger",
+            "Number.isSafeInteger (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.parsefloat",
+            "Number.parseFloat (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.parseint",
+            "Number.parseInt (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "number.prototype.toexponential",
+            "Number.prototype.toExponential (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object-assign",
+            "Object.assign (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "object-is",
+            "Object.is (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object-keys",
+            "Object.keys (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.assign",
+            "Object.assign (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.defineproperties",
+            "Object.defineProperties (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.entries",
+            "Object.entries (Node 7.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.fromentries",
+            "Object.fromEntries (Node 12.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.getownpropertydescriptors",
+            "Object.getOwnPropertyDescriptors (Node 7.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "object.getprototypeof",
+            "Object.getPrototypeOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.groupby",
+            "Object.groupBy (Node 21.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "object.hasown",
+            "Object.hasOwn (Node 16.9.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.keys",
+            "Object.keys (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "object.values",
+            "Object.values (Node 7.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "os-homedir",
+            "os.homedir (Node 2.3.0+)",
+            false
+        ],
+        [
+            "native",
+            "os-tmpdir",
+            "os.tmpdir (Node 0.9.9+)",
+            false
+        ],
+        [
+            "native",
+            "own-keys",
+            "Reflect.ownKeys (Node 6.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "p-defer",
+            "Promise.withResolvers (Node 22.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "p-try",
+            "Promise.try (Node 23.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "pad-left",
+            "String.prototype.padStart (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "parseint",
+            "parseInt (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "path-is-absolute",
+            "path.isAbsolute (Node 0.11.2+)",
+            false
+        ],
+        [
+            "native",
+            "path-parse",
+            "path.parse (Node 0.11.15+)",
+            false
+        ],
+        [
+            "native",
+            "pify",
+            "util.promisify (Node 8.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "pinkie-promise",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "pn",
+            "util.promisify (Node 8.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "process-nextick-args",
+            "process.nextTick (Node 0.1.26+)",
+            false
+        ],
+        [
+            "native",
+            "promise",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "promise-polyfill",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "promise.allsettled",
+            "Promise.allSettled (Node 12.9.0+)",
+            true
+        ],
+        [
+            "native",
+            "promise.any",
+            "Promise.any (Node 15.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "promise.prototype.finally",
+            "Promise.prototype.finally (Node 10.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "promish",
+            "Promise (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "queue-microtask",
+            "queueMicrotask (Node 11.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "queue-tick",
+            "queueMicrotask (Node 11.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "raf",
+            "requestAnimationFrame",
+            false
+        ],
+        [
+            "native",
+            "random-bytes",
+            "crypto.randomBytes (Node 0.5.8+)",
+            false
+        ],
+        [
+            "native",
+            "randombytes",
+            "crypto.randomBytes (Node 0.5.8+)",
+            false
+        ],
+        [
+            "native",
+            "randomfill",
+            "crypto.randomFill (Node 6.13.0+)",
+            false
+        ],
+        [
+            "native",
+            "reflect.getprototypeof",
+            "Reflect.getPrototypeOf (Node 6.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "reflect.ownkeys",
+            "Reflect.ownKeys (Node 6.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "regexp.prototype.flags",
+            "RegExp.prototype.flags (Node 6.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "remove",
+            "fs.promises.rm (Node 14.14.0+)",
+            false
+        ],
+        [
+            "native",
+            "repeat-string",
+            "String.prototype.repeat (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "repeating",
+            "String.prototype.repeat (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "safe-buffer",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "safer-buffer",
+            "no longer needed",
+            false
+        ],
+        [
+            "native",
+            "setprototypeof",
+            "Object.setPrototypeOf (Node 0.12.0+)",
+            true
+        ],
+        [
+            "native",
+            "simple-concat",
+            "streamConsumers",
+            false
+        ],
+        [
+            "native",
+            "starts-with",
+            "String.prototype.startsWith (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "stream-combiner2",
+            "stream.compose (Node 16.9.0+)",
+            false
+        ],
+        [
+            "native",
+            "stream-shift",
+            "Readable.read (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "string.prototype.at",
+            "String.prototype.at (Node 16.6.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.includes",
+            "String.prototype.includes (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "string.prototype.lastindexof",
+            "String.prototype.lastIndexOf (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.matchall",
+            "String.prototype.matchAll (Node 12.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.padend",
+            "String.prototype.padEnd (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.padleft",
+            "String.prototype.padStart (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.padright",
+            "String.prototype.padEnd (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.padstart",
+            "String.prototype.padStart (Node 8.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.repeat",
+            "String.prototype.repeat (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.replaceall",
+            "String.prototype.replaceAll (Node 15.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.split",
+            "String.prototype.split (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.substr",
+            "String.prototype.substr (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.trim",
+            "String.prototype.trim (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.trimend",
+            "String.prototype.trimEnd (Node 10.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.trimleft",
+            "String.prototype.trimStart (Node 10.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.trimright",
+            "String.prototype.trimEnd (Node 10.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.prototype.trimstart",
+            "String.prototype.trimStart (Node 10.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string.raw",
+            "String.raw (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "string_decoder",
+            "string_decoder (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "symbol.prototype.description",
+            "Symbol.prototype.description (Node 11.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "text-decoding",
+            "TextDecoder (Node 11.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "through2-map",
+            "Readable.map (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "time-stamp",
+            "Intl.DateTimeFormat (Node 13.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "timezone-support",
+            "Temporal",
+            false
+        ],
+        [
+            "native",
+            "to-array",
+            "Array.from (Node 4.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "to-buffer",
+            "Buffer.from (Node 0.1.90+)",
+            false
+        ],
+        [
+            "native",
+            "to-data-view",
+            "DataView (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "trim",
+            "String.prototype.trim (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "trim-right",
+            "String.prototype.trimEnd (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "tweetnacl",
+            "crypto.subtle (Node 19.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "typed-array-buffer",
+            "%TypedArray%.prototype.buffer (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "typed-array-byte-length",
+            "%TypedArray%.prototype.byteLength (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "typed-array-byte-offset",
+            "%TypedArray%.prototype.byteOffset (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "typed-array-length",
+            "%TypedArray%.prototype.length (Node 0.10.0+)",
+            true
+        ],
+        [
+            "native",
+            "typed-emitter",
+            "EventEmitter (Node 0.1.26+)",
+            false
+        ],
+        [
+            "native",
+            "typedarray",
+            "%TypedArray% (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "typedarray.prototype.slice",
+            "%TypedArray%.prototype.slice (Node 4.0.0+)",
+            true
+        ],
+        [
+            "native",
+            "unpipe",
+            "Readable.unpipe (Node 0.9.4+)",
+            false
+        ],
+        [
+            "native",
+            "upper-case",
+            "String.prototype.toUpperCase (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "url-parse",
+            "URL (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "util.promisify",
+            "util.promisify (Node 8.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "validate.io-array",
+            "Array.isArray (Node 0.10.0+)",
+            false
+        ],
+        [
+            "native",
+            "w3c-hr-time",
+            "performance (Node 18.8.0+)",
+            false
+        ],
+        [
+            "native",
+            "weak-map",
+            "WeakMap (Node 0.12.0+)",
+            false
+        ],
+        [
+            "native",
+            "whatwg-url",
+            "URL (Node 10.0.0+)",
+            false
+        ],
+        [
+            "native",
+            "xtend",
+            "Object.assign (Node 4.0.0+)",
+            true
+        ],
+        [
+            "preferred",
+            "@75lb/deep-merge",
+            "defu, @fastify/deepmerge",
+            false
+        ],
+        [
+            "preferred",
+            "@better-auth/cli",
+            "auth",
+            false
+        ],
+        [
+            "preferred",
+            "@cypress/request",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "@img/colour",
+            "color",
+            false
+        ],
+        [
+            "preferred",
+            "@jsdevtools/ez-spawn",
+            "tinyexec",
+            false
+        ],
+        [
+            "preferred",
+            "@ljharb/through",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "@supabase/node-fetch",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "@typescript/native-preview",
+            "typescript",
+            false
+        ],
+        [
+            "preferred",
+            "@whatwg-node/fetch",
+            "fetch (Node 18.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "@whatwg-node/node-fetch",
+            "fetch (Node 18.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "arg",
+            "util.parseArgs (Node 16.17.0+), mri",
+            false
+        ],
+        [
+            "preferred",
+            "axios",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "bcrypt",
+            "bcryptjs, node:crypto (Node 0.3.6+), crypto (Node 19.0.0+), Bun.CryptoHasher",
+            false
+        ],
+        [
+            "preferred",
+            "bluebird",
+            "Promise (Node 0.12.0+), nativebird",
+            false
+        ],
+        [
+            "preferred",
+            "bluebird-lst",
+            "Promise (Node 0.12.0+), nativebird",
+            false
+        ],
+        [
+            "preferred",
+            "body-parser",
+            "milliparsec",
+            false
+        ],
+        [
+            "preferred",
+            "buf-compare",
+            "Buffer.compare (Node 0.1.90+)",
+            false
+        ],
+        [
+            "preferred",
+            "buffer-equal",
+            "Buffer.prototype.equals (Node 0.1.90+)",
+            true
+        ],
+        [
+            "preferred",
+            "buffer-equal-constant-time",
+            "crypto.timingSafeEqual (Node 6.6.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "buffer-equals",
+            "Buffer.prototype.equals (Node 0.1.90+)",
+            true
+        ],
+        [
+            "preferred",
+            "builtin-modules",
+            "builtinModules",
+            false
+        ],
+        [
+            "preferred",
+            "chalk",
+            "util.styleText (Node 20.12.0+), picocolors, ansis",
+            true
+        ],
+        [
+            "preferred",
+            "clean-webpack-plugin",
+            "webpack",
+            false
+        ],
+        [
+            "preferred",
+            "cli-color",
+            "util.styleText (Node 20.12.0+), picocolors, ansis",
+            false
+        ],
+        [
+            "preferred",
+            "clipboard",
+            "ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "clipboard-copy",
+            "ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "clipboardy",
+            "tinyclip, ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "coa",
+            "sade, cleye, cac",
+            false
+        ],
+        [
+            "preferred",
+            "colors",
+            "util.styleText (Node 20.12.0+), picocolors, ansis",
+            false
+        ],
+        [
+            "preferred",
+            "copy-paste",
+            "tinyclip, ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "copy-text-to-clipboard",
+            "ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "copy-to-clipboard",
+            "ClipboardAPI",
+            false
+        ],
+        [
+            "preferred",
+            "core-util-is",
+            "util.types (Node 10.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "cosmiconfig",
+            "lilconfig",
+            false
+        ],
+        [
+            "preferred",
+            "cpx",
+            "cpx2",
+            false
+        ],
+        [
+            "preferred",
+            "create-hmac",
+            "crypto.createHmac (Node 0.1.94+), crypto.subtle.sign (Node 15.0.0+), @noble/hashes",
+            false
+        ],
+        [
+            "preferred",
+            "cross-fetch",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "cross-spawn",
+            "tinyexec",
+            false
+        ],
+        [
+            "preferred",
+            "crypto-js",
+            "node:crypto (Node 0.3.6+), crypto (Node 19.0.0+), Bun.CryptoHasher",
+            false
+        ],
+        [
+            "preferred",
+            "css-loader",
+            "webpack",
+            false
+        ],
+        [
+            "preferred",
+            "cwd",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "debug",
+            "obug",
+            false
+        ],
+        [
+            "preferred",
+            "deep-equal",
+            "dequal, util.isDeepStrictEqual (Node 9.0.0+), Bun.deepEquals",
+            true
+        ],
+        [
+            "preferred",
+            "deep-equal-json",
+            "dequal, util.isDeepStrictEqual (Node 9.0.0+), Bun.deepEquals",
+            false
+        ],
+        [
+            "preferred",
+            "deep-extend",
+            "defu, @fastify/deepmerge",
+            false
+        ],
+        [
+            "preferred",
+            "deepmerge",
+            "defu, @fastify/deepmerge",
+            false
+        ],
+        [
+            "preferred",
+            "depcheck",
+            "knip",
+            false
+        ],
+        [
+            "preferred",
+            "detect-package-manager",
+            "package-manager-detector",
+            false
+        ],
+        [
+            "preferred",
+            "dev-null",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "dot-prop",
+            "dlv",
+            false
+        ],
+        [
+            "preferred",
+            "dotenv",
+            "process.loadEnvFile, --env-file",
+            false
+        ],
+        [
+            "preferred",
+            "dottie",
+            "dlv, dset",
+            false
+        ],
+        [
+            "preferred",
+            "emoji-regex",
+            "emoji-regex-xs, unicodeClassEscape",
+            false
+        ],
+        [
+            "preferred",
+            "error-stack-parser",
+            "error-stack-parser-es",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-config-airbnb",
+            "eslint-config-airbnb-extended",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-es",
+            "eslint-plugin-es-x",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-eslint-comments",
+            "@eslint-community/eslint-plugin-eslint-comments",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-import",
+            "eslint-plugin-import-x, oxlint",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-node",
+            "eslint-plugin-n",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-react",
+            "@eslint-react/eslint-plugin, oxlint",
+            false
+        ],
+        [
+            "preferred",
+            "eslint-plugin-vitest",
+            "@vitest/eslint-plugin",
+            false
+        ],
+        [
+            "preferred",
+            "event-stream",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "execa",
+            "tinyexec, nanoexec, Bun.Shell",
+            false
+        ],
+        [
+            "preferred",
+            "express",
+            "h3, @tinyhttp/app, hono, elysia",
+            false
+        ],
+        [
+            "preferred",
+            "extend",
+            "structuredClone (Node 17.0.0+), defu",
+            false
+        ],
+        [
+            "preferred",
+            "ez-spawn",
+            "tinyexec",
+            false
+        ],
+        [
+            "preferred",
+            "ezspawn",
+            "tinyexec",
+            false
+        ],
+        [
+            "preferred",
+            "faker",
+            "@faker-js/faker",
+            false
+        ],
+        [
+            "preferred",
+            "fast-glob",
+            "tinyglobby",
+            false
+        ],
+        [
+            "preferred",
+            "feather-icons",
+            "lucide",
+            false
+        ],
+        [
+            "preferred",
+            "find-cache-dir",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "find-cache-directory",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "find-file-up",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "find-pkg",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "find-process",
+            "find-proc",
+            false
+        ],
+        [
+            "preferred",
+            "find-up",
+            "empathic, pkg-types",
+            false
+        ],
+        [
+            "preferred",
+            "findup",
+            "empathic, pkg-types",
+            false
+        ],
+        [
+            "preferred",
+            "fs-extra",
+            "fs (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "fs-temp",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "fs.extra",
+            "fs (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "gaxios",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "get-stream",
+            "Buffer (Node 0.1.90+)",
+            false
+        ],
+        [
+            "preferred",
+            "get-value",
+            "dlv",
+            false
+        ],
+        [
+            "preferred",
+            "glob",
+            "tinyglobby, fs.promises.glob (Node 22.0.0+), fdir",
+            false
+        ],
+        [
+            "preferred",
+            "globby",
+            "tinyglobby",
+            false
+        ],
+        [
+            "preferred",
+            "globule",
+            "tinyglobby",
+            false
+        ],
+        [
+            "preferred",
+            "grapheme-splitter",
+            "Intl.Segmenter (Node 16.0.0+), unicode-segmenter",
+            false
+        ],
+        [
+            "preferred",
+            "graphemer",
+            "Intl.Segmenter (Node 16.0.0+), unicode-segmenter",
+            false
+        ],
+        [
+            "preferred",
+            "graphviz",
+            "ts-graphviz",
+            false
+        ],
+        [
+            "preferred",
+            "gray-matter",
+            "@11ty/gray-matter",
+            false
+        ],
+        [
+            "preferred",
+            "gzip-size",
+            "zlib.gzipSync (Node 0.11.12+)",
+            false
+        ],
+        [
+            "preferred",
+            "has-yarn",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "html-minifier",
+            "html-minifier-next",
+            false
+        ],
+        [
+            "preferred",
+            "http-proxy",
+            "httpxy, http-proxy-3",
+            false
+        ],
+        [
+            "preferred",
+            "invariant",
+            "tiny-invariant",
+            true
+        ],
+        [
+            "preferred",
+            "is-builtin-module",
+            "isBuiltin, builtinModules",
+            true
+        ],
+        [
+            "preferred",
+            "is-core-module",
+            "isBuiltin, builtinModules",
+            false
+        ],
+        [
+            "preferred",
+            "isomorphic-fetch",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "istanbul-lib-coverage",
+            "@vitest/istanbul-lib-coverage",
+            false
+        ],
+        [
+            "preferred",
+            "istanbul-lib-instrument",
+            "@vitest/istanbul-lib-instrument",
+            false
+        ],
+        [
+            "preferred",
+            "jquery",
+            "no longer needed",
+            false
+        ],
+        [
+            "preferred",
+            "js-yaml",
+            "yaml, Bun.YAML",
+            false
+        ],
+        [
+            "preferred",
+            "jsonwebtoken",
+            "jose",
+            false
+        ],
+        [
+            "preferred",
+            "jsx-ast-utils",
+            "jsx-ast-utils-x",
+            false
+        ],
+        [
+            "preferred",
+            "lodash",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash-amd",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash-compat",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash-es",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash-fp",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash-node",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.add",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.after",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.ary",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.assign",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.assignin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.assigninwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.assignwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.attempt",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.before",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.bind",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.bindall",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.bindkey",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.callback",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.camelcase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.capitalize",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.ceil",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.chunk",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.clamp",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.clonedeep",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.clonedeepwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.clonewith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.compact",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.compose",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.concat",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.cond",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.conforms",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.conformsto",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.constant",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.contains",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.countby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.create",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.createcallback",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.curry",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.curryright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.debounce",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.deburr",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.defaults",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.defaultsdeep",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.defaultto",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.defer",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.delay",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.difference",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.differenceby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.differencewith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.divide",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.drop",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.dropright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.droprightwhile",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.dropwhile",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.endswith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.escape",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.every",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.filter",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.find",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findindex",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findkey",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findlast",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findlastindex",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findlastkey",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.findwhere",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.first",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flatmap",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flatmapdeep",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flatmapdepth",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flatten",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flattendeep",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flattendepth",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flip",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.floor",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flow",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.flowright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.foreach",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.foreachright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.forin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.forinright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.forown",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.forownright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.frompairs",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.functions",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.functionsin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.gt",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.gte",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.has",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.hasin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.head",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.identity",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.includes",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.indexby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.indexof",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.initial",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.inrange",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.intersection",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.intersectionby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.intersectionwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.invert",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.invertby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.invoke",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.invokemap",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isarguments",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isarraylike",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isarraylikeobject",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.iselement",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isempty",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isequal",
+            "util.isDeepStrictEqual (Node 9.0.0+), dequal, Bun.deepEquals",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isequalwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.islength",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.ismatch",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.ismatchwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isnative",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.isobjectlike",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.iteratee",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.kebabcase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.keyby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.keys",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.keysin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.last",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.lowercase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.lowerfirst",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.lt",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.lte",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.map",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.mapkeys",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.mapvalues",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.matches",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.matchesproperty",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.max",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.maxby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.mean",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.meanby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.memoize",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.merge",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.mergewith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.method",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.methodof",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.min",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.minby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.mixin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.modargs",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.multiply",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.negate",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.now",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.nth",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.ntharg",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.omit",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.omitby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.once",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.orderby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.over",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.overargs",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.overevery",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.oversome",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pad",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.padend",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.padleft",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.padright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.padstart",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pairs",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.parseint",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.partial",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.partialright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.partition",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pick",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pickby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pluck",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.property",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.propertyof",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pull",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pullall",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pullallwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.pullat",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.random",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.range",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.rangeright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.rearg",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reduce",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reduceright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reescape",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reevaluate",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reinterpolate",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reject",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.remove",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.repeat",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.replace",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.rest",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.restparam",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.result",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.reverse",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.round",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sample",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.samplesize",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.set",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.setwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.shuffle",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.size",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.slice",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.snakecase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.some",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortbyall",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortbyorder",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedindex",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedindexby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedindexof",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedlastindex",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedlastindexby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sortedlastindexof",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sorteduniq",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sorteduniqby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.split",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.spread",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.startcase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.startswith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.stubarray",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.stubfalse",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.stubobject",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.stubstring",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.stubtrue",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.subtract",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sum",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.sumby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.support",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tail",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.take",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.takeright",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.takerightwhile",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.takewhile",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.template",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.templatesettings",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.throttle",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.times",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tofinite",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tolength",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tonumber",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.topairs",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.topairsin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.topath",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.toplainobject",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tosafeinteger",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.tostring",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.transform",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.trunc",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.truncate",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unary",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unescape",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.union",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unionby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unionwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.uniqby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.uniqueid",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.uniqwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unset",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unzip",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.unzipwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.update",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.updatewith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.uppercase",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.upperfirst",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.values",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.valuesin",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.where",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.without",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.words",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.wrap",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.xor",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.xorby",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.xorwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.zip",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.zipobject",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.zipobjectdeep",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "lodash.zipwith",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "materialize-css",
+            "@materializecss/materialize, @material/web",
+            false
+        ],
+        [
+            "preferred",
+            "md5",
+            "node:crypto (Node 0.3.6+)",
+            true
+        ],
+        [
+            "preferred",
+            "meow",
+            "sade, cleye",
+            false
+        ],
+        [
+            "preferred",
+            "mime",
+            "mrmime",
+            false
+        ],
+        [
+            "preferred",
+            "minimist",
+            "util.parseArgs (Node 16.17.0+), mri",
+            false
+        ],
+        [
+            "preferred",
+            "mississippi",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "mktemp",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "mockdate",
+            "node:test (Node 18.0.0+), vitest, bun:test",
+            false
+        ],
+        [
+            "preferred",
+            "moment",
+            "day.js, date-fns, luxon, Date (Node 0.10.0+), Temporal",
+            false
+        ],
+        [
+            "preferred",
+            "node-fetch",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "node-telegram-bot-api",
+            "grammy",
+            false
+        ],
+        [
+            "preferred",
+            "node-uuid",
+            "crypto.randomUUID (Node 16.7.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "npm-check",
+            "no longer needed, taze",
+            false
+        ],
+        [
+            "preferred",
+            "npm-run-all",
+            "npm-run-all2, concurrently, wireit",
+            false
+        ],
+        [
+            "preferred",
+            "object-hash",
+            "ohash, crypto (Node 19.0.0+), Bun.CryptoHasher",
+            false
+        ],
+        [
+            "preferred",
+            "object-path",
+            "dlv, dset",
+            false
+        ],
+        [
+            "preferred",
+            "open",
+            "tiny-open",
+            false
+        ],
+        [
+            "preferred",
+            "ora",
+            "nanospinner, picospinner",
+            false
+        ],
+        [
+            "preferred",
+            "package-up",
+            "empathic, pkg-types",
+            false
+        ],
+        [
+            "preferred",
+            "path-exists",
+            "fs.promises.access (Node 10.0.0+), fs.existsSync (Node 0.1.21+), Bun.file",
+            false
+        ],
+        [
+            "preferred",
+            "pbkdf2",
+            "node:crypto (Node 0.3.6+), crypto (Node 19.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "pkg-dir",
+            "empathic",
+            false
+        ],
+        [
+            "preferred",
+            "pkg-up",
+            "empathic, pkg-types",
+            false
+        ],
+        [
+            "preferred",
+            "portal-vue",
+            "Teleport",
+            false
+        ],
+        [
+            "preferred",
+            "portfinder",
+            "get-port",
+            false
+        ],
+        [
+            "preferred",
+            "preferred-pm",
+            "package-manager-detector",
+            false
+        ],
+        [
+            "preferred",
+            "q",
+            "Promise (Node 0.12.0+), nativebird",
+            false
+        ],
+        [
+            "preferred",
+            "qs",
+            "URLSearchParams (Node 10.0.0+), fast-querystring, picoquery, neoqs",
+            true
+        ],
+        [
+            "preferred",
+            "querystring",
+            "URLSearchParams (Node 10.0.0+), fast-querystring, picoquery, neoqs",
+            false
+        ],
+        [
+            "preferred",
+            "quick-temp",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "randomatic",
+            "nanoid",
+            false
+        ],
+        [
+            "preferred",
+            "react-feather",
+            "lucide-react",
+            false
+        ],
+        [
+            "preferred",
+            "react-helmet",
+            "react, react-helmet-async",
+            false
+        ],
+        [
+            "preferred",
+            "read-package-up",
+            "pkg-types, empathic",
+            false
+        ],
+        [
+            "preferred",
+            "read-pkg",
+            "pkg-types, node:fs",
+            false
+        ],
+        [
+            "preferred",
+            "read-pkg-up",
+            "pkg-types, empathic",
+            false
+        ],
+        [
+            "preferred",
+            "readable-stream",
+            "node:stream (Node 0.10.0+), streams (Node 18.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "request",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "resolve",
+            "import.meta.resolve (Node 20.8.0+), exsolve, oxc-resolver",
+            false
+        ],
+        [
+            "preferred",
+            "retry-request",
+            "ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "rimraf",
+            "fs.promises.rm (Node 14.14.0+), fs.promises.rmdir (Node 10.0.0+), premove",
+            true
+        ],
+        [
+            "preferred",
+            "rollup-plugin-terser",
+            "@rollup/plugin-terser",
+            false
+        ],
+        [
+            "preferred",
+            "safe-compare",
+            "crypto.timingSafeEqual (Node 6.6.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "scmp",
+            "crypto.timingSafeEqual (Node 6.6.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "secure-compare",
+            "crypto.timingSafeEqual (Node 6.6.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "semver",
+            "verkit",
+            false
+        ],
+        [
+            "preferred",
+            "semver-diff",
+            "verkit",
+            false
+        ],
+        [
+            "preferred",
+            "set-value",
+            "dset",
+            false
+        ],
+        [
+            "preferred",
+            "shortid",
+            "nanoid",
+            false
+        ],
+        [
+            "preferred",
+            "slice-ansi",
+            "fast-slice-ansi",
+            false
+        ],
+        [
+            "preferred",
+            "sort-object",
+            "no longer needed, sort-object-keys, sortobject",
+            false
+        ],
+        [
+            "preferred",
+            "source-map-explorer",
+            "rollup-plugin-visualizer, sonda, webpack-bundle-analyzer",
+            false
+        ],
+        [
+            "preferred",
+            "split",
+            "readline.createInterface (Node 17.0.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "sqlite3",
+            "node:sqlite (Node 22.5.0+), better-sqlite3, @libsql/client",
+            false
+        ],
+        [
+            "preferred",
+            "stream-buffers",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "string-width",
+            "fast-string-width, Bun.stringWidth",
+            false
+        ],
+        [
+            "preferred",
+            "strip-ansi",
+            "util.stripVTControlCharacters (Node 16.11.0+), Bun.stripANSI",
+            true
+        ],
+        [
+            "preferred",
+            "tar",
+            "modern-tar",
+            false
+        ],
+        [
+            "preferred",
+            "tar-fs",
+            "modern-tar",
+            false
+        ],
+        [
+            "preferred",
+            "tar-stream",
+            "modern-tar",
+            false
+        ],
+        [
+            "preferred",
+            "teeny-request",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "temp",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "temp-dir",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "tempfile",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "tempy",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "then-request",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "through",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "through2",
+            "node:stream (Node 0.10.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "tmp",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "tmp-promise",
+            "fs.promises.mkdtempDisposable (Node 24.4.0+), fs.promises.mkdtemp (Node 10.0.0+), Deno.makeTempDir",
+            false
+        ],
+        [
+            "preferred",
+            "tokml",
+            "@placemarkio/tokml",
+            false
+        ],
+        [
+            "preferred",
+            "traverse",
+            "neotraverse",
+            true
+        ],
+        [
+            "preferred",
+            "tsc",
+            "no longer needed",
+            false
+        ],
+        [
+            "preferred",
+            "tsup",
+            "tsdown",
+            false
+        ],
+        [
+            "preferred",
+            "uid-safe",
+            "crypto.randomUUID (Node 16.7.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "underscore",
+            "no longer needed, es-toolkit",
+            false
+        ],
+        [
+            "preferred",
+            "universal-deep-strict-equal",
+            "dequal, util.isDeepStrictEqual (Node 9.0.0+), Bun.deepEquals",
+            false
+        ],
+        [
+            "preferred",
+            "uri-js",
+            "URL (Node 10.0.0+), uri-js-replace, fast-uri",
+            false
+        ],
+        [
+            "preferred",
+            "utf8",
+            "TextEncoder (Node 11.0.0+), Buffer.prototype.toString (Node 0.1.90+)",
+            false
+        ],
+        [
+            "preferred",
+            "uuid",
+            "crypto.randomUUID (Node 16.7.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "uuidv4",
+            "crypto.randomUUID (Node 16.7.0+)",
+            false
+        ],
+        [
+            "preferred",
+            "vue3-markdown-it",
+            "vue-markdown-render",
+            false
+        ],
+        [
+            "preferred",
+            "wait-for-expect",
+            "node:test (Node 18.0.0+), vitest",
+            false
+        ],
+        [
+            "preferred",
+            "wellknown",
+            "betterknown",
+            false
+        ],
+        [
+            "preferred",
+            "whatwg-fetch",
+            "fetch (Node 18.0.0+), ofetch, ky",
+            false
+        ],
+        [
+            "preferred",
+            "which-pm",
+            "package-manager-detector",
+            false
+        ],
+        [
+            "preferred",
+            "wrap-ansi",
+            "fast-wrap-ansi",
+            false
+        ],
+        [
+            "preferred",
+            "xmldom",
+            "@xmldom/xmldom",
+            false
+        ],
+        [
+            "preferred",
+            "yaml-ast-parser",
+            "yaml",
+            false
+        ],
+        [
+            "preferred",
+            "yamljs",
+            "yaml, Bun.YAML",
+            false
+        ],
+        [
+            "preferred",
+            "yargs",
+            "sade, cleye",
+            false
+        ],
+        [
+            "preferred",
+            "yargs-parser",
+            "util.parseArgs (Node 16.17.0+), mri",
+            false
+        ],
+        [
+            "preferred",
+            "yup",
+            "valibot, zod",
+            false
+        ],
+        [
+            "micro-utility",
+            "arr-diff",
+            "You can use a combination of `filter` and `includes` to calculate the difference between two arrays.",
+            false
+        ],
+        [
+            "micro-utility",
+            "arr-flatten",
+            "You can use `Array.prototype.flat` with `Infinity` as an argument to fully flatten an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "arr-union",
+            "You can use a combination of the spread operator and `Set` to create a union of two arrays.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-back",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-ify",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-initial",
+            "You can get all but the last n elements using `array.slice`",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-last",
+            "You can use `arr.at(-1)` if supported or `arr[arr.length - 1]` to get the last element of an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-range",
+            "You can use `Array.from` to create an array of sequential integers starting from a specific integer",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-union",
+            "You can use a combination of the spread operator and `Set` to create a union of two arrays.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-uniq",
+            "You can convert to and from a `Set` to remove duplicates from an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "array-unique",
+            "You can convert to and from a `Set` to remove duplicates from an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "arrify",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "as-array",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "async-each",
+            "You can use `Promise.all` with `Array.prototype.map` to do an async action with an array of items.",
+            false
+        ],
+        [
+            "micro-utility",
+            "async-function",
+            "You can get the `AsyncFunction` using `async function`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "base64-js",
+            "Every modern runtime provides a way to convert byte array to and from base64.",
+            false
+        ],
+        [
+            "micro-utility",
+            "base64id",
+            "You can use `crypto.randomBytes` with `Buffer.prototype.toString` to generate a random base64 id",
+            false
+        ],
+        [
+            "micro-utility",
+            "call-bind",
+            "Every modern runtime provides a way to bind to the `call` method of a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "clone-regexp",
+            "You can create a copy of a regular expression using the `RegExp` constructor.",
+            true
+        ],
+        [
+            "micro-utility",
+            "comver-to-semver",
+            "You can use a ternary operator and string concatenation to add a trailing `.0`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "defined",
+            "You can use `Array.prototype.find` to find a first defined item.",
+            false
+        ],
+        [
+            "micro-utility",
+            "es-get-iterator",
+            "Every modern runtime provides a way to get the iterator function through the `Symbol.iterator` symbol.",
+            true
+        ],
+        [
+            "micro-utility",
+            "es-set-tostringtag",
+            "You can set the `toStringTag` of an object using `Object.defineProperty`.",
+            true
+        ],
+        [
+            "micro-utility",
+            "except",
+            "You can use `Object.fromEntries` with `Object.entries` and `Array.prototype.filter` to exclude specific keys from an object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "fast-base64-decode",
+            "Every modern runtime provides a way to convert byte array to and from base64.",
+            false
+        ],
+        [
+            "micro-utility",
+            "filter-obj",
+            "You can use `Object.fromEntries` with `Object.entries` and `Array.prototype.filter` to filter an object's properties.",
+            false
+        ],
+        [
+            "micro-utility",
+            "for-own",
+            "You can use `Object.keys(obj).forEach` to iterate over the own enumerable properties of an object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "has-ansi",
+            "You can use the `includes` method on the string to check if a specific ANSI byte is present.",
+            false
+        ],
+        [
+            "micro-utility",
+            "has-flag",
+            "You can use the `includes` method on the `process.argv` array to check if a flag is present.",
+            false
+        ],
+        [
+            "micro-utility",
+            "indent-string",
+            "You can indent every non-empty line with `String.prototype.replace`, or use `/^/gm` to also indent empty lines, matching the package's `includeEmptyLines` option.",
+            false
+        ],
+        [
+            "micro-utility",
+            "invert-kv",
+            "You can use `Object.fromEntries` with `Object.entries` to invert keys and values.",
+            false
+        ],
+        [
+            "micro-utility",
+            "iota-array",
+            "You can use `Array.from` to create an array of sequential integers",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-arguments",
+            "You can use `Object.prototype.toString.call(obj) === \"[object Arguments]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-array-buffer",
+            "You can use `instanceof ArrayBuffer`, or if cross-realm, use `Object.prototype.toString.call(obj) === \"[object ArrayBuffer]\"`",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-async-function",
+            "You can use `typeof` and `Object.prototype.toString.call` to check if it's an async function",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-bigint",
+            "You can use `typeof` to check if a value is a bigint.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-boolean-object",
+            "You can use `typeof` to check if a value is a boolean.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-ci",
+            "Every major CI provider sets a `CI` environment variable that you can use to detect if you're running in a CI environment.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-date-object",
+            "You can use `instanceof Date`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Date]\"`",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-decimal",
+            "You can check if a character, or a character code, is a decimal digit by comparing its character code against the `0`-`9` range.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-deflate",
+            "You can check the first two bytes of a buffer to detect if it's compressed using deflate.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-directory",
+            "You can call `isDirectory()` on the result of `stat` from `node:fs/promises`, or of `statSync` from `node:fs`, treating an `ENOENT` error as `false`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-dotfile",
+            "You can test whether a path ends in a dotfile such as `.gitignore` using a regular expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-electron",
+            "You can detect Electron by checking the renderer process type, `process.versions.electron`, or the user agent.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-even",
+            "You can use the modulo operator to check if a number is even.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-extendable",
+            "You can use `typeof` to check if a value is an object or a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-function",
+            "You can use `typeof` to check if a value is a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-generator-function",
+            "You can use `typeof` and `Object.prototype.toString.call` to check if a value is a generator function",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-gzip",
+            "You can check first three bytes of a buffer to detect if it is a gzip file.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-in-ci",
+            "Every major CI provider sets a `CI` environment variable that you can use to detect if you're running in a CI environment.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-in-ssh",
+            "You can check if the current environment is SSH by checking if the `SSH_CONNECTION` environment variable is set.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-interactive",
+            "You can check if the current environment is interactive using `process.stdout.isTTY` and checking that it is not running in CI.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-jpg",
+            "You can check the first three bytes of a buffer against the JPEG file signature to detect if it is a JPEG image.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-lambda",
+            "You can check if the current environment is an AWS Lambda by checking if the `LAMBDA_TASK_ROOT` environment variables are set.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-lower-case",
+            "You can compare the string against its lower-cased form to determine if the string is entirely lower case",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-map",
+            "You can use `instanceof Map` to check if a value is a `Map`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Map]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-negative",
+            "You can check if a number is less than 0 to determine if it's negative.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-negative-zero",
+            "You can use `Object.is` to check if a value is negative zero.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-nil",
+            "You can check if a value is `null` or `undefined` using loose equality with `null`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-npm",
+            "If the current environment is npm the `npm_config_user_agent` environment variable will be set and start with `\"npm\"`.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-number",
+            "You can use `typeof` to check if a value is a number.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-number-object",
+            "You can use `typeof` to check if a value is a number.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-obj",
+            "You can use `typeof` to check if a value is an object or a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-object",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-odd",
+            "You can use the modulo operator to check if a number is odd.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-path-cwd",
+            "You can check if a path equals the current working directory using `path.relative`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-plain-obj",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-plain-object",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-png",
+            "You can check the first eight bytes of a buffer against the PNG file signature to detect if it is a PNG image.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-posix-bracket",
+            "You can test for a POSIX bracket expression such as `[:alpha:]` using a regular expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-primitive",
+            "You can check `typeof` of a value to determine if it's a primitive. Note that `typeof null` is `\"object\"` so you need to check for `null` separately.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-property",
+            "You can test a string against the `ID_Start` and `ID_Continue` Unicode properties to check whether it is a valid identifier name, and so usable as an unquoted property.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-regex",
+            "You can use `instanceof RegExp` to check if a value is a regular expression, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object RegExp]\"`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-regexp",
+            "You can use `instanceof RegExp` to check if a value is a regular expression, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object RegExp]\"`.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-root",
+            "You can use `process.getuid?.()` to check if a user is a root user.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-set",
+            "You can use `instanceof Set` to check if a value is a `Set`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Set]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-stream",
+            "`node:stream` provides `isReadable` and `isWritable` methods that can be used to check if a stream is readable or writable.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-string",
+            "You can use `typeof` to check if a value is a string.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-supported-regexp-flag",
+            "The `RegExp` constructor throws on an unsupported or invalid flag, so you can check support with a `try`/`catch`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-symbol",
+            "You can use `typeof` to check if a value is a symbol.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-touch-device",
+            "You can check if the current device is a touch device by checking the `'ontouchstart'` propery of the `window` object and `maxTouchPoints` of the `navigator` object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-travis",
+            "You can check if the current environment is Travis CI by checking if the `TRAVIS` environment variable is set.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-typedarray",
+            "You can check if a value is a Typed Array using `ArrayBuffer.isView` and checking if it is not a `DataView`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-unc-path",
+            "You can test for a Windows UNC path such as `\\\\server\\share` using a regular expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-whitespace",
+            "You can check if a string contains only whitespace with `RegExp` or by trimming it and comparing it to an empty string.",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-whitespace-character",
+            "You can check if a string contains only whitespace with `RegExp` or by trimming it and comparing it to an empty string.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-windows",
+            "You can check if the current environment is Windows by checking if `process.platform` is equal to \"win32\".",
+            true
+        ],
+        [
+            "micro-utility",
+            "is-word-character",
+            "You can check if a character is a word character with a `RegExp`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "is-wsl",
+            "You can check if the current environment is WSL by checking if the `WSL_DISTRO_NAME` environment variable is set.",
+            false
+        ],
+        [
+            "micro-utility",
+            "isobject",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "isstream",
+            "`node:stream` provides `isReadable` and `isWritable` methods that can be used to check if a stream is readable or writable.",
+            false
+        ],
+        [
+            "micro-utility",
+            "iterate-object",
+            "You can use a `for...of` loop over `Object.entries` to iterate an object's own enumerable properties, and `break` to stop early.",
+            false
+        ],
+        [
+            "micro-utility",
+            "js-base64",
+            "Every modern runtime provides a way to convert byte array to and from base64.",
+            false
+        ],
+        [
+            "micro-utility",
+            "jsonfile",
+            "You can use `JSON` and `node:fs` to read and write JSON files.",
+            false
+        ],
+        [
+            "micro-utility",
+            "kind-of",
+            "You can use `typeof` to get the type of a value, or `Object.prototype.toString.call` to get the internal [[Class]] of an object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "last-char",
+            "You can use `str.at(-1)` if supported or `str[str.length - 1]` to get the last character of a string.",
+            false
+        ],
+        [
+            "micro-utility",
+            "libbase64",
+            "Every modern runtime provides a way to convert byte array to and from base64.",
+            false
+        ],
+        [
+            "micro-utility",
+            "load-json-file",
+            "You can use `JSON` and `node:fs` to read and write JSON files.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.castarray",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.eq",
+            "You can determine if two values are equal using regular equality checks.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isarraybuffer",
+            "You can use `instanceof ArrayBuffer`, or if cross-realm, use `Object.prototype.toString.call(obj) === \"[object ArrayBuffer]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isboolean",
+            "You can use `typeof` to check if a value is a boolean.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isdate",
+            "You can use `instanceof Date`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Date]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isfunction",
+            "You can use `typeof` to check if a value is a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.ismap",
+            "You can use `instanceof Map` to check if a value is a `Map`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Map]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isnil",
+            "You can check if a value is `null` or `undefined` using loose equality with `null`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isnull",
+            "You can check if a value is `null` using regular equality checks.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isnumber",
+            "You can use `typeof` to check if a value is a number.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isobject",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isplainobject",
+            "You can use `typeof` to check if a value is an object and `Object.getPrototypeOf` to ensure it's a plain object.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isregexp",
+            "You can use `instanceof RegExp` to check if a value is a regular expression, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object RegExp]\"`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isset",
+            "You can use `instanceof Set` to check if a value is a `Set`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object Set]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isstring",
+            "You can use `typeof` to check if a value is a string.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.issymbol",
+            "You can use `typeof` to check if a value is a symbol.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.istypedarray",
+            "You can check if a value is a Typed Array using `ArrayBuffer.isView` and checking if it is not a `DataView`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isundefined",
+            "You can use `typeof` to check if a value is `undefined`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isweakmap",
+            "You can use `instanceof WeakMap` to check if a value is a `WeakMap`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object WeakMap]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.isweakset",
+            "You can use `instanceof WeakSet` to check if a value is a `WeakSet`, or if cross-realm, use `Object.prototype.toString.call(v) === \"[object WeakSet]\"`",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.noop",
+            "You can use an arrow function `() => {}` for a noop function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "lodash.uniq",
+            "You can convert to and from a `Set` to remove duplicates from an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "map-obj",
+            "You can use `Object.fromEntries` with `Object.entries` and `Array.prototype.map` to map an object's properties.",
+            false
+        ],
+        [
+            "micro-utility",
+            "math-random",
+            "You can use `Math.random()` or `crypto.getRandomValues` if cryptographic randomness is required.",
+            false
+        ],
+        [
+            "micro-utility",
+            "min-indent",
+            "You can use a regular expression with `Array.prototype.reduce` to find the shortest leading whitespace across the lines of a string.",
+            false
+        ],
+        [
+            "micro-utility",
+            "minimalistic-assert",
+            "You can use a simple function to assert a value or an expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "object-filter",
+            "You can use `Object.fromEntries` with `Object.entries` and `Array.prototype.filter` to filter an object's properties.",
+            false
+        ],
+        [
+            "micro-utility",
+            "object.map",
+            "You can use `Object.fromEntries` with `Object.entries` and `Array.prototype.map` to map an object's properties.",
+            false
+        ],
+        [
+            "micro-utility",
+            "object.reduce",
+            "You can use `Object.entries` and `Array.prototype.reduce`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "path-key",
+            "You can use `Object.keys` with `Array.prototype.findLast` to find the case-insensitive `PATH` environment variable key.",
+            false
+        ],
+        [
+            "micro-utility",
+            "path-name",
+            "You can use `Object.keys` with `Array.prototype.findLast` to find the case-insensitive `PATH` environment variable key.",
+            false
+        ],
+        [
+            "micro-utility",
+            "path-root",
+            "You can use `parse` from `node:path` and read its `root` property to get the root of a path.",
+            false
+        ],
+        [
+            "micro-utility",
+            "path-root-regex",
+            "You can use `parse` from `node:path` and read its `root` property to get the root of a path.",
+            false
+        ],
+        [
+            "micro-utility",
+            "reduce-object",
+            "You can use `Object.entries` and `Array.prototype.reduce`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "repeat-element",
+            "You can use `new Array` with `Array.prototype.fill` to create an array filled with identical elements",
+            false
+        ],
+        [
+            "micro-utility",
+            "set-function-length",
+            "You can set `length` of a function using `Object.defineProperty`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "set-function-name",
+            "You can set `name` of a function using `Object.defineProperty`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "shebang-regex",
+            "You can use `/^#!(.+)/` regex.",
+            false
+        ],
+        [
+            "micro-utility",
+            "slash",
+            "You can check the start of a path for the Windows extended-length path prefix and if it's not present, replace backslashes with forward slashes.",
+            false
+        ],
+        [
+            "micro-utility",
+            "split-lines",
+            "You can split a string into lines using a regular expression.",
+            true
+        ],
+        [
+            "micro-utility",
+            "strip-bom",
+            "You can check if the first character of the string is the BOM and strip it using `String.prototype.slice` if it is.",
+            false
+        ],
+        [
+            "micro-utility",
+            "strip-bom-string",
+            "You can check if the first character of the string is the BOM and strip it using `String.prototype.slice` if it is.",
+            false
+        ],
+        [
+            "micro-utility",
+            "toarray",
+            "You can use a combination of a ternary operator and `Array.isArray` to make sure a value, `undefined`, `null` or an array is always returned as an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "toidentifier",
+            "You can transform a string into an identifier (alphanumeric PascalCase) using `map` and a regular expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "trim-repeated",
+            "You can trim repeated sequences of characters using `String.prototype.replace`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "typedarray-to-buffer",
+            "You can use `Buffer.from` to convert a Typed Array to `Buffer` and `ArrayBuffer.isView` to avoid a copy.",
+            false
+        ],
+        [
+            "micro-utility",
+            "unc-path-regex",
+            "You can test for a Windows UNC path such as `\\\\server\\share` using a regular expression.",
+            false
+        ],
+        [
+            "micro-utility",
+            "uniq",
+            "You can convert to and from a `Set` to remove duplicates from an array.",
+            false
+        ],
+        [
+            "micro-utility",
+            "upper-case-first",
+            "You can uppercase the first character.",
+            false
+        ],
+        [
+            "micro-utility",
+            "util-arity",
+            "You can set `length` of a function using `Object.defineProperty`.",
+            false
+        ],
+        [
+            "micro-utility",
+            "validate.io-function",
+            "You can use `typeof` to check if a value is a function.",
+            false
+        ],
+        [
+            "micro-utility",
+            "year",
+            "You can use `new Date().getUTCFullYear()` to get the current year.",
+            false
+        ]
+    ],
     "socket": [
         [
             "aggregate-error",

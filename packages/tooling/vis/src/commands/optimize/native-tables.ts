@@ -11,8 +11,8 @@ const PM: PmInfo = { name: "pnpm", version: "latest" };
  * functions the Node handler uses, for every package the manifests know. The native side keeps the entries whose
  * package is a dependency of the workspace, in this order, which is the Node filter.
  *
- * - `e18e`: the `module-replacements` entries, as `[category, package, replacement, hasCodemod]`. Empty while the
- *   installed manifests have no `moduleReplacements` list, which is the only shape the handler reads.
+ * - `e18e`: the `module-replacements` entries, as `[category, package, replacement, hasCodemod]`,
+ *   one entry per mapping of the three manifests, in manifest order.
  * - `socket`: the `@socketregistry` overrides, as `[package, replacement, spec, pinnedSpec]`.
  */
 export const buildNativeOptimizeTables = async (): Promise<{

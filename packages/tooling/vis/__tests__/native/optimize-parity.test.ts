@@ -61,7 +61,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         workspaceFiles({
             ...project("a", { dependencies: deps(0, 6), devDependencies: deps(6, 5) }),
             ...project("b", { peerDependencies: deps(11, 4), optionalDependencies: deps(15, 3) }),
-            // Names the e18e manifests know: Node reports none of them (see `optimize-tables.test.ts`), and so must the binary.
+            // Names the e18e manifests know, so the report has e18e entries as well as socket ones.
             ...project("c", { dependencies: { "a-sync-waterfall": "1", "@cypress/request": "1", "arr-diff": "1", left: "1", ...deps(0, 2) } }),
         }, { dependencies: deps(20, 3), devDependencies: deps(23, 2) });
 

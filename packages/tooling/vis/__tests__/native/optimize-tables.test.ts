@@ -45,17 +45,14 @@ describe("native optimize tables", () => {
         expect(e18e.every(([category]) => ["micro-utility", "native", "preferred"].includes(category))).toBe(true);
     });
 
-    it("hold every entry of a manifest that has a `moduleReplacements` list", async () => {
-        expect.assertions(1);
+    it("hold one entry for every mapping of the module-replacements manifests", async () => {
+        expect.assertions(2);
 
-        // module-replacements 3.4 ships `replacements` and `mappings` objects, which the handler does not read, so
-        // the handler (and with it the native report) lists no e18e entry. When a release ships the list the handler
-        // reads, or the handler learns the new shape, this count and the table move together.
-        const lists = [nativeManifest, preferredManifest, microUtilitiesManifest].map((manifest) => (manifest as { moduleReplacements?: unknown[] }).moduleReplacements);
-        const expected = lists.reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+        const expected = [nativeManifest, preferredManifest, microUtilitiesManifest].reduce((sum, manifest) => sum + Object.keys(manifest.mappings).length, 0);
 
         const { e18e } = await buildNativeOptimizeTables();
 
+        expect(expected).toBeGreaterThan(0);
         expect(e18e).toHaveLength(expected);
     });
 });
