@@ -38,16 +38,14 @@ use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer
 use vis_core::date::iso_from_millis;
 
 use crate::cache::dirs::default_task_cache_directory;
+use crate::cache::entries::{is_sweep_candidate, DEFAULT_MAX_CACHE_AGE};
 use crate::js::{is_js_whitespace, json_string, random_uuid};
 use crate::node_context::{in_ci, native_context};
 use crate::targets::{script_targets_below, Targets};
 use crate::term;
 use crate::toolchain::{self, Pins, Versions};
 
-/// `DEFAULT_MAX_CACHE_AGE` of the task-runner cache: an entry older than this is swept by Node.
-const SWEEP_WINDOW: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
-/// An entry this close to the window is treated as expired: the native answer never depends on the
+/// An entry this close to the sweep window is treated as expired: the native answer never depends on the
 /// edge of a race with the sweep.
 const SWEEP_MARGIN: Duration = Duration::from_secs(60 * 60);
 
@@ -260,13 +258,11 @@ fn lockfile_is_fresh(root: &Path) -> bool {
 /// entry it looks up is a hit or a miss depending on a race.
 fn nothing_to_sweep(cache: &Path) -> bool {
     let Ok(entries) = fs::read_dir(cache) else { return false };
-    let limit = SWEEP_WINDOW.saturating_sub(SWEEP_MARGIN);
+    let limit = DEFAULT_MAX_CACHE_AGE.saturating_sub(SWEEP_MARGIN);
 
     for entry in entries {
         let Ok(entry) = entry else { return false };
-        let name = entry.file_name();
-
-        if name.as_encoded_bytes().starts_with(b".") || name == "v2" {
+        if !is_sweep_candidate(&entry.file_name()) {
             continue;
         }
 

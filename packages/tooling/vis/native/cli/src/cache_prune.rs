@@ -32,7 +32,8 @@ use std::process::exit;
 
 use crate::cache::dirs::{evict_directories, Scope};
 use crate::cache::entries::{
-    add_safe, collect_entries, has_backslash, mtime_ms, now_ms, sorted_entries, sum_directory_size,
+    add_safe, collect_entries, has_backslash, is_sweep_candidate, mtime_ms, now_ms, sorted_entries, sum_directory_size,
+    DEFAULT_MAX_CACHE_AGE,
 };
 use crate::cache::flags;
 use crate::cache::format::format_bytes;
@@ -43,12 +44,6 @@ use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::removal::{removable_directory, removable_file};
 use crate::text::is_ascii_graphic;
-
-/// `DEFAULT_MAX_CACHE_AGE` of the task runner's cache: seven days.
-const DEFAULT_MAX_CACHE_AGE: f64 = 7.0 * 24.0 * 60.0 * 60.0 * 1000.0;
-
-/// `V2_ROOT`: the content-addressed subtree, which `removeOldEntries` leaves alone.
-const V2_ROOT: &str = "v2";
 
 /// Nothing was removed. Its em dash is three bytes and one column, so it is printed only where it fits one line.
 const NOTHING_TO_PRUNE: &str = "Nothing to prune \u{2014} all entries are within the configured limits.";
@@ -357,13 +352,13 @@ fn prune_directory(request: &Request, directory: &str, layout: Layout, plan: &mu
 /// `fs.readdir` lists them. `dropped` holds what `--keep-last` removed before, which is gone when Node looks again.
 fn expire(request: &Request, base: &Path, dropped: &mut Vec<String>) -> Option<()> {
     let now = now_ms();
-    let max_age = request.max_age.unwrap_or(DEFAULT_MAX_CACHE_AGE);
+    let max_age = request.max_age.unwrap_or(DEFAULT_MAX_CACHE_AGE.as_secs_f64() * 1000.0);
     let mut kept: Vec<(f64, String, u64)> = Vec::new();
 
     for entry in sorted_entries(base)? {
         let file_name = entry.file_name();
 
-        if file_name.as_encoded_bytes().starts_with(b".") || file_name == V2_ROOT {
+        if !is_sweep_candidate(&file_name) {
             continue;
         }
 
