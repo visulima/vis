@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1247,6 +1247,146 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 expect(readFileSync(join(root, file), "utf8")).toContain(landed);
                 expect(readSummary(root)).toBe(readSummary(base.root));
             });
+        });
+
+        describe("tools that share one file, and probes that misbehave", () => {
+            const base = { root: "" };
+
+            beforeAll(() => {
+                base.root = warm("probe-edge-cases", shape).root;
+            }, 120_000);
+
+            /** A version manager's shim: one file linked under several names, answering by the name it is started under. */
+            const shimDirectory = (name: string, answers: Record<string, string>): string => {
+                const directory = join(paths.scratch, `shim-${name}`);
+                const shim = join(directory, "shim");
+                const cases = Object.entries(answers).map(([tool, answer]) => `*/${tool}) echo ${answer};;`).join(" ");
+
+                mkdirSync(directory, { recursive: true });
+                writeFileSync(shim, `#!/bin/sh\ncase "$0" in ${cases} *) exit 1;; esac\n`, { mode: 0o755 });
+
+                for (const tool of Object.keys(answers)) {
+                    symlinkSync(shim, join(directory, tool));
+                }
+
+                return directory;
+            };
+
+            it.each([true, false])("asks each name of a shim on its own and answers when every pin is met (started by the launcher: %s)", (handoff) => {
+                expect.assertions(3);
+
+                const root = fresh(base.root);
+                const directory = shimDirectory(`met-${handoff}`, { node: "v22.1.0", npm: "10.5.0" });
+
+                rootWith({ engines: { node: ">=18", npm: ">=9" } })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory), handoff);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(native.status).toBe(0);
+                expect(native.stderr).toBe("");
+            });
+
+            it.each([true, false])("does not take Node's answer for npm's when they share a shim (started by the launcher: %s)", (handoff) => {
+                expect.assertions(3);
+
+                const root = fresh(base.root);
+                const directory = shimDirectory(`unmet-${handoff}`, { node: "v22.1.0", npm: "8.0.0" });
+
+                rootWith({ engines: { node: ">=18", npm: ">=9" } })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory), handoff);
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(readSummary(root)).toBe(readSummary(base.root));
+            });
+
+            // Two aliases of one tool: Node walks `engines` in file order and the later one wins, so the run is Node's either way.
+            it.each([
+                ["the lenient alias first", { nodejs: ">=1", node: ">=99999" }],
+                ["the strict alias first", { node: ">=99999", nodejs: ">=1" }],
+            ])("delegates an engines that names node twice: %s", (_name, engines) => {
+                expect.assertions(3);
+
+                const root = fresh(base.root);
+
+                rootWith({ engines })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(stubDirectory("aliases", toolsAt({ node: "v22.1.0" }))));
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(readSummary(root)).toBe(readSummary(base.root));
+            });
+
+            it("delegates when the Node it asks for its version changes a task input, with no pin", () => {
+                expect.assertions(5);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory("touching-node", {
+                    node: `if [ "$1" = "--version" ]; then echo '// touched' >> packages/p1/src/index.ts; echo v22.1.0; else exec ${process.execPath} "$@"; fi`,
+                });
+                const native = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE: join(directory, "node") }), false);
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(native.stderr).toBe("");
+                expect(readFileSync(join(root, "packages/p1/src/index.ts"), "utf8")).toContain("// touched");
+                expect(readSummary(root)).toBe(readSummary(base.root));
+            });
+
+            it("keeps the run's times in order and the time a probe takes out of its duration", () => {
+                expect.assertions(6);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory("slow-pnpm", { pnpm: "sleep 1; echo 10.4.1" });
+
+                rootWith({ packageManager: "pnpm@10.4.1" })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
+                const summary = JSON.parse(readSummary(root)) as { duration: number; endTime: string; startTime: string; tasks: { endTime: string; startTime: string }[] };
+                const at = (text: string): number => Date.parse(text);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(summary.tasks.length).toBeGreaterThan(0);
+                expect(summary.tasks.every((task) => at(summary.startTime) <= at(task.startTime))).toBe(true);
+                expect(summary.tasks.every((task) => at(summary.endTime) >= at(task.endTime))).toBe(true);
+                // The probe slept a second; neither the duration nor the span of the timestamps contains it.
+                expect(summary.duration).toBeLessThan(800);
+                expect(at(summary.endTime) - at(summary.startTime)).toBeLessThan(800);
+            });
+
+            it("delegates promptly when a probe prints without end", () => {
+                expect.assertions(3);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory("noisy-pnpm", { pnpm: "exec yes 10.4.1" });
+
+                rootWith({ packageManager: "pnpm@10.4.1" })(root);
+
+                const started = Date.now();
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                // Ending the probe at its output limit does not wait for the two seconds of its timeout.
+                expect(Date.now() - started).toBeLessThan(1800);
+            });
+
+            it("delegates when a probe leaves a process holding its output open", () => {
+                expect.assertions(2);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory("holding-pnpm", { pnpm: "sleep 30 &\necho 10.4.1" });
+
+                rootWith({ packageManager: "pnpm@10.4.1" })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+            }, 20_000);
         });
 
         describe("the Node version without the launcher", () => {
