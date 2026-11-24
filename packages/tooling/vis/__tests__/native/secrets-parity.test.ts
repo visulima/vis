@@ -273,7 +273,7 @@ const ready = Boolean(binary) && process.platform !== "win32" && existsSync(node
 const TIMEOUT = 300_000;
 
 describe.skipIf(!ready)("vis secrets: native vs Node", () => {
-    const paths = { fixtures: new Map<string, string>(), scratch: "", stub: "" };
+    const paths = { bareStub: "", fixtures: new Map<string, string>(), scratch: "", stub: "" };
 
     beforeAll(() => {
         paths.scratch = realpathSync(mkdtempSync(join(tmpdir(), "vis-secrets-parity-")));
@@ -293,6 +293,12 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
         mkdirSync(join(stubPackage, "node_modules", "@visulima"), { recursive: true });
         symlinkSync(realpathSync(scannerPackage), join(stubPackage, "node_modules", "@visulima", "secret-scanner"), "dir");
         paths.stub = join(stubPackage, "dist", "bin.js");
+
+        // The same stub with no scanner package above it: the ruleset cannot be located.
+        const bareStubPackage = join(paths.scratch, "bare-stub-package");
+
+        write(bareStubPackage, "dist/bin.js", `console.log("${marker}");\nprocess.exit(99);\n`);
+        paths.bareStub = join(bareStubPackage, "dist", "bin.js");
     }, TIMEOUT);
 
     afterAll(() => {
@@ -369,6 +375,14 @@ describe.skipIf(!ready)("vis secrets: native vs Node", () => {
 
         // The stub entry answers with the marker, which only a delegation reaches.
         expect(runNative(directoryOf(fixture), args, true, paths.stub).stdout).toContain(marker);
+    }, TIMEOUT);
+
+    // The answer needs the ruleset of the scanner package the Node entry resolves. An entry outside any
+    // `node_modules` that holds it (a stand-in entry, for one) leaves the run to Node, whatever the shape.
+    it.each([["clean", ["--quiet"]], ["clean", ["--format", "json"]]] as const)("%s %j is delegated when the entry has no scanner package above it", (fixture, args) => {
+        expect.assertions(1);
+
+        expect(runNative(directoryOf(fixture), [...args], true, paths.bareStub).stdout).toContain(marker);
     }, TIMEOUT);
 
     it.each(DELEGATED_AND_COMPARED)("%s %j is delegated to the Node CLI unchanged", (fixture, args) => {

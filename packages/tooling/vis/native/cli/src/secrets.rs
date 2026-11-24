@@ -192,6 +192,11 @@ fn secretlintignore_applies(root: &Path) -> bool {
 
 /// The `data/ruleset.json` of the `@visulima/secret-scanner` the Node CLI would load: the nearest
 /// `node_modules` above the Node entry that holds it, as Node's resolution walks.
+///
+/// An entry with no such `node_modules` above it finds nothing, and the whole run goes to Node, whatever
+/// the arguments. The launcher passes the real `dist/bin.js`, which always has one; a stand-in entry
+/// outside the package tree (a harness that only needs to see a delegation) does not, so a plain
+/// `vis secrets --quiet` in a pnpm workspace delegates there.
 fn ruleset_path() -> Option<PathBuf> {
     let entry = fs::canonicalize(env::var_os("VIS_FALLBACK_ENTRY")?).ok()?;
 

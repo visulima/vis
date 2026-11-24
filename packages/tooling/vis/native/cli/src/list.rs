@@ -11,6 +11,7 @@
 //! and no config changes the target set. Node prints tips and first-run notices to stderr outside CI,
 //! so the native path needs the same quiet context `advisories` uses.
 
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -196,33 +197,77 @@ struct Triggers {
     fallback_dependencies: Vec<String>,
 }
 
-/// Whether any inference detector would run on this project directory. Node then may enrich
-/// the script targets with a `type`, so the native path hands the project to Node.
-fn detector_triggered(project: &Path, manifest: &Manifest, triggers: &Triggers) -> Option<bool> {
-    for pattern in &triggers.config_files {
-        match pattern.strip_prefix('*') {
-            Some(suffix) => {
-                for entry in fs::read_dir(project).ok()? {
-                    let entry = entry.ok()?;
+/// The config-file triggers split by how a project directory is checked: one directory listing answers
+/// every top-level name and suffix pattern, and only a pattern whose first path segment is present in the
+/// listing is looked at on disk.
+struct Detectors<'a> {
+    /// `(pattern, lowercased first segment)` of each trigger without a wildcard.
+    files: Vec<(&'a str, String)>,
+    /// The lowercased first segments of `files`: the only entry names a listing has to remember.
+    first_segments: HashSet<Vec<u8>>,
+    /// The part after the `*` of each wildcard trigger.
+    suffixes: Vec<&'a [u8]>,
+    dependencies: &'a [String],
+}
 
-                    if entry.file_name().as_encoded_bytes().ends_with(suffix.as_bytes()) {
-                        return Some(true);
-                    }
-                }
-            }
-            None => {
-                if project.join(pattern).exists() {
-                    return Some(true);
+impl<'a> Detectors<'a> {
+    fn new(triggers: &'a Triggers) -> Self {
+        let mut files = Vec::new();
+        let mut suffixes = Vec::new();
+
+        for pattern in &triggers.config_files {
+            match pattern.strip_prefix('*') {
+                Some(suffix) => suffixes.push(suffix.as_bytes()),
+                None => {
+                    files.push((pattern.as_str(), pattern.split('/').next().unwrap_or_default().to_ascii_lowercase()))
                 }
             }
         }
+
+        let first_segments = files.iter().map(|(_, segment)| segment.as_bytes().to_vec()).collect();
+
+        Self { files, first_segments, suffixes, dependencies: &triggers.fallback_dependencies }
+    }
+}
+
+/// Whether any inference detector would run on this project directory. Node then may enrich
+/// the script targets with a `type`, so the native path hands the project to Node.
+fn detector_triggered(project: &Path, manifest: &Manifest, detectors: &Detectors) -> Option<bool> {
+    let mut names: HashSet<Vec<u8>> = HashSet::new();
+    let mut ascii = true;
+
+    for entry in fs::read_dir(project).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let bytes = name.as_encoded_bytes();
+
+        if detectors.suffixes.iter().any(|suffix| bytes.ends_with(suffix)) {
+            return Some(true);
+        }
+
+        ascii &= bytes.is_ascii();
+
+        let folded = bytes.to_ascii_lowercase();
+
+        if detectors.first_segments.contains(&folded) {
+            names.insert(folded);
+        }
     }
 
-    Some(triggers.fallback_dependencies.iter().any(|name| manifest.declares(name)))
+    // `exists` follows links and, on a case-insensitive volume, ignores case, so a pattern is only ruled out
+    // when no entry could be it under ASCII case folding. A name outside ASCII could fold onto one on such a
+    // volume (the Kelvin sign onto `k`), so that directory takes every check.
+    for (pattern, first_segment) in &detectors.files {
+        if (!ascii || names.contains(first_segment.as_bytes())) && project.join(pattern).exists() {
+            return Some(true);
+        }
+    }
+
+    Some(detectors.dependencies.iter().any(|name| manifest.declares(name)))
 }
 
 /// Reads one project's script targets, or `None` when Node must answer for it.
-fn project_scripts(root: &Path, directory: &str, triggers: &Triggers) -> Option<Vec<(String, String)>> {
+fn project_scripts(root: &Path, directory: &str, detectors: &Detectors) -> Option<Vec<(String, String)>> {
     if directory == "." || !directory.is_ascii() {
         return None;
     }
@@ -230,7 +275,7 @@ fn project_scripts(root: &Path, directory: &str, triggers: &Triggers) -> Option<
     let project = root.join(directory);
     let manifest: Manifest = serde_json::from_str(&fs::read_to_string(project.join("package.json")).ok()?).ok()?;
 
-    if detector_triggered(&project, &manifest, triggers)? {
+    if detector_triggered(&project, &manifest, detectors)? {
         return None;
     }
 
@@ -269,6 +314,7 @@ struct Listed {
 
 fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
     let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).ok()?;
+    let detectors = Detectors::new(&triggers);
     let mut listed = Vec::new();
 
     for (name, node) in &graph.nodes {
@@ -277,7 +323,7 @@ fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
         }
 
         let directory = graph.directories.get(name)?;
-        let targets = project_scripts(root, directory, &triggers)?;
+        let targets = project_scripts(root, directory, &detectors)?;
 
         listed.push(Listed {
             directory: directory.clone(),
@@ -482,6 +528,64 @@ mod tests {
         for name in RESERVED_SCRIPT_NAMES {
             assert!(!parses(&format!(r#"{{"{name}":"echo"}}"#)), "{name}");
         }
+    }
+
+    /// A project directory holding the given files (a `/` makes the parent directory), with no manifest fields.
+    fn detector_project(label: &str, files: &[&str]) -> std::path::PathBuf {
+        let project = env::temp_dir().join(format!("vis-list-detector-{}-{label}", std::process::id()));
+        let _ = fs::remove_dir_all(&project);
+
+        fs::create_dir_all(&project).unwrap();
+
+        for file in files {
+            let path = project.join(file);
+
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+        }
+
+        project
+    }
+
+    fn triggered(label: &str, files: &[&str], manifest: &str) -> bool {
+        let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).unwrap();
+        let project = detector_project(label, files);
+        let parsed: Manifest = serde_json::from_str(manifest).unwrap();
+        let answer = detector_triggered(&project, &parsed, &Detectors::new(&triggers));
+
+        let _ = fs::remove_dir_all(&project);
+
+        answer.unwrap()
+    }
+
+    #[test]
+    fn detectors_find_top_level_nested_and_suffix_triggers() {
+        assert!(!triggered("none", &["package.json", "src/index.ts"], "{}"));
+        assert!(triggered("top", &["package.json", "tsup.config.ts"], "{}"));
+        assert!(triggered("nested", &["package.json", ".storybook/main.ts"], "{}"));
+        assert!(triggered("deep", &["package.json", "docs/.vitepress/config.ts"], "{}"));
+        assert!(triggered("suffix", &["package.json", "Thing.csproj"], "{}"));
+        assert!(triggered("dependency", &["package.json"], r#"{"devDependencies":{"vitest":"1"}}"#));
+    }
+
+    #[test]
+    fn detectors_ignore_a_directory_that_only_shares_a_first_segment() {
+        assert!(!triggered("segment", &["package.json", ".storybook/other.ts", "docs/readme.md"], "{}"));
+    }
+
+    #[test]
+    fn detectors_follow_the_volume_on_name_case() {
+        let probe = env::temp_dir().join(format!("vis-list-case-{}", std::process::id()));
+        let _ = fs::remove_file(&probe);
+
+        fs::write(&probe, "").unwrap();
+
+        let insensitive = env::temp_dir().join(format!("VIS-LIST-CASE-{}", std::process::id())).exists();
+
+        let _ = fs::remove_file(&probe);
+
+        // `exists` is the oracle: a differently cased trigger counts exactly where the volume treats it as the file.
+        assert_eq!(triggered("case", &["package.json", "TSUP.config.ts"], "{}"), insensitive);
     }
 
     #[test]
