@@ -126,6 +126,12 @@ fn main() {
         "hook" if args.get(1).map(String::as_str) == Some("list") && !surface::asks_for_help(&args) => {
             hook::list::run(&args, &raw_args)
         }
+        // `vis hook validate` — answered natively only when it has nothing to report; any warning or error goes to
+        // Node (see `hook::validate`), before anything is printed.
+        #[cfg(unix)]
+        "hook" if args.get(1).map(String::as_str) == Some("validate") && !surface::asks_for_help(&args) => {
+            hook::validate::run(&args, &raw_args)
+        }
         // `vis advisories bloom status --format json --cache-dir <dir>` — read-only osv-bloom
         // status. Every other shape (table output, `sync`, `prune`, help) goes to the arm below.
         "advisories"

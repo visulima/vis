@@ -1020,7 +1020,7 @@ const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return outputSettingsAreDefault(environment) && args.length === 2 && taskWhyIdIsNative(args[1]);
 };
 
-// Whether `vis hook list` can pass the binary's native gate (`parse` and `answer` in `hook/list.rs`): the plain listing, or
+// Whether `vis hook list` and `vis hook validate` can pass the binary's native gate (`parse` and `answer` in `hook/list.rs` and `hook/validate.rs`): the plain command, or
 // one `--hooks-dir` that is a relative path of plain segments the argument parser keeps as a string, at the root of a pnpm
 // workspace in a CI context off a terminal. The binary re-checks everything, including the files of the hooks directory, so this
 // only skips the extra process when it would delegate anyway. Windows stays in Node.
@@ -1036,7 +1036,7 @@ const hooksDirectoryIsNative = (value) => {
     return value.split("/").every((segment) => HOOKS_DIRECTORY_SEGMENT.test(segment) && segment !== "." && segment !== "..");
 };
 
-const hookListShapeIsNative = (args) => {
+const hookShapeIsNative = (args) => {
     if (args.length === 2) {
         return true;
     }
@@ -1048,12 +1048,12 @@ const hookListShapeIsNative = (args) => {
     return args.length === 3 && args[2].startsWith("--hooks-dir=") && hooksDirectoryIsNative(args[2].slice("--hooks-dir=".length));
 };
 
-const hookListMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+const hookMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
     if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
         return false;
     }
 
-    return outputSettingsAreDefault(environment) && hookListShapeIsNative(args);
+    return outputSettingsAreDefault(environment) && hookShapeIsNative(args);
 };
 
 // Commands with a native gate answer help through the binary on every platform (it enables
@@ -1097,15 +1097,16 @@ const NATIVE_SHAPE_GATES = new Map([
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
-    // `hook list`; `hook run` is native for every shape (`alwaysNative`) and the other `hook` subcommands are Node's.
+    // `hook list` and `hook validate` (which the binary answers only when it has nothing to report); `hook run` is native for every shape
+    // (`alwaysNative`) and the other `hook` subcommands are Node's.
     [
         "hook",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
-            if (subcommand !== "list") {
+            if (subcommand !== "list" && subcommand !== "validate") {
                 return undefined;
             }
 
-            return helpOrNative(args, () => hookListMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            return helpOrNative(args, () => hookMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
         },
     ],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],

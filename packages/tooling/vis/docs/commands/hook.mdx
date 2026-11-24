@@ -78,6 +78,8 @@ Sanity-check the hooks directory: verifies `core.hooksPath`, the dispatcher scri
 vis hook validate
 ```
 
+In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, the Rust binary answers a hooks directory with nothing to report ("looks good") without starting Node. A directory with any warning or error, and every shape the binary cannot reproduce exactly, is handed to the Node implementation before anything is printed.
+
 ### run
 
 Run a stage's hooks from `<hooks-dir>/config.json` manually, useful for CI or one-off checks. This is the same runner that fires at commit time, so the same logic can be replayed over any file set:

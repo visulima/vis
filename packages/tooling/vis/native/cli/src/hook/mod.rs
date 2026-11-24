@@ -36,6 +36,8 @@ mod config;
 mod exec;
 mod filter;
 pub mod list;
+#[cfg(unix)]
+pub mod validate;
 
 use std::env;
 use std::io::Write;

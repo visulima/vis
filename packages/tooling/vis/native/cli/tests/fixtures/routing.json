@@ -925,6 +925,17 @@
         { "args": ["hook", "list"], "launcher": "node", "binary": "node", "env": { "CI": "1", "DEBUG": "1" } },
         { "args": ["hook", "list"], "launcher": "node", "binary": "node", "env": { "CI": "1", "PAIL_LOG_LEVEL": "error" } },
         { "args": ["hook", "list"], "launcher": "node", "binary": "node", "env": { "CI": "1", "CEREBRO_OUTPUT_LEVEL": "16" } },
-        { "args": ["hook", "list"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } }
+        { "args": ["hook", "list"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } },
+        { "args": ["hook", "validate"], "launcher": "native", "binary": "node", "env": { "CI": "1" }, "note": "the project of this fixture is no git repository, so the binary hands it over; the parity suite covers the answered shape" },
+        { "args": ["hook", "validate", "--hooks-dir=.githooks"], "launcher": "native", "binary": "node", "env": { "CI": "1" }, "note": "the project of this fixture is no git repository, so the binary hands it over; the parity suite covers the answered shape" },
+        { "args": ["hook", "validate", "--help"], "launcher": "native", "binary": "native" },
+        { "args": ["hook", "validate", "--json"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["hook", "validate", "--hooks-dir", "/abs"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["hook", "validate"], "launcher": "node", "binary": "node" },
+        { "args": ["hook", "validate"], "launcher": "node", "env": { "CI": "1" }, "interactive": true },
+        { "args": ["hook", "validate"], "launcher": "node", "env": { "CI": "1" }, "platform": "win32" },
+        { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1" }, "directory": "packages/a" },
+        { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1", "NODE_ENV": "test" } },
+        { "args": ["hook", "validate"], "launcher": "node", "binary": "node", "env": { "CI": "1", "FORCE_COLOR": "1", "NO_COLOR": "1" } }
     ]
 }
