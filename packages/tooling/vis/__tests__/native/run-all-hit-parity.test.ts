@@ -309,6 +309,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["a global tsconfig.json", { packages: 5, tsconfig: true }],
         ["many files and two workspace patterns", { apps: true, busy: true, chain: true, packages: 9 }],
         ["projects with no scripts", { emptyScripts: [4], noScripts: [2], packages: 6 }],
+        // The tasks are keyed and looked up side by side: the printed order and the summary stay the project order.
+        ["two hundred packages in two workspace patterns", { apps: true, busy: true, packages: 200 }],
     ];
 
     describe.each(shapes)("%s", (name, shape) => {
@@ -316,7 +318,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         beforeAll(() => {
             Object.assign(reference, warm(name.replaceAll(" ", "-"), shape));
-        }, 120_000);
+        }, 300_000);
 
         it("prints, writes and exits like Node", () => {
             expect.hasAssertions();
@@ -1472,6 +1474,131 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 expect(readFileSync(marker2, "utf8")).toBe("");
                 expect(recorded(root)).toBe(process.version);
             });
+        });
+    });
+
+    describe("a miss in a large workspace", () => {
+        // A miss at the first, a middle and the last project: the tasks are worked on side by side and the first one
+        // that is not a hit ends the attempt, so the position must not matter to the decision.
+        const shape: Shape = { apps: true, busy: true, packages: 200, tsconfig: true };
+        const positions: [string, number][] = [
+            ["the first project", 1],
+            ["a middle project", 100],
+            ["the last project", 200],
+        ];
+        const base = { root: "", summary: "" };
+
+        beforeAll(() => {
+            Object.assign(base, warm("large-miss", shape));
+        }, 300_000);
+
+        const entryOf = (root: string, position: number): string => {
+            const { tasks } = JSON.parse(readSummary(root)) as { tasks: { hash: string; taskId: string }[] };
+            const task = tasks.find((candidate) => candidate.taskId === `p${position}:build`);
+
+            return join(root, "node_modules/.cache/vis", task?.hash as string);
+        };
+
+        /** The binary hands the run to Node without writing anything. */
+        const expectDelegated = (mutate: (root: string) => void): string => {
+            const root = fresh(base.root);
+
+            mutate(root);
+
+            const before = snapshot(root);
+            const native = runNative(root, ["run", "build"], paths.stub);
+
+            expect(native.stdout).toBe(`${marker}\n`);
+            expect(native.status).toBe(99);
+            expect(snapshot(root)).toStrictEqual(before);
+
+            return root;
+        };
+
+        /** The binary hands the run to Node, and Node is not all-hit on the same copy. */
+        const expectBothMiss = (mutate: (root: string) => void): void => {
+            const root = expectDelegated(mutate);
+            const node = runNode(root, ["run", "build"]);
+            const { stats } = JSON.parse(readSummary(root)) as { stats: { cached: number; total: number } };
+
+            expect(node.status).toBe(0);
+            expect(stats.cached).toBeLessThan(stats.total);
+        };
+
+        describe.each(positions)("at %s", (_where, position) => {
+            const directory = directoryOf(shape, position);
+
+            it.each([
+                ["a source file is edited", (root: string) => { write(root, `${directory}/src/index.ts`, "export const changed = true;\n"); }],
+                ["a nested file is edited", (root: string) => { write(root, `${directory}/src/nested/util.ts`, "export const changed = true;\n"); }],
+                ["a file is added", (root: string) => { write(root, `${directory}/src/extra.ts`, "export {};\n"); }],
+                ["a file is deleted", (root: string) => { rmSync(join(root, `${directory}/src/nested/util.ts`)); }],
+                ["a file of the project root is added", (root: string) => { write(root, `${directory}/README.md`, "# readme\n"); }],
+                [
+                    "the script text changes",
+                    (root: string) => { write(root, `${directory}/package.json`, JSON.stringify({ name: `p${position}`, scripts: { build: "echo different" }, version: "1.0.0" }, undefined, 2)); },
+                ],
+                ["its cache entry is deleted", (root: string) => { rmSync(entryOf(root, position), { force: true, recursive: true }); }],
+                ["its cache entry is half written", (root: string) => { rmSync(join(entryOf(root, position), ".commit")); }],
+            ])("%s", (_name, mutate) => {
+                expect.assertions(5);
+
+                expectBothMiss(mutate);
+            });
+
+            // Node serves these entries; the binary does not reproduce what a hit does for them, so it hands the run over.
+            it.each([
+                ["its cache entry stores a failure", (root: string) => { writeFileSync(join(entryOf(root, position), "code"), "1"); }],
+                ["its cache entry holds outputs", (root: string) => { writeFileSync(join(entryOf(root, position), "outputs-manifest.json"), "{}"); }],
+            ])("%s", (_name, mutate) => {
+                expect.assertions(3);
+
+                expectDelegated(mutate);
+            });
+        });
+
+        it("a global input is edited, so every project misses", () => {
+            expect.assertions(5);
+
+            expectBothMiss((root) => { write(root, "tsconfig.json", '{ "compilerOptions": { "strict": false } }\n'); });
+        });
+
+        // A detector's config file changes what Node infers for the project, and a file under a dot directory is no
+        // input of the key: every key still hits, so only the detector's marker can hand the run over. The binary
+        // has to find it in the listing of any of 200 projects, one directory down.
+        it.each([
+            ["a nested config file in the first project", `${directoryOf(shape, 1)}/.changeset/config.json`],
+            ["a nested config file in a middle project", `${directoryOf(shape, 100)}/.vitepress/config.mjs`],
+            ["a nested config file in the last project", `${directoryOf(shape, 200)}/.storybook/main.ts`],
+        ])("%s hands the run to Node", (_name, file) => {
+            expect.assertions(3);
+
+            expectDelegated((root) => { write(root, file, "export default {};\n"); });
+        });
+
+        it("the first and the last project both miss", () => {
+            expect.assertions(5);
+
+            expectBothMiss((root) => {
+                write(root, `${directoryOf(shape, 1)}/src/index.ts`, "export const changed = 1;\n");
+                write(root, `${directoryOf(shape, 200)}/src/index.ts`, "export const changed = 200;\n");
+            });
+        });
+
+        it("hands the run back with the launcher's status through the launcher, and Node reports the miss", () => {
+            expect.assertions(4);
+
+            const root = fresh(base.root);
+
+            write(root, `${directoryOf(shape, 200)}/src/index.ts`, "export const changed = 200;\n");
+
+            const launcher = spawnSync(process.execPath, [join(packageRoot, "bin", "vis.mjs"), "run", "build"], { cwd: root, encoding: "utf8", env: baseEnvironment() });
+            const { stats } = JSON.parse(readSummary(root)) as { stats: { cached: number; failed: number; succeeded: number; total: number } };
+
+            expect(launcher.status).toBe(0);
+            expect(stats.total).toBe(200);
+            expect(stats.cached).toBe(199);
+            expect(stats.succeeded).toBe(1);
         });
     });
 
