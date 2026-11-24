@@ -408,7 +408,8 @@ const scenarios: Scenario[] = [
     {
         // The pty command fails and takes the pipe command down with it. (A pty command that is
         // itself killed reports exit code 0 in the JS spawner: accepted difference 7.)
-        commands: () => [// Long enough for the pipe command to have started and printed before it is killed.
+        // The pty command waits long enough for the pipe command to have started and printed before it is killed.
+        commands: () => [
             { command: probeCommand("exit-after", "400", "1"), stdin: "pty" },
             { command: probeCommand("hang") },
         ],
