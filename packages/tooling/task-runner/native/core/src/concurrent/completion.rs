@@ -1,9 +1,12 @@
-use super::types::ConcurrentCloseEvent;
+use std::str::FromStr;
+
+use super::types::{ConcurrentCloseEvent, InvalidOption};
 
 /// Determines what constitutes a successful run.
-#[derive(Debug, Clone)]
-pub(crate) enum SuccessCondition {
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SuccessCondition {
     /// All commands must exit with code 0.
+    #[default]
     All,
     /// Only the first command to close must succeed.
     First,
@@ -15,17 +18,38 @@ pub(crate) enum SuccessCondition {
     NegatedCommand(String),
 }
 
+impl FromStr for SuccessCondition {
+    type Err = InvalidOption;
+
+    /// Formats: "all", "first", "last", "command-<name|index>", "!command-<name|index>".
+    ///
+    /// The keywords are case-insensitive; the name after `command-` keeps its
+    /// case, because it is compared with the command's own name.
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let trimmed = input.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        let target = |prefix: &str| (trimmed.len() > prefix.len()).then(|| trimmed[prefix.len()..].to_string());
+
+        match lower.as_str() {
+            "all" => Ok(Self::All),
+            "first" => Ok(Self::First),
+            "last" => Ok(Self::Last),
+            s if s.starts_with("!command-") => {
+                target("!command-").map(Self::NegatedCommand).ok_or_else(|| Self::invalid(input))
+            }
+            s if s.starts_with("command-") => target("command-").map(Self::Command).ok_or_else(|| Self::invalid(input)),
+            _ => Err(Self::invalid(input)),
+        }
+    }
+}
+
 impl SuccessCondition {
-    /// Parse a success condition from a string.
-    /// Formats: "all", "first", "last", "command-<name>", "!command-<name>"
-    pub(crate) fn parse(input: &str) -> Self {
-        match input.trim().to_lowercase().as_str() {
-            "all" => Self::All,
-            "first" => Self::First,
-            "last" => Self::Last,
-            s if s.starts_with("!command-") => Self::NegatedCommand(s.trim_start_matches("!command-").to_string()),
-            s if s.starts_with("command-") => Self::Command(s.trim_start_matches("command-").to_string()),
-            _ => Self::All,
+    fn invalid(value: &str) -> InvalidOption {
+        InvalidOption {
+            option: "successCondition",
+            value: value.to_string(),
+            expected: "\"all\", \"first\", \"last\", \"command-<name|index>\" or \"!command-<name|index>\"",
         }
     }
 
@@ -141,13 +165,17 @@ mod tests {
         assert!(cond.evaluate(&events));
     }
 
+    fn parse(input: &str) -> SuccessCondition {
+        input.parse().unwrap()
+    }
+
     #[test]
     fn test_parse() {
-        assert!(matches!(SuccessCondition::parse("all"), SuccessCondition::All));
-        assert!(matches!(SuccessCondition::parse("first"), SuccessCondition::First));
-        assert!(matches!(SuccessCondition::parse("last"), SuccessCondition::Last));
-        assert!(matches!(SuccessCondition::parse("command-server"), SuccessCondition::Command(_)));
-        assert!(matches!(SuccessCondition::parse("!command-server"), SuccessCondition::NegatedCommand(_)));
+        assert_eq!(parse("all"), SuccessCondition::All);
+        assert_eq!(parse("first"), SuccessCondition::First);
+        assert_eq!(parse("last"), SuccessCondition::Last);
+        assert_eq!(parse("command-server"), SuccessCondition::Command("server".to_string()));
+        assert_eq!(parse("!command-server"), SuccessCondition::NegatedCommand("server".to_string()));
     }
 
     #[test]
@@ -202,21 +230,40 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_case_insensitive() {
-        assert!(matches!(SuccessCondition::parse("ALL"), SuccessCondition::All));
-        assert!(matches!(SuccessCondition::parse("First"), SuccessCondition::First));
-        assert!(matches!(SuccessCondition::parse("LAST"), SuccessCondition::Last));
+    fn test_parse_keywords_are_case_insensitive() {
+        assert_eq!(parse("ALL"), SuccessCondition::All);
+        assert_eq!(parse("First"), SuccessCondition::First);
+        assert_eq!(parse("LAST"), SuccessCondition::Last);
+        assert_eq!(parse("COMMAND-x"), SuccessCondition::Command("x".to_string()));
+        assert_eq!(parse("!Command-x"), SuccessCondition::NegatedCommand("x".to_string()));
+    }
+
+    #[test]
+    fn test_parse_keeps_the_case_of_the_command_name() {
+        assert_eq!(parse("command-MyApp"), SuccessCondition::Command("MyApp".to_string()));
+        assert_eq!(parse("!command-MyApp"), SuccessCondition::NegatedCommand("MyApp".to_string()));
+
+        let events = vec![make_event(0, Some("MyApp"), 0), make_event(1, Some("other"), 3)];
+
+        assert!(parse("command-MyApp").evaluate(&events));
+        assert!(!parse("command-myapp").evaluate(&events));
+        assert!(parse("!command-other").evaluate(&events));
     }
 
     #[test]
     fn test_parse_with_whitespace() {
-        assert!(matches!(SuccessCondition::parse("  all  "), SuccessCondition::All));
+        assert_eq!(parse("  all  "), SuccessCondition::All);
     }
 
     #[test]
-    fn test_parse_unknown_defaults_to_all() {
-        assert!(matches!(SuccessCondition::parse("unknown"), SuccessCondition::All));
-        assert!(matches!(SuccessCondition::parse(""), SuccessCondition::All));
+    fn test_parse_rejects_unknown_values_and_names_them() {
+        for value in ["unknown", "", "command-", "!command-", "commands-x"] {
+            let error = value.parse::<SuccessCondition>().unwrap_err();
+
+            assert_eq!(error.option, "successCondition");
+            assert_eq!(error.value, value);
+            assert!(error.to_string().contains(&format!("{value:?}")), "{error}");
+        }
     }
 
     #[test]

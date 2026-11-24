@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use super::process_group;
-use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, ProcessEvent};
+use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, ProcessEvent, StdinMode};
 
 /// Spawn a child process and stream its output.
 ///
@@ -29,13 +29,11 @@ pub(crate) fn spawn_process(
     shell_path: Option<&str>,
 ) -> Result<ProcessInfo, std::io::Error> {
     let mut cmd = build_command(config, shell_path);
-    // If the JS-side `run_concurrent` future is dropped (Promise GC'd,
-    // AbortController cancellation, Node shutdown), tokio tears down
-    // its task tree: the completion-waiter task is aborted and the
-    // owned `Child` is dropped. With the default `kill_on_drop = false`
-    // that would leave the OS-level process running as an orphan
-    // re-parented to PID 1. Force-killing on drop ensures the JS side
-    // can never abandon spawned children.
+    // If the runtime is torn down mid-run (Node shutdown), its task tree is
+    // dropped: the completion-waiter task is aborted and the owned `Child` is
+    // dropped. With the default `kill_on_drop = false` that would leave the
+    // OS-level process running as an orphan re-parented to PID 1. Force-killing
+    // on drop ensures the JS side can never abandon spawned children.
     cmd.kill_on_drop(true);
     let mut child = cmd.spawn()?;
     let start_time = Instant::now();
@@ -45,14 +43,14 @@ pub(crate) fn spawn_process(
     // Surface the pid to the consumer before any output streams,
     // so JS-side signal handlers can register the child for cleanup
     // before it has a chance to emit anything.
-    let _ = event_tx.send(ProcessEvent::started(index, pid));
+    let _ = event_tx.send(ProcessEvent::Started { index, pid });
 
     // Spawn stdout reader -- returns JoinHandle so we can wait for it
-    let stdout_handle: Option<JoinHandle<()>> =
+    let mut stdout_handle: Option<JoinHandle<()>> =
         child.stdout.take().map(|stdout| tokio::spawn(stream_output(stdout, event_tx.clone(), index, false)));
 
     // Spawn stderr reader -- returns JoinHandle so we can wait for it
-    let stderr_handle: Option<JoinHandle<()>> =
+    let mut stderr_handle: Option<JoinHandle<()>> =
         child.stderr.take().map(|stderr| tokio::spawn(stream_output(stderr, event_tx.clone(), index, true)));
 
     // Shared flag the runner's force-kill timer checks before issuing
@@ -71,28 +69,33 @@ pub(crate) fn spawn_process(
         let duration = start_time.elapsed();
         let duration_ms = duration.as_secs_f64() * 1000.0;
 
-        // Wait for stdout/stderr readers to finish draining
-        // This is critical: pipes may still have buffered data after the process exits
-        if let Some(h) = stdout_handle {
-            let _ = h.await;
-        }
-        if let Some(h) = stderr_handle {
-            let _ = h.await;
+        // Wait for the stdout/stderr readers to finish draining, but only for
+        // a grace period. A descendant that outlives the child (`server &`, a
+        // leaked worker) keeps the inherited pipes open, and waiting for EOF
+        // would hold the run open for as long as it lives.
+        let drained = timeout(STDIO_DRAIN_GRACE, async {
+            if let Some(h) = stdout_handle.as_mut() {
+                let _ = h.await;
+            }
+            if let Some(h) = stderr_handle.as_mut() {
+                let _ = h.await;
+            }
+        })
+        .await;
+
+        if drained.is_err() {
+            // Reap the group and drop the readers so nothing keeps the pipes alive.
+            if let Some(pid) = pid {
+                let _ = process_group::kill_tree(pid, KillSignal::Kill);
+            }
+            for handle in [&stdout_handle, &stderr_handle].into_iter().flatten() {
+                handle.abort();
+            }
         }
 
-        let exit_code = match status {
-            Ok(s) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    s.code().unwrap_or_else(|| s.signal().map(|sig| -sig).unwrap_or(-1))
-                }
-                #[cfg(windows)]
-                {
-                    s.code().unwrap_or(-1)
-                }
-            }
-            Err(_) => -1,
+        let (exit_code, signalled) = match status {
+            Ok(s) => exit_code_of(s),
+            Err(_) => (-1, false),
         };
 
         // Mark this process as terminated *before* we send the completion
@@ -106,7 +109,7 @@ pub(crate) fn spawn_process(
             command: command_str,
             name,
             exit_code,
-            killed: false, // Updated by runner if it initiated the kill
+            killed: signalled, // The runner also sets it when it aborts the run.
             duration_ms,
         };
 
@@ -173,6 +176,32 @@ pub(crate) struct ProcessInfo {
 /// instead of being withheld until the next `\n` or process exit (EOF).
 const PARTIAL_FLUSH: Duration = Duration::from_millis(100);
 
+/// How long to wait after a child exits for its stdout/stderr pipes to reach
+/// EOF before giving up on them.
+const STDIO_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+/// Exit code of a finished child and whether a signal ended it. A signalled
+/// child reports `128 + signal`, the shell convention, so callers see 137 or 143
+/// regardless of which spawner ran it.
+#[cfg(unix)]
+fn exit_code_of(status: std::process::ExitStatus) -> (i32, bool) {
+    use std::os::unix::process::ExitStatusExt;
+
+    match (status.code(), status.signal()) {
+        (Some(code), _) => (code, false),
+        (None, Some(signal)) => (128 + signal, true),
+        (None, None) => (-1, false),
+    }
+}
+
+#[cfg(windows)]
+fn exit_code_of(status: std::process::ExitStatus) -> (i32, bool) {
+    (status.code().unwrap_or(-1), false)
+}
+
+/// Longest line the reader buffers before emitting it as its own event.
+const MAX_LINE_BYTES: usize = 1 << 20;
+
 /// Read size for a single `read()`; large enough to swallow most line
 /// bursts in one syscall without holding an oversized buffer per process.
 const READ_CHUNK: usize = 8192;
@@ -186,6 +215,20 @@ fn strip_trailing_cr(line: &[u8]) -> String {
     String::from_utf8_lossy(&line[..end]).into_owned()
 }
 
+/// Emit the longest valid-UTF-8 prefix of a line that reached the cap, keeping an
+/// incomplete trailing sequence for the next event so no character is split.
+fn take_capped_prefix(pending: &mut Vec<u8>) -> String {
+    let cut = match std::str::from_utf8(pending) {
+        Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => error.valid_up_to(),
+        _ => pending.len(),
+    };
+    let text = String::from_utf8_lossy(&pending[..cut]).into_owned();
+
+    pending.drain(..cut);
+
+    text
+}
+
 /// Stream a child's stdout/stderr to `tx`, emitting one event per `\n`-
 /// terminated line AND flushing any partial line after `PARTIAL_FLUSH` of
 /// idle time (or at EOF). Unlike `BufReader::lines()` / `next_line()`,
@@ -193,12 +236,16 @@ fn strip_trailing_cr(line: &[u8]) -> String {
 /// prompt output that a long-running process emits without a trailing
 /// newline. `is_stderr` selects the event variant; otherwise the two
 /// streams are handled identically.
+///
+/// Only the newly read bytes are scanned for a newline, and a line without one
+/// is emitted in pieces of at most `MAX_LINE_BYTES`, so memory and time stay
+/// linear in the output however long a line is.
 async fn stream_output<R>(mut reader: R, tx: mpsc::UnboundedSender<ProcessEvent>, index: u32, is_stderr: bool)
 where
     R: AsyncRead + Unpin,
 {
     let emit = |text: String| {
-        let event = if is_stderr { ProcessEvent::stderr(index, text) } else { ProcessEvent::stdout(index, text) };
+        let event = if is_stderr { ProcessEvent::Stderr { index, text } } else { ProcessEvent::Stdout { index, text } };
 
         let _ = tx.send(event);
     };
@@ -232,16 +279,34 @@ where
                 break;
             }
             Ok(n) => {
-                pending.extend_from_slice(&chunk[..n]);
+                let mut rest = &chunk[..n];
 
-                while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
-                    let line: Vec<u8> = pending.drain(..=pos).collect();
+                while let Some(position) = rest.iter().position(|&byte| byte == b'\n') {
+                    append_capped(&mut pending, &rest[..position], &emit);
+                    emit(strip_trailing_cr(&pending));
+                    pending.clear();
 
-                    // `line` includes the trailing `\n`; drop it before stripping `\r`.
-                    emit(strip_trailing_cr(&line[..line.len() - 1]));
+                    rest = &rest[position + 1..];
                 }
+
+                append_capped(&mut pending, rest, &emit);
             }
         }
+    }
+}
+
+/// Append `bytes` to the pending line, emitting the buffered part first whenever
+/// it is already at the cap and more of the same line follows.
+fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], emit: &impl Fn(String)) {
+    while !bytes.is_empty() {
+        if pending.len() >= MAX_LINE_BYTES {
+            emit(take_capped_prefix(pending));
+        }
+
+        let take = (MAX_LINE_BYTES - pending.len()).min(bytes.len());
+
+        pending.extend_from_slice(&bytes[..take]);
+        bytes = &bytes[take..];
     }
 }
 
@@ -254,18 +319,37 @@ where
 fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> Command {
     let use_shell = config.shell.unwrap_or(true);
 
-    let (program, args) =
-        if use_shell { shell_command(&config.command, shell_path) } else { direct_command(&config.command) };
+    let (program, args) = if use_shell {
+        shell_invocation(&config.command, shell_path, cfg!(windows))
+    } else {
+        let (program, args) = direct_command(&config.command);
+
+        (program, args.into_iter().map(ShellArg::Plain).collect())
+    };
 
     let mut cmd = Command::new(&program);
-    cmd.args(&args);
+    for arg in args {
+        match arg {
+            ShellArg::Plain(value) => {
+                cmd.arg(value);
+            }
+            // `Raw` only comes out of the Windows branch of `shell_invocation`.
+            #[cfg(windows)]
+            ShellArg::Raw(value) => {
+                cmd.raw_arg(value);
+            }
+            #[cfg(not(windows))]
+            ShellArg::Raw(value) => {
+                cmd.arg(value);
+            }
+        }
+    }
 
     if let Some(ref cwd) = config.cwd {
         cmd.current_dir(cwd);
     }
 
-    // Merge environment variables
-    cmd.envs(std::env::vars());
+    // The child inherits the parent environment by default; only the overlay is applied.
     if let Some(ref env) = config.env {
         cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     }
@@ -293,12 +377,10 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    // Stdin mode: "null" (default), "pipe", or "inherit"
-    let stdin_mode = config.stdin.as_deref().unwrap_or("null");
-    cmd.stdin(match stdin_mode {
-        "pipe" => std::process::Stdio::piped(),
-        "inherit" => std::process::Stdio::inherit(),
-        _ => std::process::Stdio::null(),
+    cmd.stdin(match config.stdin {
+        StdinMode::Pipe => std::process::Stdio::piped(),
+        StdinMode::Inherit => std::process::Stdio::inherit(),
+        StdinMode::Null => std::process::Stdio::null(),
     });
 
     // Unix: create new process group via setsid
@@ -323,33 +405,45 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     cmd
 }
 
-/// Build shell invocation arguments.
-/// If `shell_path` is provided, uses it with POSIX-style `-c` args.
-/// Otherwise falls back to platform defaults.
+/// One argument of a shell invocation.
+#[derive(Debug, PartialEq, Eq)]
+enum ShellArg {
+    /// Passed through the platform's normal argument quoting.
+    Plain(String),
+    /// Appended to the Windows command line exactly as given. `cmd.exe` does not
+    /// undo the `\"` escaping Rust applies to a normal argument, so a command
+    /// containing quotes has to be quoted by hand.
+    Raw(String),
+}
+
+/// Whether `shell` names `cmd.exe`, with or without the extension and on either
+/// path separator.
+fn is_cmd_exe(shell: &str) -> bool {
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_ascii_lowercase();
+
+    name == "cmd" || name == "cmd.exe"
+}
+
+/// Build the program and arguments that run `command` through a shell.
+///
+/// `windows` selects the Windows rules; it is a parameter so the command line
+/// can be unit-tested on any host. With `shell_path` set, that shell is used
+/// with a POSIX-style `-c`, unless it is `cmd.exe` on Windows. Otherwise the
+/// platform default (`/bin/sh`, or `cmd.exe` on Windows) is used.
+///
 /// Commands originate from package.json scripts (trusted).
-fn shell_command(command: &str, shell_path: Option<&str>) -> (String, Vec<String>) {
-    if let Some(custom_shell) = shell_path {
-        // Custom shell (e.g. from npm script-shell config).
-        // Always use POSIX-style -c invocation since custom shells
-        // are typically bash/sh-compatible (Git Bash, zsh, fish, etc.)
-        return (custom_shell.to_string(), vec!["-c".to_string(), command.to_string()]);
-    }
+fn shell_invocation(command: &str, shell_path: Option<&str>, windows: bool) -> (String, Vec<ShellArg>) {
+    // `cmd.exe /d /s /c "<command>"`, the form Node's `shell: true` builds: `/s`
+    // strips exactly one pair of outer quotes, so inner quotes survive.
+    let cmd_exe = |program: &str| (program.to_string(), vec![ShellArg::Raw(format!("/d /s /c \"{command}\""))]);
 
-    #[cfg(unix)]
-    {
-        ("/bin/sh".to_string(), vec!["-c".to_string(), command.to_string()])
-    }
-
-    #[cfg(windows)]
-    {
-        // Pass the command verbatim and let Rust's Windows arg-encoder
-        // wrap it in `"..."` when it contains whitespace. cmd.exe `/s`
-        // then strips those outer quotes before parsing. Pre-wrapping in
-        // `"..."` ourselves would force Rust to escape the inner quotes
-        // as `\"`, which cmd.exe does not understand (it expects `""` for
-        // a literal quote inside a quoted section), so the shell ends up
-        // running a mangled command and the child exits non-zero.
-        ("cmd.exe".to_string(), vec!["/s".to_string(), "/c".to_string(), command.to_string()])
+    match shell_path {
+        Some(custom) if windows && is_cmd_exe(custom) => cmd_exe(custom),
+        Some(custom) => {
+            (custom.to_string(), vec![ShellArg::Plain("-c".to_string()), ShellArg::Plain(command.to_string())])
+        }
+        None if windows => cmd_exe("cmd.exe"),
+        None => ("/bin/sh".to_string(), vec![ShellArg::Plain("-c".to_string()), ShellArg::Plain(command.to_string())]),
     }
 }
 
@@ -367,14 +461,21 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
-    use super::stream_output;
+    use super::{stream_output, ShellArg};
     use crate::concurrent::types::ProcessEvent;
 
     /// Receive the next event's text within `within`, or `None` on timeout/close.
     async fn next_text(rx: &mut mpsc::UnboundedReceiver<ProcessEvent>, within: Duration) -> Option<String> {
         match timeout(within, rx.recv()).await {
-            Ok(Some(event)) => event.text,
+            Ok(Some(ProcessEvent::Stdout { text, .. } | ProcessEvent::Stderr { text, .. })) => Some(text),
             _ => None,
+        }
+    }
+
+    fn text_of(event: ProcessEvent) -> String {
+        match event {
+            ProcessEvent::Stdout { text, .. } | ProcessEvent::Stderr { text, .. } => text,
+            other => panic!("expected an output event, got {other:?}"),
         }
     }
 
@@ -454,11 +555,128 @@ mod tests {
 
         let event = timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
 
-        assert_eq!(event.kind, "stderr");
-        assert_eq!(event.index, 7);
-        assert_eq!(event.text.as_deref(), Some("err-line"));
+        assert_eq!(event, ProcessEvent::Stderr { index: 7, text: "err-line".to_string() });
 
         drop(writer);
         handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scans_a_50_mib_single_line_in_linear_time() {
+        let (mut writer, reader) = tokio::io::duplex(1 << 20);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+
+        let start = std::time::Instant::now();
+        let chunk = vec![b'x'; 64 * 1024];
+        let writer_task = tokio::spawn(async move {
+            for _ in 0..(50 * 1024 * 1024 / chunk.len()) {
+                writer.write_all(&chunk).await.unwrap();
+            }
+            // Dropping the writer is the EOF.
+        });
+
+        timeout(Duration::from_secs(10), async {
+            writer_task.await.unwrap();
+            handle.await.unwrap();
+        })
+        .await
+        .expect("a single 50 MiB line must be consumed in linear time");
+
+        assert!(start.elapsed() < Duration::from_secs(2), "took {:?}", start.elapsed());
+
+        let mut total = 0usize;
+        while let Ok(event) = rx.try_recv() {
+            total += text_of(event).len();
+        }
+        assert_eq!(total, 50 * 1024 * 1024, "no byte may be lost to the cap");
+    }
+
+    #[tokio::test]
+    async fn caps_a_line_without_newline_and_delivers_the_rest_as_its_own_event() {
+        let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+
+        let total = 2 * super::MAX_LINE_BYTES + 10;
+        let chunk = vec![b'a'; 64 * 1024];
+        let mut written = 0;
+        while written < total {
+            let n = chunk.len().min(total - written);
+            writer.write_all(&chunk[..n]).await.unwrap();
+            written += n;
+        }
+        drop(writer);
+        handle.await.unwrap();
+
+        let mut lengths = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            lengths.push(text_of(event).len());
+        }
+
+        assert!(lengths.iter().all(|&l| l <= super::MAX_LINE_BYTES), "every event stays under the cap: {lengths:?}");
+        assert_eq!(lengths.iter().sum::<usize>(), total);
+        assert!(lengths.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn a_200_kb_line_arrives_in_one_piece() {
+        let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+
+        let mut line = vec![b'b'; 200_000];
+        line.push(b'\n');
+        writer.write_all(&line).await.unwrap();
+        drop(writer);
+        handle.await.unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(text_of(event).len(), 200_000);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn windows_default_shell_gets_a_raw_quoted_command_line() {
+        let (program, args) = super::shell_invocation("node -e \"console.log('a b')\"", None, true);
+
+        assert_eq!(program, "cmd.exe");
+        assert_eq!(args, vec![ShellArg::Raw("/d /s /c \"node -e \"console.log('a b')\"\"".to_string())]);
+    }
+
+    #[test]
+    fn windows_cmd_exe_as_custom_shell_is_quoted_the_same_way() {
+        for shell in ["C:\\Windows\\System32\\cmd.exe", "cmd", "CMD.EXE", "C:/Windows/System32/cmd.exe"] {
+            let (program, args) = super::shell_invocation("echo \"x y\"", Some(shell), true);
+
+            assert_eq!(program, shell);
+            assert_eq!(args, vec![ShellArg::Raw("/d /s /c \"echo \"x y\"\"".to_string())]);
+        }
+    }
+
+    #[test]
+    fn a_posix_custom_shell_gets_dash_c_on_every_platform() {
+        for windows in [false, true] {
+            let (program, args) =
+                super::shell_invocation("echo hi", Some("C:\\Program Files\\Git\\bin\\bash.exe"), windows);
+
+            assert_eq!(program, "C:\\Program Files\\Git\\bin\\bash.exe");
+            assert_eq!(args, vec![ShellArg::Plain("-c".to_string()), ShellArg::Plain("echo hi".to_string())]);
+        }
+    }
+
+    #[test]
+    fn cmd_exe_is_only_special_on_windows() {
+        let (_, args) = super::shell_invocation("echo hi", Some("cmd.exe"), false);
+
+        assert_eq!(args, vec![ShellArg::Plain("-c".to_string()), ShellArg::Plain("echo hi".to_string())]);
+    }
+
+    #[test]
+    fn unix_default_shell_is_bin_sh() {
+        let (program, args) = super::shell_invocation("echo hi", None, false);
+
+        assert_eq!(program, "/bin/sh");
+        assert_eq!(args, vec![ShellArg::Plain("-c".to_string()), ShellArg::Plain("echo hi".to_string())]);
     }
 }

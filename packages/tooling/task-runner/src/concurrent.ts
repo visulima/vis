@@ -18,23 +18,19 @@ import { loadNativeBindings } from "./native-binding";
 import { buildEnhancedPath } from "./path-utils";
 import type { ConcurrentCommandConfig, ConcurrentCommandInput, ConcurrentRunnerOptions, ConcurrentRunResult } from "./types";
 
-// ── Native-path signal cleanup ──────────────────────────────────────────
+// ── Native-path signal handling ─────────────────────────────────────────
 //
-// The native runner already handles its own SIGINT/SIGTERM via tokio's
-// signal::create_signal_handler(). But when the parent process is killed
-// in a way that bypasses that loop — e.g. another listener calls
-// process.exit() first, or the host TUI installs its own SIGINT handler —
-// the tokio runtime is torn down before it can clean up its children,
-// and the spawned processes leak.
+// The native runner installs no process-wide signal handlers: a handler that
+// outlives a run changes what a later SIGHUP or Ctrl+C does to the whole host.
+// Instead, each run registers SIGINT / SIGTERM listeners for its own lifetime
+// and turns them into `abort()` on the run handle, then removes them when the
+// run settles, the same way the JS spawner does.
 //
-// To close that gap we track every PID surfaced by the `started` event
-// and install module-level fallbacks that fire signals directly through
-// the kernel. process.kill is synchronous, so the children get the
-// signal before the parent dies even if the rest of the listener chain
-// short-circuits.
-
-const trackedPids = new Set<number>();
-let signalHandlersInstalled = false;
+// The "exit" listener is a synchronous safety net. It fires even when another
+// listener short-circuits the chain by calling `process.exit()` (a TUI's own
+// SIGINT handler, say), when the event loop will never run the abort. Children
+// are spawned in their own process group, so signalling `-pid` takes the whole
+// group in one syscall, before the parent dies.
 
 const killTrackedTree = (pid: number, signal: NodeJS.Signals): void => {
     try {
@@ -42,47 +38,11 @@ const killTrackedTree = (pid: number, signal: NodeJS.Signals): void => {
             // taskkill /T tears down the whole tree.
             spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
         } else {
-            // Children are spawned in their own process group via setsid
-            // (see native/core/src/concurrent/process_group.rs), so signalling
-            // -pid hits the whole group in one syscall.
             process.kill(-pid, signal);
         }
     } catch {
         // Process may already be dead; nothing to do.
     }
-};
-
-const killAllTracked = (signal: NodeJS.Signals): void => {
-    for (const pid of trackedPids) {
-        killTrackedTree(pid, signal);
-    }
-};
-
-const installSignalHandlersOnce = (): void => {
-    if (signalHandlersInstalled) {
-        return;
-    }
-
-    signalHandlersInstalled = true;
-
-    // Bump the cap so a host that already attaches its own SIGINT/
-    // SIGTERM/exit listeners (TUIs, test harnesses, other libraries)
-    // doesn't trip Node's default 10-listener MaxListenersExceeded
-    // warning when this module adds three more.
-    process.setMaxListeners(process.getMaxListeners() + 3);
-
-    process.on("SIGINT", () => {
-        killAllTracked("SIGINT");
-    });
-    process.on("SIGTERM", () => {
-        killAllTracked("SIGTERM");
-    });
-    // Synchronous safety net: fires even when another listener short-
-    // circuits the chain by calling process.exit(). See concurrent-fallback.ts
-    // for the same pattern on the JS path.
-    process.on("exit", () => {
-        killAllTracked("SIGTERM");
-    });
 };
 
 /**
@@ -198,46 +158,53 @@ const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: Concurren
             };
         });
 
-        installSignalHandlersOnce();
-
-        // PIDs from *this* run keyed by command index. We untrack
-        // on close/error so an exited child's pid can't be hit by a
-        // later signal (the kernel may recycle it for an unrelated
-        // process). Anything still in this map at run-resolution time
-        // gets cleaned up by the finally block.
+        // PIDs of *this* run keyed by command index. An exited child's pid is dropped on
+        // close/error so a later signal can't hit a pid the kernel has recycled.
         const indexToPid = new Map<number, number>();
 
-        const onLifecycle = (event: NativeProcessEvent | null | undefined): void => {
-            // NAPI threadsafe-function callbacks have been observed to
-            // deliver null events on some platforms/CI — guard or the
-            // process crashes with TypeError.
-            if (event == null) {
-                return;
-            }
-
+        const onLifecycle = (event: NativeProcessEvent): void => {
             if (event.kind === "started" && typeof event.pid === "number") {
-                trackedPids.add(event.pid);
                 indexToPid.set(event.index, event.pid);
 
                 return;
             }
 
             if (event.kind === "close" || event.kind === "error") {
-                const pid = indexToPid.get(event.index);
-
-                if (pid !== undefined) {
-                    trackedPids.delete(pid);
-                    indexToPid.delete(event.index);
-                }
+                indexToPid.delete(event.index);
             }
         };
 
-        try {
-            return await native.runConcurrentBatch(nativeCommands, nativeOptions, onLifecycle);
-        } finally {
+        const run = native.startConcurrent(nativeCommands, nativeOptions, onLifecycle);
+
+        // Like the JS spawner, SIGINT is a user interrupt (exit codes become 0) and SIGTERM
+        // is a plain termination. SIGHUP is deliberately not handled: neither spawner has
+        // ever listened for it, and adding a listener would change what a hangup does.
+        const onSigint = (): void => {
+            run.abort("interrupt");
+        };
+        const onSigterm = (): void => {
+            run.abort("terminate");
+        };
+        const onExit = (): void => {
             for (const pid of indexToPid.values()) {
-                trackedPids.delete(pid);
+                killTrackedTree(pid, "SIGTERM");
             }
+        };
+
+        // A host with its own SIGINT/SIGTERM/exit listeners must not trip Node's
+        // 10-listener MaxListenersExceeded warning when this run adds three more.
+        process.setMaxListeners(process.getMaxListeners() + 3);
+        process.on("SIGINT", onSigint);
+        process.on("SIGTERM", onSigterm);
+        process.on("exit", onExit);
+
+        try {
+            return await run.done();
+        } finally {
+            process.removeListener("SIGINT", onSigint);
+            process.removeListener("SIGTERM", onSigterm);
+            process.removeListener("exit", onExit);
+            process.setMaxListeners(Math.max(0, process.getMaxListeners() - 3));
         }
     }
 

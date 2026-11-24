@@ -2,38 +2,35 @@
 mod tests {
     use tokio::sync::mpsc;
 
+    use crate::concurrent::completion::SuccessCondition;
     use crate::concurrent::runner::ConcurrentRunner;
     use crate::concurrent::types::{
-        ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent,
+        ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ControlMessage, KillOthers,
+        ProcessEvent, StdinMode,
     };
+
+    /// A control channel nobody holds the sender of: the runner must carry on without it.
+    fn no_control() -> mpsc::UnboundedReceiver<ControlMessage> {
+        mpsc::unbounded_channel().1
+    }
 
     /// Run all commands and collect results without streaming events.
     async fn run_batch(runner: &ConcurrentRunner) -> ConcurrentRunResult {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
-        runner.run(event_tx).await
+        runner.run(event_tx, no_control()).await
     }
 
     fn make_config(command: &str, name: Option<&str>) -> ConcurrentCommandConfig {
         ConcurrentCommandConfig {
             command: command.to_string(),
             name: name.map(|s| s.to_string()),
-            cwd: None,
-            env: None,
-            shell: None,
-            stdin: None,
+            ..Default::default()
         }
     }
 
     fn default_options() -> ConcurrentRunnerOptions {
-        ConcurrentRunnerOptions {
-            max_processes: None,
-            kill_signal: None,
-            kill_others: None,
-            success_condition: None,
-            kill_timeout: None,
-            shell_path: None,
-        }
+        ConcurrentRunnerOptions::default()
     }
 
     #[tokio::test]
@@ -43,7 +40,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
 
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
         assert_eq!(result.close_events.len(), 1);
@@ -54,12 +51,12 @@ mod tests {
         let mut stdout_count = 0;
         let mut close_count = 0;
         while let Ok(event) = event_rx.try_recv() {
-            match event.kind.as_str() {
-                "stdout" => {
+            match event {
+                ProcessEvent::Stdout { text, .. } => {
                     stdout_count += 1;
-                    assert_eq!(event.text.as_deref(), Some("hello"));
+                    assert_eq!(text, "hello");
                 }
-                "close" => close_count += 1,
+                ProcessEvent::Close { .. } => close_count += 1,
                 _ => {}
             }
         }
@@ -75,28 +72,28 @@ mod tests {
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let _ = runner.run(event_tx).await;
+        let _ = runner.run(event_tx, no_control()).await;
 
-        let mut started: Vec<ProcessEvent> = Vec::new();
+        let mut started: Vec<(u32, Option<u32>)> = Vec::new();
         let mut close_seen_before_started = false;
         let mut close_seen = false;
         while let Ok(event) = event_rx.try_recv() {
-            match event.kind.as_str() {
-                "started" => {
+            match event {
+                ProcessEvent::Started { index, pid } => {
                     if close_seen {
                         close_seen_before_started = true;
                     }
-                    started.push(event);
+                    started.push((index, pid));
                 }
-                "close" => close_seen = true,
+                ProcessEvent::Close { .. } => close_seen = true,
                 _ => {}
             }
         }
 
         assert_eq!(started.len(), 1, "expected exactly one started event");
-        assert_eq!(started[0].index, 0);
-        assert!(started[0].pid.is_some(), "started event should carry a pid");
-        assert!(started[0].pid.unwrap() > 0, "pid should be a positive integer");
+        assert_eq!(started[0].0, 0);
+        assert!(started[0].1.is_some(), "started event should carry a pid");
+        assert!(started[0].1.unwrap() > 0, "pid should be a positive integer");
         assert!(!close_seen_before_started, "started event must arrive before close event");
     }
 
@@ -138,11 +135,12 @@ mod tests {
         assert_eq!(result.close_events.len(), 2);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_success_condition_first() {
         let commands = vec![make_config("echo ok", Some("fast")), make_config("sleep 0.1 && exit 1", Some("slow"))];
         let mut opts = default_options();
-        opts.success_condition = Some("first".to_string());
+        opts.success_condition = SuccessCondition::First;
         let runner = ConcurrentRunner::new(commands, &opts);
         let result = run_batch(&runner).await;
 
@@ -168,11 +166,12 @@ mod tests {
         assert_eq!(result.close_events[2].index, 2);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_kill_others_on_failure() {
         let commands = vec![make_config("exit 1", Some("fails-fast")), make_config("sleep 10", Some("long-running"))];
         let mut opts = default_options();
-        opts.kill_others = Some(vec!["failure".to_string()]);
+        opts.kill_others = vec![KillOthers::Failure];
         opts.kill_timeout = Some(1000);
         let runner = ConcurrentRunner::new(commands, &opts);
 
@@ -186,26 +185,29 @@ mod tests {
         assert!(elapsed.as_secs() < 5, "kill-others should have killed the long-running process, took {:?}", elapsed);
     }
 
+    // `cmd.exe` keeps the space before `>&2` in the text it echoes.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stderr_output() {
         let commands = vec![make_config("echo error >&2", None)];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut has_stderr = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stderr" {
+            if let ProcessEvent::Stderr { text, .. } = event {
                 has_stderr = true;
-                assert_eq!(event.text.as_deref(), Some("error"));
+                assert_eq!(text, "error");
             }
         }
         assert!(has_stderr, "expected stderr event");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_environment_variables() {
         let mut env = std::collections::HashMap::new();
@@ -217,18 +219,18 @@ mod tests {
             cwd: None,
             env: Some(env),
             shell: None,
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("hello_from_rust") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "hello_from_rust") {
                 found = true;
             }
         }
@@ -241,7 +243,7 @@ mod tests {
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, _event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         // The shell will report the error, exit code should be non-zero
         assert!(!result.success);
@@ -259,6 +261,7 @@ mod tests {
         assert!(result.close_events.is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_multiline_output_ordering() {
         // Verify that all stdout lines arrive before the close event
@@ -266,7 +269,7 @@ mod tests {
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
@@ -276,15 +279,15 @@ mod tests {
         }
 
         // Find the close event index
-        let close_idx = events.iter().position(|e| e.kind == "close");
-        let stdout_events: Vec<_> = events.iter().filter(|e| e.kind == "stdout").collect();
+        let close_idx = events.iter().position(|e| matches!(e, ProcessEvent::Close { .. }));
+        let stdout_events: Vec<_> = events.iter().filter(|e| matches!(e, ProcessEvent::Stdout { .. })).collect();
 
         assert!(close_idx.is_some(), "expected a close event");
         assert_eq!(stdout_events.len(), 3, "expected 3 stdout lines");
 
         // All stdout events must come before the close event
         for (i, event) in events.iter().enumerate() {
-            if event.kind == "stdout" {
+            if matches!(event, ProcessEvent::Stdout { .. }) {
                 assert!(
                     i < close_idx.unwrap(),
                     "stdout event at index {} came after close event at index {}",
@@ -295,6 +298,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_close_event_has_duration() {
         let commands = vec![make_config("sleep 0.1", None)];
@@ -313,7 +317,7 @@ mod tests {
     async fn test_success_condition_command_by_name() {
         let commands = vec![make_config("exit 1", Some("irrelevant")), make_config("echo ok", Some("important"))];
         let mut opts = default_options();
-        opts.success_condition = Some("command-important".to_string());
+        opts.success_condition = SuccessCondition::Command("important".to_string());
         let runner = ConcurrentRunner::new(commands, &opts);
         let result = run_batch(&runner).await;
 
@@ -321,6 +325,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_working_directory() {
         let commands = vec![ConcurrentCommandConfig {
@@ -329,28 +334,26 @@ mod tests {
             cwd: Some("/tmp".to_string()),
             env: None,
             shell: None,
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found_tmp = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" {
-                if let Some(text) = &event.text {
-                    if text.contains("tmp") {
-                        found_tmp = true;
-                    }
-                }
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text.contains("tmp")) {
+                found_tmp = true;
             }
         }
         assert!(found_tmp, "expected /tmp in pwd output");
     }
 
+    // `echo` is a shell builtin on Windows, so there is no program to run directly.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_direct_execution_without_shell() {
         let commands = vec![ConcurrentCommandConfig {
@@ -359,24 +362,25 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(false),
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("direct-mode") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "direct-mode") {
                 found = true;
             }
         }
         assert!(found, "expected 'direct-mode' in output");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_shell_true_supports_pipes() {
         // Pipes require shell execution
@@ -386,24 +390,25 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: None,
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("piped") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "piped") {
                 found = true;
             }
         }
         assert!(found, "expected 'piped' in output from shell pipe");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stdin_null_is_default() {
         // Command that tries to read stdin should get EOF immediately
@@ -413,7 +418,7 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: None, // defaults to "null"
+            stdin: StdinMode::Null,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
         let result = run_batch(&runner).await;
@@ -432,24 +437,25 @@ mod tests {
             cwd: None,
             env: None,
             shell: Some(true),
-            stdin: Some("pipe".to_string()),
+            stdin: StdinMode::Pipe,
         }];
         let runner = ConcurrentRunner::new(commands, &default_options());
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("pipe-test") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "pipe-test") {
                 found = true;
             }
         }
         assert!(found, "expected 'pipe-test' in output");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_custom_shell_path() {
         // Use /bin/bash explicitly as shell_path
@@ -459,16 +465,390 @@ mod tests {
         let runner = ConcurrentRunner::new(commands, &opts);
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
-        let result = runner.run(event_tx).await;
+        let result = runner.run(event_tx, no_control()).await;
 
         assert!(result.success);
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("custom-shell") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "custom-shell") {
                 found = true;
             }
         }
         assert!(found, "expected 'custom-shell' in output via /bin/bash");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_signalled_child_exit_code_is_128_plus_signal() {
+        let commands = vec![make_config("kill -TERM $$", None), make_config("kill -KILL $$", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let result = run_batch(&runner).await;
+
+        let by_index = |i: u32| result.close_events.iter().find(|e| e.index == i).unwrap();
+
+        assert_eq!(by_index(0).exit_code, 143);
+        assert!(by_index(0).killed, "a signalled child is reported as killed");
+        assert_eq!(by_index(1).exit_code, 137);
+        assert!(by_index(1).killed);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_descendant_holding_pipes_does_not_hang_the_run() {
+        // `sleep 5 &` inherits the stdout/stderr pipes and outlives the shell.
+        let commands = vec![make_config("sleep 5 &", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), run_batch(&runner))
+            .await
+            .expect("run must finish once the drain grace has passed");
+
+        assert!(result.success);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(3),
+            "expected completion within the 2s drain grace + 1s, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn test_kill_signal_parses_node_and_bare_names_in_any_case() {
+        use crate::concurrent::types::KillSignal;
+
+        for (input, expected) in [
+            ("SIGTERM", KillSignal::Term),
+            ("sigkill", KillSignal::Kill),
+            ("INT", KillSignal::Int),
+            ("SIGHUP", KillSignal::Hup),
+            ("SIGQUIT", KillSignal::Quit),
+            ("SIGUSR1", KillSignal::Usr1),
+            ("SIGUSR2", KillSignal::Usr2),
+            ("SIGABRT", KillSignal::Abrt),
+            ("SIGALRM", KillSignal::Alrm),
+            ("SIGCONT", KillSignal::Cont),
+            ("sigwinch", KillSignal::Winch),
+        ] {
+            assert_eq!(input.parse::<KillSignal>().unwrap(), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_unknown_option_values_are_errors_that_name_the_value() {
+        use crate::concurrent::types::{KillOthers, KillSignal};
+
+        let signal = "SIGBOGUS".parse::<KillSignal>().unwrap_err();
+        assert_eq!((signal.option, signal.value.as_str()), ("killSignal", "SIGBOGUS"));
+
+        let stdin = "telepathy".parse::<StdinMode>().unwrap_err();
+        assert_eq!((stdin.option, stdin.value.as_str()), ("stdin", "telepathy"));
+
+        let kill_others = "maybe".parse::<KillOthers>().unwrap_err();
+        assert_eq!((kill_others.option, kill_others.value.as_str()), ("killOthers", "maybe"));
+        assert!(kill_others.to_string().contains("\"maybe\""));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_signal_other_than_the_default_is_the_one_sent() {
+        use crate::concurrent::types::KillSignal;
+
+        // The child exits with 70 only if it receives SIGUSR1; SIGTERM would give 143.
+        let commands = vec![
+            make_config("trap 'exit 70' USR1; sleep 30 & wait", Some("trapper")),
+            make_config("sleep 0.1; exit 1", Some("fails")),
+        ];
+        let mut opts = default_options();
+        opts.kill_others = vec![KillOthers::Failure];
+        opts.kill_signal = KillSignal::Usr1;
+        let runner = ConcurrentRunner::new(commands, &opts);
+        let result = run_batch(&runner).await;
+
+        let trapper = result.close_events.iter().find(|e| e.index == 0).unwrap();
+        assert_eq!(trapper.exit_code, 70);
+        assert!(trapper.killed);
+    }
+
+    /// A run driven on its own task, with handles to steer and observe it.
+    #[cfg(unix)]
+    struct LiveRun {
+        events: mpsc::UnboundedReceiver<ProcessEvent>,
+        control: mpsc::UnboundedSender<ControlMessage>,
+        result: tokio::task::JoinHandle<ConcurrentRunResult>,
+    }
+
+    #[cfg(unix)]
+    fn start(commands: Vec<ConcurrentCommandConfig>, options: &ConcurrentRunnerOptions) -> LiveRun {
+        let runner = ConcurrentRunner::new(commands, options);
+        let (event_tx, events) = mpsc::unbounded_channel();
+        let (control, control_rx) = mpsc::unbounded_channel();
+        let result = tokio::spawn(async move { runner.run(event_tx, control_rx).await });
+
+        LiveRun { events, control, result }
+    }
+
+    #[cfg(unix)]
+    impl LiveRun {
+        /// Wait until `count` commands have started; returns their pids by index.
+        async fn wait_for_started(&mut self, count: usize) -> Vec<(u32, u32)> {
+            let mut started = Vec::new();
+
+            while started.len() < count {
+                match tokio::time::timeout(std::time::Duration::from_secs(5), self.events.recv()).await {
+                    Ok(Some(ProcessEvent::Started { index, pid })) => started.push((index, pid.unwrap())),
+                    Ok(Some(_)) => {}
+                    other => panic!("expected {count} started events, got {started:?} then {other:?}"),
+                }
+            }
+
+            started
+        }
+
+        async fn finish(self) -> (ConcurrentRunResult, Vec<ProcessEvent>) {
+            let LiveRun { mut events, control, result } = self;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10), result)
+                .await
+                .expect("the run must end")
+                .unwrap();
+            drop(control);
+
+            let mut all = Vec::new();
+            while let Ok(event) = events.try_recv() {
+                all.push(event);
+            }
+
+            (result, all)
+        }
+    }
+
+    /// Assert that no process of the group led by `pid` is left. A killed
+    /// descendant may take a moment to be reaped, so allow it a short while.
+    #[cfg(unix)]
+    async fn assert_group_gone(pid: u32) {
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+
+        for _ in 0..30 {
+            if kill(Pid::from_raw(-(pid as i32)), None).is_err() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        panic!("process group {pid} is still alive");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_graceful_abort_reports_zero_and_spawns_no_queued_command() {
+        let commands = vec![
+            make_config("sleep 30", Some("a")),
+            make_config("sleep 30", Some("b")),
+            make_config("echo queued", Some("c")),
+        ];
+        let mut options = default_options();
+        options.max_processes = Some(2);
+        let mut run = start(commands, &options);
+
+        let started = run.wait_for_started(2).await;
+        run.control.send(ControlMessage::Abort { graceful: true }).unwrap();
+
+        let (result, events) = run.finish().await;
+
+        assert_eq!(result.close_events.len(), 2, "the queued command never starts");
+        for close in &result.close_events {
+            assert_eq!(close.exit_code, 0, "a user interrupt is not a failure");
+            assert!(close.killed);
+        }
+        assert!(result.success);
+        assert!(!events.iter().any(|e| e.index() == 2), "no event for the queued command: {events:?}");
+        for (_, pid) in started {
+            assert_group_gone(pid).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_terminating_abort_keeps_the_exit_codes() {
+        let mut run = start(vec![make_config("sleep 30", None)], &default_options());
+
+        let started = run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert_eq!(result.close_events[0].exit_code, 143);
+        assert!(result.close_events[0].killed);
+        assert!(!result.success);
+        assert_group_gone(started[0].1).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_second_abort_is_ignored() {
+        let mut run = start(vec![make_config("sleep 30", None)], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Abort { graceful: true }).unwrap();
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert_eq!(result.close_events.len(), 1);
+        assert_eq!(result.close_events[0].exit_code, 0, "the first abort decides how closes are reported");
+    }
+
+    #[tokio::test]
+    async fn test_an_abort_requested_before_the_run_starts_spawns_nothing() {
+        let runner = ConcurrentRunner::new(vec![make_config("echo never", None)], &default_options());
+        let (event_tx, mut events) = mpsc::unbounded_channel();
+        let (control, control_rx) = mpsc::unbounded_channel();
+        control.send(ControlMessage::Abort { graceful: true }).unwrap();
+
+        let result = runner.run(event_tx, control_rx).await;
+
+        assert!(result.close_events.is_empty());
+        assert!(events.try_recv().is_err(), "no event at all");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_signals_one_command_and_leaves_the_others() {
+        use crate::concurrent::types::KillSignal;
+
+        let commands =
+            vec![make_config("sleep 30", Some("victim")), make_config("sleep 0.4; echo done", Some("bystander"))];
+        let mut run = start(commands, &default_options());
+
+        let started = run.wait_for_started(2).await;
+        run.control.send(ControlMessage::Kill { index: 0, signal: Some(KillSignal::Kill) }).unwrap();
+
+        let (result, _) = run.finish().await;
+        let by_index = |i: u32| result.close_events.iter().find(|e| e.index == i).unwrap();
+
+        assert_eq!(by_index(0).exit_code, 137);
+        assert!(by_index(0).killed);
+        assert_eq!(by_index(1).exit_code, 0);
+        assert!(!by_index(1).killed);
+        assert_group_gone(started[0].1).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_without_a_signal_uses_the_runners_signal() {
+        let mut run = start(vec![make_config("sleep 30", None)], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Kill { index: 0, signal: None }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert_eq!(result.close_events[0].exit_code, 143);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_of_a_command_that_is_not_running_is_a_no_op() {
+        let mut run = start(vec![make_config("exit 0", None), make_config("sleep 0.5", None)], &default_options());
+
+        run.wait_for_started(2).await;
+        // Index 0 has most likely closed already; 7 never existed.
+        run.control.send(ControlMessage::Kill { index: 0, signal: None }).unwrap();
+        run.control.send(ControlMessage::Kill { index: 7, signal: None }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert_eq!(result.close_events.len(), 2);
+        assert!(result.close_events.iter().find(|e| e.index == 1).is_some_and(|e| e.exit_code == 0));
+    }
+
+    fn unspawnable(name: &str) -> ConcurrentCommandConfig {
+        ConcurrentCommandConfig {
+            command: "echo never".to_string(),
+            name: Some(name.to_string()),
+            cwd: Some("/nonexistent/directory/for/the/runner/test".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_spawn_failure_does_not_take_a_slot() {
+        let mut options = default_options();
+        options.max_processes = Some(1);
+        let runner = ConcurrentRunner::new(vec![unspawnable("bad"), make_config("echo ok", Some("good"))], &options);
+        let (event_tx, mut events) = mpsc::unbounded_channel();
+
+        let result = runner.run(event_tx, no_control()).await;
+
+        assert_eq!(result.close_events.len(), 2);
+        assert_eq!(result.close_events[0].index, 0);
+        assert_eq!(result.close_events[0].exit_code, 1);
+        assert_eq!(result.close_events[1].exit_code, 0);
+        assert!(!result.success);
+
+        let mut saw_error = false;
+        while let Ok(event) = events.try_recv() {
+            saw_error |= matches!(event, ProcessEvent::Error { index: 0, .. });
+        }
+        assert!(saw_error, "the spawn failure is reported as an error event");
+    }
+
+    #[tokio::test]
+    async fn test_a_spawn_failure_triggers_kill_others_and_stops_spawning() {
+        let mut options = default_options();
+        options.max_processes = Some(1);
+        options.kill_others = vec![KillOthers::Failure];
+        let runner = ConcurrentRunner::new(vec![unspawnable("bad"), make_config("sleep 30", Some("queued"))], &options);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            runner.run(mpsc::unbounded_channel().0, no_control()),
+        )
+        .await
+        .expect("the queued command must not be started");
+
+        assert_eq!(result.close_events.len(), 1);
+        assert_eq!(result.close_events[0].exit_code, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_spawn_failure_kills_the_running_commands_under_kill_others() {
+        let mut options = default_options();
+        options.kill_others = vec![KillOthers::Failure];
+        let runner =
+            ConcurrentRunner::new(vec![make_config("sleep 30", Some("running")), unspawnable("bad")], &options);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            runner.run(mpsc::unbounded_channel().0, no_control()),
+        )
+        .await
+        .expect("kill-others must stop the running command");
+
+        assert_eq!(result.close_events.len(), 2);
+        assert!(result.close_events.iter().any(|e| e.index == 0 && e.killed));
+    }
+
+    /// The command line reaches the shell intact when it contains double quotes. On Windows this
+    /// is the `cmd.exe /d /s /c "..."` construction; elsewhere it passes through `sh -c`.
+    #[tokio::test]
+    async fn test_quoted_arguments_survive_the_default_shell() {
+        let commands = vec![make_config("node -e \"console.log('a b')\"", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let (event_tx, mut events) = mpsc::unbounded_channel::<ProcessEvent>();
+
+        let result = runner.run(event_tx, no_control()).await;
+
+        assert!(result.success, "{:?}", result.close_events);
+
+        let mut lines = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if let ProcessEvent::Stdout { text, .. } = event {
+                lines.push(text);
+            }
+        }
+        assert_eq!(lines, vec!["a b".to_string()]);
     }
 }

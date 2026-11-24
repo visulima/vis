@@ -224,6 +224,46 @@ jobs:
                       ${{ matrix.package.dir }}/target
                   key: "${{ steps.cargo-cache.outputs.cache-primary-key }}"
 
+    # The concurrent runner spawns processes and signals process groups, so the
+    # Linux job above says little about macOS and Windows (fork path, cmd.exe
+    # quoting, Job Objects). This leg runs the concurrent runner's tests and the
+    # core crate's clippy there. It is not part of the required-check aggregation below.
+    test-core-os:
+        name: "Test task-runner core (${{ matrix.os }})"
+        needs: "files-changed"
+        if: |
+            github.event_name == 'workflow_dispatch' ||
+            needs.files-changed.outputs.task-runner == 'true'
+        runs-on: "${{ matrix.os }}"
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                os: ["macos-latest", "windows-latest"]
+        steps:
+            - name: "Git checkout"
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: "Install Rust stable toolchain"
+              uses: "dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8" # v1
+              with:
+                  toolchain: "stable"
+
+            # One concurrent-runner test runs `node -e ...`; both runner images ship Node.
+            # Only the concurrent runner's tests: the hashing and worktree tests have
+            # never run on Windows and are not what this leg is for.
+            - name: "Run cargo test"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner/native"
+              run: "cargo test -p task-runner-core --verbose concurrent"
+
+            - name: "Run cargo clippy"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner/native"
+              run: "cargo clippy -p task-runner-core --all-targets -- -D warnings"
+
     # Native criterion benches tracked on CodSpeed. Separate from the JS
     # benches in codspeed.yml (those run each package's bench script under the
     # CodSpeed vitest plugin); these compile the crate's criterion benches via

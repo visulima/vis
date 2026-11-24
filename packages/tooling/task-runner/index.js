@@ -716,7 +716,8 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { collectFiles, computeTaskHash, findAllCycles, findBackEdges, findCycle, getDependentTasks, getMainWorktreeRoot, getTransitiveDeps, hashCommand, hashEnvVar, hashFile, hashFilesBatch, hashFilesInDirectory, hashGlobalInputs, hashString, hashStrings, hashTaskCommand, isLinkedWorktree, nativeRunLookupEntry, nativeRunTaskKeys, resetWorktreeCache, runConcurrent, runConcurrentBatch, topologicalSort, trackWithSeccomp } = nativeBinding
+const { ConcurrentRun, collectFiles, computeTaskHash, findAllCycles, findBackEdges, findCycle, getDependentTasks, getMainWorktreeRoot, getTransitiveDeps, hashCommand, hashEnvVar, hashFile, hashFilesBatch, hashFilesInDirectory, hashGlobalInputs, hashString, hashStrings, hashTaskCommand, isLinkedWorktree, nativeRunLookupEntry, nativeRunTaskKeys, resetWorktreeCache, runConcurrent, runConcurrentBatch, startConcurrent, topologicalSort, trackWithSeccomp } = nativeBinding
+export { ConcurrentRun }
 export { collectFiles }
 export { computeTaskHash }
 export { findAllCycles }
@@ -740,6 +741,7 @@ export { nativeRunTaskKeys }
 export { resetWorktreeCache }
 export { runConcurrent }
 export { runConcurrentBatch }
+export { startConcurrent }
 export { topologicalSort }
 export { trackWithSeccomp }
 export const __napiBindingTarget = __napiLoadedBindingTarget
