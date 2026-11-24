@@ -89,7 +89,19 @@ pub(crate) fn spawn_process(
         // a grace period. A descendant that outlives the child (`server &`, a
         // leaked worker) keeps the inherited pipes open, and waiting for EOF
         // would hold the run open for as long as it lives.
-        let drained = drain_readers(&mut stdout_handle, &mut stderr_handle, &parked, &giving_up).await;
+        let drained = drain_within_grace(
+            async {
+                if let Some(handle) = stdout_handle.as_mut() {
+                    let _ = handle.await;
+                }
+                if let Some(handle) = stderr_handle.as_mut() {
+                    let _ = handle.await;
+                }
+            },
+            &parked,
+            &giving_up,
+        )
+        .await;
 
         if !drained {
             // Reap the group and drop the readers so nothing keeps the pipes alive.
@@ -159,28 +171,18 @@ pub(crate) fn spawn_process(
     })
 }
 
-/// Wait for both readers to reach EOF, for at most `STDIO_DRAIN_GRACE` of the time they spend
-/// waiting on the pipe. False when the grace ran out: something still holds the pipes open.
+/// Wait for `drain` (the readers reaching EOF) for at most `STDIO_DRAIN_GRACE` of the time they
+/// spend waiting on the pipe. False when the grace ran out: something still holds the pipes open.
 ///
 /// A reader that is parked waiting for the consumer is not waiting on the pipe, so the clock
 /// restarts for as long as one is. Without that, a consumer slower than the grace would have its
 /// output cut off. Once the run is being torn down (`giving_up`) the output has no reader to wait
 /// for, and the plain grace applies, so an abort never waits for a consumer that has stalled.
-async fn drain_readers(
-    stdout: &mut Option<JoinHandle<()>>,
-    stderr: &mut Option<JoinHandle<()>>,
+pub(crate) async fn drain_within_grace(
+    drain: impl std::future::Future<Output = ()>,
     parked: &AtomicUsize,
     giving_up: &AtomicBool,
 ) -> bool {
-    let drain = async {
-        if let Some(handle) = stdout.as_mut() {
-            let _ = handle.await;
-        }
-        if let Some(handle) = stderr.as_mut() {
-            let _ = handle.await;
-        }
-    };
-
     tokio::pin!(drain);
 
     loop {
@@ -214,6 +216,11 @@ impl InputHandle {
         });
 
         Self { tx, task: Some(task) }
+    }
+
+    /// Wrap a sender whose receiving end is owned by a writer thread.
+    pub(crate) fn from_sender(tx: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+        Self { tx, task: None }
     }
 
     /// Queue `data` for the child. False when the writer has already gone.
@@ -263,7 +270,7 @@ const PARTIAL_FLUSH: Duration = Duration::from_millis(100);
 
 /// How long to wait after a child exits for its stdout/stderr pipes to reach
 /// EOF before giving up on them.
-const STDIO_DRAIN_GRACE: Duration = Duration::from_secs(2);
+pub(crate) const STDIO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Exit code of a finished child and whether a signal ended it. A signalled
 /// child reports `128 + signal`, the shell convention, so callers see 137 or 143
@@ -513,7 +520,7 @@ enum ShellArg {
 
 /// Whether `shell` names `cmd.exe`, with or without the extension and on either
 /// path separator.
-fn is_cmd_exe(shell: &str) -> bool {
+pub(crate) fn is_cmd_exe(shell: &str) -> bool {
     let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_ascii_lowercase();
 
     name == "cmd" || name == "cmd.exe"

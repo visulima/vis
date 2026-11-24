@@ -1097,4 +1097,204 @@ mod tests {
 
         assert!(result.close_events[0].killed);
     }
+
+    // ── pty ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(unix)]
+    fn pty_config(command: &str) -> ConcurrentCommandConfig {
+        let mut config = make_config(command, None);
+        config.stdin = StdinMode::Pty;
+        config
+    }
+
+    #[cfg(unix)]
+    fn stdout_of(events: &[ProcessEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ProcessEvent::Stdout { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_sees_a_terminal_and_the_default_size() {
+        let mut run =
+            start(vec![pty_config("test -t 0 && test -t 1 && test -t 2 && echo tty; stty size")], &default_options());
+
+        run.wait_for_started(1).await;
+
+        let (result, events) = run.finish().await;
+        let out = stdout_of(&events);
+
+        assert!(result.success, "{result:?} {events:?}");
+        assert!(out.contains("tty"), "{out:?}");
+        assert!(out.contains("24 80"), "{out:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_starts_at_the_requested_size() {
+        let mut config = pty_config("stty size");
+        config.pty_size = Some(crate::concurrent::types::PtySize { cols: 100, rows: 30 });
+        let mut run = start(vec![config], &default_options());
+
+        run.wait_for_started(1).await;
+
+        let (_, events) = run.finish().await;
+
+        assert!(stdout_of(&events).contains("30 100"), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_resize_reaches_the_running_command() {
+        let mut run = start(vec![pty_config("sleep 1; stty size")], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control
+            .send(ControlMessage::Resize { index: 0, size: crate::concurrent::types::PtySize { cols: 120, rows: 40 } })
+            .unwrap();
+
+        let (_, events) = run.finish().await;
+
+        assert!(stdout_of(&events).contains("40 120"), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_reads_what_is_written_to_it() {
+        let mut run = start(vec![pty_config("read line; echo got:$line")], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Write { index: 0, data: b"hello\n".to_vec() }).unwrap();
+
+        let (result, events) = run.finish().await;
+
+        assert!(result.success);
+        assert!(stdout_of(&events).contains("got:hello"), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_reports_its_exit_code_and_the_signal_that_ended_it() {
+        let mut options = default_options();
+        options.max_processes = Some(0);
+        let mut run =
+            start(vec![pty_config("exit 3"), pty_config("kill -TERM $$"), pty_config("kill -KILL $$")], &options);
+
+        run.wait_for_started(3).await;
+
+        let (result, _) = run.finish().await;
+        let by_index = |index: u32| result.close_events.iter().find(|event| event.index == index).unwrap();
+
+        assert_eq!((by_index(0).exit_code, by_index(0).killed), (3, false));
+        assert_eq!((by_index(1).exit_code, by_index(1).killed), (143, true));
+        assert_eq!((by_index(2).exit_code, by_index(2).killed), (137, true));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_is_killed_with_its_whole_process_group() {
+        let mut run = start(vec![pty_config("sleep 30 & sleep 30")], &default_options());
+        let started = run.wait_for_started(1).await;
+
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+
+        let (result, _) = run.finish().await;
+
+        assert!(result.close_events[0].killed);
+        assert_group_gone(started[0].1).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_honours_inherit_env_false() {
+        std::env::set_var("RUNNER_TEST_PARENT_ONLY", "from-parent");
+
+        let mut config = pty_config("echo \"[$RUNNER_TEST_PARENT_ONLY][$RUNNER_TEST_OVERLAY]\"");
+        config.inherit_env = Some(false);
+        config.env = Some([("RUNNER_TEST_OVERLAY".to_string(), "from-overlay".to_string())].into());
+        let mut run = start(vec![config], &default_options());
+
+        run.wait_for_started(1).await;
+
+        let (_, events) = run.finish().await;
+
+        assert!(stdout_of(&events).contains("[][from-overlay]"), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_in_a_missing_directory_is_a_spawn_failure_not_the_home_directory() {
+        let mut config = pty_config("pwd");
+        config.cwd = Some("/nonexistent/directory/for/the/runner/test".to_string());
+        let run = start(vec![config], &default_options());
+
+        let (result, events) = run.finish().await;
+
+        assert_eq!(result.close_events[0].exit_code, 1);
+        assert!(events.iter().any(|e| matches!(e, ProcessEvent::Error { .. })), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, ProcessEvent::Started { .. })), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_ignores_shell_false_and_still_goes_through_the_shell() {
+        let mut config = pty_config("echo one && echo two");
+        config.shell = Some(false);
+        let run = start(vec![config], &default_options());
+
+        let (result, events) = run.finish().await;
+
+        assert!(result.success, "{events:?}");
+        assert!(stdout_of(&events).contains("two"), "{events:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_descendant_holding_the_pty_does_not_hang_the_run() {
+        let run = start(vec![pty_config("sleep 5 &")], &default_options());
+
+        let started = std::time::Instant::now();
+        let (result, _) = run.finish().await;
+
+        assert!(result.success);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4), "took {:?}", started.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_pty_output_waits_for_the_consumer_like_pipe_output_does() {
+        // Raw chunks, so the number of events is not the number of lines; what matters is that
+        // a stalled consumer stalls the child and loses nothing.
+        let mut run = start_bounded(vec![pty_config("seq 1 20000")], 2);
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(!run.result.is_finished(), "the child must be blocked on the pty");
+
+        let mut text = String::new();
+        let mut closed = false;
+
+        while !closed {
+            let batch = tokio::time::timeout(std::time::Duration::from_secs(20), run.stream.next_batch(16))
+                .await
+                .expect("the run must keep producing while it is drained")
+                .expect("the stream stays open until the close");
+
+            for event in &batch.events {
+                match event {
+                    ProcessEvent::Stdout { text: chunk, .. } => text.push_str(chunk),
+                    ProcessEvent::Close { .. } => closed = true,
+                    _ => {}
+                }
+            }
+        }
+
+        let numbers: Vec<u32> = text.lines().filter_map(|line| line.trim().parse().ok()).collect();
+
+        assert_eq!(numbers, (1..=20000).collect::<Vec<u32>>());
+    }
 }
