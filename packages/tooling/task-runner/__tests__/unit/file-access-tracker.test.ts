@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { FileAccessTracker, generatePreloadScript, parseDirectExec } from "../../src/file-access-tracker";
+import { loadNativeBindings } from "../../src/native-binding";
 
 const createTemporaryDirectory = async (base?: string): Promise<string> => {
     const parent = base ?? tmpdir();
@@ -252,6 +254,67 @@ describe(FileAccessTracker, () => {
                 expect(result.accesses.some((a) => a.path.replaceAll("\\", "/").toLowerCase() === want && a.type === "write")).toBe(true);
             },
         );
+    });
+
+    // The tracker DLL must be confirmed loaded and connected BEFORE the child
+    // runs. When it is not, the native call has to reject promptly (so the TS
+    // side can fall back to an untracked run) and the suspended child must never
+    // execute — previously a DLL that failed to load left the drain blocked in
+    // `ConnectNamedPipe` forever. Windows-only: unverified outside Windows CI.
+    describe("windows IAT-hook injection failure", () => {
+        const iatAvailable = new FileAccessTracker(tmpdir(), []).isIatHookSupported();
+        const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`;
+
+        it.skipIf(!iatAvailable)(
+            "rejects, without running the child, when the DLL fails to load",
+            async () => {
+                expect.assertions(2);
+
+                const marker = join(workspaceRoot, "must-not-run.txt");
+                const argv = [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x")`];
+
+                await expect(loadNativeBindings()?.trackWithIatHook?.(argv, join(workspaceRoot, "missing-tracker.dll"), { cwd: workspaceRoot })).rejects.toThrow(/LoadLibraryW failed/u);
+
+                expect(existsSync(marker)).toBe(false);
+            },
+            30_000,
+        );
+
+        it.skipIf(!iatAvailable)(
+            "rejects, without running the child, when the loaded DLL never connects to the pipe",
+            async () => {
+                expect.assertions(2);
+
+                const marker = join(workspaceRoot, "must-not-run-either.txt");
+                const argv = [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x")`];
+
+                // A real system DLL loads fine but is not the tracker, so it never connects.
+                await expect(
+                    loadNativeBindings()?.trackWithIatHook?.(argv, join(systemRoot, "System32", "version.dll"), { cwd: workspaceRoot }),
+                ).rejects.toThrow(/did not connect/u);
+
+                expect(existsSync(marker)).toBe(false);
+            },
+            30_000,
+        );
+    });
+
+    // When the IAT tracker cannot be used (no addon/DLL, or it failed to attach)
+    // the command runs once through the untracked `sh -c` path, so the argv has
+    // to be quoted into a command line that re-parses to the same arguments.
+    describe("trackIatHook untracked fallback", () => {
+        it.skipIf(new FileAccessTracker(tmpdir(), []).isIatHookSupported())("keeps arguments with spaces and quotes intact", async () => {
+            expect.assertions(2);
+
+            const tracker = new FileAccessTracker(workspaceRoot, []);
+            const argument = `it's a  "quoted"  arg`;
+            const argv = [process.execPath, "-e", "process.stdout.write(process.argv[1])", argument];
+
+            const result = await tracker.trackIatHook(argv, { cwd: workspaceRoot });
+
+            expect(result.code).toBe(0);
+            expect(result.output).toBe(argument);
+        });
     });
 
     describe("track on unsupported platform", () => {
