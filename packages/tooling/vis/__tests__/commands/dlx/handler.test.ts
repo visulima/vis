@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const maybeGateFirstRunMock = vi.fn(async () => {
+const maybeGateFirstRunMock = vi.fn(async (_options: { forceInfo?: boolean; noInfo?: boolean }) => {
     return { proceed: true };
 });
 
@@ -32,15 +32,11 @@ const run = async (options: Record<string, unknown>, env: Record<string, string>
     });
 };
 
-const gateOptions = (): { forceInfo: boolean; noInfo: boolean } => maybeGateFirstRunMock.mock.calls[0]?.[0] as unknown as { forceInfo: boolean; noInfo: boolean };
+const gateOptions = (): { forceInfo?: boolean; noInfo?: boolean } | undefined => maybeGateFirstRunMock.mock.calls[0]?.[0];
 
 describe("dlx first-run gate options", () => {
     beforeEach(() => {
         maybeGateFirstRunMock.mockClear();
-    });
-
-    afterEach(() => {
-        process.exitCode = undefined;
     });
 
     it("does not force the panel when neither --info nor --no-info is given", async () => {
@@ -48,8 +44,8 @@ describe("dlx first-run gate options", () => {
 
         await run({});
 
-        expect(gateOptions().forceInfo).toBe(false);
-        expect(gateOptions().noInfo).toBe(false);
+        expect(gateOptions()?.forceInfo).toBe(false);
+        expect(gateOptions()?.noInfo).toBe(false);
     });
 
     it("forces the panel for --info", async () => {
@@ -57,8 +53,8 @@ describe("dlx first-run gate options", () => {
 
         await run({ info: true });
 
-        expect(gateOptions().forceInfo).toBe(true);
-        expect(gateOptions().noInfo).toBe(false);
+        expect(gateOptions()?.forceInfo).toBe(true);
+        expect(gateOptions()?.noInfo).toBe(false);
     });
 
     it("suppresses the panel for --no-info", async () => {
@@ -66,8 +62,8 @@ describe("dlx first-run gate options", () => {
 
         await run({ info: false });
 
-        expect(gateOptions().noInfo).toBe(true);
-        expect(gateOptions().forceInfo).toBe(false);
+        expect(gateOptions()?.noInfo).toBe(true);
+        expect(gateOptions()?.forceInfo).toBe(false);
     });
 
     it("suppresses the panel for VIS_DLX_NO_INFO", async () => {
@@ -75,6 +71,6 @@ describe("dlx first-run gate options", () => {
 
         await run({}, { VIS_DLX_NO_INFO: "1" });
 
-        expect(gateOptions().noInfo).toBe(true);
+        expect(gateOptions()?.noInfo).toBe(true);
     });
 });
