@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants as fsConstants } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -168,6 +168,75 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
 
             expect(result.code).toBe(0);
             expect(await modeOf(target)).toBe(expectedMode(0o640));
+        });
+    });
+
+    describe("child processes spawned by the tracked process", () => {
+        it("keeps reporting accesses of children started with a close-all-by-default spawn", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "read-by-grandchild.txt");
+
+            await writeFile(target, "data");
+
+            // libuv launches children with POSIX_SPAWN_CLOEXEC_DEFAULT, which closes every
+            // descriptor the spawn does not name — including the report socket.
+            const grandchild = `require("node:fs").readFileSync(${JSON.stringify(target)})`;
+            const script = `
+                const { spawnSync } = require("node:child_process");
+                const result = spawnSync(process.execPath, ["-e", ${JSON.stringify(grandchild)}], { stdio: "ignore" });
+                process.exit(result.status);
+            `;
+            const result = await track([process.execPath, "-e", script]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+        });
+    });
+
+    describe("environment of the tracked child", () => {
+        it("keeps its own report socket and dylib when the caller env carries stale values", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "read-with-stale-env.txt");
+
+            await writeFile(target, "data");
+
+            const script = `require("node:fs").readFileSync(${JSON.stringify(target)})`;
+            const result = await track([process.execPath, "-e", script], {
+                env: { DYLD_INSERT_LIBRARIES: "/nonexistent/stale.dylib", FSPY_MACOS_FD: "99" },
+            });
+
+            expect(result.code).toBe(0);
+            expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+        });
+    });
+
+    describe("report socket validation", () => {
+        const dylib = findDylib();
+
+        it.skipIf(dylib === undefined)("does not write access records into an unrelated stream descriptor", async () => {
+            expect.assertions(2);
+
+            const target = join(workspaceRoot, "read-with-reused-fd.txt");
+
+            await writeFile(target, "data");
+
+            // fd 3 is a stream socket (not the datagram report socket) that the parent can read.
+            const child = spawn(process.execPath, ["-e", `require("node:fs").readFileSync(${JSON.stringify(target)})`], {
+                env: { ...process.env, DYLD_INSERT_LIBRARIES: dylib as string, FSPY_MACOS_FD: "3" },
+                stdio: ["ignore", "ignore", "ignore", "pipe"],
+            });
+            const chunks: Buffer[] = [];
+
+            child.stdio[3]?.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+            const code = await new Promise<number | null>((resolve) => {
+                child.on("close", resolve);
+            });
+
+            expect(code).toBe(0);
+            expect(Buffer.concat(chunks).toString("utf8")).toBe("");
         });
     });
 

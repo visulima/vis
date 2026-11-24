@@ -104,7 +104,12 @@ fn init() {
         return;
     };
 
-    if fd < 0 {
+    // The number can be stale: a descendant that closed its descriptors (or was
+    // spawned without inheriting the socket) still sees `FSPY_MACOS_FD` in its
+    // environment, and the number may by now belong to an unrelated file or
+    // stream. Only adopt a unix-domain datagram socket; otherwise stay disabled
+    // rather than write access records into someone else's descriptor.
+    if fd < 0 || !is_report_socket(fd) {
         return;
     }
 
@@ -123,6 +128,36 @@ fn init() {
     }
 
     REPORT_FD.store(fd, Ordering::Relaxed);
+}
+
+/// True when `fd` is an `AF_UNIX`/`SOCK_DGRAM` socket — what the parent hands out.
+fn is_report_socket(fd: c_int) -> bool {
+    let mut kind: c_int = 0;
+    let mut kind_len = std::mem::size_of::<c_int>() as libc::socklen_t;
+
+    // SAFETY: `kind`/`kind_len` are valid out-parameters for SO_TYPE.
+    let typed = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            std::ptr::addr_of_mut!(kind).cast::<c_void>(),
+            &mut kind_len,
+        )
+    };
+
+    if typed != 0 || kind != libc::SOCK_DGRAM {
+        return false;
+    }
+
+    // SAFETY: an all-zero `sockaddr_storage` is a valid out-parameter for getsockname.
+    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+    // SAFETY: `addr`/`addr_len` describe a writable sockaddr_storage.
+    let named = unsafe { libc::getsockname(fd, std::ptr::addr_of_mut!(addr).cast::<libc::sockaddr>(), &mut addr_len) };
+
+    named == 0 && c_int::from(addr.ss_family) == libc::AF_UNIX
 }
 
 /// Best-effort: send one `[mode][path]` datagram. Never blocks (`MSG_DONTWAIT`)
@@ -396,6 +431,55 @@ unsafe extern "C" fn hook_execve(path: *const c_char, argv: *const *const c_char
     }
 }
 
+extern "C" {
+    // Not exported by the `libc` crate. Marks `fd` as inherited by a child spawned
+    // with `POSIX_SPAWN_CLOEXEC_DEFAULT` (which closes every descriptor that file
+    // actions do not name).
+    fn posix_spawn_file_actions_addinherit_np(file_actions: *mut libc::posix_spawn_file_actions_t, fd: c_int) -> c_int;
+}
+
+/// Runs `spawn` with file actions that keep the report socket open in the child.
+///
+/// libuv (Node's `child_process`, so vitest's fork pool and `vite` -> `esbuild`)
+/// spawns with `POSIX_SPAWN_CLOEXEC_DEFAULT`; without an explicit inherit action
+/// the child loses the socket and its accesses never reach the parent. The
+/// caller's file actions are extended in place when given; otherwise a temporary
+/// set is created and destroyed around the call.
+unsafe fn with_inherited_report_fd(
+    file_actions: *const libc::posix_spawn_file_actions_t,
+    spawn: impl FnOnce(*const libc::posix_spawn_file_actions_t) -> c_int,
+) -> c_int {
+    let fd = REPORT_FD.load(Ordering::Relaxed);
+
+    if fd < 0 {
+        return spawn(file_actions);
+    }
+
+    if !file_actions.is_null() {
+        // SAFETY: `file_actions` points at an initialised object the caller owns.
+        unsafe { posix_spawn_file_actions_addinherit_np(file_actions.cast_mut(), fd) };
+
+        return spawn(file_actions);
+    }
+
+    let mut own: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
+
+    // SAFETY: `own` is a valid out-parameter; it is destroyed below once initialised.
+    if unsafe { libc::posix_spawn_file_actions_init(&mut own) } != 0 {
+        return spawn(file_actions);
+    }
+
+    // SAFETY: `own` was initialised just above.
+    unsafe { posix_spawn_file_actions_addinherit_np(&mut own, fd) };
+
+    let rc = spawn(&own);
+
+    // SAFETY: `own` was initialised and the spawn call has returned.
+    unsafe { libc::posix_spawn_file_actions_destroy(&mut own) };
+
+    rc
+}
+
 unsafe extern "C" fn hook_posix_spawn(
     pid: *mut libc::pid_t,
     path: *const c_char,
@@ -406,9 +490,11 @@ unsafe extern "C" fn hook_posix_spawn(
 ) -> c_int {
     // The kernel copies `envp` during the call, so dropping the rebuilt storage
     // when this returns is safe.
-    match unsafe { rebuild_envp(envp as *const *const c_char) } {
-        Some(copy) => unsafe { libc::posix_spawn(pid, path, file_actions, attrp, argv, copy.as_ptr()) },
-        None => unsafe { libc::posix_spawn(pid, path, file_actions, attrp, argv, envp) },
+    let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
+    let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
+
+    unsafe {
+        with_inherited_report_fd(file_actions, |actions| libc::posix_spawn(pid, path, actions, attrp, argv, envp))
     }
 }
 
@@ -420,9 +506,11 @@ unsafe extern "C" fn hook_posix_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    match unsafe { rebuild_envp(envp as *const *const c_char) } {
-        Some(copy) => unsafe { libc::posix_spawnp(pid, path, file_actions, attrp, argv, copy.as_ptr()) },
-        None => unsafe { libc::posix_spawnp(pid, path, file_actions, attrp, argv, envp) },
+    let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
+    let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
+
+    unsafe {
+        with_inherited_report_fd(file_actions, |actions| libc::posix_spawnp(pid, path, actions, attrp, argv, envp))
     }
 }
 

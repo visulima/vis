@@ -139,9 +139,11 @@ fn run(
 
     let mut command = Command::new(&argv[0]);
     command.args(&argv[1..]);
+    command.envs(&extra_env);
+    // Injected last: a stale value inherited from an outer tracker (or passed by
+    // the caller) must not replace this run's dylib or report socket.
     command.env("DYLD_INSERT_LIBRARIES", dylib_path);
     command.env("FSPY_MACOS_FD", child_fd.to_string());
-    command.envs(&extra_env);
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
