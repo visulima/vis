@@ -813,7 +813,9 @@ fn attempt(args: &[String]) -> Option<Answer> {
     }
 
     // Asking the pinned tools (and Node, for the summary) for their versions costs a process each, so it
-    // waits until every task has hit; they are asked at the same time.
+    // waits until every task has hit; they are asked at the same time. Node asks before it starts the clock of
+    // the run, so the time this takes is not part of the run's duration.
+    let probe_clock = Instant::now();
     let pin_binaries = pins.binaries()?;
     let node_command = match launcher_version {
         Some(_) => None,
@@ -846,13 +848,15 @@ fn attempt(args: &[String]) -> Option<Answer> {
         (None, None) => return None,
     };
 
+    let probed = probe_clock.elapsed();
+    let now = SystemTime::now();
     let answer = Answer {
         look,
         hits,
         target,
         started,
-        ended: SystemTime::now(),
-        milliseconds: clock.elapsed().as_millis() as u64,
+        ended: now.checked_sub(probed).unwrap_or(now),
+        milliseconds: clock.elapsed().saturating_sub(probed).as_millis() as u64,
         arch,
         platform,
         node_version,

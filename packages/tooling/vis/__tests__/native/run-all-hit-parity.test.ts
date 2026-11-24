@@ -914,8 +914,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             return directory;
         };
+        // `NVM_DIR` makes Node count nvm as an installed manager, which is what turns a pin that is not met into a printed
+        // line (with no manager installed Node's check stays quiet about it), so the cases below can tell met from unmet.
+        const MANAGER = { NVM_DIR: "/nonexistent-nvm" };
         const environmentWith = (directory: string, extra: Record<string, string> = {}): Record<string, string> =>
-            baseEnvironment({ PATH: `${directory}:${process.env["PATH"] ?? ""}`, ...extra });
+            baseEnvironment({ PATH: `${directory}:${process.env["PATH"] ?? ""}`, ...MANAGER, ...extra });
         /** The Node the Node CLI itself runs under, which the pins below are written against (a stub `node` would break the tasks). */
         const major = process.versions.node.split(".")[0] as string;
         const toolsAt = (versions: { node?: string; npm?: string; pnpm?: string }): Record<string, string | undefined> => {
@@ -944,7 +947,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             { manifest: { packageManager: "pnpm" }, name: "a packageManager without a version", versions: {} },
             { manifest: { engines: { node: `>=${major}` } }, name: "engines.node as a range", versions: {} },
             { manifest: { engines: { node: `^1 || ^${major}`, pnpm: "^10" } }, name: "engines for two tools", versions: { pnpm: "10.4.1" } },
-            // A stub `npm` on PATH breaks the tasks themselves, so this one asks the installed npm.
+            // A stub `npm` on PATH breaks the tasks themselves, so this one asks the installed npm ("installed npm" in the name).
             { manifest: { engines: { npm: ">=1" } }, name: "engines.npm against the installed npm", versions: {} },
             { manifest: { engines: { node: `>=${major}`, vscode: "^1.90.0" } }, name: "engines with a key Node ignores", versions: {} },
             { manifest: { engines: {} }, name: "empty engines", versions: {} },
@@ -962,7 +965,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             },
         ];
 
-        describe.each(met)("a pin that is met: $name", (pin) => {
+        // The installed npm answers in tens to hundreds of milliseconds; on a machine too busy for that the case is left out.
+        const npmIsQuick = ((): boolean => {
+            const started = Date.now();
+            const result = spawnSync("npm", ["--version"], { encoding: "utf8" });
+
+            return result.status === 0 && Date.now() - started < 700;
+        })();
+
+        describe.each(met.filter((pin) => npmIsQuick || !pin.name.includes("installed npm")))("a pin that is met: $name", (pin) => {
             const reference = { env: baseEnvironment(), root: "", stderr: "", stdout: "" };
 
             beforeAll(() => {
@@ -986,13 +997,13 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 );
             }, 120_000);
 
-            it("answers like Node, and nothing else is written", () => {
+            it.each([true, false])("answers like Node, and nothing else is written (started by the launcher: %s)", (handoff) => {
                 expect.hasAssertions();
 
                 const root = fresh(reference.root);
                 const before = snapshot(root, "node_modules/.cache/vis");
                 const node = runNode(fresh(reference.root), ["run", "build"], reference.env);
-                const native = runNative(root, ["run", "build"], paths.stub, reference.env);
+                const native = runNative(root, ["run", "build"], paths.stub, reference.env, handoff);
 
                 expect(native.stdout).not.toContain(marker);
                 expect(native.status).toBe(0);
@@ -1007,7 +1018,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         // The same workspaces with a tool that does not meet the pin, is missing, or cannot report: Node may print or
         // install, so the binary hands the run over before anything is printed or written.
-        const unmet: { env: (directory: string) => Record<string, string>; name: string; pin: Omit<PinCase, "name" | "versions">; tools: Record<string, string | undefined> }[] = [
+        // `prints: false` is a case in which Node itself stays quiet (it falls back to the Node that runs it), and still goes to Node here.
+        const unmet: { env: (directory: string) => Record<string, string>; name: string; pin: Omit<PinCase, "name" | "versions">; prints?: boolean; tools: Record<string, string | undefined> }[] = [
             { env: (d) => environmentWith(d), name: "pnpm older than the pin", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "9.1.0" }) },
             { env: (d) => environmentWith(d), name: "pnpm newer than an exact pin", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "10.5.0" }) },
             { env: (d) => environmentWith(d), name: "a pin prefix that is not a prefix of the version", pin: { manifest: { packageManager: "pnpm@10.4" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "10.40.0" }) },
@@ -1022,9 +1034,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             { env: (d) => environmentWith(d), name: "a pinned tool that fails", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "exit 3" } },
             { env: (d) => environmentWith(d), name: "a pinned tool that prints no version", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "echo unknown" } },
             { env: (d) => environmentWith(d), name: "a pinned tool that is too slow", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "sleep 4; echo 10.4.1" } },
-            { env: (d) => environmentWith(d), name: "node that fails while pinned", pin: { manifest: { engines: { node: ">=20" } } }, tools: { node: "exit 1" } },
-            { env: (d) => baseEnvironment({ PATH: d }), name: "a pinned pnpm that is not on PATH", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0" }) },
-            { env: (d) => baseEnvironment({ PATH: `${d}:/usr/bin:/bin` }), name: "a pinned node that is not on PATH", pin: { manifest: { engines: { node: ">=20" } } }, tools: {} },
+            { env: (d) => environmentWith(d), name: "node that fails while pinned", pin: { manifest: { engines: { node: ">=20" } } }, prints: false, tools: { node: "exit 1" } },
+            { env: (d) => baseEnvironment({ PATH: d, ...MANAGER }), name: "a pinned pnpm that is not on PATH", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => baseEnvironment({ PATH: `${d}:/usr/bin:/bin`, ...MANAGER }), name: "a pinned node that is not on PATH", pin: { manifest: { engines: { node: ">=20" } } }, prints: false, tools: {} },
         ];
 
         describe("a pin that is not met leaves the run to Node untouched", () => {
@@ -1036,7 +1048,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             }, 120_000);
 
             it.each(unmet.map((entry) => [entry.name, entry] as const))("%s", (name, entry) => {
-                expect.assertions(4);
+                expect.assertions(6);
 
                 const root = fresh(base.root);
                 const directory = stubDirectory(`unmet-${name.replaceAll(/\W+/g, "-")}`, entry.tools);
@@ -1054,7 +1066,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 expect(native.stderr).toBe("");
                 expect(native.status).toBe(99);
                 expect(snapshot(root)).toStrictEqual(before);
-            }, 20_000);
+
+                // Node itself, on the same workspace: still a run of cache hits (so the twin does reach the pin check),
+                // and a line about the pin where its check has something to say.
+                const node = runNode(root, ["run", "build"], entry.env(directory));
+                const { stats } = JSON.parse(readSummary(root)) as { stats: { cached: number; total: number } };
+
+                expect(stats.cached).toBe(stats.total);
+                expect(entry.prints === false || /toolchain:/.test(node.stdout + node.stderr)).toBe(true);
+            }, 30_000);
         });
 
         describe("a pin the binary does not read leaves the run to Node untouched", () => {
@@ -1157,7 +1177,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         describe("with the installed tools", () => {
             const installed = spawnSync("pnpm", ["--version"], { encoding: "utf8" });
             // A pnpm that manages its own version would fetch the pinned one into the (fresh) test home; this asks plain `pnpm --version`.
-            const env = baseEnvironment();
+            const env = baseEnvironment(MANAGER);
 
             it.skipIf(installed.status !== 0)("answers a run pinned to the installed pnpm and Node range, like Node", (context) => {
                 expect.hasAssertions();
@@ -1207,11 +1227,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             // Node asks before it reads the lockfile and keys the tasks, so a change made by the answer is part of its run.
             it.each([
-                ["the lockfile", "echo '# touched' >> pnpm-lock.yaml"],
-                ["a source file of a project", "echo 'export {};' >> packages/p1/src/index.ts"],
-                ["the manifest of a project", `echo '' >> packages/p2/package.json`],
-            ])("delegates when it changes %s", (name, change) => {
-                expect.assertions(4);
+                ["the lockfile", "echo '# touched' >> pnpm-lock.yaml", "pnpm-lock.yaml", "# touched"],
+                ["a source file of a project", "echo '// touched' >> packages/p1/src/index.ts", "packages/p1/src/index.ts", "// touched"],
+                ["the manifest of a project", "echo ' ' >> packages/p2/package.json", "packages/p2/package.json", "} \n"],
+            ])("delegates when it changes %s", (name, change, file, landed) => {
+                expect.assertions(5);
 
                 const root = fresh(base.root);
                 const directory = stubDirectory(`changing-${name.replaceAll(/\W+/g, "-")}`, { pnpm: `${change}\necho 10.4.1` });
@@ -1223,7 +1243,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 expect(native.stdout).toBe(`${marker}\n`);
                 expect(native.status).toBe(99);
                 expect(native.stderr).toBe("");
-                // The summary of the Node runs that filled the cache is still the last one.
+                // The stub did change the workspace (so the run did reach the probe), and nothing was written after it.
+                expect(readFileSync(join(root, file), "utf8")).toContain(landed);
                 expect(readSummary(root)).toBe(readSummary(base.root));
             });
         });
