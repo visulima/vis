@@ -1049,6 +1049,46 @@ const securityListMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && args.length === 3 && args[2] === "--json";
 };
 
+// The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
+// differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
+// the same list in `NETWORK_VARIABLES` (`keys_refresh.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
+// both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
+const NETWORK_VARIABLES = [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "NODE_USE_ENV_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "NODE_OPTIONS",
+];
+
+const networkEnvironmentIsPlain = (environment) => NETWORK_VARIABLES.every((name) => environment[name] === undefined);
+
+// Whether `vis security keys-refresh` can pass the binary's native gate (`parse` and `answer` in `keys_refresh.rs`): `--json`,
+// alone or with `--clear` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
+// terminal, with no proxy, CA or Node option in the environment. The command prints no pail line in this form, so the colour
+// and width of pail do not matter, but the Node runtime's own colour warning does. The binary re-checks everything, including
+// the key URL, the cache file and the answer (a run it cannot reproduce goes to Node before anything is printed or written).
+const keysRefreshArgsAreNative = (args) => {
+    const flags = args.slice(2);
+
+    return (flags.length === 1 && flags[0] === "--json") || (flags.length === 2 && flags.includes("--json") && flags.includes("--clear"));
+};
+
+const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && keysRefreshArgsAreNative(args);
+};
+
 // Whether `vis task-why` can pass the binary's native gate (`parse` and `answer` in `task_why.rs`): one id of the shape
 // `<project>:<target>` with exactly one colon (the handler splits at the colon with a limit of two, which truncates a
 // longer id), in printable ASCII and not starting with `-`, for a pnpm workspace whose root is the working directory, in a
@@ -1276,15 +1316,19 @@ const NATIVE_SHAPE_GATES = new Map([
     ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
-    // `security list --json`; the other `security` subcommands write files or use the network, and follow the help rule below.
+    // `security list --json` and `security keys-refresh --json`; the other `security` subcommands write files or run scripts, and follow the help rule below.
     [
         "security",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
-            if (subcommand !== "list") {
-                return undefined;
+            if (subcommand === "list") {
+                return helpOrNative(args, () => securityListMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
             }
 
-            return helpOrNative(args, () => securityListMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            if (subcommand === "keys-refresh") {
+                return helpOrNative(args, () => keysRefreshMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            }
+
+            return undefined;
         },
     ],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.

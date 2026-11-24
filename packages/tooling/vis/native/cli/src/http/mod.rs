@@ -106,7 +106,6 @@ impl HttpConfig {
 /// A successful (2xx) response, the body already decompressed.
 #[derive(Debug)]
 pub(crate) struct Response {
-    pub status: u16,
     pub body: Vec<u8>,
 }
 
@@ -115,6 +114,7 @@ impl Response {
         std::str::from_utf8(&self.body).map_err(|error| HttpError::Decode(format!("the body is not UTF-8: {error}")))
     }
 
+    #[allow(dead_code, reason = "the commands that read a JSON answer are not native yet; the tests cover it")]
     pub(crate) fn json(&self) -> Result<serde_json::Value, HttpError> {
         serde_json::from_slice(&self.body).map_err(|error| HttpError::Decode(format!("the body is not JSON: {error}")))
     }
@@ -158,6 +158,7 @@ impl HttpClient {
     }
 
     /// POSTs `body`, already serialised, with `content-type: application/json`.
+    #[allow(dead_code, reason = "the commands that POST are not native yet; the tests cover it")]
     pub(crate) fn post_json(&self, url: &str, headers: &[(&str, &str)], body: &str) -> Result<Response, HttpError> {
         self.send(url, headers, Some(body))
     }
@@ -204,7 +205,7 @@ impl HttpClient {
                 .map_err(|error| HttpError::from_ureq(error, &host))?;
 
             if (200..300).contains(&status) {
-                return Ok(Response { status, body });
+                return Ok(Response { body });
             }
 
             return Err(HttpError::Status { code: status, body: String::from_utf8_lossy(&body).into_owned() });
