@@ -17,8 +17,34 @@ pub struct ConcurrentCommandConfig {
     pub env: Option<HashMap<String, String>>,
     /// Whether to use shell execution (default: true).
     pub shell: Option<bool>,
-    /// Stdin mode: "null" (default), "pipe", or "inherit".
+    /// Stdin mode: "null" (default), "pipe", "inherit" or "pty"; anything else is an error.
     pub stdin: Option<String>,
+    /// Whether the command inherits this process's environment under `env` (default: true).
+    /// `false` gives it no variables but `env`.
+    pub inherit_env: Option<bool>,
+    /// Initial terminal size for `stdin: "pty"` (default: 80x24).
+    pub pty_size: Option<PtySize>,
+}
+
+/// Size of a pseudo-terminal, in character cells.
+#[napi(object)]
+#[derive(Debug, Clone, Copy)]
+pub struct PtySize {
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl PtySize {
+    /// A size the terminal can represent: at least one cell each way, and no more than 65535.
+    pub fn parse(cols: u32, rows: u32) -> napi::Result<core::PtySize> {
+        match (u16::try_from(cols), u16::try_from(rows)) {
+            (Ok(cols @ 1..), Ok(rows @ 1..)) => Ok(core::PtySize { cols, rows }),
+            _ => Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                format!("invalid pty size {cols}x{rows}: columns and rows must each be between 1 and 65535"),
+            )),
+        }
+    }
 }
 
 /// An unknown option value is reported to the caller as an invalid argument.
@@ -32,7 +58,18 @@ impl TryFrom<ConcurrentCommandConfig> for core::ConcurrentCommandConfig {
     fn try_from(v: ConcurrentCommandConfig) -> napi::Result<Self> {
         let stdin = v.stdin.as_deref().map(str::parse).transpose().map_err(invalid_arg)?.unwrap_or_default();
 
-        Ok(Self { command: v.command, name: v.name, cwd: v.cwd, env: v.env, shell: v.shell, stdin })
+        let pty_size = v.pty_size.map(|size| PtySize::parse(size.cols, size.rows)).transpose()?;
+
+        Ok(Self {
+            command: v.command,
+            name: v.name,
+            cwd: v.cwd,
+            env: v.env,
+            shell: v.shell,
+            stdin,
+            inherit_env: v.inherit_env,
+            pty_size,
+        })
     }
 }
 
@@ -57,6 +94,9 @@ pub struct ConcurrentRunnerOptions {
     /// When set, used instead of the platform default (/bin/sh or cmd.exe).
     /// Format: "/path/to/shell" — args are always ["-c", command].
     pub shell_path: Option<String>,
+    /// Whether `startConcurrent` reports `stdout` and `stderr` events (default: false, only
+    /// "started", "close" and "error"). Ignored by the other entry points.
+    pub stream_output: Option<bool>,
 }
 
 impl TryFrom<ConcurrentRunnerOptions> for core::ConcurrentRunnerOptions {
@@ -183,4 +223,20 @@ impl From<core::ConcurrentRunResult> for ConcurrentRunResult {
         let core::ConcurrentRunResult { close_events, success } = v;
         Self { close_events: close_events.into_iter().map(Into::into).collect(), success }
     }
+}
+
+/// What `startConcurrent` hands its callback: events in the order they happened, and, as the
+/// very last batch, how the run ended.
+///
+/// Every event of a run is delivered before the batch that carries `result` or `error`, so a
+/// caller that settles its promise from that batch has seen everything first.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ProcessEventBatch {
+    /// Events in the order they happened; empty in the final batch.
+    pub events: Vec<ProcessEvent>,
+    /// Present in the final batch only: the outcome of the run.
+    pub result: Option<ConcurrentRunResult>,
+    /// Present in the final batch only, instead of `result`, if the run itself failed.
+    pub error: Option<String>,
 }

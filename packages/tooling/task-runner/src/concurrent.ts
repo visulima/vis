@@ -1,49 +1,21 @@
 /**
  * Public API for the concurrent process runner.
  *
- * Uses the native Rust addon when available, falling back to
- * a pure JavaScript implementation. Integrates flow controllers
+ * Runs on the native Rust addon, or on the pure JavaScript spawner for
+ * callers that stream events, pipe stdin, use a PTY or opt out of the parent
+ * environment. Integrates flow controllers
  * (restart, teardown, timings) around the core runner.
  */
 
-import { spawn } from "node:child_process";
-
 import { runConcurrentFallback } from "./concurrent-fallback";
+import { runNativeConcurrent } from "./concurrent-native";
 import { detectScriptShell } from "./detect-shell";
 import { logTimings } from "./flow-controllers/log-timings";
 import { withRestart } from "./flow-controllers/restart-process";
 import { runTeardown } from "./flow-controllers/teardown";
-import type { NativeProcessEvent } from "./native-binding";
 import { loadNativeBindings } from "./native-binding";
 import { buildEnhancedPath } from "./path-utils";
 import type { ConcurrentCommandConfig, ConcurrentCommandInput, ConcurrentRunnerOptions, ConcurrentRunResult } from "./types";
-
-// ── Native-path signal handling ─────────────────────────────────────────
-//
-// The native runner installs no process-wide signal handlers: a handler that
-// outlives a run changes what a later SIGHUP or Ctrl+C does to the whole host.
-// Instead, each run registers SIGINT / SIGTERM listeners for its own lifetime
-// and turns them into `abort()` on the run handle, then removes them when the
-// run settles, the same way the JS spawner does.
-//
-// The "exit" listener is a synchronous safety net. It fires even when another
-// listener short-circuits the chain by calling `process.exit()` (a TUI's own
-// SIGINT handler, say), when the event loop will never run the abort. Children
-// are spawned in their own process group, so signalling `-pid` takes the whole
-// group in one syscall, before the parent dies.
-
-const killTrackedTree = (pid: number, signal: NodeJS.Signals): void => {
-    try {
-        if (process.platform === "win32") {
-            // taskkill /T tears down the whole tree.
-            spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
-        } else {
-            process.kill(-pid, signal);
-        }
-    } catch {
-        // Process may already be dead; nothing to do.
-    }
-};
 
 /**
  * Normalize command inputs to ConcurrentCommandConfig objects.
@@ -128,84 +100,17 @@ const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: Concurren
 
     const native = loadNativeBindings();
 
-    // Fall back to the JS runner when:
-    // - any command needs stdin piping or PTY (native addon can't do those)
-    // - onEvent streaming is requested (native addon's NAPI callback can emit
-    //   null events on some platforms/CI, making it unreliable for streaming)
-    // - a command opts out of parent-env inheritance (`inheritEnv: false`):
-    //   the native addon always copies the parent environment, so only the JS
-    //   spawner can give the child exactly the env it was handed
+    // Callers that use any of these still run on the JS spawner:
+    // - stdin piping or a PTY
+    // - `onEvent` streaming
+    // - `inheritEnv: false`
+    // The native runner (`runNativeConcurrent`) does all of them now, with the same results (the
+    // parity suite compares the two runners). Which one a caller gets stays as it was until the
+    // native runner meets the throughput bar.
     const needsJsFallback = configs.some((c) => c.stdin === "pipe" || c.stdin === "pty" || c.inheritEnv === false) || !!options.onEvent;
 
     if (native && !needsJsFallback) {
-        const nativeOptions = {
-            killOthers: options.killOthers,
-            killSignal: options.killSignal,
-            killTimeout: options.killTimeout,
-            maxProcesses: options.maxProcesses,
-            shellPath,
-            successCondition: options.successCondition,
-        };
-
-        const nativeCommands = configs.map((c) => {
-            return {
-                command: c.command,
-                cwd: c.cwd,
-                env: c.env,
-                name: c.name,
-                shell: c.shell,
-                stdin: c.stdin,
-            };
-        });
-
-        // PIDs of *this* run keyed by command index. An exited child's pid is dropped on
-        // close/error so a later signal can't hit a pid the kernel has recycled.
-        const indexToPid = new Map<number, number>();
-
-        const onLifecycle = (event: NativeProcessEvent): void => {
-            if (event.kind === "started" && typeof event.pid === "number") {
-                indexToPid.set(event.index, event.pid);
-
-                return;
-            }
-
-            if (event.kind === "close" || event.kind === "error") {
-                indexToPid.delete(event.index);
-            }
-        };
-
-        const run = native.startConcurrent(nativeCommands, nativeOptions, onLifecycle);
-
-        // Like the JS spawner, SIGINT is a user interrupt (exit codes become 0) and SIGTERM
-        // is a plain termination. SIGHUP is deliberately not handled: neither spawner has
-        // ever listened for it, and adding a listener would change what a hangup does.
-        const onSigint = (): void => {
-            run.abort("interrupt");
-        };
-        const onSigterm = (): void => {
-            run.abort("terminate");
-        };
-        const onExit = (): void => {
-            for (const pid of indexToPid.values()) {
-                killTrackedTree(pid, "SIGTERM");
-            }
-        };
-
-        // A host with its own SIGINT/SIGTERM/exit listeners must not trip Node's
-        // 10-listener MaxListenersExceeded warning when this run adds three more.
-        process.setMaxListeners(process.getMaxListeners() + 3);
-        process.on("SIGINT", onSigint);
-        process.on("SIGTERM", onSigterm);
-        process.on("exit", onExit);
-
-        try {
-            return await run.done();
-        } finally {
-            process.removeListener("SIGINT", onSigint);
-            process.removeListener("SIGTERM", onSigterm);
-            process.removeListener("exit", onExit);
-            process.setMaxListeners(Math.max(0, process.getMaxListeners() - 3));
-        }
+        return runNativeConcurrent(configs, { ...options, shellPath });
     }
 
     return runConcurrentFallback(configs, { ...options, shellPath });

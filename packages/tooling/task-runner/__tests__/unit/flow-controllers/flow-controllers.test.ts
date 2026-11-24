@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { runConcurrentFallback } from "../../../src/concurrent-fallback";
+import { runNativeConcurrent } from "../../../src/concurrent-native";
 import { createInputHandler } from "../../../src/flow-controllers/input-handler";
 import { formatTimingTable } from "../../../src/flow-controllers/log-timings";
 import { withRestart } from "../../../src/flow-controllers/restart-process";
@@ -184,7 +185,12 @@ describe(createInputHandler, () => {
     });
 });
 
-describe(withRestart, () => {
+// The restart wrapper sits on top of whichever runner `runConcurrently` picks, so it is
+// exercised on both.
+describe.each([
+    { name: "JS spawner", run: runConcurrentFallback },
+    { name: "native runner", run: runNativeConcurrent },
+])("withRestart on the $name", ({ run }) => {
     it("should not restart when tries is 0", async () => {
         expect.assertions(2);
 
@@ -194,7 +200,7 @@ describe(withRestart, () => {
             async (commands, options) => {
                 callCount++;
 
-                return runConcurrentFallback(commands, options);
+                return run(commands, options);
             },
             [{ command: "exit 1" }],
             {},
@@ -214,7 +220,7 @@ describe(withRestart, () => {
             async (commands, options) => {
                 callCount++;
 
-                return runConcurrentFallback(commands, options);
+                return run(commands, options);
             },
             [{ command: "exit 1" }],
             {},
@@ -235,7 +241,7 @@ describe(withRestart, () => {
             async (commands, options) => {
                 callCount++;
 
-                return runConcurrentFallback(commands, options);
+                return run(commands, options);
             },
             [{ command: "echo ok" }],
             {},
@@ -252,7 +258,7 @@ describe(withRestart, () => {
         const calls: { attempt: number; commandIndex: number; prevExitCode: number }[] = [];
 
         await withRestart(
-            (commands, options) => runConcurrentFallback(commands, options),
+            (commands, options) => run(commands, options),
             [{ command: "exit 7" }],
             {},
             {
@@ -283,7 +289,7 @@ describe(withRestart, () => {
                 (commands, options) => {
                     runCalls++;
 
-                    return runConcurrentFallback(commands, options);
+                    return run(commands, options);
                 },
                 [{ command: "exit 1" }],
                 {},

@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import type { IPty } from "@lydell/node-pty";
 import { spawn as ptySpawn } from "@lydell/node-pty";
 
+import { forceColorFor } from "./force-color";
 import type { ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunnerOptions, ConcurrentRunResult, ProcessEvent } from "./types";
 
 /**
@@ -54,25 +55,15 @@ const signalNumberFor = (signal: string): number | undefined => SIGNAL_NUMBERS[s
 const STDIO_DRAIN_GRACE_MS = 2000;
 
 /**
- * Merge env vars for a child process, preserving an explicit caller-supplied
- * `FORCE_COLOR` from `config.env` rather than clobbering it. Order of
- * precedence: `config.env` > `process.env` > the default `"1"`. The previous
- * pattern (`FORCE_COLOR: process.env.FORCE_COLOR ?? "1"` placed *after* the
- * config.env spread) silently overrode a caller passing `FORCE_COLOR=0` to
- * disable color for tools that misbehave with ANSI / emit JSON. See
- * voidzero-dev/vite-task#379.
- *
- * The `"1"` default is only applied when the runner's own stdout is a TTY
- * and the caller has not set `NO_COLOR`. Otherwise children get no
- * `FORCE_COLOR` at all: forcing colour into piped, CI or `NO_COLOR` runs
- * breaks tools that match their output as plain text.
+ * Merge env vars for a child process: the parent `process.env` (unless the caller
+ * turned inheritance off), then `config.env`, then `extras`, plus the `FORCE_COLOR`
+ * that {@link forceColorFor} resolves. A caller-supplied `FORCE_COLOR` wins.
  */
 const mergeEnvWithForceColor = (
     configEnv: NodeJS.ProcessEnv | undefined,
     extras: Record<string, string> = {},
     inheritEnv: boolean | undefined = true,
 ): NodeJS.ProcessEnv => {
-    const callerForceColor = configEnv?.["FORCE_COLOR"];
     // `inheritEnv: false` means the caller already built the whole child
     // environment (clean mode), so the parent env is not a fallback source.
     const parentEnv: NodeJS.ProcessEnv = inheritEnv ? process.env : {};
@@ -81,25 +72,13 @@ const mergeEnvWithForceColor = (
         ...configEnv,
         ...extras,
     };
-    const forceColor = callerForceColor ?? parentEnv["FORCE_COLOR"] ?? defaultForceColor(merged);
+    const forceColor = forceColorFor(configEnv, extras, inheritEnv);
 
     if (forceColor !== undefined) {
         merged["FORCE_COLOR"] = forceColor;
     }
 
     return merged;
-};
-
-/**
- * `"1"` when colour should be forced into children, `undefined` otherwise.
- * Colour is forced only for an interactive runner whose caller has not
- * asked for plain output (`NO_COLOR`, non-empty, per no-color.org).
- */
-const defaultForceColor = (env: NodeJS.ProcessEnv): string | undefined => {
-    const noColor = env["NO_COLOR"];
-    const colorDisabled = noColor !== undefined && noColor !== "";
-
-    return process.stdout.isTTY && !colorDisabled ? "1" : undefined;
 };
 
 interface ActiveProcess {

@@ -1,13 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
+use super::events::EventSink;
 use super::process_group;
 use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, ProcessEvent, StdinMode};
 
@@ -24,10 +25,15 @@ use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, Pr
 pub(crate) fn spawn_process(
     index: u32,
     config: &ConcurrentCommandConfig,
-    event_tx: mpsc::UnboundedSender<ProcessEvent>,
+    sink: &EventSink,
     completion_tx: mpsc::UnboundedSender<CompletionMessage>,
     shell_path: Option<&str>,
+    giving_up: &Arc<AtomicBool>,
 ) -> Result<ProcessInfo, std::io::Error> {
+    if config.stdin == StdinMode::Pty {
+        return super::pty::spawn_pty(index, config, sink, completion_tx, shell_path, giving_up);
+    }
+
     let mut cmd = build_command(config, shell_path);
     // If the runtime is torn down mid-run (Node shutdown), its task tree is
     // dropped: the completion-waiter task is aborted and the owned `Child` is
@@ -43,15 +49,25 @@ pub(crate) fn spawn_process(
     // Surface the pid to the consumer before any output streams,
     // so JS-side signal handlers can register the child for cleanup
     // before it has a chance to emit anything.
-    let _ = event_tx.send(ProcessEvent::Started { index, pid });
+    sink.send(ProcessEvent::Started { index, pid });
+
+    // Readers that wait for the consumer (see `EventSink`) report it here, so the drain grace
+    // below does not mistake a slow consumer for a descendant that holds the pipes.
+    let parked = Arc::new(AtomicUsize::new(0));
+    let output = sink.counting_parked(Arc::clone(&parked));
+    let giving_up = Arc::clone(giving_up);
 
     // Spawn stdout reader -- returns JoinHandle so we can wait for it
     let mut stdout_handle: Option<JoinHandle<()>> =
-        child.stdout.take().map(|stdout| tokio::spawn(stream_output(stdout, event_tx.clone(), index, false)));
+        child.stdout.take().map(|stdout| tokio::spawn(stream_output(stdout, output.clone(), index, false)));
 
     // Spawn stderr reader -- returns JoinHandle so we can wait for it
     let mut stderr_handle: Option<JoinHandle<()>> =
-        child.stderr.take().map(|stderr| tokio::spawn(stream_output(stderr, event_tx.clone(), index, true)));
+        child.stderr.take().map(|stderr| tokio::spawn(stream_output(stderr, output.clone(), index, true)));
+
+    // The child's stdin goes to a task of its own: `Child::wait` would drop it, which the child
+    // sees as EOF, and a write to a child that is not reading must never block the runner.
+    let input = child.stdin.take().map(InputHandle::pipe);
 
     // Shared flag the runner's force-kill timer checks before issuing
     // SIGKILL. Without it, a kill_timeout of 5s is plenty of room for
@@ -73,17 +89,21 @@ pub(crate) fn spawn_process(
         // a grace period. A descendant that outlives the child (`server &`, a
         // leaked worker) keeps the inherited pipes open, and waiting for EOF
         // would hold the run open for as long as it lives.
-        let drained = timeout(STDIO_DRAIN_GRACE, async {
-            if let Some(h) = stdout_handle.as_mut() {
-                let _ = h.await;
-            }
-            if let Some(h) = stderr_handle.as_mut() {
-                let _ = h.await;
-            }
-        })
+        let drained = drain_within_grace(
+            async {
+                if let Some(handle) = stdout_handle.as_mut() {
+                    let _ = handle.await;
+                }
+                if let Some(handle) = stderr_handle.as_mut() {
+                    let _ = handle.await;
+                }
+            },
+            &parked,
+            &giving_up,
+        )
         .await;
 
-        if drained.is_err() {
+        if !drained {
             // Reap the group and drop the readers so nothing keeps the pipes alive.
             if let Some(pid) = pid {
                 let _ = process_group::kill_tree(pid, KillSignal::Kill);
@@ -144,9 +164,77 @@ pub(crate) fn spawn_process(
         index,
         pid,
         terminated,
+        input,
+        pty: None,
         #[cfg(windows)]
         job,
     })
+}
+
+/// Wait for `drain` (the readers reaching EOF) for at most `STDIO_DRAIN_GRACE` of the time they
+/// spend waiting on the pipe. False when the grace ran out: something still holds the pipes open.
+///
+/// A reader that is parked waiting for the consumer is not waiting on the pipe, so the clock
+/// restarts for as long as one is. Without that, a consumer slower than the grace would have its
+/// output cut off. Once the run is being torn down (`giving_up`) the output has no reader to wait
+/// for, and the plain grace applies, so an abort never waits for a consumer that has stalled.
+pub(crate) async fn drain_within_grace(
+    drain: impl std::future::Future<Output = ()>,
+    parked: &AtomicUsize,
+    giving_up: &AtomicBool,
+) -> bool {
+    tokio::pin!(drain);
+
+    loop {
+        match timeout(STDIO_DRAIN_GRACE, &mut drain).await {
+            Ok(()) => return true,
+            Err(_) if parked.load(Ordering::Acquire) > 0 && !giving_up.load(Ordering::Acquire) => continue,
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Where bytes for a running command's stdin are queued.
+///
+/// The bytes are written by a task (or thread) of their own, so the runner never waits for a
+/// child that is not reading. Dropping the handle ends the writer, which closes the child's stdin.
+pub(crate) struct InputHandle {
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// Stops a pipe writer that is blocked on a child that never reads.
+    task: Option<JoinHandle<()>>,
+}
+
+impl InputHandle {
+    fn pipe(mut stdin: ChildStdin) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let task = tokio::spawn(async move {
+            while let Some(data) = rx.recv().await {
+                if stdin.write_all(&data).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self { tx, task: Some(task) }
+    }
+
+    /// Wrap a sender whose receiving end is owned by a writer thread.
+    pub(crate) fn from_sender(tx: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+        Self { tx, task: None }
+    }
+
+    /// Queue `data` for the child. False when the writer has already gone.
+    pub(crate) fn write(&self, data: Vec<u8>) -> bool {
+        self.tx.send(data).is_ok()
+    }
+}
+
+impl Drop for InputHandle {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
 }
 
 /// Message sent when a process completes (after all I/O is drained).
@@ -164,6 +252,10 @@ pub(crate) struct ProcessInfo {
     /// this with Acquire ordering before issuing SIGKILL so it can't
     /// hit a PID the kernel has already recycled for another process.
     pub(crate) terminated: Arc<AtomicBool>,
+    /// The command's stdin, when it is a pipe or a pty.
+    pub(crate) input: Option<InputHandle>,
+    /// The command's terminal, when it runs in a pty.
+    pub(crate) pty: Option<super::pty::PtyControl>,
     /// Windows: Job Object that owns the process tree.
     /// When terminated or dropped, kills all child processes.
     #[cfg(windows)]
@@ -178,7 +270,7 @@ const PARTIAL_FLUSH: Duration = Duration::from_millis(100);
 
 /// How long to wait after a child exits for its stdout/stderr pipes to reach
 /// EOF before giving up on them.
-const STDIO_DRAIN_GRACE: Duration = Duration::from_secs(2);
+pub(crate) const STDIO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Exit code of a finished child and whether a signal ended it. A signalled
 /// child reports `128 + signal`, the shell convention, so callers see 137 or 143
@@ -240,18 +332,22 @@ fn take_capped_prefix(pending: &mut Vec<u8>) -> String {
 /// Only the newly read bytes are scanned for a newline, and a line without one
 /// is emitted in pieces of at most `MAX_LINE_BYTES`, so memory and time stay
 /// linear in the output however long a line is.
-async fn stream_output<R>(mut reader: R, tx: mpsc::UnboundedSender<ProcessEvent>, index: u32, is_stderr: bool)
+async fn stream_output<R>(mut reader: R, sink: EventSink, index: u32, is_stderr: bool)
 where
     R: AsyncRead + Unpin,
 {
-    let emit = |text: String| {
-        let event = if is_stderr { ProcessEvent::Stderr { index, text } } else { ProcessEvent::Stdout { index, text } };
-
-        let _ = tx.send(event);
+    let event = |text: String| {
+        if is_stderr {
+            ProcessEvent::Stderr { index, text }
+        } else {
+            ProcessEvent::Stdout { index, text }
+        }
     };
 
     let mut pending: Vec<u8> = Vec::new();
     let mut chunk = [0u8; READ_CHUNK];
+    // Lines completed by the last read, sent once it has been fully scanned.
+    let mut lines: Vec<String> = Vec::new();
 
     loop {
         // With a partial line buffered, bound the read so an idle stream
@@ -262,8 +358,9 @@ where
             match timeout(PARTIAL_FLUSH, reader.read(&mut chunk)).await {
                 Ok(result) => result,
                 Err(_) => {
-                    emit(strip_trailing_cr(&pending));
+                    lines.push(strip_trailing_cr(&pending));
                     pending.clear();
+                    send_lines(&sink, &mut lines, &event).await;
                     continue;
                 }
             }
@@ -273,8 +370,10 @@ where
             // EOF or read error: flush any trailing partial line, then stop.
             Ok(0) | Err(_) => {
                 if !pending.is_empty() {
-                    emit(strip_trailing_cr(&pending));
+                    lines.push(strip_trailing_cr(&pending));
                 }
+
+                send_lines(&sink, &mut lines, &event).await;
 
                 break;
             }
@@ -282,25 +381,42 @@ where
                 let mut rest = &chunk[..n];
 
                 while let Some(position) = rest.iter().position(|&byte| byte == b'\n') {
-                    append_capped(&mut pending, &rest[..position], &emit);
-                    emit(strip_trailing_cr(&pending));
+                    append_capped(&mut pending, &rest[..position], &mut lines);
+                    lines.push(strip_trailing_cr(&pending));
                     pending.clear();
 
                     rest = &rest[position + 1..];
                 }
 
-                append_capped(&mut pending, rest, &emit);
+                append_capped(&mut pending, rest, &mut lines);
+
+                // The reader stops here while the consumer is behind, which stops it reading the
+                // pipe, which makes the child block on its next write.
+                if !send_lines(&sink, &mut lines, &event).await {
+                    break;
+                }
             }
         }
     }
 }
 
-/// Append `bytes` to the pending line, emitting the buffered part first whenever
+/// Send the completed lines in order. False when the stream was closed and the reader should stop.
+async fn send_lines(sink: &EventSink, lines: &mut Vec<String>, event: &impl Fn(String) -> ProcessEvent) -> bool {
+    for text in lines.drain(..) {
+        if !sink.send_output(event(text)).await {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Append `bytes` to the pending line, completing the buffered part first whenever
 /// it is already at the cap and more of the same line follows.
-fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], emit: &impl Fn(String)) {
+fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], completed: &mut Vec<String>) {
     while !bytes.is_empty() {
         if pending.len() >= MAX_LINE_BYTES {
-            emit(take_capped_prefix(pending));
+            completed.push(take_capped_prefix(pending));
         }
 
         let take = (MAX_LINE_BYTES - pending.len()).min(bytes.len());
@@ -349,28 +465,14 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
         cmd.current_dir(cwd);
     }
 
-    // The child inherits the parent environment by default; only the overlay is applied.
-    if let Some(ref env) = config.env {
-        cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    // The child inherits this process's environment unless the caller opted out; then the
+    // overlay is all it gets. Colour (`FORCE_COLOR`) is the caller's decision, already in the overlay.
+    if config.inherit_env == Some(false) {
+        cmd.env_clear();
     }
 
-    // Pass through color support — but respect an explicit
-    // `FORCE_COLOR` from `config.env` first (e.g. `"0"` to disable
-    // color for tools that misbehave with ANSI / emit JSON). The
-    // previous unconditional override on parent-env absence silently
-    // forced color on. See voidzero-dev/vite-task#379.
-    //
-    // Colour is only forced when this process's stdout is a terminal
-    // and `NO_COLOR` is not set (non-empty), matching the JS fallback.
-    let caller_has_force_color = config.env.as_ref().map(|env| env.contains_key("FORCE_COLOR")).unwrap_or(false);
-    // A task-level NO_COLOR, even an empty one, overrides the parent's, as it does in the JS fallback.
-    let no_color_set = match config.env.as_ref().and_then(|env| env.get("NO_COLOR")) {
-        Some(value) => !value.is_empty(),
-        None => std::env::var("NO_COLOR").map(|v| !v.is_empty()).unwrap_or(false),
-    };
-    let stdout_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
-    if !caller_has_force_color && std::env::var("FORCE_COLOR").is_err() && !no_color_set && stdout_is_tty {
-        cmd.env("FORCE_COLOR", "1");
+    if let Some(ref env) = config.env {
+        cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     }
 
     // Pipe stdout/stderr for capture
@@ -380,7 +482,7 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     cmd.stdin(match config.stdin {
         StdinMode::Pipe => std::process::Stdio::piped(),
         StdinMode::Inherit => std::process::Stdio::inherit(),
-        StdinMode::Null => std::process::Stdio::null(),
+        StdinMode::Null | StdinMode::Pty => std::process::Stdio::null(),
     });
 
     // Unix: create new process group via setsid
@@ -418,7 +520,7 @@ enum ShellArg {
 
 /// Whether `shell` names `cmd.exe`, with or without the extension and on either
 /// path separator.
-fn is_cmd_exe(shell: &str) -> bool {
+pub(crate) fn is_cmd_exe(shell: &str) -> bool {
     let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_ascii_lowercase();
 
     name == "cmd" || name == "cmd.exe"
@@ -483,7 +585,7 @@ mod tests {
     async fn emits_one_event_per_newline_terminated_line() {
         let (mut writer, reader) = tokio::io::duplex(64);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         writer.write_all(b"line1\nline2\n").await.unwrap();
 
@@ -502,7 +604,7 @@ mod tests {
     async fn flushes_partial_line_while_stream_stays_open() {
         let (mut writer, reader) = tokio::io::duplex(64);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         writer.write_all(b"spinner-frame").await.unwrap();
 
@@ -522,7 +624,7 @@ mod tests {
     async fn flushes_trailing_partial_line_at_eof() {
         let (mut writer, reader) = tokio::io::duplex(64);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         writer.write_all(b"tail-no-newline").await.unwrap();
         drop(writer); // Immediate EOF.
@@ -535,7 +637,7 @@ mod tests {
     async fn strips_single_trailing_carriage_return() {
         let (mut writer, reader) = tokio::io::duplex(64);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         writer.write_all(b"crlf-line\r\n").await.unwrap();
 
@@ -549,7 +651,7 @@ mod tests {
     async fn tags_stderr_events_with_kind_and_index() {
         let (mut writer, reader) = tokio::io::duplex(64);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 7, true));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 7, true));
 
         writer.write_all(b"err-line\n").await.unwrap();
 
@@ -565,7 +667,7 @@ mod tests {
     async fn scans_a_50_mib_single_line_in_linear_time() {
         let (mut writer, reader) = tokio::io::duplex(1 << 20);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         let start = std::time::Instant::now();
         let chunk = vec![b'x'; 64 * 1024];
@@ -596,7 +698,7 @@ mod tests {
     async fn caps_a_line_without_newline_and_delivers_the_rest_as_its_own_event() {
         let (mut writer, reader) = tokio::io::duplex(64 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         let total = 2 * super::MAX_LINE_BYTES + 10;
         let chunk = vec![b'a'; 64 * 1024];
@@ -623,7 +725,7 @@ mod tests {
     async fn a_200_kb_line_arrives_in_one_piece() {
         let (mut writer, reader) = tokio::io::duplex(64 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = tokio::spawn(stream_output(reader, tx, 0, false));
+        let handle = tokio::spawn(stream_output(reader, tx.into(), 0, false));
 
         let mut line = vec![b'b'; 200_000];
         line.push(b'\n');

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { runConcurrently } from "../../src/concurrent";
-import type { NativeProcessEvent } from "../../src/native-binding";
+import type { NativeProcessEvent, NativeProcessEventBatch } from "../../src/native-binding";
 import { loadNativeBindings } from "../../src/native-binding";
 
 const native = loadNativeBindings()!;
@@ -103,12 +103,14 @@ describe("native concurrent runner (napi surface)", () => {
                 seen = resolve;
             });
 
-            const run = native.startConcurrent(commands, options, (event) => {
-                if (event.kind === "started" && typeof event.pid === "number") {
-                    pids.set(event.index, event.pid);
+            const run = native.startConcurrent(commands, options, (batch) => {
+                for (const event of batch.events) {
+                    if (event.kind === "started" && typeof event.pid === "number") {
+                        pids.set(event.index, event.pid);
 
-                    if (pids.size >= count) {
-                        seen();
+                        if (pids.size >= count) {
+                            seen();
+                        }
                     }
                 }
             });
@@ -218,6 +220,85 @@ describe("native concurrent runner (napi surface)", () => {
             await run.done();
 
             expect(() => native.startConcurrent([{ command: "true" }], { killSignal: "SIGBOGUS" }, null)).toThrow("SIGBOGUS");
+        });
+    });
+
+    describe("startConcurrent batches", () => {
+        it("delivers the outcome as the last batch, after every event", async () => {
+            expect.assertions(4);
+
+            const batches: NativeProcessEventBatch[] = [];
+            const run = native.startConcurrent([{ command: "seq 1 3000" }], { streamOutput: true }, (batch) => {
+                batches.push(batch);
+            });
+
+            await run.done();
+            // The callback runs on the JS thread; give the final batch the turn it needs.
+            await vi.waitFor(() => {
+                if (!batches.some((batch) => batch.result)) {
+                    throw new Error("the final batch has not arrived");
+                }
+            });
+
+            const last = batches.at(-1)!;
+            const events = batches.flatMap((batch) => batch.events);
+
+            expect(last.result?.success).toBe(true);
+            expect(last.events).toHaveLength(0);
+            expect(batches.slice(0, -1).every((batch) => batch.result === undefined && batch.error === undefined)).toBe(true);
+            expect(events.filter((event) => event.kind === "stdout")).toHaveLength(3000);
+        });
+
+        it("reports lines only when asked to", async () => {
+            expect.assertions(2);
+
+            const kinds: string[] = [];
+            const run = native.startConcurrent([{ command: "echo hi" }], {}, (batch) => {
+                kinds.push(...batch.events.map((event) => event.kind));
+            });
+
+            await run.done();
+            await vi.waitFor(() => {
+                if (!kinds.includes("close")) {
+                    throw new Error("the close has not arrived");
+                }
+            });
+
+            expect(kinds).toContain("started");
+            expect(kinds).not.toContain("stdout");
+        });
+    });
+
+    describe("write, resize and the pty options", () => {
+        it("refuses a terminal size the terminal cannot take, naming it", async () => {
+            expect.assertions(3);
+
+            expect(() => native.startConcurrent([{ command: "true", ptySize: { cols: 0, rows: 24 }, stdin: "pty" }], {}, null)).toThrow("0x24");
+
+            const run = native.startConcurrent([{ command: "true" }], {}, null);
+
+            expect(() => run.resize(0, 80, 70_000)).toThrow("80x70000");
+
+            await run.done();
+
+            expect(run.resize(0, 80, 24)).toBe(false);
+        });
+
+        it("reports a write to a finished run as not delivered", async () => {
+            expect.assertions(2);
+
+            const run = native.startConcurrent([{ command: "true" }], {}, null);
+
+            expect(run.write(0, "late")).toBe(true);
+
+            await run.done();
+            await vi.waitFor(() => {
+                if (run.write(0, "later")) {
+                    throw new Error("the run is still reachable");
+                }
+            });
+
+            expect(run.write(0, "much later")).toBe(false);
         });
     });
 

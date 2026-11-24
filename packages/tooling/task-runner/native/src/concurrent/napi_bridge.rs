@@ -3,10 +3,23 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use tokio::sync::{mpsc, watch};
 
+use task_runner_core::concurrent::events::{event_channel, EventBatch};
 use task_runner_core::concurrent::types::{ControlMessage, ProcessEvent as CoreProcessEvent};
 use task_runner_core::ConcurrentRunner;
 
-use super::types::{ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent};
+use super::types::{
+    ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ProcessEvent, ProcessEventBatch, PtySize,
+};
+
+/// How many output lines may be waiting for JavaScript at once, queued or being handled.
+/// A child that writes faster than the callback consumes blocks on its pipe past this.
+const OUTPUT_CREDITS: usize = 4096;
+
+/// The most events handed to JavaScript in one call.
+const MAX_BATCH: usize = 512;
+
+/// The callback of `startConcurrent`. `CalleeHandled = false`: JS receives the batch itself.
+type BatchCallback = ThreadsafeFunction<ProcessEventBatch, (), ProcessEventBatch, Status, false>;
 
 /// A JS event callback. It is declared with `CalleeHandled = false`, so JS receives
 /// the event itself as its first argument rather than the Node-style `(error, event)`.
@@ -112,6 +125,101 @@ pub async fn run_concurrent_batch(
     wait_for_result(launched.result).await
 }
 
+/// Hand one batch to JavaScript and wait until it has been handled; only then do the batch's
+/// credits come back. Lines are left out unless `with_output`, and a batch with nothing left is
+/// not sent at all. False when there is no callback, or JavaScript can no longer be reached.
+async fn deliver(callback: Option<&BatchCallback>, mut batch: EventBatch, with_output: bool) -> bool {
+    let events: Vec<ProcessEvent> = std::mem::take(&mut batch.events)
+        .into_iter()
+        .filter(|event| {
+            with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
+        })
+        .map(Into::into)
+        .collect();
+
+    match callback {
+        Some(callback) if !events.is_empty() => {
+            callback.call_async(ProcessEventBatch { events, result: None, error: None }).await.is_ok()
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
+/// Start `runner` and forward its events to `on_batch`, in batches, ending with the result.
+///
+/// The forwarder waits for the callback to return before it releases a batch, so the output
+/// credits (see `event_channel`) measure what JavaScript has not finished with. A child that
+/// outpaces the callback blocks on its pipe instead of filling memory.
+///
+/// The callback lives in the forwarding task and is dropped when the run ends, so it never keeps
+/// Node alive after the result has been delivered.
+fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with_output: bool) -> Launched {
+    let (sink, mut stream) = event_channel(OUTPUT_CREDITS);
+    let (control, control_rx) = mpsc::unbounded_channel();
+    let (result_tx, result) = watch::channel(None);
+
+    spawn(async move {
+        let mut run = tokio::spawn(async move { runner.run(sink, control_rx).await });
+        let mut callback = on_batch;
+        let mut outcome = None;
+
+        // Everything the run produced goes out first, in the order it was produced.
+        loop {
+            tokio::select! {
+                batch = stream.next_batch(MAX_BATCH) => match batch {
+                    Some(batch) => {
+                        if !deliver(callback.as_ref(), batch, with_output).await {
+                            callback = None;
+                        }
+                    }
+                    None => break,
+                },
+                joined = &mut run => {
+                    outcome = Some(joined);
+
+                    break;
+                }
+            }
+        }
+
+        let outcome = match outcome {
+            Some(outcome) => outcome,
+            None => run.await,
+        };
+
+        // A reader that was abandoned (a descendant held its pipe) must not add events after this
+        // point, or block waiting for a credit that will never come.
+        stream.close();
+
+        while let Some(batch) = stream.try_next_batch(MAX_BATCH) {
+            if !deliver(callback.as_ref(), batch, with_output).await {
+                callback = None;
+            }
+        }
+
+        let last = match outcome {
+            Ok(outcome) => {
+                let outcome: ConcurrentRunResult = outcome.into();
+                let _ = result_tx.send(Some(outcome.clone()));
+
+                ProcessEventBatch { events: Vec::new(), result: Some(outcome), error: None }
+            }
+            Err(error) => ProcessEventBatch {
+                events: Vec::new(),
+                result: None,
+                error: Some(format!("the concurrent run ended without a result: {error}")),
+            },
+        };
+
+        if let Some(callback) = callback {
+            let _ = callback.call_async(last).await;
+        }
+    });
+
+    Launched { control, result }
+}
+
 /// A concurrent run that is already in progress.
 ///
 /// The addon installs no signal handlers: the host decides which signals mean "stop" and calls
@@ -124,19 +232,23 @@ pub struct ConcurrentRun {
 
 /// Start commands concurrently and return a handle to the run.
 ///
-/// Like `runConcurrentBatch`, `onLifecycle` receives only "started", "close" and "error" events.
+/// `onBatch` receives the events in the order they happened, several at a time, and the outcome
+/// of the run as the last batch (`result`, or `error` if the run itself failed); every event is
+/// delivered before it. Only "started", "close" and "error" events are reported unless
+/// `options.streamOutput` is set, which adds the "stdout" and "stderr" lines (for a pty, raw chunks).
 /// An unknown option value throws before anything is spawned.
 ///
 /// Commands originate from package.json scripts (trusted input).
 #[napi(
-    ts_args_type = "commands: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions, onLifecycle?: ((event: ProcessEvent) => void) | undefined | null"
+    ts_args_type = "commands: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions, onBatch?: ((batch: ProcessEventBatch) => void) | undefined | null"
 )]
 pub fn start_concurrent(
     commands: Vec<ConcurrentCommandConfig>,
     options: ConcurrentRunnerOptions,
-    on_lifecycle: Option<EventCallback>,
+    on_batch: Option<BatchCallback>,
 ) -> Result<ConcurrentRun> {
-    let Launched { control, result } = launch(new_runner(commands, options)?, on_lifecycle, false);
+    let with_output = options.stream_output.unwrap_or(false);
+    let Launched { control, result } = launch_stream(new_runner(commands, options)?, on_batch, with_output);
 
     Ok(ConcurrentRun { control, result })
 }
@@ -146,8 +258,9 @@ impl ConcurrentRun {
     /// Stop the run: kill every running command and start no queued one.
     ///
     /// `"interrupt"` is a user interrupt (Ctrl+C): every command then closes with exit code 0 and
-    /// `killed: true`, because cancelling is not a failure. `"terminate"` (the default) keeps the
-    /// commands' exit codes. Calling it again, or after the run has finished, does nothing.
+    /// `killed: true` in the result, because cancelling is not a failure; the `close` events keep
+    /// the exit codes the commands really had. `"terminate"` (the default) keeps the exit codes in
+    /// the result too. Calling it again, or after the run has finished, does nothing.
     #[napi(ts_args_type = "mode?: 'interrupt' | 'terminate'")]
     pub fn abort(&self, mode: Option<String>) -> Result<()> {
         let graceful = match mode.as_deref() {
@@ -177,6 +290,23 @@ impl ConcurrentRun {
         )?;
 
         Ok(self.control.send(ControlMessage::Kill { index, signal }).is_ok())
+    }
+
+    /// Write `data` to a running command's stdin (a pipe, or a pty). Returns false when the run
+    /// has already finished; a command that is not running, or has neither, is ignored. The write
+    /// is queued, never waited for, so a child that does not read cannot block the caller.
+    #[napi]
+    pub fn write(&self, index: u32, data: String) -> bool {
+        self.control.send(ControlMessage::Write { index, data: data.into_bytes() }).is_ok()
+    }
+
+    /// Resize a running pty command's terminal. Returns false when the run has already finished;
+    /// a command that is not running in a pty is ignored. Throws if a dimension is 0 or above 65535.
+    #[napi]
+    pub fn resize(&self, index: u32, cols: u32, rows: u32) -> Result<bool> {
+        let size = PtySize::parse(cols, rows)?;
+
+        Ok(self.control.send(ControlMessage::Resize { index, size }).is_ok())
     }
 
     /// Resolves with the result once every command has finished. May be awaited more than once.
