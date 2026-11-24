@@ -17,8 +17,17 @@
 //! - a `VIS_NPM_KEYS_URL` that is not a plain `http(s)` URL on a port `fetch` always allows, and a `HOME` that
 //!   is not a plain absolute path;
 //! - a cache file that is not a JSON object with a `keys` array (Node removes a corrupt one), and an answer that
-//!   is 2xx but not a JSON object, or has a byte-order mark: the 2xx body is read the way `response.json()`
-//!   does only for what `serde_json` reads identically.
+//!   is 2xx but not a JSON object, or has a byte-order mark, or holds a string `serde_json` rejects (a lone
+//!   surrogate) or a number outside a double (`1e999`): the 2xx body is read the way `response.json()` does only
+//!   for what this module reads identically.
+//!
+//! The cache file holds `JSON.stringify(keys)`, so the `keys` array is parsed and written again the way
+//! JavaScript writes it (see [`Js`]): compact, strings escaped as JavaScript escapes them, numbers printed as
+//! `Number.prototype.toString` prints them, and object keys in JavaScript's order (integer-like keys first,
+//! ascending; a repeated key keeps its first place and its last value).
+//!
+//! The 15 second limit is Node's fixed one: `VIS_HTTP_TIMEOUT` and `VIS_HTTP_CONNECT_TIMEOUT`, which the other
+//! commands of this binary honour, do not apply here.
 //!
 //! A refused or failed request is not a hand-off: Node's own reply to it (the old keys, or the
 //! `fetch-failed` document and exit status 1) is reproduced.
@@ -179,10 +188,7 @@ fn clear(file: &Path) -> Result<Outcome, String> {
 
 fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
     let cached = read_cache(file)?;
-    // Redirects are Node's: `fetch` follows a different set of them than the client does (https to http, the
-    // ports and credentials of the target), so a run that meets one is handed over whole.
-    let client =
-        HttpClient::new(HttpConfig { follow_redirects: false, ..HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT) });
+    let client = HttpClient::new(fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT)));
 
     // A failed request, a failed write and a refused status all end the way Node's `catch` and `!response.ok`
     // do: the old keys when there are some, the `fetch-failed` document otherwise.
@@ -230,6 +236,14 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
     })
 }
 
+/// `config` with the limits Node's `fetch` has (one fixed 15 seconds) whatever `VIS_HTTP_TIMEOUT` and
+/// `VIS_HTTP_CONNECT_TIMEOUT` say, and with redirects left to Node: `fetch` follows a different set of them than
+/// the client does (https to http, the ports and credentials of the target), so a run that meets one is handed
+/// over whole.
+fn fetch_config(config: HttpConfig) -> HttpConfig {
+    HttpConfig { follow_redirects: false, global_timeout: FETCH_TIMEOUT, connect_timeout: FETCH_TIMEOUT, ..config }
+}
+
 /// The cache entry on disk: `Ok(None)` when there is none, `Ok(Some(_))` for an object with a `keys` array,
 /// and the reason for a hand-off for anything else, which Node removes or fails on.
 fn read_cache(file: &Path) -> Result<Option<Cached>, String> {
@@ -255,10 +269,189 @@ fn read_cache(file: &Path) -> Result<Option<Cached>, String> {
         .ok_or_else(|| "the cache file has no `keys` array".to_owned())
 }
 
-/// A fetched key set: how many keys, and the `keys` text to cache.
+/// A fetched key set: how many keys, and `JSON.stringify(keys)` to cache.
 struct Fetched {
     count: usize,
     raw: String,
+}
+
+/// A parsed JSON value that keeps what JavaScript's `JSON.parse` and `JSON.stringify` keep: the order of an
+/// object's keys (before JavaScript's own reordering) and every number as a double.
+enum Js {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<Js>),
+    /// Entries in first-seen order; a repeated key already replaced the value of the first.
+    Object(Vec<(String, Js)>),
+}
+
+struct JsVisitor;
+
+impl<'de> serde::de::Visitor<'de> for JsVisitor {
+    type Value = Js;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Js, E> {
+        Ok(Js::Null)
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Js, E> {
+        Ok(Js::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Js, E> {
+        Ok(Js::Number(value as f64))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Js, E> {
+        Ok(Js::Number(value as f64))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Js, E> {
+        Ok(Js::Number(value))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Js, E> {
+        Ok(Js::String(value.to_owned()))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Js, A::Error> {
+        let mut items = Vec::new();
+
+        while let Some(item) = seq.next_element()? {
+            items.push(item);
+        }
+
+        Ok(Js::Array(items))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Js, A::Error> {
+        let mut entries: Vec<(String, Js)> = Vec::new();
+        let mut places: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        while let Some((key, value)) = map.next_entry::<String, Js>()? {
+            match places.get(&key) {
+                Some(place) => entries[*place].1 = value,
+                None => {
+                    places.insert(key.clone(), entries.len());
+                    entries.push((key, value));
+                }
+            }
+        }
+
+        Ok(Js::Object(entries))
+    }
+}
+
+impl<'de> Deserialize<'de> for Js {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(JsVisitor)
+    }
+}
+
+/// Whether JavaScript orders `key` among the integer indices of an object: a canonical decimal below 2^32 - 1.
+fn array_index(key: &str) -> Option<u32> {
+    let canonical =
+        key == "0" || (!key.starts_with('0') && !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()));
+
+    canonical.then(|| key.parse::<u32>().ok()).flatten().filter(|index| *index != u32::MAX)
+}
+
+/// `Number.prototype.toString` for a finite double: the shortest digits that read back as the same double, in
+/// decimal up to 21 digits and from 1e-6 on, in exponent form beyond. A non-finite value is `null` in a document.
+fn js_number(value: f64) -> Option<String> {
+    if !value.is_finite() {
+        return Some("null".to_owned());
+    }
+
+    if value == 0.0 {
+        return Some("0".to_owned());
+    }
+
+    if value < 0.0 {
+        return Some(format!("-{}", js_number(-value)?));
+    }
+
+    // Rust prints the shortest digits that round-trip too: `d.ddde<exponent>`.
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific.split_once('e')?;
+    let digits: String = mantissa.chars().filter(|character| *character != '.').collect();
+    let point = exponent.parse::<i32>().ok()? + 1;
+    let length = i32::try_from(digits.len()).ok()?;
+
+    Some(if length <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat(usize::try_from(point - length).ok()?))
+    } else if 0 < point && point <= 21 {
+        let (whole, fraction) = digits.split_at(usize::try_from(point).ok()?);
+
+        format!("{whole}.{fraction}")
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat(usize::try_from(-point).ok()?))
+    } else {
+        let power = point - 1;
+        let sign = if power < 0 { '-' } else { '+' };
+        let (first, rest) = digits.split_at(1);
+        let fraction = if rest.is_empty() { String::new() } else { format!(".{rest}") };
+
+        format!("{first}{fraction}e{sign}{}", power.abs())
+    })
+}
+
+impl Js {
+    /// `JSON.stringify(value)` with no indentation.
+    fn stringify(&self, out: &mut String) -> Option<()> {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Self::Number(value) => out.push_str(&js_number(*value)?),
+            // `serde_json` escapes the quote, the backslash and the control characters, as JavaScript does, and
+            // writes every other character as it is.
+            Self::String(text) => out.push_str(&serde_json::to_string(text).ok()?),
+            Self::Array(items) => {
+                out.push('[');
+
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+
+                    item.stringify(out)?;
+                }
+
+                out.push(']');
+            }
+            Self::Object(entries) => {
+                // Integer-like keys come first, ascending; the rest keep their order.
+                let mut indexed: Vec<(u32, &(String, Js))> =
+                    entries.iter().filter_map(|entry| Some((array_index(&entry.0)?, entry))).collect();
+
+                indexed.sort_by_key(|(index, _)| *index);
+
+                let others = entries.iter().filter(|entry| array_index(&entry.0).is_none());
+
+                out.push('{');
+
+                for (position, (key, value)) in indexed.into_iter().map(|(_, entry)| entry).chain(others).enumerate() {
+                    if position > 0 {
+                        out.push(',');
+                    }
+
+                    out.push_str(&serde_json::to_string(key).ok()?);
+                    out.push(':');
+                    value.stringify(out)?;
+                }
+
+                out.push('}');
+            }
+        }
+
+        Some(())
+    }
 }
 
 /// What Node does with a 2xx body that is a JSON object: a missing or non-array `keys` is the empty list. `None`
@@ -275,10 +468,19 @@ fn fetched_keys(text: &str) -> Option<Fetched> {
         return Some(Fetched { count: 0, raw: "[]".to_owned() });
     };
 
-    Some(Fetched { count: serde_json::from_str::<Vec<&RawValue>>(raw).ok()?.len(), raw: raw.to_owned() })
+    let keys = serde_json::from_str::<Js>(raw).ok()?;
+    let Js::Array(items) = &keys else {
+        return None;
+    };
+
+    let mut compact = String::new();
+
+    keys.stringify(&mut compact)?;
+
+    Some(Fetched { count: items.len(), raw: compact })
 }
 
-/// `writeCachedKeys`: `JSON.stringify({createdAt, keys, ttlMs})`, the `keys` as the registry sent them.
+/// `writeCachedKeys`: `JSON.stringify({createdAt, keys, ttlMs})`.
 fn store(file: &Path, keys: &Fetched) -> bool {
     let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return false };
     let entry = format!("{{\"createdAt\":{},\"keys\":{},\"ttlMs\":{TTL_MS}}}", now.as_millis(), keys.raw);
@@ -338,10 +540,10 @@ mod tests {
     }
 
     #[test]
-    fn a_key_set_is_counted_and_kept_as_written() {
+    fn a_key_set_is_counted_and_written_compact() {
         let fetched = fetched_keys(r#" {"keys":[{"keyid":"a","key":"x"}, {"b":1}], "extra": true}"#).unwrap();
 
-        assert_eq!((fetched.count, fetched.raw.as_str()), (2, r#"[{"keyid":"a","key":"x"}, {"b":1}]"#));
+        assert_eq!((fetched.count, fetched.raw.as_str()), (2, r#"[{"keyid":"a","key":"x"},{"b":1}]"#));
 
         for empty in [r#"{}"#, r#"{"keys":null}"#, r#"{"keys":{"a":1}}"#, r#"{"keys":"x"}"#, r#"{"keys":[]}"#] {
             let fetched = fetched_keys(empty).unwrap();
@@ -351,12 +553,70 @@ mod tests {
     }
 
     #[test]
+    fn a_key_set_is_written_the_way_json_stringify_writes_it() {
+        let written = |text: &str| fetched_keys(text).unwrap().raw;
+
+        // Whitespace goes, and a number prints the way JavaScript prints it.
+        assert_eq!(
+            written("{\"keys\": [ 1.0, 1e2, 2.50, -0, -0.0, 1E5, 0.000001, 1e-7, 1e21, 12345678901234567890 ]}"),
+            "[1,100,2.5,0,0,100000,0.000001,1e-7,1e+21,12345678901234567000]"
+        );
+        assert_eq!(
+            written("{\"keys\":[9007199254740993,5e-324,1.7976931348623157e308,-1.5e-10,123456789012345680000]}"),
+            "[9007199254740992,5e-324,1.7976931348623157e+308,-1.5e-10,123456789012345680000]"
+        );
+
+        // Strings keep their characters and escape what JavaScript escapes.
+        assert_eq!(
+            written(r#"{"keys":["caf\u00e9 \/ \u0041 \n \u0001 \u007f \u2028 \ud83d\ude00 \"q\" \\"]}"#),
+            "[\"caf\u{e9} / A \\n \\u0001 \u{7f} \u{2028} \u{1f600} \\\"q\\\" \\\\\"]"
+        );
+
+        // Integer-like keys come first and ascending, a repeated key keeps its first place and its last value.
+        assert_eq!(
+            written(r#"{"keys":[{"b":1,"2":2,"1":3,"a":4,"a":5,"01":6,"4294967295":7,"4294967294":8}]}"#),
+            r#"[{"1":3,"2":2,"4294967294":8,"b":1,"a":5,"01":6,"4294967295":7}]"#
+        );
+    }
+
+    #[test]
     fn a_body_node_may_read_differently_is_handed_over() {
-        for text in
-            ["", "null", "[]", "5", "\"x\"", "\u{feff}{}", "{", "{\"keys\":[1,}", r#"{"keys":[],"keys":[1]}"#, "<html>"]
-        {
+        for text in [
+            "",
+            "null",
+            "[]",
+            "5",
+            "\"x\"",
+            "\u{feff}{}",
+            "{",
+            "{\"keys\":[1,}",
+            r#"{"keys":[],"keys":[1]}"#,
+            "<html>",
+            r#"{"keys":["\ud800"]}"#,
+            r#"{"keys":[1e999]}"#,
+        ] {
             assert!(fetched_keys(text).is_none(), "{text:?}");
         }
+    }
+
+    #[test]
+    fn the_request_keeps_node_s_fixed_limit_whatever_the_environment_says() {
+        let from_environment = HttpConfig::from_lookup(
+            &|name| match name {
+                "VIS_HTTP_TIMEOUT" => Some("90".into()),
+                "VIS_HTTP_CONNECT_TIMEOUT" => Some("3".into()),
+                _ => None,
+            },
+            FETCH_TIMEOUT,
+            FETCH_TIMEOUT,
+        );
+
+        assert_eq!(from_environment.global_timeout, Duration::from_secs(90));
+
+        let config = fetch_config(from_environment);
+
+        assert_eq!((config.global_timeout, config.connect_timeout), (FETCH_TIMEOUT, FETCH_TIMEOUT));
+        assert!(!config.follow_redirects);
     }
 
     #[test]

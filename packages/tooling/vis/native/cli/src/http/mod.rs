@@ -9,7 +9,7 @@
 //!
 //! | Variable | Effect |
 //! | --- | --- |
-//! | `VIS_HTTP_TIMEOUT` | Seconds a whole request may take, redirects and body included. Default 30 (a command may pick another default). |
+//! | `VIS_HTTP_TIMEOUT` | Seconds a whole request may take, all its redirect hops and the body included. Default 30 (a command may pick another default). |
 //! | `VIS_HTTP_CONNECT_TIMEOUT` | Seconds the connection (DNS, TCP, TLS) may take. Default 10 (a command may pick another default). |
 //! | `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (and lower case) | Read by `ureq`, which tunnels every request through the proxy with `CONNECT`. |
 //! | `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` | A PEM file added to the OS trust store (see `tls`). |
@@ -26,7 +26,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ureq::{Agent, Proxy};
 
@@ -169,11 +169,19 @@ impl HttpClient {
         let mut url = url.to_owned();
         let mut headers = headers.to_vec();
         let mut body = body;
+        // One limit for the whole call: every hop gets what the earlier ones left, not a fresh limit.
+        let deadline = Instant::now() + self.config.global_timeout;
 
         for _ in 0..=MAX_REDIRECTS {
             let host = host_of(&url).to_owned();
+            let remaining = deadline.saturating_duration_since(Instant::now());
+
+            if remaining.is_zero() {
+                return Err(HttpError::Timeout("global".to_owned()));
+            }
+
             let mut response =
-                self.send_once(&url, &headers, body).map_err(|error| HttpError::from_ureq(error, &host))?;
+                self.send_once(&url, &headers, body, remaining).map_err(|error| HttpError::from_ureq(error, &host))?;
             let status = response.status().as_u16();
             let location = response.headers().get("location").and_then(|value| value.to_str().ok()).map(str::to_owned);
 
@@ -219,10 +227,11 @@ impl HttpClient {
         url: &str,
         headers: &[(&str, &str)],
         body: Option<&str>,
+        time_left: Duration,
     ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         match body {
             None => {
-                let mut request = self.agent().get(url);
+                let mut request = self.agent().get(url).config().timeout_global(Some(time_left)).build();
 
                 for (name, value) in headers {
                     request = request.header(*name, *value);
@@ -231,7 +240,13 @@ impl HttpClient {
                 request.call()
             }
             Some(body) => {
-                let mut request = self.agent().post(url).header("content-type", "application/json");
+                let mut request = self
+                    .agent()
+                    .post(url)
+                    .config()
+                    .timeout_global(Some(time_left))
+                    .build()
+                    .header("content-type", "application/json");
 
                 for (name, value) in headers {
                     request = request.header(*name, *value);

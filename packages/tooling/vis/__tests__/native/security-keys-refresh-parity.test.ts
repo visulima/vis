@@ -41,6 +41,11 @@ const answers = {
     "/not-an-array": (res) => res.end('{"keys":"x"}'),
     "/null-keys": (res) => res.end('{"keys":null,"other":[1,2]}'),
     "/pretty": (res) => res.end('{\n  "keys": [\n    { "keyid": "a\\u00e9", "n": 1.50, "list": [1, 2] }\n  ],\n  "extra": true\n}\n'),
+    "/escapes": (res) => res.end('{"keys":[{"a":"caf\\u00e9 \\/ \\u0041 \\n \\t \\u0001 \\u007f \\u2028 \\ud83d\\ude00 \\"q\\" \\\\ \\u003c"}]}'),
+    "/floats": (res) => res.end('{"keys":[1.0,1e2,1.5e300,0.000001,1e-7,123456789012345680000,1e21,-0,-0.0,9007199254740993,0.1,5e-324,1.7976931348623157e308,12345678901234567890,1E5,2.50,-1.5e-10]}'),
+    "/key-order": (res) => res.end('{"keys":[{"b":1,"2":2,"1":3,"a":4,"a":5,"01":6,"4294967295":7,"4294967294":8}]}'),
+    "/lone-surrogate": (res) => res.end('{"keys":["\\ud800"]}'),
+    "/overflow": (res) => res.end('{"keys":[1e999]}'),
     "/500": (res) => { res.statusCode = 500; res.end("broken"); },
     "/404": (res) => { res.statusCode = 404; res.end("{}"); },
     "/invalid-json": (res) => res.end("{"),
@@ -204,6 +209,21 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(run({ native: true, url: `${base}${path}` })).toContain(`"keyCount": ${String(count)}`);
         });
 
+        // The cache holds `JSON.stringify(keys)`: compact, strings escaped the way JavaScript escapes them, numbers
+        // printed the way JavaScript prints them, object keys in JavaScript's order. The bytes must match, not only the meaning.
+        it.each(["/pretty", "/escapes", "/floats", "/key-order"])("writes the cache of %s byte for byte", (path) => {
+            expect.hasAssertions();
+
+            run({ exactCache: true, native: true, url: `${base}${path}` });
+        });
+
+        // Node's limit is a fixed 15 seconds, so the timeout variables of the native client do not change the answer.
+        it.each([{ VIS_HTTP_TIMEOUT: "1" }, { VIS_HTTP_CONNECT_TIMEOUT: "1" }])("answers the same with %j in the environment", (extra) => {
+            expect.hasAssertions();
+
+            run({ exactCache: true, extra, native: true, url: `${base}/keys` });
+        });
+
         it("ignores a query string in the URL like the stub does", () => {
             expect.hasAssertions();
 
@@ -244,7 +264,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     describe("what goes to Node", () => {
-        it.each(["/invalid-json", "/array", "/null", "/html", "/bom", "/no-content", "/redirect", "/loop"])("hands over the answer of %s", (path) => {
+        it.each(["/invalid-json", "/array", "/null", "/html", "/bom", "/no-content", "/redirect", "/loop", "/lone-surrogate", "/overflow"])("hands over the answer of %s", (path) => {
             expect.hasAssertions();
 
             run({ native: false, url: `${base}${path}` });
