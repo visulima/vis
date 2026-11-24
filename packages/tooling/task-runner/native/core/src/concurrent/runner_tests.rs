@@ -135,6 +135,7 @@ mod tests {
         assert_eq!(result.close_events.len(), 2);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_success_condition_first() {
         let commands = vec![make_config("echo ok", Some("fast")), make_config("sleep 0.1 && exit 1", Some("slow"))];
@@ -165,6 +166,7 @@ mod tests {
         assert_eq!(result.close_events[2].index, 2);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_kill_others_on_failure() {
         let commands = vec![make_config("exit 1", Some("fails-fast")), make_config("sleep 10", Some("long-running"))];
@@ -203,6 +205,7 @@ mod tests {
         assert!(has_stderr, "expected stderr event");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_environment_variables() {
         let mut env = std::collections::HashMap::new();
@@ -256,6 +259,7 @@ mod tests {
         assert!(result.close_events.is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_multiline_output_ordering() {
         // Verify that all stdout lines arrive before the close event
@@ -292,6 +296,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_close_event_has_duration() {
         let commands = vec![make_config("sleep 0.1", None)];
@@ -318,6 +323,7 @@ mod tests {
         assert!(result.success);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_working_directory() {
         let commands = vec![ConcurrentCommandConfig {
@@ -344,6 +350,8 @@ mod tests {
         assert!(found_tmp, "expected /tmp in pwd output");
     }
 
+    // `echo` is a shell builtin on Windows, so there is no program to run directly.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_direct_execution_without_shell() {
         let commands = vec![ConcurrentCommandConfig {
@@ -370,6 +378,7 @@ mod tests {
         assert!(found, "expected 'direct-mode' in output");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_shell_true_supports_pipes() {
         // Pipes require shell execution
@@ -397,6 +406,7 @@ mod tests {
         assert!(found, "expected 'piped' in output from shell pipe");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stdin_null_is_default() {
         // Command that tries to read stdin should get EOF immediately
@@ -443,6 +453,7 @@ mod tests {
         assert!(found, "expected 'pipe-test' in output");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_custom_shell_path() {
         // Use /bin/bash explicitly as shell_path
@@ -556,12 +567,14 @@ mod tests {
     }
 
     /// A run driven on its own task, with handles to steer and observe it.
+    #[cfg(unix)]
     struct LiveRun {
         events: mpsc::UnboundedReceiver<ProcessEvent>,
         control: mpsc::UnboundedSender<ControlMessage>,
         result: tokio::task::JoinHandle<ConcurrentRunResult>,
     }
 
+    #[cfg(unix)]
     fn start(commands: Vec<ConcurrentCommandConfig>, options: &ConcurrentRunnerOptions) -> LiveRun {
         let runner = ConcurrentRunner::new(commands, options);
         let (event_tx, events) = mpsc::unbounded_channel();
@@ -571,6 +584,7 @@ mod tests {
         LiveRun { events, control, result }
     }
 
+    #[cfg(unix)]
     impl LiveRun {
         /// Wait until `count` commands have started; returns their pids by index.
         async fn wait_for_started(&mut self, count: usize) -> Vec<(u32, u32)> {
@@ -811,5 +825,26 @@ mod tests {
 
         assert_eq!(result.close_events.len(), 2);
         assert!(result.close_events.iter().any(|e| e.index == 0 && e.killed));
+    }
+
+    /// The command line reaches the shell intact when it contains double quotes. On Windows this
+    /// is the `cmd.exe /d /s /c "..."` construction; elsewhere it passes through `sh -c`.
+    #[tokio::test]
+    async fn test_quoted_arguments_survive_the_default_shell() {
+        let commands = vec![make_config("node -e \"console.log('a b')\"", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let (event_tx, mut events) = mpsc::unbounded_channel::<ProcessEvent>();
+
+        let result = runner.run(event_tx, no_control()).await;
+
+        assert!(result.success, "{:?}", result.close_events);
+
+        let mut lines = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if let ProcessEvent::Stdout { text, .. } = event {
+                lines.push(text);
+            }
+        }
+        assert_eq!(lines, vec!["a b".to_string()]);
     }
 }
