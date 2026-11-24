@@ -833,6 +833,102 @@ const sortPackageJsonMayRunNatively = (platform, environment, args, cwd, interac
     return sortPackageJsonShapeIsNative(args.slice(1));
 };
 
+// The flags `vis sbom` takes natively (`parse` in `native/cli/src/sbom/mod.rs`): each at most once, `--format` only as
+// `json`, `--include-dev` without a value, `--focus` and `--output` with one. `--output` is `-` (stdout) or a plain path.
+const SBOM_FLAGS = new Set(["--focus", "--format", "--include-dev", "--output"]);
+
+// The value of `--name value` or `--name=value` at `flags[index]` as `[value, next index]`, or `false` when it is missing,
+// empty or looks like a flag; `-` is a value here, unlike in `optionValue`.
+const sbomValue = (flags, index, name) => {
+    const inline = flags[index] !== name;
+    const value = inline ? flags[index].slice(name.length + 1) : flags[index + 1];
+
+    return value === undefined || value === "" || (value !== "-" && value.startsWith("-")) ? false : [value, inline ? index + 1 : index + 2];
+};
+
+const SBOM_PRINTABLE_ASCII = /^[\u0021-\u007E]+$/;
+const LEADING_SLASH = /^\//;
+
+// A path `resolve` of `@visulima/path` leaves as typed: printable ASCII, no `\\`, one leading `/` at most (it folds `//a` into
+// `/a`), no empty, `.` or `..` segment, no trailing `/`.
+const sbomOutputIsPlain = (output) =>
+    output === "-"
+    || (SBOM_PRINTABLE_ASCII.test(output) && !output.includes("\\") && !output.startsWith("//") && !output.endsWith("/") && output.replace(LEADING_SLASH, "").split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."));
+
+const sbomValueIsNative = (name, value) => {
+    if (name === "--format") {
+        return value === "json";
+    }
+
+    if (name === "--output") {
+        return sbomOutputIsPlain(value);
+    }
+
+    return [...value].every((character) => character.codePointAt(0) < 128);
+};
+
+// The output path of the arguments after `sbom` when they are a native shape, else `undefined`.
+const sbomOutput = (flags) => {
+    const seen = new Set();
+    let output = "sbom.cdx.json";
+    let index = 0;
+
+    while (index < flags.length) {
+        const name = flags[index].startsWith("--") ? flags[index].split("=")[0] : flags[index];
+
+        if (!SBOM_FLAGS.has(name) || seen.has(name)) {
+            return undefined;
+        }
+
+        seen.add(name);
+
+        if (name === "--include-dev") {
+            if (flags[index] !== name) {
+                return undefined;
+            }
+
+            index += 1;
+
+            continue;
+        }
+
+        const given = sbomValue(flags, index, name);
+
+        if (given === false || !sbomValueIsNative(name, given[0])) {
+            return undefined;
+        }
+
+        output = name === "--output" ? given[0] : output;
+        [, index] = given;
+    }
+
+    return output;
+};
+
+// Whether `vis sbom` can pass the binary's native gate (`answer` and `context` in `sbom/mod.rs`): the JSON BOM at the
+// workspace root, in a CI context off a terminal, written to a file (where pail's layout has to be decidable) or to stdout.
+// Like `secrets`, it stays in Node on Windows, when the working directory is not the workspace root, and where `NODE_ENV`,
+// `DEBUG`, `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change the log lines. The binary re-checks everything,
+// including the lockfile, the config and the other ecosystems' files; this only skips the extra process when it would delegate anyway.
+const sbomMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    if (
+        ["debug", "test"].includes(environment.NODE_ENV)
+        || environment.DEBUG !== undefined
+        || environment.PAIL_LOG_LEVEL !== undefined
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    const output = sbomOutput(args.slice(1));
+
+    return output !== undefined && (output === "-" || pailOutputIsDecidable(environment, args));
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -884,6 +980,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["replay", ({ args, environment, interactive, platform }) => helpOrNative(args, () => replayMayRunNatively(platform, environment, args, interactive))],
     // `run <target>`, answered only when every task is a cache hit; the binary hands every other run to Node.
     ["run", ({ args, cacheMayExist, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => runMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker, cacheMayExist))],
+    // The JSON BOM of a pnpm workspace: `--format json`, `--output`, `--focus`, `--include-dev`.
+    ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.

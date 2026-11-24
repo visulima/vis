@@ -53,6 +53,7 @@ mod pm_family;
 mod pm_shim;
 mod replay;
 mod run;
+mod sbom;
 mod secrets;
 mod self_update;
 mod sort_package_json;
@@ -160,6 +161,9 @@ fn main() {
         // `vis affected <target> --sparse-checkout` — the affected project roots. Every other shape
         // forwards to `vis run --affected` and is delegated inside `affected::run`.
         "affected" if !surface::asks_for_help(&args) => affected::run(&args, &raw_args),
+        // `vis sbom` — the CycloneDX JSON BOM of a pnpm workspace, native for the shapes `sbom::run` can prove
+        // byte for byte; every other shape, and every root or input it cannot read exactly, is delegated inside it.
+        "sbom" if !surface::asks_for_help(&args) => sbom::run(&args, &raw_args),
         // `vis secrets` — the working-tree scan with `--format json|sarif`, `--quiet` and `--baseline`.
         // Every other shape is delegated inside `secrets::run`; help is left to the arm below.
         "secrets" if !surface::asks_for_help(&args) => secrets::run(&args, &raw_args),

@@ -541,7 +541,7 @@ pub(crate) fn plain(text: &str) -> bool {
 /// Whether Node's `localeCompare` orders ASCII like the root collation [`collate`] reproduces. A
 /// tailored locale (`da`, `cs`, …) orders some letter pairs differently, and Node takes its default
 /// locale from these variables.
-fn root_collation() -> bool {
+pub(crate) fn root_collation() -> bool {
     ["LC_ALL", "LC_MESSAGES", "LC_COLLATE", "LANG", "LANGUAGE"].iter().all(|key| match env::var(key) {
         Ok(value) => {
             let value = value.trim();
@@ -574,7 +574,7 @@ static PRIMARY: [u8; 128] = primary_weights();
 
 /// `a.localeCompare(b)` for printable ASCII under the root collation: the primary weights of the
 /// whole strings first, then at the first case difference lowercase before uppercase.
-fn collate(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn collate(a: &str, b: &str) -> std::cmp::Ordering {
     let primary = |byte: u8| PRIMARY[usize::from(byte.to_ascii_lowercase())];
 
     a.bytes().map(primary).cmp(b.bytes().map(primary)).then_with(|| {
