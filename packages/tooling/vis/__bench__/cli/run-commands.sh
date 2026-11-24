@@ -130,6 +130,9 @@ fi
 
 mkdir -p "$RESULTS_DIR/cap" "$RESULTS_DIR/log"
 RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
+# One record per scenario this run attempts: --check-budgets treats a scenario without one as excluded on purpose, so
+# the records of an earlier run in a reused --results-dir must not count.
+rm -f "$RESULTS_DIR"/*.meta.json "$RESULTS_DIR"/run.json
 if [[ -n "${VIS_BENCH_DIR:-}" ]]; then
   mkdir -p "$VIS_BENCH_DIR"
   WORK="$(cd "$VIS_BENCH_DIR" && pwd -P)"
@@ -324,6 +327,8 @@ bench_scenario() {
     record "$cap" node skipped "" "" "Node reference failed to run (exit $ref_code)"
     record "$cap" binary skipped "" "" "no Node reference"
     record "$cap" launcher skipped "" "" "no Node reference"
+    "${LIB[@]}" meta "$cap" "$RESULTS_DIR/$key.meta.json" "$id" "$label_size" "$argtext" "$scenario_label" "$order"
+    printf '  %-34s INVALID: the Node reference failed to run (exit %s)\n' "$key" "$ref_code"
     return 0
   fi
 

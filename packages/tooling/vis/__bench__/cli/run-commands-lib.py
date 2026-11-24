@@ -423,6 +423,35 @@ def merged_budgets(existing, found):
     return {key: budgets[key] for key in sorted(budgets)}
 
 
+def check_budgets(budgets, found, rows):
+    """(failures, warnings, checked). `rows` holds one record per scenario this run attempted: a scenario excluded on
+    purpose by `--only` or `--sizes` has none and is only a warning, but a budgeted variant of an attempted scenario
+    that was not measured (skipped because it delegated to Node, was not routed natively, or disagreed with Node)
+    fails with the reason."""
+    attempted = {}
+    for meta in rows:
+        attempted[meta["id"] + ("@%s" % meta["size"] if meta.get("size") else "")] = meta
+    failures, warnings, checked = [], [], 0
+    for key, limits in sorted(budgets.items()):
+        if key not in attempted:
+            warnings.append("%s: not attempted in this run (excluded by --only or --sizes)" % key)
+            continue
+        got = found.get(key, {})
+        for variant, limit in limits.items():
+            cell = got.get(variant)
+            if cell is None:
+                info = attempted[key]["variants"].get(variant, {})
+                reason = info.get("reason") if info.get("status") == "skipped" else "no timing was recorded"
+                failures.append("%s %s: budgeted but not measured: %s" % (key, variant, reason or "no reason recorded"))
+            elif cell["node"] and variant != "node":
+                failures.append("%s %s: answered by Node (%.1f ms), the budget expects the native path" % (key, variant, cell["ms"]))
+            else:
+                checked += 1
+                if cell["ms"] > limit:
+                    failures.append("%s %s: %.1f ms over the %d ms budget" % (key, variant, cell["ms"], limit))
+    return failures, warnings, checked
+
+
 def command_budgets(argv):
     results = argv[0]
     rows = gather(results)
@@ -451,22 +480,7 @@ def command_budgets(argv):
     path = argv[argv.index("--check") + 1]
     with open(path, "r", encoding="utf-8") as handle:
         budgets = json.load(handle)["budgets"]
-    failures, warnings, checked = [], [], 0
-    for key, limits in sorted(budgets.items()):
-        got = found.get(key)
-        if got is None:
-            warnings.append("%s: not measured in this run" % key)
-            continue
-        for variant, limit in limits.items():
-            cell = got.get(variant)
-            if cell is None:
-                warnings.append("%s %s: not measured (skipped)" % (key, variant))
-            elif cell["node"] and variant != "node":
-                failures.append("%s %s: answered by Node (%.1f ms), the budget expects the native path" % (key, variant, cell["ms"]))
-            else:
-                checked += 1
-                if cell["ms"] > limit:
-                    failures.append("%s %s: %.1f ms over the %d ms budget" % (key, variant, cell["ms"], limit))
+    failures, warnings, checked = check_budgets(budgets, found, rows)
     print("\nBudget check: %d measurement(s) compared with %s" % (checked, path))
     for warning in warnings:
         print("  warning: " + warning)
