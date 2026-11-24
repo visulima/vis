@@ -8,6 +8,8 @@
 
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
+
 /// The binary with a terminal size in its environment, so the help it renders has a width without asking
 /// a terminal (a run from a terminal would otherwise be handed to Node for it).
 fn binary() -> Command {
@@ -1210,7 +1212,11 @@ impl EmitFixture {
             *__emit-config*)\n\
               echo run >> \"$VIS_TEST_COUNT\"\n\
               while [ $# -gt 0 ]; do if [ \"$1\" = \"--out\" ]; then out=\"$2\"; fi; shift; done\n\
-              /bin/cp \"$VIS_TEST_EMITTED\" \"$out\" ;;\n\
+              IFS= read -r line < \"$VIS_TEST_EMITTED\" || true\n\
+              case \"$line\" in\n\
+              *\\{digest\\}*) printf '%s' \"${line%%\\{digest\\}*}$VIS_TEST_DIGEST${line#*\\{digest\\}}\" > \"$out\" ;;\n\
+              *) printf '%s' \"$line\" > \"$out\" ;;\n\
+              esac ;;\n\
             *) echo \"NODE:$*\" ;;\n\
             esac\n";
 
@@ -1237,6 +1243,11 @@ impl EmitFixture {
             .env("VIS_FALLBACK_ENTRY", self.base.join("dist").join("bin.js"))
             .env("VIS_TEST_COUNT", self.base.join("count"))
             .env("VIS_TEST_EMITTED", self.base.join("emitted.json"))
+            // What the real emitter reports: the digest of the helper as it is when the config is evaluated.
+            .env(
+                "VIS_TEST_DIGEST",
+                format!("{:x}", Sha256::digest(std::fs::read(self.project.join("helper.ts")).unwrap())),
+            )
             .env("PATH", &self.bindir)
             .env_remove("VIS_INSTALLER")
             .env_remove("VIS_NO_CONFIG_CACHE")
@@ -1265,8 +1276,8 @@ impl Drop for EmitFixture {
 }
 
 #[cfg(unix)]
-const EMITTED_NPM: &str = "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
-    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\"}],\"env\":[],\"uncacheable\":[]}";
+const EMITTED_NPM: &str = "{\"version\":2,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
+    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\",\"digest\":\"{digest}\"}],\"env\":[],\"uncacheable\":[]}";
 
 /// A config that needs evaluation is evaluated once; the next runs read the stored result without Node,
 /// and editing a module the config imports evaluates it again.
@@ -1310,7 +1321,7 @@ fn the_config_cache_can_be_turned_off() {
 fn a_config_that_is_not_data_is_delegated_to_node() {
     let fixture = EmitFixture::new(
         "node-only",
-        "{\"version\":1,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
+        "{\"version\":2,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
     );
 
     assert!(fixture.run(&[]).starts_with("NODE:"));
@@ -1325,7 +1336,7 @@ fn a_config_that_is_not_data_is_delegated_to_node() {
 fn a_result_that_cannot_be_tracked_is_left_to_node() {
     let fixture = EmitFixture::new(
         "untracked",
-        "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
+        "{\"version\":2,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
     );
 
     assert!(fixture.run(&[]).starts_with("NODE:"));

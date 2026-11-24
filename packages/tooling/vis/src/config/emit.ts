@@ -10,6 +10,7 @@
 // Lean entry (see `bin.ts`): it loads no command module.
 
 import childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
@@ -23,11 +24,18 @@ import { observeModuleLoads, registerTsHooks } from "../runtime/ts-loader";
 import { loadMergedVisConfig } from "./config";
 
 /** Bump when the shape of {@link EmittedConfig} changes; the native reader refuses other versions. */
-const EMIT_VERSION = 1;
+const EMIT_VERSION = 2;
 
 type TrackedKind = "dir" | "exists" | "file";
 
 interface TrackedPath {
+    /**
+     * SHA-256 of what the evaluation saw when it first touched the path: the bytes of a file, the sorted entry names of
+     * a directory (joined with NUL), the empty string for a path that exists. `null` when the path did not exist.
+     * The native side hashes the path again once the emitter has exited and keeps the result only when both agree, so a
+     * file edited while the config was being evaluated is never stored next to digests of its newer contents.
+     */
+    digest: string | null;
     kind: TrackedKind;
     path: string;
 }
@@ -51,6 +59,9 @@ const KIND_RANK: Record<TrackedKind, number> = { dir: 2, exists: 0, file: 1 };
 const original = {
     environment: process.env,
     existsSync: fs.existsSync,
+    lstatSync: fs.lstatSync,
+    readdirSync: fs.readdirSync,
+    readFileSync: fs.readFileSync,
     realpathSync: fs.realpathSync,
     statSync: fs.statSync,
     writeFileSync: fs.writeFileSync,
@@ -102,11 +113,37 @@ const owningManifest = (path: string): string | undefined => {
 };
 
 interface Tracker {
+    /** Digests taken when each path was first touched (or last promoted to a stronger kind). */
+    digests: Map<string, string | null>;
     env: Set<string>;
     files: Map<string, TrackedKind>;
     stop: () => void;
+    /** Records a path the evaluation is about to read, taking its digest now. */
+    track: (path: string | undefined, kind: TrackedKind) => void;
     uncacheable: Set<string>;
 }
+
+const sha256 = (input: Buffer | string): string => createHash("sha256").update(input).digest("hex");
+
+/** The digest of `path` as `kind` observes it (see {@link TrackedPath.digest}); `null` when it cannot be read or is not there. */
+const digestOf = (path: string, kind: TrackedKind): string | null => {
+    try {
+        if (kind === "exists") {
+            return original.lstatSync(path, { throwIfNoEntry: false }) === undefined ? null : "";
+        }
+
+        if (kind === "file") {
+            return sha256(original.readFileSync(path));
+        }
+
+        // Byte order of the UTF-8 names, which is how the native side sorts them.
+        const names = original.readdirSync(path).toSorted((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+
+        return sha256(names.join("\0"));
+    } catch {
+        return null;
+    }
+};
 
 /** `stat` results carry the size, times and mode of a file, which no digest covers: see where `stat` is handled. */
 const FS_PATH_FIRST: Record<string, TrackedKind | "stat"> = {
@@ -190,6 +227,7 @@ const FLAGGED: [object, string, string][] = [
  */
 const startTracking = (): Tracker => {
     const files = new Map<string, TrackedKind>();
+    const digests = new Map<string, string | null>();
     const env = new Set<string>();
     const uncacheable = new Set<string>();
     const restore: (() => void)[] = [];
@@ -206,6 +244,8 @@ const startTracking = (): Tracker => {
 
         if (known === undefined || KIND_RANK[effective] > KIND_RANK[known]) {
             files.set(target, effective);
+            // Taken before the read this call is about to make, so it describes what the evaluation sees.
+            digests.set(target, digestOf(target, effective));
         }
     };
 
@@ -330,6 +370,7 @@ const startTracking = (): Tracker => {
     syncBuiltinESMExports();
 
     return {
+        digests,
         env,
         files,
         stop: () => {
@@ -342,6 +383,7 @@ const startTracking = (): Tracker => {
 
             syncBuiltinESMExports();
         },
+        track: record,
         uncacheable,
     };
 };
@@ -414,6 +456,9 @@ export const emitConfig = async (configPath: string): Promise<EmittedConfig> => 
 
     const tracker = startTracking();
 
+    // The config file is read by the loader, but its digest is taken here, before any of that.
+    tracker.track(absolute, "file");
+
     let merged: unknown;
 
     try {
@@ -423,13 +468,14 @@ export const emitConfig = async (configPath: string): Promise<EmittedConfig> => 
     }
 
     tracker.files.set(absolute, "file");
+    tracker.digests.set(absolute, tracker.digests.get(absolute) ?? digestOf(absolute, "file"));
 
     const nonData: string[] = [];
 
     findNonData(merged, "$", nonData, new Set());
 
     const files: TrackedPath[] = [...tracker.files]
-        .map(([path, kind]) => { return { kind, path: safeRealPath(path) ?? path }; })
+        .map(([path, kind]) => { return { digest: tracker.digests.get(path) ?? null, kind, path: safeRealPath(path) ?? path }; })
         .sort((a, b) => a.path.localeCompare(b.path));
 
     return {

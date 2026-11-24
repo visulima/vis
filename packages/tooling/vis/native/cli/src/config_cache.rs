@@ -23,6 +23,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// Bump with the stored layout; an entry with another schema is ignored.
 const SCHEMA: u32 = 1;
@@ -30,8 +31,9 @@ const SCHEMA: u32 = 1;
 /// Environment values shorter than this are never taken for secrets.
 const MIN_SECRET_LENGTH: usize = 8;
 
-/// The emitter's own output version (`EMIT_VERSION` in `src/config/emit.ts`).
-const EMIT_VERSION: u32 = 1;
+/// The emitter's own output version (`EMIT_VERSION` in `src/config/emit.ts`). Version 2 added the digest of each
+/// tracked path as the evaluation first saw it. The stored layout ([`SCHEMA`]) did not change.
+const EMIT_VERSION: u32 = 2;
 
 /// Set in the emitter's environment, so a config that starts `vis` itself is not evaluated again by that child.
 const EMITTING: &str = "VIS_EMITTING_CONFIG";
@@ -59,6 +61,9 @@ struct Emitted {
 struct EmittedFile {
     path: String,
     kind: Kind,
+    /// SHA-256 of the path as the evaluation first saw it (see [`sha256_path`]); `None` when it was not there.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,7 +287,13 @@ fn store(
         });
     }
 
-    if files.iter().any(|file| modified_since(Path::new(&file.path), started)) {
+    // The digests above describe the files now. They stand for the evaluation only when the emitter saw the same
+    // bytes when it read them, and a file's modification time cannot say that on a file system with coarse
+    // timestamps, so the emitter's own digests are compared too.
+    let changed_since_read =
+        emitted.files.iter().any(|file| sha256_path(Path::new(&file.path), file.kind) != file.digest);
+
+    if changed_since_read || files.iter().any(|file| modified_since(Path::new(&file.path), started)) {
         return StoreOutcome::Raced;
     }
 
@@ -333,11 +344,12 @@ fn modified_since(path: &Path, started: SystemTime) -> bool {
     fs::metadata(path).and_then(|metadata| metadata.modified()).is_ok_and(|modified| modified >= started)
 }
 
-/// A digest of what `kind` observed at `path`, `None` when the path does not exist.
-fn hash_path(path: &Path, kind: Kind) -> Option<String> {
+/// What `kind` observes at `path`: `None` when the path does not exist, `Some(None)` for a path that merely has to
+/// exist, and the bytes a file or a directory listing (its sorted names joined with NUL) is digested from.
+fn observe(path: &Path, kind: Kind) -> Option<Option<Vec<u8>>> {
     match kind {
-        Kind::Exists => fs::symlink_metadata(path).ok().map(|_| String::new()),
-        Kind::File => fs::read(path).ok().map(|bytes| blake3::hash(&bytes).to_hex().to_string()),
+        Kind::Exists => fs::symlink_metadata(path).ok().map(|_| None),
+        Kind::File => fs::read(path).ok().map(Some),
         Kind::Dir => {
             let mut names: Vec<String> = fs::read_dir(path)
                 .ok()?
@@ -347,9 +359,20 @@ fn hash_path(path: &Path, kind: Kind) -> Option<String> {
 
             names.sort();
 
-            Some(blake3::hash(names.join("\0").as_bytes()).to_hex().to_string())
+            Some(Some(names.join("\0").into_bytes()))
         }
     }
+}
+
+/// A digest of what `kind` observed at `path`, `None` when the path does not exist.
+fn hash_path(path: &Path, kind: Kind) -> Option<String> {
+    observe(path, kind).map(|bytes| bytes.map_or_else(String::new, |bytes| blake3::hash(&bytes).to_hex().to_string()))
+}
+
+/// The digest the emitter reports for a path (`digestOf` in `src/config/emit.ts`): the same observation as
+/// [`hash_path`], in SHA-256, which Node has built in.
+fn sha256_path(path: &Path, kind: Kind) -> Option<String> {
+    observe(path, kind).map(|bytes| bytes.map_or_else(String::new, |bytes| format!("{:x}", Sha256::digest(bytes))))
 }
 
 /// A digest of an environment variable's value, so secrets are never written to disk.
@@ -407,7 +430,11 @@ mod tests {
             version: EMIT_VERSION,
             status: "ok".to_owned(),
             config: Some(serde_json::json!({ "install": { "backend": "npm" } })),
-            files: vec![EmittedFile { path: helper.to_string_lossy().into_owned(), kind: Kind::File }],
+            files: vec![EmittedFile {
+                path: helper.to_string_lossy().into_owned(),
+                kind: Kind::File,
+                digest: sha256_path(&helper, Kind::File),
+            }],
             env: vec!["VIS_CONFIG_CACHE_TEST_VARIABLE".to_owned()],
             uncacheable: vec![],
         };
@@ -464,6 +491,91 @@ mod tests {
 
         assert_eq!(outcome, StoreOutcome::Raced);
         assert!(!entry.exists());
+    }
+
+    #[test]
+    fn a_file_that_differs_from_the_digest_the_emitter_took_is_not_stored_whatever_its_mtime_says() {
+        let dir = scratch("digest");
+        let config = dir.join("vis.config.ts");
+        let helper = dir.join("helper.ts");
+
+        fs::write(&config, "export default {};").unwrap();
+        fs::write(&helper, "read by the emitter").unwrap();
+
+        let digest = sha256_path(&helper, Kind::File);
+        let emitted = |digest: Option<String>| Emitted {
+            version: EMIT_VERSION,
+            status: "ok".to_owned(),
+            config: Some(serde_json::json!({})),
+            files: vec![
+                EmittedFile {
+                    path: config.to_string_lossy().into_owned(),
+                    kind: Kind::File,
+                    digest: sha256_path(&config, Kind::File),
+                },
+                EmittedFile { path: helper.to_string_lossy().into_owned(), kind: Kind::File, digest },
+            ],
+            env: vec![],
+            uncacheable: vec![],
+        };
+        // Far in the future, so the modification-time check cannot be what refuses the store.
+        let started = SystemTime::now() + std::time::Duration::from_secs(3600);
+        let entry = dir.join("cache").join("entry.json");
+
+        // Edited after the emitter read it, on a file system whose timestamps did not move.
+        fs::write(&helper, "edited behind its back").unwrap();
+
+        assert_eq!(
+            store(&entry, &config, "1.0.0", &emitted(digest.clone()), Some(&serde_json::json!({})), started),
+            StoreOutcome::Raced
+        );
+        assert!(!entry.exists());
+
+        fs::write(&helper, "read by the emitter").unwrap();
+
+        assert_eq!(
+            store(&entry, &config, "1.0.0", &emitted(digest), Some(&serde_json::json!({})), started),
+            StoreOutcome::Done
+        );
+        assert!(entry.exists());
+
+        // A path the emitter saw missing that exists now, and one it saw present that is gone, are races too.
+        let _ = fs::remove_file(&entry);
+
+        assert_eq!(
+            store(&entry, &config, "1.0.0", &emitted(None), Some(&serde_json::json!({})), started),
+            StoreOutcome::Raced
+        );
+
+        fs::remove_file(&helper).unwrap();
+
+        assert_eq!(
+            store(
+                &entry,
+                &config,
+                "1.0.0",
+                &emitted(sha256_path(&config, Kind::File)),
+                Some(&serde_json::json!({})),
+                started
+            ),
+            StoreOutcome::Raced
+        );
+    }
+
+    #[test]
+    fn the_digest_of_a_directory_listing_is_the_one_node_takes() {
+        let dir = scratch("listing");
+
+        fs::write(dir.join("b"), "").unwrap();
+        fs::write(dir.join("a"), "").unwrap();
+
+        // `sha256("a\0b")`, which `digestOf` in `src/config/emit.ts` takes of the sorted names.
+        assert_eq!(
+            sha256_path(&dir, Kind::Dir).as_deref(),
+            Some("59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138")
+        );
+        assert_eq!(sha256_path(&dir, Kind::Exists).as_deref(), Some(""));
+        assert_eq!(sha256_path(&dir.join("missing"), Kind::File), None);
     }
 
     #[test]
