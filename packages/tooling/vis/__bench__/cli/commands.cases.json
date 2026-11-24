@@ -1,5 +1,5 @@
 {
-    "$comment": "Scenarios of run-commands.sh. `route` is the name the routing table (`bin/route.mjs`) knows the command by; `family` picks the fixture state (base: untouched workspace; warm: task cache filled by a Node run; runs: one recorded run in .vis/runs); `scales` runs the scenario for every --sizes value, otherwise only for the default size; `stubs` puts stand-in package managers on PATH (so no network and no real install runs); `handoff` gives the bare binary the environment the launcher sets (a binary started without it hands `run` to Node); `mode` is a late-miss or cold run; `compare` is how output is compared with Node (exact; sorted lines where the order of interleaved lines may differ; exit: only the exit code, where the binary hands the command to the package manager and Node does not); `label` tells the run scenarios apart; `comparatorFixture` plain is a non-workspace project (some comparators cannot find a bin in a workspace root); `comparators` are real tools run in a separate copy of the fixture, with the real PATH; `floor` is the stand-in package manager run directly (the spawn cost the command cannot go below).",
+    "$comment": "Scenarios of run-commands.sh. `route` is the name the routing table (`bin/route.mjs`) knows the command by; `family` picks the fixture state (base: untouched workspace; warm: task cache filled by a Node run; runs: one recorded run in .vis/runs); `scales` runs the scenario for every --sizes value, otherwise only for the default size; `stubs` puts stand-in package managers on PATH (so no network and no real install runs); `handoff` gives the bare binary the environment the launcher sets (a binary started without it hands `run` to Node); `mode` is a late-miss or cold run; `compare` is how output is compared with Node (exact; sorted lines where the order of interleaved lines may differ; exit: only the exit code, where the output differs from Node's and the difference is not isolated); `expect` is a substring the Node reference output must contain, so a fixture that makes the command print an error cannot pass as a measurement; `label` tells the run scenarios apart; `comparatorFixture` plain is a non-workspace project (some comparators cannot find a bin in a workspace root); `comparators` are real tools run in a separate copy of the fixture, with the real PATH; `floor` is the stand-in package manager run directly (the spawn cost the command cannot go below).",
     "cases": [
         {
             "id": "version",
@@ -31,7 +31,8 @@
                         "--version"
                     ]
                 }
-            ]
+            ],
+            "expect": "."
         },
         {
             "id": "help",
@@ -79,7 +80,8 @@
                         "ls"
                     ]
                 }
-            ]
+            ],
+            "expect": "@bench/pkg-001"
         },
         {
             "id": "list-json",
@@ -89,7 +91,8 @@
             ],
             "route": "list",
             "family": "base",
-            "scales": true
+            "scales": true,
+            "expect": "@bench/pkg-001"
         },
         {
             "id": "clean-dry-run",
@@ -98,7 +101,8 @@
                 "--dry-run"
             ],
             "route": "clean",
-            "family": "base"
+            "family": "base",
+            "expect": "Would remove"
         },
         {
             "id": "ignore",
@@ -116,7 +120,8 @@
             ],
             "route": "sort-package-json",
             "family": "base",
-            "scales": true
+            "scales": true,
+            "expect": "sorted"
         },
         {
             "id": "sync-ci-workflow-check",
@@ -127,7 +132,8 @@
                 "--provider=github"
             ],
             "route": "sync",
-            "family": "base"
+            "family": "base",
+            "expect": "out of date"
         },
         {
             "id": "secrets-quiet",
@@ -150,7 +156,8 @@
                 "advisories-cache"
             ],
             "route": "advisories",
-            "family": "base"
+            "family": "base",
+            "expect": "cacheDir"
         },
         {
             "id": "sbom",
@@ -170,7 +177,8 @@
             ],
             "route": "cache",
             "family": "warm",
-            "scales": true
+            "scales": true,
+            "expect": "\"entries\""
         },
         {
             "id": "cache-size",
@@ -184,7 +192,8 @@
             ],
             "route": "cache",
             "family": "warm",
-            "scales": true
+            "scales": true,
+            "expect": "\"exists\""
         },
         {
             "id": "cache-hash",
@@ -197,7 +206,8 @@
             ],
             "route": "cache",
             "family": "warm",
-            "scales": true
+            "scales": true,
+            "expect": "\"hash\""
         },
         {
             "id": "cache-why",
@@ -210,7 +220,8 @@
             ],
             "route": "cache",
             "family": "runs",
-            "scales": true
+            "scales": true,
+            "expect": "\"diff\""
         },
         {
             "id": "replay-list",
@@ -220,7 +231,8 @@
             ],
             "route": "replay",
             "family": "runs",
-            "scales": true
+            "scales": true,
+            "expect": "2026-"
         },
         {
             "id": "run-hit",
@@ -264,7 +276,8 @@
                     ]
                 }
             ],
-            "label": "all tasks cache hits"
+            "label": "all tasks cache hits",
+            "expect": "read from cache"
         },
         {
             "id": "run-late-miss",
@@ -278,7 +291,8 @@
             "handoff": true,
             "mode": "late",
             "compare": "sorted",
-            "label": "last task a cache miss"
+            "label": "last task a cache miss",
+            "expect": "Successfully ran target build"
         },
         {
             "id": "run-cold",
@@ -292,7 +306,8 @@
             "handoff": true,
             "mode": "cold",
             "compare": "sorted",
-            "label": "cold, empty cache"
+            "label": "cold, empty cache",
+            "expect": "Successfully ran target build"
         },
         {
             "id": "exec",
@@ -335,8 +350,9 @@
                 }
             ],
             "compare": "exit",
-            "compareReason": "the binary hands the command to the package manager; Node does not (output differs by design, exit code compared)",
-            "comparatorFixture": "plain"
+            "compareReason": "the printed output differs from Node's (cause not isolated: the binary passes the command to the package manager)",
+            "comparatorFixture": "plain",
+            "label": "output differs from Node, exit code compared"
         },
         {
             "id": "x",
@@ -376,7 +392,8 @@
             "floor": [
                 "pnpm",
                 "list"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "why",
@@ -410,7 +427,8 @@
                         "left-pad"
                     ]
                 }
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "outdated",
@@ -441,7 +459,8 @@
                 }
             ],
             "compare": "exit",
-            "compareReason": "the binary hands the command to the package manager; Node does not (output differs by design, exit code compared)"
+            "compareReason": "the printed output differs from Node's (cause not isolated: the binary passes the command to the package manager)",
+            "label": "output differs from Node, exit code compared"
         },
         {
             "id": "dlx-no-info",
@@ -457,7 +476,8 @@
                 "pnpm",
                 "dlx",
                 "cowsay"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "info",
@@ -475,7 +495,8 @@
                 "--",
                 "react",
                 "version"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "install-frozen",
@@ -491,7 +512,8 @@
                 "install",
                 "--frozen-lockfile",
                 "--ignore-scripts"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "add",
@@ -508,7 +530,8 @@
                 "add",
                 "react",
                 "--ignore-scripts"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "remove",
@@ -523,7 +546,8 @@
                 "pnpm",
                 "remove",
                 "lodash"
-            ]
+            ],
+            "expect": "stub-pm"
         },
         {
             "id": "dedupe",
@@ -536,7 +560,8 @@
             "floor": [
                 "pnpm",
                 "dedupe"
-            ]
+            ],
+            "expect": "stub-pm"
         }
     ],
     "notMeasured": [

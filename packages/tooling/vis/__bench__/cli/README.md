@@ -162,7 +162,8 @@ Each variant is checked first, in the same environment it will be timed in, and 
 - **Really native:** the native variants run with `VIS_FALLBACK_ENTRY_OVERRIDE` pointing at a stub entry that prints a marker. The binary delegates to that entry when it cannot answer, so a run that handed itself to Node is seen as a delegation and is not timed as a native number. A launcher run that ends in Node (the routing table says so, or the binary delegated) is still timed, because that is what the user pays, but it is marked `(Node)` in the table.
 - **Routed:** a scenario the routing table sends to Node on this base (`sbom`, today) is reported and not run.
 - **Still the same after timing:** the binary is run again after the timing, and a changed answer is a note. A base-family fixture that changed on disk is a note too.
-- `exec` and `outdated` are compared on the exit code only: the binary hands them to the package manager, Node does not (a difference in what they print, listed in the notes).
+- `exec` and `outdated` are the exception: their printed output differs from Node's (the cause is not isolated), so they are timed on the exit code only, the table says so in the command cell, and the difference is listed in the notes.
+- **A real answer:** each scenario names a string the Node answer must contain (`expect` in `commands.cases.json`: a hash, a diff, listed runs, `Would remove`, ...). A fixture that makes the command print an error instead is reported as invalid, not timed.
 
 ### Why the fixture is built the way it is
 
@@ -178,7 +179,7 @@ The harness checks all of this before it times anything; if the binary delegates
 
 ### Budgets
 
-`commands.budgets.json` holds a maximum median per command and variant, written by `--write-budgets` from one real run with a factor of 2 headroom, and checked by `--check-budgets`. The budgets are **machine-relative** (the file names the machine they come from): re-derive them with `--write-budgets` on another machine. They are a local aid for spotting a gain or a regression, **not wired into CI**: timings on shared runners are too noisy for a fixed limit. A native variant that starts answering from Node fails its check.
+`commands.budgets.json` holds a maximum median per command and variant: the larger of twice the median and the median plus 10 ms, from a quiet run on the machine named in the file. `--write-budgets` writes it; an existing file is merged and the larger limit is kept, so limits only ever grow (delete the file to start again). `--check-budgets` compares a run with it. The budgets are **machine-relative** (the file names the machine they come from): re-derive them with `--write-budgets` on another machine. They are a local aid for spotting a gain or a regression, **not wired into CI**: timings on shared runners are too noisy for a fixed limit. A native variant that starts answering from Node fails its check.
 
 The suite prints `uptime` and warns when the 1-minute load average is above the number of cores; numbers taken under load are not worth comparing.
 
@@ -197,10 +198,10 @@ One machine's numbers, not a promise: Apple M4 (10 cores), macOS, Node 22.23.4, 
 | `run build`, all hits (1) | 2.6 | 29.3 | 250 | `bun run --filter` 11.9, `pnpm -r run` 69.0, `npm run -ws` 79.2 |
 | `run build`, all hits (20) | 8.3 | 36.0 | 288 | `bun run --filter` 43.6, `pnpm -r run` 145, `npm run -ws` 165 |
 | `run build`, all hits (200) | 85.9 | 114 | 521 | `bun run --filter` 341, `pnpm -r run` 850, `npm run -ws` 944 |
-| `run build`, last task a miss (20) | 8.4 (hand-back only) | 397 | 363 | |
-| `run build`, last task a miss (200) | 86.5 (hand-back only) | 795 | 605 | |
-| `run build`, cold (20 / 200) | n/a | 482 / 823 | 386 / 858 | |
-| `exec noopbin` (stub pm) | 7.4 | 34.2 | 81.5 | stub pm 2.8; real: `pnpm exec` 49.8, `bun x` 12.6, `npm exec` 134 |
+| `run build`, last task a miss (20; 40 runs) | 8.5 (hand-back only) | 415 | 380 | |
+| `run build`, last task a miss (200; 40 runs) | 99.6 (hand-back only) | 826 | 606 | |
+| `run build`, cold (20 / 200) | n/a | 420 / 839 | 401 / 847 | |
+| `exec noopbin` (stub pm; output differs, exit code compared) | 7.4 | 34.2 | 81.5 | stub pm 2.8; real: `pnpm exec` 49.8, `bun x` 12.6, `npm exec` 134 |
 | `x hello.ts` | 34.4 | 60.9 | 46.2 | `bun hello.ts` 11.5, `node -e 0` 20.9 |
 | `why left-pad`, `pm list`, `outdated`, `remove`, `dedupe` (stub pm) | 4.5 to 4.7 | about 30 | 177 to 180 | stub pm 2.8; real: `pnpm why` 54.1, `pnpm outdated` 50.4, `bun outdated` 3.8 |
 | `install --frozen-lockfile` (stub pm) | 16.3 | 40.3 | 308 | stub pm 3.5 |
@@ -215,10 +216,10 @@ What this shows, on this machine:
 
 - Every native command answers in 2 to 8 ms for a small workspace, 5 to 6 times faster than the launcher and 20 to 90 times faster than Node alone. The launcher adds about 25 ms: a Node start (`node -e 0` is 20 ms here) before it hands over. The shipped `bin/vis` is the binary itself and skips that.
 - `list` is the one native command that grows with the workspace: 64 ms for 200 packages, against `bun pm ls` at 10 ms. `run` with all hits also grows (86 ms for 200 tasks) but stays far below the other tools.
-- A run that is not all hits pays for the failed native attempt: with the last task a miss, the launcher takes 34 ms (20 packages) to 190 ms (200 packages) more than Node alone. A cold run is not affected, the launcher skips the binary when there is no task cache.
+- A run that is not all hits pays for the failed native attempt. With the last task a miss, the launcher took 35 ms more than Node alone for 20 packages and 190 to 220 ms more for 200 packages (two quiet runs each, 20 and 40 runs; a run under load differed by more than the 20-package difference, so treat that one as small). The hand-back alone takes 9 ms (20) to 100 ms (200); the rest of the difference is the launcher's second step into Node. A cold run is within noise of Node (about 20 ms either way): the launcher skips the binary when there is no task cache.
 - `run` is answered natively only with the launcher's hand-off environment. A binary started without it (the installed `bin/vis` once it runs without the launcher) hands every `run` to Node.
 - `x` is barely faster than Node (it starts Node with the preload), and `bun <file>` is three times faster.
-- `secrets` and `complete` do not take the native path in this fixture (see the notes in the output); `exec` and `outdated` hand over to the package manager where Node does not, so their output is compared on the exit code only.
+- `secrets --quiet` delegates to Node in this fixture (the cause was not isolated), so it has no native number. `complete -- vis ""` is answered natively (`:0`, exit 0) but the Node implementation run directly exits 1 without output, so the two cannot be compared and it is skipped. `exec` and `outdated` print something other than Node does (with the stand-in package manager the binary prints its line and Node prints nothing or another text; the cause was not isolated), so those two are timed on the exit code only and carry that remark in the table.
 
 ## Fixtures
 

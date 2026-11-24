@@ -73,6 +73,7 @@ def command_cases(argv):
             case.get("label") or "-",
             case.get("comparatorFixture") or "-",
             case.get("compareReason") or "-",
+            case.get("expect") or "-",
         ]
         print("\t".join(fields))
 
@@ -305,11 +306,13 @@ def build_table(rows):
         cells = variant_cells(meta)
         binary, launcher, node = cells["binary"][0], cells["launcher"][0], cells["node"][0]
 
+        handback = "hand-back" in meta["variants"].get("binary", {}).get("label", "")
+
         def show(variant):
             value, _, note, status = cells[variant]
             if value is None:
                 return "skipped" if status == "skipped" else "–"
-            return format_ms(value) + (" (Node)" if note == "Node" else "")
+            return format_ms(value) + (" (Node)" if note == "Node" else "") + (" (hand-back only)" if handback and variant == "binary" else "")
 
         lines.append(
             [
@@ -318,7 +321,7 @@ def build_table(rows):
                 show("binary"),
                 show("launcher"),
                 show("node"),
-                ratio(node, binary),
+                "–" if handback else ratio(node, binary),
                 ratio(node, launcher),
                 "%s / %s / %s" % (cells["binary"][1], cells["launcher"][1], cells["node"][1]),
                 comparator_text(meta),

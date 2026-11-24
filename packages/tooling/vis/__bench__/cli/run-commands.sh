@@ -249,7 +249,7 @@ capture() { # <cap prefix> <cwd> <env lines (newline separated)> -- cmd...
 }
 
 bench_scenario() {
-  local id="$1" family="$2" stubs="$3" handoff="$4" mode="$5" compare="$6" argtext="$7" floortext="$8" size="$9" scenario_label="${10}" cmpfix="${11}" cmpreason="${12}" order="${13}"
+  local id="$1" family="$2" stubs="$3" handoff="$4" mode="$5" compare="$6" argtext="$7" floortext="$8" size="$9" scenario_label="${10}" cmpfix="${11}" cmpreason="${12}" order="${13}" expect="${14}"
   local key="$id" label_size=""
   [[ -n "$size" ]] && { key="$id@$size"; label_size="$size"; }
   local cap="$RESULTS_DIR/cap/$key"
@@ -301,6 +301,17 @@ bench_scenario() {
   prep; capture "$cap/ref" "$dir" "$envtext" -- "$NODE" "$DIST" "${args[@]}"
   prep; capture "$cap/ref2" "$dir" "$envtext" -- "$NODE" "$DIST" "${args[@]}"
   local ref_code; ref_code="$(cat "$cap/ref.code")"
+  # The scenario must really exercise the command: Node's answer has to contain what the case says it prints.
+  if [[ "$expect" != "-" ]] && ! grep -qF -- "$expect" "$cap/ref.out" "$cap/ref.err"; then
+    local why
+    why="the Node answer does not contain \`$expect\` (exit $ref_code: $(head -c 140 "$cap/ref.out" "$cap/ref.err" | tr '\n\t' '  ')): the fixture does not exercise the command"
+    record "$cap" node skipped - - "$why"
+    record "$cap" binary skipped - - "no valid Node reference"
+    record "$cap" launcher skipped - - "no valid Node reference"
+    "${LIB[@]}" meta "$cap" "$RESULTS_DIR/$key.meta.json" "$id" "$label_size" "$argtext" "$scenario_label" "$order"
+    printf '  %-34s INVALID: %s\n' "$key" "$why"
+    return 0
+  fi
   local stable=1
   if [[ -n "$("${LIB[@]}" compare "$cap/ref" "$cap/ref2" "${sorted_flag[@]+"${sorted_flag[@]}"}")" ]]; then
     stable=0
@@ -319,7 +330,7 @@ bench_scenario() {
   check_output() { # <got prefix>: prints a reason when the run disagrees with Node
     if [[ "$compare" == exit ]]; then
       local different; different="$("${LIB[@]}" compare "$cap/ref" "$1")"
-      [[ -n "$different" ]] && echo "$id: output differs from Node by design ($cmpreason): $different" >> "$cap/notes.txt"
+      [[ -n "$different" ]] && echo "$id: output differs from Node ($cmpreason): $different" >> "$cap/notes.txt"
       [[ "$(cat "$cap/ref.code")" == "$(cat "$1.code")" ]] || echo "exit code $(cat "$1.code"), Node exits $(cat "$cap/ref.code")"
     elif [[ $stable -eq 1 ]]; then
       "${LIB[@]}" compare "$cap/ref" "$1" "${sorted_flag[@]+"${sorted_flag[@]}"}"
@@ -498,7 +509,7 @@ echo ""
 echo "  validated and timed (binary / launcher / node; Node = answered by Node):"
 ran=0
 order=0
-while IFS=$'\t' read -r id family scales stubs handoff mode compare _ argtext floortext label cmpfix cmpreason; do
+while IFS=$'\t' read -r id family scales stubs handoff mode compare _ argtext floortext label cmpfix cmpreason expect; do
   order=$((order + 1))
   [[ -n "$ONLY" ]] && ! [[ "$id" =~ $ONLY ]] && continue
   [[ "$mode" == "-" ]] && mode=""
@@ -512,7 +523,7 @@ while IFS=$'\t' read -r id family scales stubs handoff mode compare _ argtext fl
       echo "  $id@$size: skipped (one package: its only task is the miss)"
       continue
     fi
-    bench_scenario "$id" "$family" "$stubs" "$handoff" "$mode" "$compare" "$argtext" "$floortext" "$size" "$label" "$cmpfix" "$cmpreason" "$order"
+    bench_scenario "$id" "$family" "$stubs" "$handoff" "$mode" "$compare" "$argtext" "$floortext" "$size" "$label" "$cmpfix" "$cmpreason" "$order" "$expect"
     ran=$((ran + 1))
   done
 done < <("${LIB[@]}" cases "$CASES")
