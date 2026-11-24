@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1083,8 +1083,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 ["an .nvmrc that is not ASCII", { files: { ".nvmrc": "22\u00A0\n" } }],
                 ["an .nvmrc that is a directory", { directories: [".nvmrc"] }],
                 ["a packageManager that is not ASCII", { manifest: { packageManager: "pnpm@10.4.1\u00E9" } }],
-            ] as [string, { directories?: string[]; files?: Record<string, string>; manifest?: Record<string, unknown> }][])("%s", (name, pin) => {
-                expect.assertions(4);
+            ] as [string, { directories?: string[]; files?: Record<string, string>; manifest?: Record<string, unknown> }][])("%s", (_name, pin) => {
+                expect.assertions(3);
 
                 const root = fresh(base.root);
                 const directory = stubDirectory("unread", toolsAt({ node: "v22.1.0", pnpm: "10.4.1" }));
@@ -1102,7 +1102,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 const before = snapshot(root);
                 const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
 
-                expect(name).toBe(true);
                 expect(native.stdout).toBe(`${marker}\n`);
                 expect(native.status).toBe(99);
                 expect(snapshot(root)).toStrictEqual(before);
@@ -1126,13 +1125,51 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(native.status).toBe(0);
         });
 
+        it("asks the tool on PATH, never one of the workspace's own bin directory", () => {
+            expect.hasAssertions();
+
+            const probes = join(paths.scratch, "bin-probe-count.log");
+            const directory = stubDirectory("bin-probe", { pnpm: "echo 10.4.1" });
+            const env = environmentWith(directory);
+            const { root } = warm(
+                "bin-probe",
+                shape,
+                (workspace) => {
+                    rootWith({ packageManager: "pnpm@10.4.1" })(workspace);
+                    write(workspace, "node_modules/.bin/pnpm", `#!/bin/sh\necho x >> ${probes}\necho 1.0.0\n`);
+                    chmodSync(join(workspace, "node_modules/.bin/pnpm"), 0o755);
+                },
+                env,
+            );
+
+            writeFileSync(probes, "");
+
+            const node = runNode(fresh(root), ["run", "build"], env);
+            const native = runNative(fresh(root), ["run", "build"], paths.stub, env);
+
+            // Neither side looks into the workspace's `.bin`, so the pin is met by the pnpm on PATH on both.
+            expect(readFileSync(probes, "utf8")).toBe("");
+            expect(node.status).toBe(0);
+            expect(native.stdout).not.toContain(marker);
+            expect(lines(native.stdout).toSorted()).toStrictEqual(lines(node.stdout).toSorted());
+        });
+
         describe("with the installed tools", () => {
             const installed = spawnSync("pnpm", ["--version"], { encoding: "utf8" });
             // A pnpm that manages its own version would fetch the pinned one into the (fresh) test home; this asks plain `pnpm --version`.
             const env = baseEnvironment();
 
-            it.skipIf(installed.status !== 0)("answers a run pinned to the installed pnpm and Node range, like Node", () => {
+            it.skipIf(installed.status !== 0)("answers a run pinned to the installed pnpm and Node range, like Node", (context) => {
                 expect.hasAssertions();
+
+                // The binary gives a tool two seconds to answer; on a machine too busy for that it correctly leaves the run to Node.
+                const started = Date.now();
+
+                spawnSync("pnpm", ["--version"], { env });
+
+                if (Date.now() - started > 700) {
+                    context.skip();
+                }
 
                 const pnpm = installed.stdout.trim();
                 const { root, stdout } = warm(
