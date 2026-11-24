@@ -750,7 +750,6 @@ impl Answer {
 fn size_thread_pool() {
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get).min(MAX_THREADS);
 
-    // An error means a pool exists already, which is fine.
     let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
 }
 
@@ -768,11 +767,6 @@ fn look_up_all(keyer: &TaskKeyer, cache: &Path) -> Option<Vec<Hit>> {
         .into_par_iter()
         .map(|graph_index| {
             let key = keyer.key(graph_index).ok()?;
-
-            if !key.keyed {
-                return None;
-            }
-
             let lookup_started = SystemTime::now();
             let lookup_clock = Instant::now();
             let CacheLookup::Hit(entry) = lookup_entry(cache, &key.hash).ok()? else { return None };
