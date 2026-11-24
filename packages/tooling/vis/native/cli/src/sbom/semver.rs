@@ -275,17 +275,13 @@ fn parse_partial(text: &str) -> Parsed<Partial> {
     Parsed::Valid(Partial { major, minor, patch, pre, misordered })
 }
 
-fn version(main: [u64; 3], pre: Vec<Ident>) -> Version {
-    Version { main, pre }
-}
-
 /// `-0`, the lowest pre-release.
 fn zero_pre() -> Vec<Ident> {
     vec![Ident::Num(0)]
 }
 
 fn bound(op: Op, main: [u64; 3], pre: Vec<Ident>) -> Comparator {
-    Some((op, version(main, pre)))
+    Some((op, Version { main, pre }))
 }
 
 /// `replaceCaret` and `replaceTilde` of node-semver with `includePrerelease`.
