@@ -3,18 +3,21 @@
 //! Everything else is Node's. The native attempt reads the workspace, keys every task and looks every
 //! key up in the cache **before it prints or writes anything**; the first thing that is not a clean hit
 //! (a miss, a key it cannot reproduce, an entry that holds outputs, an expired entry, a stale install, a
-//! toolchain pin, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
+//! toolchain pin that is not met, ...) hands the whole invocation to the Node CLI untouched. Only when every task hits
 //! does it write `.vis/last-summary.json` and print what the Node static renderer prints for such a run.
 //!
 //! What the answer covers:
 //!
 //! * the invocation `run <target>` and nothing else: no flag, no further argument;
-//! * a CI context (`CI` set, stderr and stdout not terminals, plain colour level 0, no CI log grouping),
-//!   started by the JS launcher, which passes `process.version` in `VIS_NODE_VERSION`;
+//! * a CI context (`CI` set, stderr and stdout not terminals), with the colour codes and the log grouping
+//!   (GitHub Actions, GitLab CI, Buildkite, Azure Pipelines) the Node renderer prints for that environment;
+//!   the Node version the summary records is the launcher's `process.version` (`VIS_NODE_VERSION`) when it started
+//!   the binary, and otherwise the answer of `node --version` from the Node the run would be handed to;
 //! * a pnpm workspace of script-only JS projects (`targets::script_targets`), no `vis.config`, no
 //!   `dependsOn`, default inputs, no outputs, no `cache: false`;
-//! * a workspace whose startup preflights print nothing: no toolchain pin, a lockfile that is fresh
-//!   against `node_modules`, no legacy task-runner directory, no run history.
+//! * a workspace whose startup preflights print nothing: no toolchain pin, or one that every pinned tool meets
+//!   (`toolchain.rs`), a lockfile that is fresh against `node_modules`, no legacy task-runner directory, no run
+//!   history.
 //!
 //! Output order: Node prints the lines of tasks that run side by side in the order they happen to finish.
 //! This module prints them in a fixed order (project order, three tasks in flight like the default
@@ -33,6 +36,7 @@ use task_runner_core::{compute_task_keys, lookup_entry, CacheLookup, DependsOn, 
 use crate::advisories::{in_ci, native_context};
 use crate::targets::{script_targets, Targets};
 use crate::term;
+use crate::toolchain::{self, Pins, Versions};
 
 /// `DEFAULT_MAX_CACHE_AGE` of the task-runner cache: an entry older than this is swept by Node.
 const SWEEP_WINDOW: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -62,15 +66,6 @@ const NODE_ONLY_VARIABLES: [&str; 14] = [
     "VIS_RUNTIME",
     "VIS_RUN_CONCURRENCY_LIMIT",
 ];
-
-/// CI providers whose log grouping Node switches on by itself (the output of a task is wrapped in
-/// provider directives instead of separator lines).
-const CI_GROUPING_VARIABLES: [&str; 4] = ["GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "TF_BUILD"];
-
-/// Files and directories of a toolchain pin: any of them sends the run to Node, which spawns the pinned
-/// tools and may install them.
-const TOOLCHAIN_FILES: [&str; 6] =
-    [".nvmrc", ".node-version", ".tool-versions", ".prototools", ".mise.toml", "mise.toml"];
 
 /// Lockfiles of the other package managers; the lockfile preflight looks at the first one it finds.
 const OTHER_LOCKFILES: [&str; 6] =
@@ -111,29 +106,67 @@ fn variable_set(name: &str) -> bool {
     env::var_os(name).is_some()
 }
 
+/// How Node's static renderer groups the output of a task in the log: the first of these that applies
+/// (`resolveCiGroupingMode`, which compares the value exactly, `TF_BUILD` ignoring case).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grouping {
+    /// Separator lines above and below the output.
+    Separators,
+    Github,
+    Gitlab,
+    Buildkite,
+    Azure,
+}
+
+impl Grouping {
+    fn detect() -> Self {
+        let is = |name: &str, expected: &str| env::var_os(name).is_some_and(|value| value == expected);
+
+        if is("GITHUB_ACTIONS", "true") {
+            Self::Github
+        } else if is("GITLAB_CI", "true") {
+            Self::Gitlab
+        } else if is("BUILDKITE", "true") {
+            Self::Buildkite
+        } else if env::var_os("TF_BUILD").is_some_and(|value| value.eq_ignore_ascii_case("true")) {
+            Self::Azure
+        } else {
+            Self::Separators
+        }
+    }
+}
+
+/// What the static renderer prints around the plain text: the colour codes and the grouping directives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Look {
+    colour: bool,
+    grouping: Grouping,
+}
+
 /// The part of the context only the process knows: where the output goes, which variables are set,
-/// who started the binary. The workspace is looked at later.
-fn environment_is_plain(args: &[String]) -> bool {
+/// who started the binary. The workspace is looked at later. `None` means "Node answers".
+fn environment_look(args: &[String]) -> Option<Look> {
     if !in_ci() || !ci_variable() || std::io::stdout().is_terminal() || std::io::stderr().is_terminal() {
-        return false;
+        return None;
     }
 
-    if NODE_ONLY_VARIABLES.iter().any(|name| variable_set(name))
-        || CI_GROUPING_VARIABLES.iter().any(|name| variable_set(name))
-    {
-        return false;
+    if NODE_ONLY_VARIABLES.iter().any(|name| variable_set(name)) {
+        return None;
     }
 
     if env::vars_os().any(|(key, _)| key.to_str().is_some_and(|key| key.starts_with("CEREBRO_"))) {
-        return false;
+        return None;
     }
 
     if matches!(env::var("NODE_ENV").as_deref(), Ok("debug" | "test")) {
-        return false;
+        return None;
     }
 
-    // Plain text only: the colour of the static renderer is not reproduced.
-    term::piped_colour_level(args) == Some(0)
+    // The renderer's colour follows the same detection as pail's: any level above 0 prints the same
+    // sixteen-colour codes, `None` is a case only Node can decide.
+    let colour = term::piped_colour_level(args)? > 0;
+
+    Some(Look { colour, grouping: Grouping::detect() })
 }
 
 /// `process.arch` and `process.platform` as Node names them; anything else is Node's.
@@ -152,15 +185,20 @@ fn node_environment() -> Option<(&'static str, &'static str)> {
     Some((arch, platform))
 }
 
-/// `process.version` of the Node that runs the launcher, `v22.1.0` style. The launcher hand-off sets it
-/// (`node_contract::init` drops it for any other start), so a binary started on its own has none.
-fn node_version() -> Option<String> {
-    let version = env::var("VIS_NODE_VERSION").ok()?;
+/// `process.version` as a recorded value: `v22.1.0` style, nothing that would need escaping.
+fn node_version_text(version: &str) -> Option<String> {
     let digits = version.strip_prefix('v')?;
 
     (!digits.is_empty()
         && digits.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')))
-    .then_some(version)
+    .then(|| version.to_owned())
+}
+
+/// `process.version` of the Node that runs the launcher, `v22.1.0` style. The launcher hand-off sets it
+/// (`node_contract::init` drops it for any other start), so a binary started on its own has none and asks the
+/// Node it would delegate to (see [`attempt`]).
+fn launcher_node_version() -> Option<String> {
+    node_version_text(&env::var("VIS_NODE_VERSION").ok()?)
 }
 
 fn exists(path: &Path) -> bool {
@@ -171,20 +209,6 @@ fn modified_ms(path: &Path) -> Option<f64> {
     let modified = fs::metadata(path).ok()?.modified().ok()?;
 
     Some(modified.duration_since(UNIX_EPOCH).ok()?.as_secs_f64() * 1000.0)
-}
-
-/// Whether the toolchain preflight stays silent: a root `package.json` without `engines`,
-/// `packageManager` or `volta`, and none of the version files.
-fn no_toolchain_pin(root: &Path) -> Option<bool> {
-    if TOOLCHAIN_FILES.iter().any(|name| exists(&root.join(name))) || exists(&root.join(".config/mise.toml")) {
-        return Some(false);
-    }
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join("package.json")).ok()?).ok()?;
-    let manifest = manifest.as_object()?;
-
-    Some(!["engines", "packageManager", "volta"].iter().any(|key| manifest.contains_key(*key)))
 }
 
 /// `checkLockfileFreshness` for a pnpm workspace, answering only "passes": every other outcome (an
@@ -256,7 +280,7 @@ fn nothing_to_sweep(cache: &Path) -> bool {
 }
 
 /// What JavaScript's `String.prototype.trim` removes.
-fn is_js_whitespace(c: char) -> bool {
+pub(crate) fn is_js_whitespace(c: char) -> bool {
     matches!(
         c,
         '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
@@ -414,6 +438,88 @@ fn text(value: &str) -> Json {
     Json::Text(value.to_owned())
 }
 
+impl Look {
+    /// `plain` as it is, or `coloured` when the renderer prints colour codes.
+    fn paint(&self, plain: &str, coloured: &str) -> String {
+        if self.colour { coloured } else { plain }.to_owned()
+    }
+
+    /// ` VIS  \u{2022}` with the bullet in `bullet` (37 white, 32 green).
+    fn banner(&self, bullet: &str) -> String {
+        self.paint(
+            " VIS  \u{2022}",
+            &format!(
+                "\u{1b}[1m\u{1b}[7m VIS \u{1b}[22m\u{1b}[27m \u{1b}[1m\u{1b}[{bullet}m\u{2022}\u{1b}[22m\u{1b}[39m"
+            ),
+        )
+    }
+
+    /// The success tick, green off a plain log.
+    fn tick(&self) -> String {
+        self.paint("\u{2713}", "\u{1b}[32m\u{2713}\u{1b}[39m")
+    }
+
+    /// The stored output of a task, set off from the rest of the log the way the environment's grouping does it
+    /// (`logCommandOutputCI`, for a task that succeeded).
+    fn output_block(&self, id: &str, trimmed: &str, out: &mut String) {
+        let tick = self.tick();
+
+        match self.grouping {
+            Grouping::Separators => {
+                let dashes = "\u{2014}".repeat(SEPARATOR_WIDTH);
+                let separator = self.paint(&dashes, &format!("\u{1b}[2m{dashes}\u{1b}[22m"));
+                let label = self.paint(
+                    &format!("\u{2713} [cache] {id}"),
+                    &format!("{tick} \u{1b}[36m[cache]\u{1b}[39m \u{1b}[1m{id}\u{1b}[22m"),
+                );
+
+                out.push_str(&format!("{separator}\n{label}\n{trimmed}\n{separator}\n"));
+            }
+            Grouping::Github => out.push_str(&format!("::group::{tick} {id}\n{trimmed}\n::endgroup::\n")),
+            Grouping::Gitlab => {
+                let key = gitlab_section_key(id);
+                let erase = "\u{1b}[0K";
+
+                out.push_str(&format!(
+                    "{erase}section_start:{}:{key}[collapsed=true]\r{erase}{tick} {id}\n{trimmed}\n",
+                    unix_seconds()
+                ));
+                out.push_str(&format!("{erase}section_end:{}:{key}\r{erase}\n", unix_seconds()));
+            }
+            Grouping::Buildkite => out.push_str(&format!("--- {tick} {id}\n{trimmed}\n")),
+            Grouping::Azure => out.push_str(&format!("##[group]{tick} {id}\n{trimmed}\n##[endgroup]\n")),
+        }
+    }
+}
+
+/// `Math.floor(Date.now() / 1000)`.
+fn unix_seconds() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// `toGitLabSectionKey`: the task id with every run of non-word characters turned into one `_`, then `_`
+/// and the first six hex digits of the SHA-256 of the id. (Task ids are printable ASCII here.)
+fn gitlab_section_key(id: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut slug = String::new();
+    let mut in_run = false;
+
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            slug.push(c);
+            in_run = false;
+        } else if !in_run {
+            slug.push('_');
+            in_run = true;
+        }
+    }
+
+    let digest = Sha256::digest(id.as_bytes());
+
+    format!("{slug}_{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2])
+}
+
 /// One task that hit, with the times its lookup took.
 struct Hit {
     key: TaskKey,
@@ -427,6 +533,7 @@ struct Hit {
 
 /// The whole answer, built before anything is printed or written.
 struct Answer {
+    look: Look,
     hits: Vec<Hit>,
     target: String,
     started: SystemTime,
@@ -459,46 +566,67 @@ impl Answer {
             && format!("Successfully ran {}", self.description()).len() <= MAX_TITLE_WIDTH
     }
 
-    /// What the static renderer prints for a run whose tasks all hit, off a terminal, without colour.
+    /// What the static renderer prints for a run whose tasks all hit, off a terminal, in the colour and
+    /// grouping of the environment.
     fn stdout(&self) -> String {
+        let look = self.look;
         let mut out = String::new();
         let description = self.description();
-        let separator = "\u{2014}".repeat(SEPARATOR_WIDTH);
 
         out.push_str(&format!(
-            " VIS  \u{2022}  Running {description}\n  With additional flags:\n    --visOptions={{}}\n\n"
+            "{}  Running {description}\n  With additional flags:\n    --visOptions={{}}\n\n",
+            look.banner("37")
         ));
 
         let finish = |index: usize, out: &mut String| {
             let hit = &self.hits[index];
 
-            out.push_str(&format!("\u{2713}  {} [cache] ({})\n", hit.key.id, duration_text(hit.milliseconds)));
+            out.push_str(&format!(
+                "{}  {}{}\n",
+                look.tick(),
+                hit.key.id,
+                look.paint(
+                    &format!(" [cache] ({})", duration_text(hit.milliseconds)),
+                    &format!("\u{1b}[36m [cache]\u{1b}[2m\u{1b}[39m ({})\u{1b}[22m", duration_text(hit.milliseconds))
+                )
+            ));
 
             let trimmed = hit.terminal_output.trim_matches(is_js_whitespace);
 
             if !trimmed.is_empty() {
-                out.push_str(&format!("{separator}\n\u{2713} [cache] {}\n{trimmed}\n{separator}\n", hit.key.id));
+                look.output_block(&hit.key.id, trimmed, out);
             }
         };
 
         // Three tasks start, then each one that ends is followed by the start of the next.
+        let start =
+            |id: &str, out: &mut String| out.push_str(&format!("{} {id}\n", look.paint(">", "\u{1b}[2m>\u{1b}[22m")));
+
         for hit in self.hits.iter().take(DEFAULT_PARALLEL) {
-            out.push_str(&format!("> {}\n", hit.key.id));
+            start(&hit.key.id, &mut out);
         }
 
         for index in 0..self.hits.len() {
             finish(index, &mut out);
 
             if let Some(next) = self.hits.get(index + DEFAULT_PARALLEL) {
-                out.push_str(&format!("> {}\n", next.key.id));
+                start(&next.key.id, &mut out);
             }
         }
 
         let count = self.hits.len();
 
         out.push_str(&format!(
-            "\n VIS  \u{2022}  Successfully ran {description}\n\n   \u{2713}  {count} tasks completed ({count} read from cache)  \u{b7}  Took {}\n\n",
-            duration_text(self.milliseconds)
+            "\n{}  Successfully ran {description}\n\n   {}  {count} tasks completed{}\n\n",
+            look.banner("32"),
+            look.tick(),
+            look.paint(
+                &format!(" ({count} read from cache)  \u{b7}  Took {}", duration_text(self.milliseconds)),
+                &format!(
+                    "\u{1b}[2m ({count} read from cache)  \u{b7}  Took {}\u{1b}[22m",
+                    duration_text(self.milliseconds)
+                )
+            )
         ));
         out.push_str(&format!("  {count} cached \u{b7} {}s\n", seconds_text(self.milliseconds)));
 
@@ -605,12 +733,14 @@ fn attempt(args: &[String]) -> Option<Answer> {
     let clock = Instant::now();
     let target = parse(args)?.to_owned();
 
-    if !environment_is_plain(args) {
-        return None;
-    }
+    let look = environment_look(args)?;
 
     let (arch, platform) = node_environment()?;
-    let node_version = node_version()?;
+    // `Some` with the launcher's hand-off; a start without it asks the Node it would delegate to, after the hits.
+    let launcher_version = match env::var_os("VIS_NODE_VERSION") {
+        Some(_) => Some(launcher_node_version()?),
+        None => None,
+    };
 
     // The root is the working directory, with no config and no Deno file at or above it, in a CI context.
     if !native_context() {
@@ -620,11 +750,13 @@ fn attempt(args: &[String]) -> Option<Answer> {
     let root = env::current_dir().ok()?;
 
     if ![".task-runner", ".task-runner-cache", ".vis/runs"].iter().all(|name| !exists(&root.join(name)))
-        || !no_toolchain_pin(&root)?
         || !lockfile_is_fresh(&root)
     {
         return None;
     }
+
+    // The pins Node's toolchain preflight reads; the ones this module cannot decide send the run to Node.
+    let pins = Pins::read(&root)?;
 
     let cache = cache_directory(&root)?;
 
@@ -650,6 +782,7 @@ fn attempt(args: &[String]) -> Option<Answer> {
     }
 
     let keys = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
+    let hashes: Vec<String> = keys.keys.iter().map(|key| key.hash.clone()).collect();
     let mut hits = Vec::with_capacity(keys.keys.len());
 
     for (graph_index, key) in keys.keys.into_iter().enumerate() {
@@ -681,12 +814,55 @@ fn attempt(args: &[String]) -> Option<Answer> {
         return None;
     }
 
+    // Asking the pinned tools (and Node, for the summary) for their versions costs a process each, so it
+    // waits until every task has hit; they are asked at the same time. Node asks before it starts the clock of
+    // the run, so the time this takes is not part of the run's duration.
+    let probe_clock = Instant::now();
+    let probe_started = SystemTime::now();
+    let pin_binaries = pins.binaries()?;
+    let node_command = match launcher_version {
+        Some(_) => None,
+        None => Some(toolchain::resolve_command(&env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned()))?),
+    };
+    let mut versions = Versions::with_launcher_node(env::var("VIS_NODE").ok().as_deref(), launcher_version.as_deref());
+    let wanted: Vec<PathBuf> = pin_binaries.iter().cloned().chain(node_command.clone()).collect();
+
+    versions.fetch(&wanted);
+
+    if !pins.are_met(&pin_binaries, &mut versions) {
+        return None;
+    }
+
+    // Node asks the pinned tools before it reads the lockfile and keys the tasks, and a tool may change files while
+    // it answers (a pnpm that manages its own version records the pin in the lockfile the first time). The same
+    // question here comes after the lookups, so the lockfile and the keys are checked again, and a run whose
+    // answer moved them is Node's. Any executable asked after the hits can do that, the Node of a start without the
+    // launcher included (a wrapper or a version manager's shim), so this does not depend on a pin.
+    if !pins.is_empty() || node_command.is_some() {
+        let again = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
+
+        if !lockfile_is_fresh(&root) || again.keys.iter().map(|key| &key.hash).ne(hashes.iter()) {
+            return None;
+        }
+    }
+
+    let node_version = match (launcher_version, node_command) {
+        (Some(version), _) => version,
+        (None, Some(command)) => node_version_text(versions.output(&command)?.strip_suffix('\n')?)?,
+        (None, None) => return None,
+    };
+
+    let probed = probe_clock.elapsed();
+    // The run ends where the questions began, which is after every task on this one timeline; a wall clock that was
+    // set back in between must not put the end before a task's own end.
+    let ended = hits.iter().map(|hit| hit.ended).fold(probe_started, SystemTime::max);
     let answer = Answer {
+        look,
         hits,
         target,
         started,
-        ended: SystemTime::now(),
-        milliseconds: clock.elapsed().as_millis() as u64,
+        ended,
+        milliseconds: clock.elapsed().saturating_sub(probed).as_millis() as u64,
         arch,
         platform,
         node_version,
@@ -795,6 +971,27 @@ mod tests {
         value.pretty(0, &mut out);
 
         assert_eq!(out, "{\n  \"a\": [],\n  \"b\": {\n    \"z\": 1,\n    \"y\": \"q\\\"\\n\"\n  },\n  \"c\": {}\n}");
+    }
+
+    #[test]
+    fn gitlab_section_keys_match_the_node_slug_and_hash() {
+        assert_eq!(gitlab_section_key("p2:build"), "p2_build_a9450b");
+        assert_eq!(gitlab_section_key("@acme/p2:build"), "_acme_p2_build_e36233");
+        assert_eq!(gitlab_section_key("a--b:x.y"), "a_b_x_y_200432");
+    }
+
+    #[test]
+    fn the_look_wraps_the_codes_only_with_colour() {
+        let plain = Look { colour: false, grouping: Grouping::Github };
+        let colour = Look { colour: true, grouping: Grouping::Azure };
+        let mut out = String::new();
+
+        plain.output_block("p:build", "out", &mut out);
+        colour.output_block("p:build", "out", &mut out);
+
+        assert_eq!(out, "::group::\u{2713} p:build\nout\n::endgroup::\n##[group]\u{1b}[32m\u{2713}\u{1b}[39m p:build\nout\n##[endgroup]\n");
+        assert_eq!(plain.banner("37"), " VIS  \u{2022}");
+        assert!(colour.banner("32").starts_with("\u{1b}[1m\u{1b}[7m VIS "));
     }
 
     #[test]

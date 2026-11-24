@@ -55,7 +55,7 @@ fn is_colour_flag(argument: &str) -> bool {
 
 /// JavaScript's `Number.parseInt(text, 10)`: optional leading whitespace, optional sign, then the
 /// leading digits. `None` is `NaN`.
-fn parse_int(text: &str) -> Option<i64> {
+pub(crate) fn parse_int(text: &str) -> Option<i64> {
     let text = text.trim_start();
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
