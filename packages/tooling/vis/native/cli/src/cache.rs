@@ -399,10 +399,24 @@ fn has_unscoped_entries(base: &str) -> bool {
     found
 }
 
-/// `evictionDirectories`: `base` and, when branch scoping applies, the subtree of every branch. `None` when a
-/// branch directory has a name `@visulima/path` would rewrite.
+/// The path Node lists for the branch directory at `path`: `Ok(Some(path))` for a UTF-8 name, `Ok(None)` for one
+/// that is not (Node reads the mangled path as an empty directory, which adds nothing to a count), and `Err(())`
+/// for one that is not when the command prints a block for each directory (`cache prune` names the mangled path
+/// in it, which is not reproduced).
 #[cfg(unix)]
-pub(crate) fn eviction_directories(base: &str, branch_scoped: bool) -> Option<Vec<String>> {
+fn branch_directory(path: &Path, per_directory_output: bool) -> Result<Option<String>, ()> {
+    match path.to_str() {
+        Some(text) => Ok(Some(text.to_owned())),
+        None if per_directory_output => Err(()),
+        None => Ok(None),
+    }
+}
+
+/// `evictionDirectories`: `base` and, when branch scoping applies, the subtree of every branch. `None` when a
+/// branch directory has a name `@visulima/path` would rewrite, or (with `per_directory_output`, for a command that
+/// prints a block for each directory) a name that is not UTF-8.
+#[cfg(unix)]
+pub(crate) fn eviction_directories(base: &str, branch_scoped: bool, per_directory_output: bool) -> Option<Vec<String>> {
     let mut directories = vec![base.to_owned()];
 
     if !branch_scoped {
@@ -426,8 +440,8 @@ pub(crate) fn eviction_directories(base: &str, branch_scoped: bool) -> Option<Ve
         }
 
         // A name that is not UTF-8 reaches Node mangled, and the directory it names reads as empty.
-        if let Some(path) = entry.path().to_str() {
-            directories.push(path.to_owned());
+        if let Some(path) = branch_directory(&entry.path(), per_directory_output).ok()? {
+            directories.push(path);
         }
     }
 
@@ -468,7 +482,7 @@ pub(crate) fn evict_directories(
     let mut directories: Vec<String> = Vec::new();
 
     for (base, _) in selected_directories(root, cache_dir, scope, settings)? {
-        for directory in eviction_directories(&base, settings.branch_scoped)? {
+        for directory in eviction_directories(&base, settings.branch_scoped, true)? {
             if !directories.contains(&directory) {
                 directories.push(directory);
             }
@@ -1079,6 +1093,22 @@ mod tests {
 
     fn argv(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_branch_directory_is_left_to_node_by_a_command_that_prints_each_directory() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let name = std::ffi::OsStr::from_bytes(b"/cache/branches/caf\xe9");
+        let plain = Path::new("/cache/branches/main");
+
+        // `cache prune` prints a block naming the (mangled) path, which is not reproduced.
+        assert_eq!(branch_directory(Path::new(name), true), Err(()));
+        // A count reads the mangled path as an empty directory, so the directory adds nothing.
+        assert_eq!(branch_directory(Path::new(name), false), Ok(None));
+        assert_eq!(branch_directory(plain, true), Ok(Some("/cache/branches/main".to_owned())));
+        assert_eq!(branch_directory(plain, false), Ok(Some("/cache/branches/main".to_owned())));
     }
 
     #[test]

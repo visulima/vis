@@ -729,8 +729,11 @@ mod tests {
         assert_eq!(resolve_shas(&queue), shas("b45e", "f00"));
 
         // An empty, zero or non-string base falls through to `before`, then to the default branch.
-        for unusable in [serde_json::json!(""), serde_json::json!(ZERO_SHA), serde_json::json!(7), serde_json::json!(null)] {
-            queue.payload = Some(serde_json::json!({ "before": "abc123", "merge_group": { "base_sha": unusable.clone() } }));
+        for unusable in
+            [serde_json::json!(""), serde_json::json!(ZERO_SHA), serde_json::json!(7), serde_json::json!(null)]
+        {
+            queue.payload =
+                Some(serde_json::json!({ "before": "abc123", "merge_group": { "base_sha": unusable.clone() } }));
 
             assert_eq!(resolve_shas(&queue), shas("abc123", "f00"));
 
