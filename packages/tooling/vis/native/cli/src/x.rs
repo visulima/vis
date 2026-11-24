@@ -221,7 +221,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
 
     // Edge cases → hand the whole invocation back to the Node lean path.
     if needs_node_path(parsed.node, &cwd) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let absolute = if Path::new(&file).is_absolute() { file } else { cwd.join(&file).to_string_lossy().into_owned() };
@@ -236,7 +236,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
             command.arg("run").arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
 
             match command.status() {
-                Ok(status) => Ok(crate::node_exit_code(status)),
+                Ok(status) => Ok(crate::process::node_exit_code(status)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(WrapperError::unavailable(
                     "x",
                     "runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.",
@@ -249,21 +249,20 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
                 Some(preload) => preload,
                 None => {
                     // No launcher contract (run directly) — fall back to Node.
-                    crate::delegate(raw_args);
+                    crate::process::delegate(raw_args);
                 }
             };
             let Some(specifier) = preload_specifier(&preload) else {
-                crate::delegate(raw_args);
+                crate::process::delegate(raw_args);
             };
 
-            let node = env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned());
-            let mut command = Command::new(node);
+            let mut command = Command::new(crate::process::node_program());
 
             command.arg("--import").arg(&specifier).arg(&absolute).args(&parsed.script_args).current_dir(&cwd);
 
             // Replaces this process (or spawns and waits, off Unix); only returns the failure to
             // start it, since a started command exits with its own status.
-            Err(WrapperError::launch("x", "runtime", crate::run_in_place(&mut command)))
+            Err(WrapperError::launch("x", "runtime", crate::process::run_in_place(&mut command)))
         }
     }
 }

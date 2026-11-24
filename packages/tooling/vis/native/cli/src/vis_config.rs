@@ -16,6 +16,7 @@ use oxc_ast::ast::{
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
+use vis_core::lockfiles::LOCKFILES;
 
 use crate::js::is_truthy;
 use crate::node_context::any_ancestor_has;
@@ -225,16 +226,6 @@ pub fn node_ignores_config(cwd: &Path) -> bool {
     true
 }
 
-/// The lockfiles Node's manager lookup recognises, with the manager each one names.
-const LOCKFILES: [(&str, &str); 6] = [
-    ("pnpm-lock.yaml", "pnpm"),
-    ("package-lock.json", "npm"),
-    ("npm-shrinkwrap.json", "npm"),
-    ("yarn.lock", "yarn"),
-    ("bun.lock", "bun"),
-    ("bun.lockb", "bun"),
-];
-
 /// The nearest directory that names a package manager, with that manager. `None` for the manager
 /// means the nearest marker names one Node cannot resolve a workspace from, such as bun.
 fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> {
@@ -261,7 +252,7 @@ fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> 
     None
 }
 
-fn read_json(path: &Path) -> Option<Value> {
+pub(crate) fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
 }
 

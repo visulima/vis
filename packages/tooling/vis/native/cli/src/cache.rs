@@ -1005,7 +1005,7 @@ fn answer(args: &[String]) -> Option<String> {
 /// Answers `vis cache list` / `vis cache size` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     if !cfg!(unix) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     match answer(args) {
@@ -1018,7 +1018,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
             exit(0);
         }
-        None => crate::delegate(raw_args),
+        None => crate::process::delegate(raw_args),
     }
 }
 

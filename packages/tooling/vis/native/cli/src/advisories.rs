@@ -9,7 +9,7 @@
 //! output, the `--cache-dir`-less form (which needs `@visulima/find-cache-dir`'s lookup and its
 //! `mkdir`), any config or Deno file, a working directory that is not the workspace root (see
 //! [`native_root_is_cwd`]), and any manifest or state file this module cannot read with the same
-//! result as JavaScript all go to Node via [`crate::delegate`]. `sync`, `prune` and `bloom sync`
+//! result as JavaScript all go to Node via [`crate::process::delegate`]. `sync`, `prune` and `bloom sync`
 //! are never native: they touch the network or delete files.
 
 use std::ffi::OsString;
@@ -93,7 +93,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let planned = parse(args).filter(|_| native_context());
 
     let Some(cache_dir) = planned else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     match status_json(Path::new(&cache_dir)) {
@@ -101,7 +101,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
             write_stdout("advisories", "the status", &text);
             exit(0)
         }
-        None => crate::delegate(raw_args),
+        None => crate::process::delegate(raw_args),
     }
 }
 

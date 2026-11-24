@@ -8,40 +8,17 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
     resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
-    RemoveOptions, ResolvedCommand, WhyOptions,
+    RemoveOptions, WhyOptions,
 };
 
 use crate::error::{self, WrapperError};
-
-/// Surface warnings, exec the resolved command, and return the exit status to forward.
-fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32, WrapperError> {
-    for warning in &resolved.warnings {
-        eprintln!("vis {verb}: {warning}");
-    }
-
-    let status = Command::new(&resolved.bin)
-        .args(&resolved.args)
-        .current_dir(cwd)
-        .status()
-        .map_err(|source| WrapperError::spawn(verb, &resolved.bin, source))?;
-    let mut code = crate::node_exit_code(status);
-
-    // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND — a
-    // non-error case the Node handlers suppress. Match that so the native
-    // path doesn't break `&&` chains / CI on the common case.
-    if (verb == "outdated" || verb == "why") && code == 1 {
-        code = 0;
-    }
-
-    Ok(code)
-}
+use crate::pm_detect::{ancestor_pins_package_manager, installer_selected_by_environment};
+use crate::pm_run::run_resolved;
 
 /// A token is a "known" flag if it matches one of `bools` (a switch) or `values`
 /// (consumes the next token). Returns the parsed switches/values plus the
@@ -110,48 +87,6 @@ fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
             || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()))
 }
 
-/// Node picks the installer from `VIS_INSTALLER` and from `aube` on PATH before it looks at
-/// lockfiles, so a native choice from the lockfile would differ.
-pub(crate) fn installer_selected_by_environment() -> bool {
-    env::var_os("VIS_INSTALLER").is_some() || env::var_os("VIS_RUNTIME").is_some() || binary_on_path("aube")
-}
-
-/// Whether `name` (with the Windows executable extensions) is a file in a `PATH` directory.
-pub(crate) fn binary_on_path(name: &str) -> bool {
-    let names = [name.to_owned(), format!("{name}.exe"), format!("{name}.cmd"), format!("{name}.bat")];
-
-    env::var_os("PATH").is_some_and(|path| {
-        env::split_paths(&path).any(|directory| names.iter().any(|name| directory.join(name).is_file()))
-    })
-}
-
-/// Node runs the installer a `packageManager` pin names through Corepack, which can differ from the
-/// one native finds. Any pin in an ancestor `package.json` leaves the command to Node.
-pub(crate) fn ancestor_pins_package_manager(cwd: &Path) -> bool {
-    let mut current = Some(cwd.to_path_buf());
-
-    while let Some(directory) = current {
-        let pinned = fs::read_to_string(directory.join("package.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .is_some_and(|manifest| manifest.get("packageManager").is_some());
-
-        if pinned {
-            return true;
-        }
-
-        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
-    }
-
-    false
-}
-
-/// Whether Node wraps the package manager in Corepack: a `packageManager` pin in `cwd` or an ancestor
-/// (`install.corepack` left on `auto`) and `corepack` on `PATH`. The native path never does.
-pub(crate) fn corepack_applies(cwd: &Path) -> bool {
-    binary_on_path("corepack") && ancestor_pins_package_manager(cwd)
-}
-
 /// Whether Node could pick a workspace root above `cwd`. `link` and `dedupe` run in that root, so a
 /// marker in an ancestor means the native path, which runs in `cwd`, may act on another folder.
 fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
@@ -177,7 +112,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     if matches!(verb, "link" | "dedupe") && ancestor_may_be_workspace_root(&cwd) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     // vis.config can pin `install.backend` / `install.corepack` / `runtime`, which the
@@ -227,7 +162,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
                 || uses_global_option(full_args)
                 || ancestor_pins_package_manager(&cwd)))
     {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let args = if full_args.len() > 1 { &full_args[1..] } else { &[] };
@@ -353,7 +288,15 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
     };
 
     let outcome = match resolved {
-        Ok(command) => run_resolved(verb, command, &cwd),
+        // `outdated`/`why` exit 1 from npm/pnpm when results are FOUND, a non-error case the Node handlers suppress.
+        // Match that so the native path doesn't break `&&` chains / CI on the common case.
+        Ok(command) => run_resolved(verb, &command, &cwd).map(|code| {
+            if matches!(verb, "outdated" | "why") && code == 1 {
+                0
+            } else {
+                code
+            }
+        }),
         Err(message) => Err(WrapperError::usage(verb, message)),
     };
 

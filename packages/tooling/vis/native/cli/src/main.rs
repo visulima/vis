@@ -22,8 +22,8 @@
 //! fails loudly if it is unset.
 
 use std::env;
-use std::ffi::{OsStr, OsString};
-use std::process::{exit, Command, ExitStatus};
+use std::ffi::OsString;
+use std::process::exit;
 
 mod add;
 mod advisories;
@@ -62,8 +62,11 @@ mod optimize;
 mod output;
 mod pail;
 mod pm;
+mod pm_detect;
 mod pm_family;
+mod pm_run;
 mod pm_shim;
+mod process;
 #[cfg(unix)]
 mod removal;
 mod replay;
@@ -89,13 +92,12 @@ mod width_tables;
 mod workspace;
 mod x;
 
+use process::delegate;
+
 /// Internal, additive diagnostic command. Used to validate the
 /// launcher → binary → native-output path without touching any existing
 /// command surface.
 const NATIVE_INFO: &str = "__native-info";
-
-/// `EX_SOFTWARE` from sysexits.h — internal error (cannot delegate).
-const EX_SOFTWARE: i32 = 70;
 
 fn main() {
     node_contract::init();
@@ -324,92 +326,4 @@ fn native_info() {
     println!("  node           : {}", env::var("VIS_NODE").unwrap_or_else(|_| unset()));
     println!("  fallback-entry : {}", env::var("VIS_FALLBACK_ENTRY").unwrap_or_else(|_| unset()));
     println!("  pkg-version    : {}", env::var("VIS_VERSION").unwrap_or_else(|_| unset()));
-}
-
-/// [`delegate`], after naming the gate that declined the run on stderr when `VIS_DEBUG_DECLINE` is set (to
-/// anything but `0` or the empty string). Nothing is printed otherwise, so the delegated run's stderr stays
-/// Node's alone.
-fn delegate_because<S: AsRef<OsStr>>(reason: &str, args: &[S]) -> ! {
-    if env::var_os("VIS_DEBUG_DECLINE").is_some_and(|value| !value.is_empty() && value != "0") {
-        eprintln!("vis: handing the run to Node: {reason}");
-    }
-
-    delegate(args)
-}
-
-/// Hand the full argv off to the Node CLI, inheriting stdio and forwarding the
-/// child's exit status. Never returns.
-fn delegate<S: AsRef<OsStr>>(args: &[S]) -> ! {
-    let node = env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned());
-
-    let entry = match env::var("VIS_FALLBACK_ENTRY") {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("vis: VIS_FALLBACK_ENTRY is not set; cannot delegate to the Node CLI.");
-            exit(EX_SOFTWARE);
-        }
-    };
-
-    // stdio is inherited by default, so the child shares the controlling
-    // terminal and process group — Ctrl-C / SIGINT reach it directly.
-    let mut command = Command::new(&node);
-
-    command.arg(&entry).args(args);
-
-    let error = run_in_place(&mut command);
-
-    eprintln!("vis: failed to launch Node CLI ('{node}'): {error}");
-    exit(EX_SOFTWARE);
-}
-
-/// Run `command` so that its process is the one the caller is waiting on, and
-/// never returns on success. On Unix this replaces this process with the child
-/// (`exec`), so a timeout or signal sent to the `vis` PID reaches the Node CLI
-/// itself; a parent that kills only the launcher would otherwise leave Node
-/// running with the caller's output pipes open. Elsewhere the child is spawned,
-/// waited for, and its status forwarded. Only returns the error if the child
-/// could not be started.
-pub fn run_in_place(command: &mut Command) -> std::io::Error {
-    use std::io::Write;
-
-    // `exec` skips Rust's stdio flush, so anything still buffered would be lost.
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        command.exec()
-    }
-
-    #[cfg(not(unix))]
-    {
-        match command.status() {
-            Ok(status) => exit(node_exit_code(status)),
-            Err(error) => error,
-        }
-    }
-}
-
-/// The exit code Node ends with for a child it ran with `spawnSync`: the child's own status, and 1 for one
-/// that was killed by a signal (`result.status ?? 1`). The commands that mirror a Node handler use this.
-pub(crate) fn node_exit_code(status: ExitStatus) -> i32 {
-    status.code().unwrap_or(1)
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
-
-    use super::node_exit_code;
-
-    #[test]
-    fn a_child_ends_with_its_status_and_a_killed_child_with_one() {
-        assert_eq!(node_exit_code(ExitStatus::from_raw(3 << 8)), 3);
-        assert_eq!(node_exit_code(ExitStatus::from_raw(0)), 0);
-        // Killed by SIGKILL: Node's `result.status` is null, which its handlers turn into 1.
-        assert_eq!(node_exit_code(ExitStatus::from_raw(9)), 1);
-    }
 }

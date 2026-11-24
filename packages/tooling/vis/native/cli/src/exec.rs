@@ -13,12 +13,12 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::Path;
-use std::process::Command;
 
 use vis_core::detect::detect_package_manager;
 use vis_core::resolve::{resolve_exec, ExecOptions};
 
 use crate::error::{self, WrapperError};
+use crate::pm_run::run_resolved;
 
 struct Parsed {
     runtime: Option<String>,
@@ -61,8 +61,8 @@ fn left_to_node(parsed: &Parsed, cwd: &Path) -> bool {
     (single_package && has_local_bin(&opts.command, cwd))
         || unknown_runtime
         || env::var_os("VIS_INSTALLER").is_some()
-        || crate::pm_family::binary_on_path("aube")
-        || crate::pm_family::corepack_applies(cwd)
+        || crate::pm_detect::binary_on_path("aube")
+        || crate::pm_detect::corepack_applies(cwd)
 }
 
 /// Runs the command and returns the exit status to adopt, or the failure to report.
@@ -77,7 +77,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let directory = env::current_dir().unwrap_or_else(|_| ".".into());
 
     if left_to_node(&parsed, &directory) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let Parsed { runtime, opts } = parsed;
@@ -86,16 +86,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
 
     let resolved = resolve_exec(&pm, &version, opts).map_err(|message| WrapperError::usage("exec", message))?;
 
-    for warning in &resolved.warnings {
-        eprintln!("vis exec: {warning}");
-    }
-
-    Command::new(&resolved.bin)
-        .args(&resolved.args)
-        .current_dir(&cwd)
-        .status()
-        .map(crate::node_exit_code)
-        .map_err(|source| WrapperError::spawn("exec", &resolved.bin, source))
+    run_resolved("exec", &resolved, Path::new(&cwd))
 }
 
 /// Resolve the package manager + version to drive `resolve_exec`. A `bun` runtime

@@ -92,7 +92,7 @@ struct Plan {
 /// Answer `vis cache prune` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     let (mut failed, mut keep_last_failed) = (false, false);
@@ -121,7 +121,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let stdout = if keep_last_failed { None } else { render(&plan, failed) };
 
     let Some(stdout) = stdout else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     write_streams("cache prune", &stdout, "");

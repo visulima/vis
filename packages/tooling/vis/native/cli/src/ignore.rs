@@ -5,7 +5,7 @@
 //! answers when the working directory is that root by the rule in [`native_root_is_cwd`]
 //! ([`native_context`]). Only the `--target`, `--json` and `--write` shapes are native.
 //! Anything else (positionals, `--cwd`, unknown or invalid targets, non-UTF-8 files), a config or
-//! Deno file, a terminal, a colour flag, and a run outside CI all go to Node via [`crate::delegate`]. The
+//! Deno file, a terminal, a colour flag, and a run outside CI all go to Node via [`crate::process::delegate`]. The
 //! dimmed hint of the preview is coloured when Node's colour detection says so ([`crate::term::piped_colour_level`]).
 
 use std::collections::HashSet;
@@ -166,15 +166,15 @@ fn native_context(cwd: &Path, args: &[String]) -> Option<bool> {
 /// `raw_args` is the untouched argv handed to Node, so non-UTF-8 bytes arrive unchanged. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(cwd) = env::current_dir().ok() else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let (Some(options), Some(colour)) = (parse(args), native_context(&cwd, args)) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let Some(text) = execute(&options, &cwd, colour) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     write_stdout("ignore", "the output", &text);

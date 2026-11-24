@@ -22,11 +22,13 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::path::Path;
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
+use vis_core::lockfiles::LOCKFILES;
 use vis_core::resolve::{resolve_dlx, DlxOptions, ResolvedCommand};
+
+use crate::pm_run::{on_path, ManagerRun};
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -45,43 +47,15 @@ struct Flags {
 ///
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
-    let Some((resolved, cwd)) = plan(args, raw) else {
-        crate::delegate(raw);
+    let Some(plan) = plan(args, raw) else {
+        crate::process::delegate(raw);
     };
 
-    let mut command = Command::new(&resolved.bin);
-
-    command
-        .args(&resolved.args)
-        .current_dir(&cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    node_startup_environment(&mut command, None);
-
-    match command.status() {
-        // Node reports a child without an exit code (a signal) as 1.
-        Ok(status) => exit(crate::node_exit_code(status)),
-        // Found on `PATH` but could not start; nothing has been printed, so Node reports it.
-        Err(_) => crate::delegate(raw),
-    }
-}
-
-/// What Node's own startup adds to the environment of everything it runs: cerebro's default output level and
-/// the monorepo root it found, if any. (Any `CEREBRO_*` of the caller's has kept the command in Node.) The
-/// launcher's own variables (`VIS_NODE`, `VIS_FALLBACK_ENTRY`, `VIS_VERSION`, `VIS_LAUNCHER`) stay in the
-/// environment, as for every native command that runs a child.
-pub(crate) fn node_startup_environment(command: &mut Command, root: Option<&Path>) {
-    command.env("CEREBRO_OUTPUT_LEVEL", "32");
-
-    if let Some(root) = root {
-        command.env("VIS_MONOREPO_ROOT", root);
-    }
+    plan.run_inherited(raw, |code| code)
 }
 
 /// The command to run and where, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)> {
+fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
     // Windows keeps the Node path: it runs the package manager through a shell there.
     if !cfg!(unix) || raw.iter().any(|argument| argument.to_str().is_none()) {
         return None;
@@ -98,7 +72,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     if crate::term::node_warns_about_colour()
         || env::var_os("DEBUG").is_some()
         || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-        || crate::pm_family::installer_selected_by_environment()
+        || crate::pm_detect::installer_selected_by_environment()
     {
         return None;
     }
@@ -106,7 +80,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     let cwd = env::current_dir().ok()?;
 
     // Node runs the installer a `packageManager` pin names through Corepack, which it reads from any ancestor.
-    if crate::pm_family::ancestor_pins_package_manager(&cwd) {
+    if crate::pm_detect::ancestor_pins_package_manager(&cwd) {
         return None;
     }
 
@@ -135,7 +109,13 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     }
 
     // A manager that is not on `PATH` fails in Node with its own report.
-    crate::add::on_path(&resolved.bin).then_some((resolved, cwd))
+    on_path(&resolved.bin).then(|| ManagerRun {
+        bin: resolved.bin,
+        args: resolved.args,
+        cwd,
+        root: None,
+        notices: Vec::new(),
+    })
 }
 
 /// The manager Node's `resolveInstaller` picks for the lean entry, which reads no config: a bun lockfile
@@ -154,12 +134,9 @@ fn installer(cwd: &Path) -> (String, String) {
 /// `detectFromLockfile` of `resolveRuntime`: the nearest directory with a lockfile of either runtime decides,
 /// and a bun lockfile there wins.
 fn nearest_lockfile_is_bun(cwd: &Path) -> bool {
-    const LOCKFILES: [&str; 6] =
-        ["bun.lock", "bun.lockb", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "npm-shrinkwrap.json"];
-
-    cwd.ancestors()
-        .find_map(|directory| LOCKFILES.iter().find(|name| directory.join(name).exists()))
-        .is_some_and(|name| name.starts_with("bun.lock"))
+    cwd.ancestors().find(|directory| LOCKFILES.iter().any(|(name, _)| directory.join(name).exists())).is_some_and(
+        |directory| LOCKFILES.iter().any(|(name, manager)| *manager == "bun" && directory.join(name).exists()),
+    )
 }
 
 /// `applyDlxOffline`: the manager's own offline flag right after the `dlx` word. A manager with no such flag
@@ -282,8 +259,39 @@ fn is_known_flag(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_offline, is_registry_spec, is_truthy, parse, Flags};
+    use super::{apply_offline, is_registry_spec, is_truthy, nearest_lockfile_is_bun, parse, Flags};
     use vis_core::resolve::ResolvedCommand;
+
+    fn lockfiles_at(label: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("vis-dlx-lock-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        for (directory, file) in files {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+            std::fs::write(root.join(directory).join(file), "").unwrap();
+        }
+
+        root
+    }
+
+    #[test]
+    fn a_bun_lockfile_in_the_nearest_directory_with_one_decides() {
+        let both = lockfiles_at("both", &[("", "pnpm-lock.yaml"), ("", "bun.lockb")]);
+
+        assert!(nearest_lockfile_is_bun(&both));
+
+        let nearer = lockfiles_at("nearer", &[("", "bun.lock"), ("app", "pnpm-lock.yaml")]);
+
+        assert!(!nearest_lockfile_is_bun(&nearer.join("app")));
+
+        let farther = lockfiles_at("farther", &[("", "pnpm-lock.yaml"), ("app", "bun.lock")]);
+
+        assert!(nearest_lockfile_is_bun(&farther.join("app")));
+
+        let none = lockfiles_at("none", &[("app", "yarn.lock")]);
+
+        assert!(!nearest_lockfile_is_bun(&none.join("app")));
+    }
 
     fn tokens(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| (*item).to_owned()).collect()

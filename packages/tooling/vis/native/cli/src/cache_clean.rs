@@ -77,7 +77,7 @@ const STORES: [(Target, &str); 4] = [
 /// Answer `vis cache clean` natively, or delegate to Node. Never returns.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
     // A failure that Node reports (an error or a warning with its own wording) is Node's to report: the run goes
@@ -105,7 +105,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     }
 
     if reported_failure {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     }
 
     write_streams("cache clean", &plan.output.stdout, &plan.output.stderr);

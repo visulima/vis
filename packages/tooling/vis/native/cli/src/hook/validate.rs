@@ -19,8 +19,8 @@ use std::process::{exit, Command, Stdio};
 
 use serde_json::Value;
 
+use super::common::{parse, STAGES};
 use super::config;
-use super::list::{parse, STAGES};
 use crate::node_context::context_is_native;
 use crate::output::write_stdout;
 
@@ -183,7 +183,7 @@ fn answer(args: &[String]) -> Option<String> {
 
 /// Answers `vis hook validate` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some(text) = answer(args) else { crate::delegate(raw_args) };
+    let Some(text) = answer(args) else { crate::process::delegate(raw_args) };
 
     write_stdout("hook", "the hook validation", &text);
 

@@ -105,7 +105,7 @@ struct Body<'a> {
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let outcome = match answer(args) {
         Ok(outcome) => outcome,
-        Err(reason) => crate::delegate_because(&reason, raw_args),
+        Err(reason) => crate::process::delegate_because(&reason, raw_args),
     };
 
     write_stdout("security", "the output", &outcome.stdout);

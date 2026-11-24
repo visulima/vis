@@ -851,7 +851,7 @@ fn native(args: &[String]) -> Option<Output> {
 /// argv as it arrived for the delegation; `args` is its lossy view, used for matching.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(out) = native(args) else {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     };
 
     let results = [

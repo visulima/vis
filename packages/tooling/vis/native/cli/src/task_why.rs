@@ -63,7 +63,7 @@ fn answer(args: &[String]) -> Option<String> {
 
 /// Answers `vis task-why <id>` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some(text) = answer(args) else { crate::delegate(raw_args) };
+    let Some(text) = answer(args) else { crate::process::delegate(raw_args) };
 
     write_stdout("task-why", "the task explanation", &text);
 

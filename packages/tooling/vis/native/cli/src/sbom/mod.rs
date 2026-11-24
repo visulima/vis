@@ -210,7 +210,7 @@ fn printable(path: &Path) -> bool {
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     match answer(args) {
         Some(code) => exit(code),
-        None => crate::delegate(raw),
+        None => crate::process::delegate(raw),
     }
 }
 

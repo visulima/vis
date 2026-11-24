@@ -21,13 +21,10 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
 
 use vis_core::resolve::{resolve_add, AddOptions};
 
-use crate::install::{self, Root};
+use crate::pm_run::{filter_value, on_path, security_notices, setup, ManagerRun, Root};
 use crate::typosquat;
 
 /// What the flags asked for.
@@ -47,68 +44,19 @@ struct Flags {
     workspace_root: bool,
 }
 
-struct Plan {
-    bin: String,
-    args: Vec<String>,
-    /// Lines for stderr, before the package manager starts: the security-enforcement notice and the resolver's warnings.
-    notices: Vec<String>,
-    cwd: PathBuf,
-    /// Node puts the root it found into the environment of everything it runs.
-    root: Option<PathBuf>,
-}
-
 /// Answer `vis add` natively, or delegate to Node. Never returns.
 ///
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args, raw) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
-    let mut command = Command::new(&plan.bin);
-
-    command
-        .args(&plan.args)
-        .current_dir(&plan.cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    // What Node's own startup adds to the environment of everything it runs: cerebro's default output level,
-    // and the root it found. (Any `CEREBRO_*` of the caller's has kept the command in Node.)
-    command.env("CEREBRO_OUTPUT_LEVEL", "32");
-
-    if let Some(root) = &plan.root {
-        command.env("VIS_MONOREPO_ROOT", root);
-    }
-
-    // The manager inherits the terminal, so the notices must be out before it starts.
-    let mut stderr = io::stderr().lock();
-
-    for notice in &plan.notices {
-        let _ = writeln!(stderr, "{notice}");
-    }
-
-    let _ = stderr.flush();
-
-    drop(stderr);
-
-    match command.status() {
-        // Node reports a child without an exit code (a signal) as 1.
-        Ok(status) => exit(crate::node_exit_code(status)),
-        // The manager was found on `PATH` but could not start. With nothing printed yet, Node reports it;
-        // after a notice, a second run in Node would print the notice twice.
-        Err(_) if plan.notices.is_empty() => crate::delegate(raw),
-        Err(error) => {
-            eprintln!("Error: Failed to execute '{}': {error}", plan.bin);
-
-            exit(1)
-        }
-    }
+    plan.run_inherited(raw, |code| code)
 }
 
 /// The plan for this invocation, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
+fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
     let flags = parse(args)?;
 
     // Without `--no-marshall-check` Node fetches package data from the registry first.
@@ -116,7 +64,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
         return None;
     }
 
-    let setup = install::setup(args, raw)?;
+    let setup = setup(args, raw)?;
 
     // Its output has only been compared with Node's where no colour is on and `TERM` leaves the terminal unknown.
     let plain_term = env::var("TERM").map_or(true, |term| {
@@ -137,7 +85,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
 
     // The security-enforcement plugin acts on the typed command name `add`.
     if setup.root == Root::Here {
-        notices.extend(install::security_notices(&setup.manager, &setup.cwd)?);
+        notices.extend(security_notices(&setup.manager, &setup.cwd)?);
     }
 
     let resolved = resolve_add(
@@ -171,30 +119,13 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
 
     notices.extend(resolved.warnings.iter().map(|warning| format!("warning: {warning}")));
 
-    Some(Plan {
+    Some(ManagerRun {
         args,
         bin: resolved.bin,
         cwd: setup.cwd.clone(),
         notices,
         root: (setup.root == Root::Here).then_some(setup.cwd),
     })
-}
-
-/// Whether `bin` is an executable file in a directory of `PATH`, as `execvp` looks it up.
-pub(crate) fn on_path(bin: &str) -> bool {
-    #[cfg(unix)]
-    fn executable(path: &Path) -> bool {
-        use std::os::unix::fs::PermissionsExt;
-
-        path.metadata().is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-    }
-
-    #[cfg(not(unix))]
-    fn executable(path: &Path) -> bool {
-        path.is_file()
-    }
-
-    env::var_os("PATH").is_some_and(|path| env::split_paths(&path).any(|directory| executable(&directory.join(bin))))
 }
 
 /// The flags and packages after `add`: exact tokens, each flag at most once. Anything else is `None`.
@@ -254,13 +185,13 @@ fn parse(args: &[String]) -> Option<Flags> {
             }
             "-F" | "--filter" => {
                 index += 1;
-                flags.filter.push(install::filter_value(args.get(index)?)?);
+                flags.filter.push(filter_value(args.get(index)?)?);
                 index += 1;
 
                 continue;
             }
             _ if token.starts_with("--filter=") => {
-                flags.filter.push(install::filter_value(&token["--filter=".len()..])?);
+                flags.filter.push(filter_value(&token["--filter=".len()..])?);
                 index += 1;
 
                 continue;

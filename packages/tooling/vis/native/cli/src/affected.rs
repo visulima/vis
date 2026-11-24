@@ -556,7 +556,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
             std::process::exit(0);
         }
-        None => crate::delegate(raw_args),
+        None => crate::process::delegate(raw_args),
     }
 }
 

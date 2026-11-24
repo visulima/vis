@@ -13,9 +13,7 @@ use std::process::exit;
 
 use crate::node_context::context_is_native;
 use crate::output::write_stdout;
-
-/// The package managers the shim directory intercepts, `SHIM_NAMES` in `src/commands/shim/handler.ts`.
-const SHIM_NAMES: [&str; 6] = ["npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"];
+use crate::pm_shim::SHIM_NAMES;
 
 /// The text Node prints for the shim directory `directory` and the `PATH` entries `path`.
 fn text(directory: &Path, path: &str) -> Option<String> {
@@ -63,7 +61,7 @@ fn answer(args: &[String]) -> Option<String> {
 
 /// Answers `vis shim status` natively or hands the whole invocation to Node.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some(text) = answer(args) else { crate::delegate(raw_args) };
+    let Some(text) = answer(args) else { crate::process::delegate(raw_args) };
 
     write_stdout("shim", "the shim status", &text);
 

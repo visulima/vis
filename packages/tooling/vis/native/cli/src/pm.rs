@@ -15,13 +15,14 @@
 use std::env;
 use std::ffi::OsString;
 use std::path::Path;
-use std::process::Command;
 
 use vis_core::detect::detect_package_manager;
 use vis_core::resolve::resolve_pm_command;
 
 use crate::error::{self, WrapperError};
-use crate::pm_family::{corepack_applies, installer_selected_by_environment, uses_global_option};
+use crate::pm_detect::{corepack_applies, installer_selected_by_environment};
+use crate::pm_family::uses_global_option;
+use crate::pm_run::run_resolved;
 
 const USAGE: &str = "No subcommand specified. Available: cache, publish, audit, list, view, config, whoami, login, logout, pack, owner, dist-tag, search, fund, ping, token, deprecate, rebuild, prune, plugin";
 
@@ -65,7 +66,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
 
     if left_to_node(args, subcommand, &cwd) {
-        crate::delegate(raw_args);
+        crate::process::delegate(raw_args);
     }
 
     let cwd = cwd.to_string_lossy().into_owned();
@@ -74,16 +75,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let resolved = resolve_pm_command(&detected.name, &detected.version.unwrap_or_default(), subcommand, extra)
         .map_err(|message| WrapperError::usage("pm", message))?;
 
-    for warning in &resolved.warnings {
-        eprintln!("vis pm: {warning}");
-    }
-
-    Command::new(&resolved.bin)
-        .args(&resolved.args)
-        .current_dir(&cwd)
-        .status()
-        .map(crate::node_exit_code)
-        .map_err(|source| WrapperError::spawn("pm", &resolved.bin, source))
+    run_resolved("pm", &resolved, Path::new(&cwd))
 }
 
 #[cfg(test)]

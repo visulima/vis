@@ -812,7 +812,7 @@ fn attempt(args: &[String]) -> Option<Answer> {
     let pin_binaries = pins.binaries()?;
     let node_command = match launcher_version {
         Some(_) => None,
-        None => Some(toolchain::resolve_command(&env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned()))?),
+        None => Some(toolchain::resolve_command(&crate::process::node_program().to_string_lossy())?),
     };
     let mut versions = Versions::with_launcher_node(env::var("VIS_NODE").ok().as_deref(), launcher_version.as_deref());
     let wanted: Vec<PathBuf> = pin_binaries.iter().cloned().chain(node_command.clone()).collect();
@@ -884,7 +884,7 @@ fn leave_to_node(raw_args: &[OsString]) -> ! {
         exit(HANDBACK_STATUS);
     }
 
-    crate::delegate(raw_args)
+    crate::process::delegate(raw_args)
 }
 
 /// Answers `vis run <target>` natively when every task hits, or hands the whole invocation to Node.

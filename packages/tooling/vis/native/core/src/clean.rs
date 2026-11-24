@@ -13,9 +13,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Lockfiles removed by `--lockfile`, in the order the Node handler checks them.
-pub const LOCKFILE_NAMES: [&str; 6] =
-    ["pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb"];
+use crate::lockfiles::LOCKFILES;
 
 /// What a removal did, in the order it happened.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -106,9 +104,9 @@ fn sorted_entry_names(dir: &Path) -> Option<Vec<OsString>> {
     Some(names)
 }
 
-/// The lockfiles present directly in `root`, in `LOCKFILE_NAMES` order.
+/// The lockfiles present directly in `root`, in `LOCKFILES` order, which is the order the Node handler checks them.
 pub fn find_lockfiles(root: &Path) -> Vec<PathBuf> {
-    LOCKFILE_NAMES.iter().map(|name| root.join(name)).filter(|path| path.exists()).collect()
+    LOCKFILES.iter().map(|(name, _)| root.join(name)).filter(|path| path.exists()).collect()
 }
 
 /// Removes every `node_modules` below `root` (the root's own last, because the running `vis`

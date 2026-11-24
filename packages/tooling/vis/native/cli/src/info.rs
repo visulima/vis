@@ -14,12 +14,10 @@
 //! `PATH` is Node's to report, so it is looked up before anything runs.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::{exit, Command, Stdio};
 
 use vis_core::resolve::ResolvedCommand;
 
-use crate::install::{self, Root};
+use crate::pm_run::{on_path, setup, ManagerRun, Root};
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -29,57 +27,31 @@ struct Flags {
     words: Vec<String>,
 }
 
-struct Plan {
-    bin: String,
-    args: Vec<String>,
-    cwd: PathBuf,
-    /// Node puts the root it found into the environment of everything it runs.
-    root: Option<PathBuf>,
-}
-
 /// Answer `vis info` natively, or delegate to Node. Never returns.
 ///
 /// `raw` is the untouched argv, handed to Node as it arrived; `args` is the lossy view used for parsing.
 pub fn run(args: &[String], raw: &[OsString]) -> ! {
     let Some(plan) = plan(args, raw) else {
-        crate::delegate(raw);
+        crate::process::delegate(raw);
     };
 
-    let mut command = Command::new(&plan.bin);
-
-    command
-        .args(&plan.args)
-        .current_dir(&plan.cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    crate::dlx::node_startup_environment(&mut command, plan.root.as_deref());
-
-    match command.status() {
-        // Node treats exit 1 ("not found", an empty result) as an ordinary outcome and forwards any other
-        // code. A child without an exit code (a signal) is reported as 1 there, so it ends the same way.
-        Ok(status) => exit(match crate::node_exit_code(status) {
-            1 => 0,
-            code => code,
-        }),
-        // Found on `PATH` but could not start; nothing has been printed, so Node reports it.
-        Err(_) => crate::delegate(raw),
-    }
+    // Node treats exit 1 ("not found", an empty result) as an ordinary outcome and forwards any other code.
+    plan.run_inherited(raw, |code| if code == 1 { 0 } else { code })
 }
 
 /// The plan for this invocation, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
+fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
     let flags = parse(args)?;
-    let setup = install::setup(args, raw)?;
+    let setup = setup(args, raw)?;
     let resolved = resolve_info(&setup.manager, &setup.version, &flags)?;
 
     // A manager that is not on `PATH` fails in Node with its own report.
-    if !crate::add::on_path(&resolved.bin) {
+    if !on_path(&resolved.bin) {
         return None;
     }
 
-    Some(Plan {
+    Some(ManagerRun {
+        notices: Vec::new(),
         args: resolved.args,
         bin: resolved.bin,
         cwd: setup.cwd.clone(),
