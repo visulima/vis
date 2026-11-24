@@ -172,10 +172,7 @@ pub(crate) fn kill_tree(pid: u32, signal: &str) -> std::io::Result<()> {
         if output.status.success() {
             Ok(())
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("taskkill failed: {}", String::from_utf8_lossy(&output.stderr)),
-            ))
+            Err(std::io::Error::other(format!("taskkill failed: {}", String::from_utf8_lossy(&output.stderr))))
         }
     }
 }

@@ -471,4 +471,39 @@ mod tests {
         }
         assert!(found, "expected 'custom-shell' in output via /bin/bash");
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_signalled_child_exit_code_is_128_plus_signal() {
+        let commands = vec![make_config("kill -TERM $$", None), make_config("kill -KILL $$", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let result = run_batch(&runner).await;
+
+        let by_index = |i: u32| result.close_events.iter().find(|e| e.index == i).unwrap();
+
+        assert_eq!(by_index(0).exit_code, 143);
+        assert!(by_index(0).killed, "a signalled child is reported as killed");
+        assert_eq!(by_index(1).exit_code, 137);
+        assert!(by_index(1).killed);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_descendant_holding_pipes_does_not_hang_the_run() {
+        // `sleep 5 &` inherits the stdout/stderr pipes and outlives the shell.
+        let commands = vec![make_config("sleep 5 &", None)];
+        let runner = ConcurrentRunner::new(commands, &default_options());
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), run_batch(&runner))
+            .await
+            .expect("run must finish once the drain grace has passed");
+
+        assert!(result.success);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(3),
+            "expected completion within the 2s drain grace + 1s, took {:?}",
+            start.elapsed()
+        );
+    }
 }
