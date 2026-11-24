@@ -46,6 +46,7 @@ const answers = {
     "/key-order": (res) => res.end('{"keys":[{"b":1,"2":2,"1":3,"a":4,"a":5,"01":6,"4294967295":7,"4294967294":8}]}'),
     "/lone-surrogate": (res) => res.end('{"keys":["\\ud800"]}'),
     "/overflow": (res) => res.end('{"keys":[1e999]}'),
+    "/slow": (res) => { setTimeout(() => { res.setHeader("content-type", "application/json"); res.end(keys); }, 2500); },
     "/500": (res) => { res.statusCode = 500; res.end("broken"); },
     "/404": (res) => { res.statusCode = 404; res.end("{}"); },
     "/invalid-json": (res) => res.end("{"),
@@ -222,6 +223,13 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.hasAssertions();
 
             run({ exactCache: true, extra, native: true, url: `${base}/keys` });
+        });
+
+        // An answer that takes longer than the variable allows still arrives within Node's 15 seconds.
+        it("waits for a slow answer however short VIS_HTTP_TIMEOUT is", () => {
+            expect.hasAssertions();
+
+            expect(run({ exactCache: true, extra: { VIS_HTTP_TIMEOUT: "1" }, native: true, url: `${base}/slow` })).toContain('"refetched": true');
         });
 
         it("ignores a query string in the URL like the stub does", () => {

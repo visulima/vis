@@ -62,7 +62,6 @@ struct EmittedFile {
     path: String,
     kind: Kind,
     /// SHA-256 of the path as the evaluation first saw it (see [`sha256_path`]); `None` when it was not there.
-    #[serde(default)]
     digest: Option<String>,
 }
 

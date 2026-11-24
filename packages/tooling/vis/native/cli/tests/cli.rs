@@ -8,6 +8,7 @@
 
 use std::process::Command;
 
+#[cfg(unix)]
 use sha2::{Digest, Sha256};
 
 /// The binary with a terminal size in its environment, so the help it renders has a width without asking

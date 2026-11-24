@@ -1,5 +1,7 @@
 //! What a native command checks before it deletes a directory tree: Node's `rm` fails with a stack trace when a
-//! directory cannot be emptied, and a native run cannot hand over to Node once it has removed part of the tree.
+//! directory cannot be emptied, and a native run cannot hand over to Node cleanly once it has removed part of the
+//! tree. A removal that fails despite these checks (a race, or a restriction no check sees) is handed over anyway,
+//! after the fact, by the commands that use them.
 
 use std::ffi::CString;
 use std::fs::{self, Metadata};

@@ -4,7 +4,7 @@
 //! (the shared directory, since `clean` takes no `--scope`) and the four per-user stores under `~/.vis/cache`
 //! (AI responses, Socket.dev reports, deps.dev records, Snyk records). The binary answers only what it can
 //! reproduce byte for byte, with the same files left on disk, and hands everything else to Node before it prints or
-//! removes anything:
+//! removes anything (a removal that fails despite the checks is the one exception, see [`run`]):
 //!
 //! - the flags of [`parse`], each once, with a known `--type`;
 //! - the quiet context of the cache commands, without a terminal on stdout, stderr or (for the confirmation case)
@@ -80,7 +80,8 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     };
 
     // A failure that Node reports (an error or a warning with its own wording) is Node's to report: the run goes
-    // there, and it meets the same entry again. One that Node swallows is not an error.
+    // there, and it meets the same entry again. One that Node swallows is not an error. What Node prints for the
+    // sections that finished before the failure is not reproduced then, because they are done by the time it runs.
     let mut reported_failure = false;
 
     for removal in &plan.removals {
@@ -94,8 +95,9 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
                 }
             }
             Removal::Files(files) => {
-                for file in files {
-                    reported_failure |= fs::remove_file(file).is_err();
+                // `rmSync` throws at the first file it cannot remove and leaves the rest.
+                if files.iter().any(|file| fs::remove_file(file).is_err()) {
+                    reported_failure = true;
                 }
             }
         }

@@ -468,7 +468,6 @@ export const emitConfig = async (configPath: string): Promise<EmittedConfig> => 
     }
 
     tracker.files.set(absolute, "file");
-    tracker.digests.set(absolute, tracker.digests.get(absolute) ?? digestOf(absolute, "file"));
 
     const nonData: string[] = [];
 

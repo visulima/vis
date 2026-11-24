@@ -157,7 +157,7 @@ pub fn remove_listed(directories: &[PathBuf], lockfiles: &[PathBuf]) -> CleanOut
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_workspace, find_node_modules, list_node_modules};
+    use super::find_node_modules;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -170,6 +170,7 @@ mod tests {
         directory
     }
 
+    #[cfg(unix)]
     fn sorted(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
         paths.sort();
 
@@ -199,7 +200,7 @@ mod tests {
 
         assert_eq!(find_node_modules(&workspace), vec![workspace.join("packages/app/node_modules")]);
 
-        let outcome = clean_workspace(&workspace, false);
+        let outcome = super::clean_workspace(&workspace, false);
 
         assert!(outcome.errors.is_empty());
         assert!(outside.join("node_modules/keep.js").exists(), "a directory outside the workspace was deleted");
@@ -212,7 +213,7 @@ mod tests {
     fn the_removal_walk_and_the_dry_run_walk_list_the_same_paths() {
         let (workspace, _) = workspace_with_outside_link("same-paths");
 
-        assert_eq!(sorted(find_node_modules(&workspace)), sorted(list_node_modules(&workspace)));
+        assert_eq!(sorted(find_node_modules(&workspace)), sorted(super::list_node_modules(&workspace)));
 
         fs::remove_dir_all(workspace.parent().unwrap()).unwrap();
     }
@@ -242,7 +243,7 @@ mod tests {
         std::os::unix::fs::symlink(base.join("store"), workspace.join("node_modules")).unwrap();
 
         assert!(find_node_modules(&workspace).is_empty());
-        assert!(list_node_modules(&workspace).is_empty());
+        assert!(super::list_node_modules(&workspace).is_empty());
 
         fs::remove_dir_all(&base).unwrap();
     }

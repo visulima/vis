@@ -19,8 +19,9 @@
 //!
 //! A removal that fails anyway (a race, or a restriction no check sees) is handled as Node handles it. The age and
 //! size limits swallow the error and the "Pruned" line comes from counting the entries again, so the line is built
-//! from the directory as it is after the removals. `--keep-last` rejects with an error: the run is then handed to
-//! Node, which meets the same entry and reports it.
+//! from the directory as it is after the removals. `--keep-last` rejects with an error: the removals stop where Node's
+//! stop and the run is handed to Node, which meets the same entry and reports it. What Node prints for the
+//! directories this run had already finished is not reproduced then, because they are done by the time it runs.
 
 use std::env;
 use std::ffi::OsString;
@@ -94,13 +95,24 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
     };
 
     let (mut failed, mut keep_last_failed) = (false, false);
+    // Where `--keep-last` failed: Node's `Promise.all` has tried every entry of that directory by then, and the
+    // rejection ends the run before any age or size limit (or a later directory) is looked at.
+    let mut failed_directory: Option<&Path> = None;
 
     for removal in &plan.removals {
         let path = &removal.path;
 
+        if failed_directory.is_some_and(|directory| !removal.keep_last || path.parent() != Some(directory)) {
+            break;
+        }
+
         if (if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }).is_err() {
             failed = true;
-            keep_last_failed |= removal.keep_last;
+
+            if removal.keep_last {
+                keep_last_failed = true;
+                failed_directory = path.parent();
+            }
         }
     }
 
