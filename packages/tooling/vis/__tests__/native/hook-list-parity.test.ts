@@ -143,6 +143,22 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             }
         });
 
+        it("prints format characters and braces in a script and a name as they are", () => {
+            expect.hasAssertions();
+
+            const script = [
+                "# fmt: Check %s and %d and %%",
+                "printf '%s %d %%\\n' \"${x}\" {0} {name} %j %o %O %i %f %c",
+                "# %s: Literal %",
+                "echo 100% $((1+1)) ${a:-b} {{x}} %1$s",
+                "",
+            ].join("\n");
+
+            const result = harness.expectParity(hooks({ "pre-commit": script, "pre-push": "%s\n%d\n" }), []);
+
+            expect(result.stdout).toContain("%s %d %%");
+        });
+
         it("shortens a first command line of more than 120 characters", () => {
             expect.hasAssertions();
 
