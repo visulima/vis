@@ -48,7 +48,7 @@ const createFixture = (): string => {
     put(root, "tsconfig.json", "{\"compilerOptions\":{}}\n");
     put(root, ".env", "A=1\n");
 
-    for (const name of ["core", "util", "app", "web", "docs"]) {
+    for (const name of ["core", "util", "app", "web", "docs", "lib"]) {
         put(root, `packages/${name}/package.json`, `{"name":"${name}"}\n`);
     }
 
@@ -64,6 +64,8 @@ const createFixture = (): string => {
     put(root, "packages/app/src/skip/generated.ts", "generated\n");
     put(root, "packages/app/src/other.js", "other\n");
     put(root, "packages/web/src/index.ts", "export const web = 1;\n");
+    put(root, "packages/lib/src/index.ts", "export const lib = 1;\n");
+    put(root, "node_modules/leftpad/package.json", "{\"name\":\"leftpad\",\"version\":\"1.2.3\"}\n");
     put(root, "packages/docs/.hidden", "only a hidden file\n");
 
     return root;
@@ -86,12 +88,22 @@ const projects: Record<string, ProjectConfiguration> = {
         targets: { build: { command: "echo \"quoted\" && echo 'single'\n\tline \\ two", dependsOn: ["^build"], outputs: ["dist"] } },
     },
     docs: { root: "packages/docs", targets: { build: { command: "true", dependsOn: ["^build"] } } },
+    lib: {
+        root: "packages/lib",
+        targets: {
+            build: {
+                command: "tsc",
+                fingerprintEnv: ["GOLDEN_FP_*"],
+                inputs: ["{projectRoot}/src/**/*.ts", { externalDependencies: ["leftpad", "missing-dep"] }, { env: "GOLDEN_INPUT_ENV" }],
+            },
+        },
+    },
     util: { root: "packages/util", targets: { build: { command: "node build.js", dependsOn: ["^build"] } } },
     web: { root: "packages/web", targets: { build: { command: "vite build", dependsOn: ["^build"] } } },
 };
 
 /** `web` depends on `util` then `core`, `app` on `web`, `core` and `util`, so no dependency list is in sorted order. */
-const edges: Record<string, string[]> = { app: ["web", "core", "util"], core: [], docs: ["app"], util: ["core"], web: ["util", "core"] };
+const edges: Record<string, string[]> = { app: ["web", "core", "util"], core: [], docs: ["app"], lib: [], util: ["core"], web: ["util", "core"] };
 
 const projectGraph: ProjectGraph = {
     dependencies: Object.fromEntries(
@@ -123,6 +135,7 @@ const run = async (root: string): Promise<Record<string, string>> => {
         initialTask("web", { visOptions: { pool: { size: 2, kind: "x" } } }),
         initialTask("app", {}),
         initialTask("docs", {}),
+        initialTask("lib", {}, { fingerprintEnv: ["GOLDEN_FP_*"] }),
     ];
     const taskGraph = createTaskGraph(initialTasks, { projectGraph, workspace: { projects } });
     const cache = new Cache({ cacheDirectory: join(root, "node_modules", ".cache", "vis"), workspaceRoot: root });
@@ -178,6 +191,7 @@ const GOLDEN: Record<string, string> = {
     "app:build": "f66e483c133aec8af9b44228731b9e3f",
     "core:build": "0c52805358fe6ea33d585e11783b942a",
     "docs:build": "8b4346c2ee289fc030bb4ace0e133ac3",
+    "lib:build": "d583e3e720fa3908cc272cc2c34d2df4",
     "util:build": "ea8910cb39e06b02c646767e155aba74",
     "web:build": "672fd6636cc43d5b69e914f0809446e0",
 };
@@ -189,9 +203,28 @@ describe.skipIf(process.platform === "win32")("golden task keys", () => {
     it("keeps every key of the fixture", async () => {
         expect.hasAssertions();
 
-        const keys = await withEnvironment({ GOLDEN_ENV_VAR: "value", GOLDEN_GLOBAL_ENV: "global" }, async () => run(createFixture()));
+        const keys = await withEnvironment({ GOLDEN_ENV_VAR: "value", GOLDEN_FP_ONE: "1", GOLDEN_GLOBAL_ENV: "global", GOLDEN_INPUT_ENV: "input" }, async () => run(createFixture()));
 
         expect(keys).toStrictEqual(GOLDEN);
+    });
+
+    it("keys a task on the env names and external dependencies it declares", async () => {
+        expect.hasAssertions();
+
+        const root = createFixture();
+        const environment = { GOLDEN_ENV_VAR: "value", GOLDEN_FP_ONE: "1", GOLDEN_GLOBAL_ENV: "global", GOLDEN_INPUT_ENV: "input" };
+        const base = await withEnvironment(environment, async () => run(root));
+
+        for (const changed of ["GOLDEN_FP_ONE", "GOLDEN_INPUT_ENV"]) {
+            // eslint-disable-next-line no-await-in-loop -- one run at a time
+            const rerun = await withEnvironment({ ...environment, [changed]: "other" }, async () => run(root));
+
+            expect(rerun["lib:build"], changed).not.toBe(base["lib:build"]);
+        }
+
+        put(root, "node_modules/leftpad/package.json", "{\"name\":\"leftpad\",\"version\":\"2.0.0\"}\n");
+
+        expect((await withEnvironment(environment, async () => run(root)))["lib:build"]).not.toBe(base["lib:build"]);
     });
 
     it("keeps the key of a task with a configuration", async () => {
