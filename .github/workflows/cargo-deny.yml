@@ -111,5 +111,5 @@ jobs:
                   tools: "cargo-deny"
 
             - name: "Run cargo deny"
-              run: "cargo deny check"
+              run: "cargo deny --workspace check"
               working-directory: "${{ matrix.package.dir }}"
