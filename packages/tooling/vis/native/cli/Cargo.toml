@@ -24,6 +24,11 @@ path = "src/main.rs"
 # `localtime_r` for the local clock in pail's header (see src/clean.rs).
 libc = "0.2"
 
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+# Only read when `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set (see src/http/tls.rs): the OS trust store
+# that the extra PEM file is added to, like Node does. Not on macOS, where it would link the Security framework.
+rustls-native-certs = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 # Switches the console to ANSI mode at startup (see src/term.rs).
 windows-sys = { version = "0.61", features = [ "Win32_System_Console" ] }
@@ -65,3 +70,14 @@ oxc_parser = "=0.154.0"
 oxc_span = "=0.154.0"
 # Terminal width for help layout (the tty size, like the Node CLI's own lookup).
 terminal_size = "0.4"
+# `src/http/`: the blocking HTTPS client (rustls + ring + the bundled Mozilla roots, gzip). Default features
+# are off so no second TLS stack or unused codec links; it is built lazily and never touched by `--version`.
+ureq = { version = "3.5", default-features = false, features = [ "rustls", "gzip" ] }
+# Already in the tree through `ureq`; named here to read its errors apart (src/http/error.rs) and, in the tests, to
+# serve TLS. Same features as `ureq` turns on.
+rustls = { version = "0.23", default-features = false, features = [ "ring", "std" ] }
+
+[dev-dependencies]
+# A self-signed certificate generated at test time, and a TLS server to present it, so the extra-CA path
+# is proven without a network (src/http/tests.rs).
+rcgen = { version = "0.13", default-features = false, features = [ "crypto", "pem", "ring" ] }

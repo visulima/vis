@@ -1,0 +1,93 @@
+//! The failures a request can end in, told apart so a caller can print the same text for the same
+//! cause on every run. The `Display` strings are part of the contract (parity tests compare them).
+
+use std::fmt;
+use std::io;
+
+#[derive(Debug)]
+pub(crate) enum HttpError {
+    /// The host name did not resolve.
+    Dns { host: String },
+    /// No connection could be made, or it dropped (refused, reset, aborted, ...).
+    Connect(String),
+    /// The handshake or the certificate check failed; the text is the verifier's own message.
+    Tls(String),
+    /// A time limit ran out; the text names the phase (`connect`, `global`, `receive response`, ...).
+    Timeout(String),
+    /// The server answered outside 200-299 (after following redirects).
+    Status { code: u16, body: String },
+    /// The body could not be decompressed, or is not the text or JSON the caller asked for.
+    Decode(String),
+    /// The body is larger than the cap.
+    TooLarge { limit: u64 },
+    /// Anything else: a bad URL, too many redirects, a protocol error.
+    Request(String),
+}
+
+impl HttpError {
+    pub(crate) fn is_timeout(&self) -> bool {
+        matches!(self, Self::Timeout(_))
+    }
+
+    /// The status code of a [`HttpError::Status`].
+    pub(crate) fn status(&self) -> Option<u16> {
+        match self {
+            Self::Status { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
+    /// Maps what `ureq` reports for a request to `host` to one of the cases above.
+    pub(crate) fn from_ureq(error: ureq::Error, host: &str) -> Self {
+        match error {
+            ureq::Error::HostNotFound => Self::Dns { host: host.to_owned() },
+            ureq::Error::Timeout(phase) => Self::Timeout(phase.to_string()),
+            ureq::Error::ConnectionFailed => Self::Connect("connection failed".to_owned()),
+            ureq::Error::Tls(message) => Self::Tls(message.to_owned()),
+            ureq::Error::Pem(error) => Self::Tls(format!("invalid certificate: {error:?}")),
+            ureq::Error::Rustls(error) => Self::Tls(error.to_string()),
+            ureq::Error::BodyExceedsLimit(limit) => Self::TooLarge { limit },
+            ureq::Error::Decompress(kind, error) => Self::Decode(format!("{kind} decompression failed: {error}")),
+            ureq::Error::Io(error) => Self::from_io(&error),
+            ureq::Error::ConnectProxyFailed(message) => Self::Connect(format!("proxy: {message}")),
+            other => Self::Request(other.to_string()),
+        }
+    }
+
+    fn from_io(error: &io::Error) -> Self {
+        // `rustls` reports a failed handshake or certificate check through the stream as an `io::Error`
+        // wrapping its own error, so the verifier's message is that error's.
+        if let Some(tls) = error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+            return Self::Tls(tls.to_string());
+        }
+
+        match error.kind() {
+            io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::AddrNotAvailable
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof => Self::Connect(error.to_string()),
+            io::ErrorKind::TimedOut => Self::Timeout("io".to_owned()),
+            _ => Self::Request(error.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dns { host } => write!(f, "dns: could not resolve {host}"),
+            Self::Connect(detail) => write!(f, "connect: {detail}"),
+            Self::Tls(detail) => write!(f, "tls: {detail}"),
+            Self::Timeout(phase) => write!(f, "timeout: {phase}"),
+            Self::Status { code, .. } => write!(f, "http status: {code}"),
+            Self::Decode(detail) => write!(f, "decode: {detail}"),
+            Self::TooLarge { limit } => write!(f, "response larger than {limit} bytes"),
+            Self::Request(detail) => write!(f, "request: {detail}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpError {}

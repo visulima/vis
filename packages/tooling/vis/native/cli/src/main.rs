@@ -46,6 +46,9 @@ mod exec;
 mod graph;
 mod help;
 mod hook;
+// No command uses the client yet; the first one lands with it.
+#[allow(dead_code)]
+mod http;
 mod ignore;
 #[cfg(unix)]
 mod implode;
