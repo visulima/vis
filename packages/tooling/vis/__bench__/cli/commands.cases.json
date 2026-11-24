@@ -232,7 +232,7 @@
             "route": "replay",
             "family": "runs",
             "scales": true,
-            "expect": "2026-"
+            "expect": "mtime"
         },
         {
             "id": "run-hit",
