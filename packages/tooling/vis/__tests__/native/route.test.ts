@@ -495,7 +495,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         const cwd = "/work/app";
         const holdsMarker = (directory: string): boolean => directory === cwd;
 
-        // One invocation per command that prints through pail or colours a line, each in a CI context.
+        // One invocation per command that prints through pail or colours a line (`task-why` prints the same in every colour environment), each in a CI context.
         const COMMANDS: [string, string[], Record<string, string>][] = [
             ["clean", ["clean"], { CI: "1" }],
             ["ignore", ["ignore"], { CI: "1" }],
@@ -505,6 +505,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["replay", ["replay"], { CI: "1" }],
             ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
             ["sync ci-workflow", ["sync", "ci-workflow", "--provider=github"], { CI: "1" }],
+            ["task-why", ["task-why", "app:build"], { CI: "1" }],
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
