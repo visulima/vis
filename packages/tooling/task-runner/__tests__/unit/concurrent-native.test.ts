@@ -6,7 +6,7 @@ import { loadNativeBindings } from "../../src/native-binding";
 import type { ProcessEvent } from "../../src/types";
 
 // The real addon, except where a test hands in a binding of its own for one call.
-vi.mock(import('../../src/native-binding'), async (importOriginal) => {
+vi.mock(import("../../src/native-binding"), async (importOriginal) => {
     const original = await importOriginal<typeof import("../../src/native-binding")>();
 
     return { ...original, loadNativeBindings: vi.fn<typeof original.loadNativeBindings>(original.loadNativeBindings) };
@@ -148,16 +148,19 @@ describe(runNativeConcurrent, () => {
 
             const { events, result } = await (async () => {
                 const seen: ProcessEvent[] = [];
-                const outcome = await runNativeConcurrent([{ command: "read line; stty size; echo got:$line; test -t 1 && echo tty", ptySize: { cols: 90, rows: 20 }, stdin: "pty" }], {
-                    onEvent: (event) => {
-                        seen.push(event);
+                const outcome = await runNativeConcurrent(
+                    [{ command: "read line; stty size; echo got:$line; test -t 1 && echo tty", ptySize: { cols: 90, rows: 20 }, stdin: "pty" }],
+                    {
+                        onEvent: (event) => {
+                            seen.push(event);
 
-                        if (event.kind === "started") {
-                            event.resize?.(100, 30);
-                            event.write?.("typed\n");
-                        }
+                            if (event.kind === "started") {
+                                event.resize?.(100, 30);
+                                event.write?.("typed\n");
+                            }
+                        },
                     },
-                });
+                );
 
                 return { events: seen, result: outcome };
             })();
@@ -179,7 +182,9 @@ describe(runNativeConcurrent, () => {
             const events: ProcessEvent[] = [];
             const run: NativeConcurrentRun = {
                 abort: () => undefined,
-                done: async () => { return { closeEvents: [], success: true }; },
+                done: async () => {
+                    return { closeEvents: [], success: true };
+                },
                 kill: () => true,
                 resize: () => true,
                 write: () => true,

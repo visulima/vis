@@ -146,7 +146,9 @@ const runNativeConcurrent = async (commands: ConcurrentCommandConfig[], options:
     const native = loadNativeBindings();
 
     if (typeof native?.startConcurrent !== "function") {
-        throw new TypeError("@visulima/task-runner: the native addon is too old to run commands (startConcurrent is missing); rebuild it with `pnpm build:native`.");
+        throw new TypeError(
+            "@visulima/task-runner: the native addon is too old to run commands (startConcurrent is missing); rebuild it with `pnpm build:native`.",
+        );
     }
 
     const { onEvent } = options;

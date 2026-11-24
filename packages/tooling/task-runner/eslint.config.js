@@ -8,6 +8,8 @@ export default createConfig(
             "node_modules",
             "coverage",
             "__fixtures__",
+            // A plain Node script the parity suite runs as the child process.
+            "__tests__/parity/fixtures",
             "__docs__",
             "vitest.config.ts",
             "packem.config.ts",
