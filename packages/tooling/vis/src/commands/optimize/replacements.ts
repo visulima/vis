@@ -19,58 +19,71 @@ interface ManifestEntryData {
 type ManifestEntry = [string, ManifestEntryData];
 
 /**
- * `module-replacements` manifest shape (v3+). The package was reshaped
- * to a single flat `moduleReplacements` array; entries fall into three
- * variants distinguished by `type`:
- *
- * - `simple` — inline replacement string
- * - `native` — replaceable with a built-in API at the given Node version
- * - `documented` — guidance lives at an external doc path
+ * `module-replacements` manifest shape (v3.4+): every manifest holds a `replacements` record (what a package can be
+ * swapped for, keyed by id) and a `mappings` record (which package maps to which replacement ids).
  */
-interface E18eEntry {
-    category?: string;
-    docPath?: string;
-    mdnPath?: string;
+type KnownUrl = string | { id: string; type: "e18e" | "mdn" | "node" };
+
+interface E18eReplacement {
+    description?: string;
+    engines?: { engine: string; minVersion?: string }[];
+    id: string;
+    replacementModule?: string;
+    type: "documented" | "native" | "removal" | "simple";
+    url?: KnownUrl;
+}
+
+interface E18eMapping {
     moduleName: string;
-    nodeVersion?: string;
-    replacement?: string;
-    type: "documented" | "native" | "simple";
+    replacements: string[];
+    type: "module";
+    url?: KnownUrl;
 }
 
 interface E18eManifest {
-    moduleReplacements: E18eEntry[];
+    mappings: Record<string, E18eMapping>;
+    replacements: Record<string, E18eReplacement>;
 }
 
 // Upstream e18e module-replacements docs — slug-keyed markdown files.
 const E18E_DOC_BASE_URL = "https://github.com/es-tooling/module-replacements/blob/main/docs/modules";
 
-const buildE18eDocUrl = (docPath: string): string => `${E18E_DOC_BASE_URL}/${docPath}.md`;
+const KNOWN_URL_BASES = { e18e: `${E18E_DOC_BASE_URL}/`, mdn: "https://developer.mozilla.org/en-US/docs/", node: "https://nodejs.org/" } as const;
+
+const knownUrlToString = (url: KnownUrl | undefined): string | undefined => {
+    if (!url) {
+        return undefined;
+    }
+
+    if (typeof url === "string") {
+        return url;
+    }
+
+    return `${KNOWN_URL_BASES[url.type]}${url.id}${url.type === "e18e" ? ".md" : ""}`;
+};
 
 /**
- * Builds a human-readable replacement hint for an e18e entry.
- * Each variant carries its replacement guidance under a different key.
- *
- * `documented` entries deliberately point at the migration guide rather than
- * echoing the bare `docPath` slug (which is sometimes the package name
- * itself — e.g. `chalk` → "See chalk", which reads as if the package were
- * its own replacement).
+ * Builds a human-readable replacement hint for one replacement a mapping points at.
+ * Each variant carries its guidance under a different key.
  */
-const e18eReplacementHint = (entry: E18eEntry): string => {
-    if (entry.type === "simple" && entry.replacement) {
-        return entry.replacement;
+const e18eReplacementHint = (replacement: E18eReplacement): string => {
+    if (replacement.type === "simple") {
+        return replacement.description ?? "";
     }
 
-    if (entry.type === "native") {
-        const minNode = entry.nodeVersion ? ` (Node ${entry.nodeVersion}+)` : "";
+    if (replacement.type === "native") {
+        const minNode = replacement.engines?.find((engine) => engine.engine === "nodejs")?.minVersion;
+        const suffix = minNode ? ` (Node ${minNode}+)` : "";
 
-        return entry.replacement ? `${entry.replacement}${minNode}` : `Native API${minNode}`;
+        return `${replacement.id}${suffix}`;
     }
 
-    if (entry.type === "documented" && entry.docPath) {
-        return "see migration guide";
+    if (replacement.type === "documented") {
+        return replacement.replacementModule ?? "";
     }
 
-    return "";
+    // `removal`: the package is not needed at all.
+    return "no longer needed";
 };
 
 /**
@@ -81,24 +94,26 @@ export const buildE18eEntries = (allDeps?: Set<string>): OptimizeEntry[] => {
     const entries: OptimizeEntry[] = [];
 
     const scanManifest = (manifest: E18eManifest, category: "micro-utility" | "native" | "preferred"): void => {
-        const list = manifest.moduleReplacements;
+        const { mappings, replacements } = manifest;
 
-        if (!Array.isArray(list)) {
+        if (!mappings || !replacements) {
             return;
         }
 
-        for (const entry of list) {
-            if (allDeps && !allDeps.has(entry.moduleName)) {
+        for (const mapping of Object.values(mappings)) {
+            if (allDeps && !allDeps.has(mapping.moduleName)) {
                 continue;
             }
 
+            const targets = mapping.replacements.map((id) => replacements[id]).filter((target): target is E18eReplacement => target !== undefined);
+
             entries.push({
                 category,
-                docUrl: entry.type === "documented" && entry.docPath ? buildE18eDocUrl(entry.docPath) : undefined,
+                docUrl: knownUrlToString(mapping.url ?? targets.find((target) => target.url)?.url),
                 hasCodemod: false, // filled in below
                 overrideSpec: undefined,
-                packageName: entry.moduleName,
-                replacement: e18eReplacementHint(entry),
+                packageName: mapping.moduleName,
+                replacement: [...new Set(targets.map((target) => e18eReplacementHint(target)).filter(Boolean))].join(", "),
             });
         }
     };
