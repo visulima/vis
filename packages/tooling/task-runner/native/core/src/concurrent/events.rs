@@ -131,6 +131,13 @@ pub fn event_channel(capacity: usize) -> (EventSink, EventStream) {
     (EventSink { tx, credits: Some(Arc::clone(&credits)), parked: None }, EventStream { rx, credits: Some(credits) })
 }
 
+impl Drop for EventStream {
+    /// A consumer that goes away must not leave a reader waiting for a credit that will never come.
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 impl EventStream {
     /// Wait for the next event, then take everything already queued behind it, up to
     /// `max` events in all. There is no timer: a lone event is delivered at once, and a
@@ -309,6 +316,27 @@ mod tests {
         // What was queued before the close can still be taken.
         assert_eq!(texts(&stream.try_next_batch(10).unwrap()), ["1"]);
         assert!(stream.try_next_batch(10).is_none());
+    }
+
+    #[tokio::test]
+    async fn dropping_the_stream_releases_a_waiting_sender() {
+        let (sink, mut stream) = event_channel(1);
+
+        sink.send_output(line("1")).await;
+
+        let blocked = tokio::spawn({
+            let sink = sink.clone();
+
+            async move { sink.send_output(line("2")).await }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The first event is still outstanding, so the credit never comes back by itself.
+        let batch = stream.next_batch(10).await.unwrap();
+        std::mem::forget(batch);
+        drop(stream);
+
+        assert!(!timeout(Duration::from_secs(1), blocked).await.unwrap().unwrap());
     }
 
     #[tokio::test]

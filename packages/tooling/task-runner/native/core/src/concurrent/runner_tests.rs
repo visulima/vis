@@ -960,6 +960,7 @@ mod tests {
         assert_eq!(run_env_probe(Some(false)).await, "[][from-overlay]");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_the_runner_does_not_set_force_color_itself() {
         // Colour is the caller's decision (resolved into `env` on the JS side); the core must not
