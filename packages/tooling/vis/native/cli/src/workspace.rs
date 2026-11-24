@@ -886,4 +886,20 @@ mod gitignore_fixture_tests {
         assert_eq!(project_directories_below(&root, 3), Membership::Delegate);
         assert_eq!(project_directories_below(&root, 1), Membership::Delegate);
     }
+
+    #[test]
+    fn a_project_named_empty_or_proto_is_left_to_node() {
+        for (index, manifest) in [r#"{"name":""}"#, r#"{"name":"__proto__"}"#].into_iter().enumerate() {
+            let root = std::env::temp_dir().join(format!("vis-workspace-name-{}-{index}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+
+            fs::create_dir_all(root.join("pkgs/a")).expect("project");
+            fs::write(root.join("package.json"), r#"{"name":"root","workspaces":["pkgs/*"]}"#).expect("root manifest");
+            fs::write(root.join("pkgs/a/package.json"), manifest).expect("manifest");
+
+            assert_eq!(project_directories(&root), Membership::Delegate, "{manifest}");
+
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
 }

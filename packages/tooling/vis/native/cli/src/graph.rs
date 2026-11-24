@@ -26,18 +26,17 @@ pub enum GraphResult {
 #[derive(Debug, PartialEq)]
 pub struct ProjectGraph {
     /// Keyed by project name, which is the `package.json` name.
-    pub nodes: BTreeMap<String, Node>,
-    /// Edges per source project, in the order Node emits them: `dependencies`, then
-    /// `devDependencies`, then `peerDependencies`, each in key order, with a target kept once.
-    pub dependencies: BTreeMap<String, Vec<Edge>>,
-    /// Project directory, relative to the root, of each project name.
-    pub directories: BTreeMap<String, String>,
+    pub projects: BTreeMap<String, Project>,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Node {
-    pub name: String,
+pub struct Project {
+    /// The project directory, relative to the root.
+    pub directory: String,
     pub project_type: ProjectType,
+    /// Edges from this project, in the order Node emits them: `dependencies`, then
+    /// `devDependencies`, then `peerDependencies`, each in key order, with a target kept once.
+    pub edges: Vec<Edge>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -178,27 +177,21 @@ fn resolve(root: &Path) -> Option<GraphResult> {
 
     for directory in &directories {
         let manifest = read_manifest(&root.join(directory).join("package.json"))?;
-        let name = manifest.name.clone().filter(|name| !name.is_empty())?;
+        // The membership has refused an empty name and `__proto__` already (see `workspace::has_package_name`).
+        let name = manifest.name.clone()?;
 
-        // Node keeps the last project of a repeated name, and `__proto__` is not a plain key.
-        if name == "__proto__" || !names.insert(name.clone()) {
+        // Node keeps the last project of a repeated name.
+        if !names.insert(name.clone()) {
             return None;
         }
 
         projects.push((name, manifest, directory.clone()));
     }
 
-    let mut nodes = BTreeMap::new();
-    let mut dependencies = BTreeMap::new();
-    let mut directories = BTreeMap::new();
+    let mut graph = BTreeMap::new();
 
     for (name, manifest, directory) in &projects {
-        directories.insert(name.clone(), directory.clone());
-
         let project_type = if manifest.bin.0 { ProjectType::Application } else { ProjectType::Library };
-
-        nodes.insert(name.clone(), Node { name: name.clone(), project_type });
-
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut edges = Vec::new();
 
@@ -219,10 +212,10 @@ fn resolve(root: &Path) -> Option<GraphResult> {
             }
         }
 
-        dependencies.insert(name.clone(), edges);
+        graph.insert(name.clone(), Project { directory: directory.clone(), project_type, edges });
     }
 
-    Some(GraphResult::Native(ProjectGraph { dependencies, directories, nodes }))
+    Some(GraphResult::Native(ProjectGraph { projects: graph }))
 }
 
 /// `None` when the file is missing, unreadable, or not a manifest this module reproduces.
@@ -245,9 +238,9 @@ mod tests {
     /// `(source, target, kind)` triples sorted the way the TypeScript parity test sorts them.
     fn sorted_edges(graph: &ProjectGraph) -> Vec<(String, String, String)> {
         let mut edges: Vec<(String, String, String)> = graph
-            .dependencies
+            .projects
             .values()
-            .flatten()
+            .flat_map(|project| &project.edges)
             .map(|edge| (edge.source.clone(), edge.target.clone(), edge.kind.as_str().to_string()))
             .collect();
         edges.sort();
@@ -256,8 +249,11 @@ mod tests {
     }
 
     fn sorted_nodes(graph: &ProjectGraph) -> Vec<(String, String)> {
-        let mut nodes: Vec<(String, String)> =
-            graph.nodes.values().map(|node| (node.name.clone(), node.project_type.as_str().to_string())).collect();
+        let mut nodes: Vec<(String, String)> = graph
+            .projects
+            .iter()
+            .map(|(name, project)| (name.clone(), project.project_type.as_str().to_string()))
+            .collect();
         nodes.sort();
 
         nodes
@@ -377,36 +373,5 @@ mod tests {
         }
 
         assert_eq!(checked, 9, "fixture count changed");
-    }
-
-    /// A temporary project whose only candidate is `pkgs/a` with the given manifest text. Slice 1 accepts
-    /// it (the name is a string), so any delegation comes from this module's own checks.
-    fn project_with_candidate(manifest: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("vis-graph-{}-{}", std::process::id(), manifest.len()));
-        let _ = fs::remove_dir_all(&root);
-
-        fs::create_dir_all(root.join("pkgs/a")).unwrap();
-        fs::write(root.join("package.json"), r#"{"name":"root","workspaces":["pkgs/*"]}"#).unwrap();
-        fs::write(root.join("pkgs/a/package.json"), manifest).unwrap();
-
-        root
-    }
-
-    #[test]
-    fn an_empty_project_name_delegates() {
-        let root = project_with_candidate(r#"{"name":""}"#);
-
-        assert_eq!(project_graph(&root), GraphResult::Delegate);
-
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn a_proto_project_name_delegates() {
-        let root = project_with_candidate(r#"{"name":"__proto__"}"#);
-
-        assert_eq!(project_graph(&root), GraphResult::Delegate);
-
-        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -261,7 +261,7 @@ fn focus_closure(focus: &[String], graph: &ProjectGraph) -> Result<BTreeSet<Stri
 
     for name in focus {
         // Node would read `dependencies[name]` of a name that is no project (or is `constructor`).
-        if !graph.nodes.contains_key(name) {
+        if !graph.projects.contains_key(name) {
             return Err(Unsupported);
         }
 
@@ -274,7 +274,7 @@ fn focus_closure(focus: &[String], graph: &ProjectGraph) -> Result<BTreeSet<Stri
         while let Some(&current) = queue.get(head) {
             head += 1;
 
-            for edge in graph.dependencies.get(current).into_iter().flatten() {
+            for edge in graph.projects.get(current).into_iter().flat_map(|project| &project.edges) {
                 if visited.insert(edge.target.as_str()) {
                     result.insert(edge.target.clone());
                     queue.push(edge.target.as_str());
@@ -356,7 +356,7 @@ pub(super) fn build(root: &Path, graph: &ProjectGraph, options: &Options) -> Res
     let mut project_names: Vec<String> = if focused {
         focus_closure(options.focus, graph)?.into_iter().collect()
     } else {
-        graph.nodes.keys().cloned().collect()
+        graph.projects.keys().cloned().collect()
     };
 
     project_names.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
@@ -367,18 +367,17 @@ pub(super) fn build(root: &Path, graph: &ProjectGraph, options: &Options) -> Res
     let mut project_refs: HashMap<&str, String> = HashMap::new();
 
     for name in &project_names {
-        let directory = graph.directories.get(name).ok_or(Unsupported)?;
-        let manifest = read_manifest(&root.join(directory).join("package.json"))?.ok_or(Unsupported)?;
+        let project = graph.projects.get(name).ok_or(Unsupported)?;
+        let manifest = read_manifest(&root.join(&project.directory).join("package.json"))?.ok_or(Unsupported)?;
         let version = string_or(manifest.version.as_ref(), "0.0.0")?.to_owned();
         let bom_ref = npm_purl(ascii(name)?, &version);
-        let node = graph.nodes.get(name).ok_or(Unsupported)?;
 
         project_refs.insert(name, bom_ref.clone());
         project_components.push(Component {
             bom_ref,
             name: name.clone(),
             scope: None,
-            kind: if node.project_type == ProjectType::Application { "application" } else { "library" },
+            kind: if project.project_type == ProjectType::Application { "application" } else { "library" },
             version,
             hash: None,
             decoration: decorate(&manifest)?,
