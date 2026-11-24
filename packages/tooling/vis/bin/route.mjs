@@ -1020,6 +1020,42 @@ const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return outputSettingsAreDefault(environment) && args.length === 2 && taskWhyIdIsNative(args[1]);
 };
 
+// Whether `vis hook list` can pass the binary's native gate (`parse` and `answer` in `hook/list.rs`): the plain listing, or
+// one `--hooks-dir` that is a relative path of plain segments the argument parser keeps as a string, at the root of a pnpm
+// workspace in a CI context off a terminal. The binary re-checks everything, including the files of the hooks directory, so this
+// only skips the extra process when it would delegate anyway. Windows stays in Node.
+const HOOKS_DIRECTORY_START = /^(?:[A-Z_]|\.[A-Z_])/i;
+const HOOKS_DIRECTORY_SEGMENT = /^[\w.-]+$/;
+const HOOKS_DIRECTORY_RESERVED = new Set(["false", "infinity", "nan", "null", "true", "undefined"]);
+
+const hooksDirectoryIsNative = (value) => {
+    if (value === undefined || !HOOKS_DIRECTORY_START.test(value) || HOOKS_DIRECTORY_RESERVED.has(value.toLowerCase())) {
+        return false;
+    }
+
+    return value.split("/").every((segment) => HOOKS_DIRECTORY_SEGMENT.test(segment) && segment !== "." && segment !== "..");
+};
+
+const hookListShapeIsNative = (args) => {
+    if (args.length === 2) {
+        return true;
+    }
+
+    if (args.length === 4) {
+        return args[2] === "--hooks-dir" && hooksDirectoryIsNative(args[3]);
+    }
+
+    return args.length === 3 && args[2].startsWith("--hooks-dir=") && hooksDirectoryIsNative(args[2].slice("--hooks-dir=".length));
+};
+
+const hookListMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && hookListShapeIsNative(args);
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -1033,7 +1069,7 @@ const helpOrNative = (args, mayRunNatively) => {
 
 // Commands whose routing needs no flag check here, because the binary decides every shape itself: the
 // native command set, `hook run` (the other `hook` subcommands - install, migrate, ... - are not native,
-// so routing them through the binary would only add a second Node boot) and `advisories bloom status`.
+// so routing them through the binary would only add a second Node boot; `hook list` has its own gate) and `advisories bloom status`.
 // The binary answers that one natively only for `--format json --cache-dir <dir>` and hands every other
 // shape to Node, as it does for `hook run`; the launcher does not check those flags.
 const alwaysNative = (command, subcommand, args) =>
@@ -1061,6 +1097,17 @@ const NATIVE_SHAPE_GATES = new Map([
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
+    // `hook list`; `hook run` is native for every shape (`alwaysNative`) and the other `hook` subcommands are Node's.
+    [
+        "hook",
+        ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
+            if (subcommand !== "list") {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => hookListMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+        },
+    ],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The registry view, typed `info` or `view`.

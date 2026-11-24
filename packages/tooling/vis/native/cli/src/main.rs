@@ -120,6 +120,12 @@ fn main() {
         // is not certain about, is delegated to Node by `hook::run` itself.
         // `hook run --help` is the manifest's to answer (the `_` arm below).
         "hook" if args.get(1).map(String::as_str) == Some("run") && !surface::asks_for_help(&args) => hook::run(&args),
+        // `vis hook list` — the stage scripts of the hooks directory, native for a CI context at the root of
+        // a pnpm workspace. Every other shape, and every directory it cannot read exactly, is delegated inside
+        // `hook::list::run`, before anything is printed; help is left to the arm below.
+        "hook" if args.get(1).map(String::as_str) == Some("list") && !surface::asks_for_help(&args) => {
+            hook::list::run(&args, &raw_args)
+        }
         // `vis advisories bloom status --format json --cache-dir <dir>` — read-only osv-bloom
         // status. Every other shape (table output, `sync`, `prune`, help) goes to the arm below.
         "advisories"
