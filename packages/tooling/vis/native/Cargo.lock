@@ -2192,6 +2192,7 @@ dependencies = [
  "oxc_parser",
  "oxc_span",
  "prek-identify",
+ "rayon",
  "regex",
  "secret-scanner-core",
  "serde",

@@ -33,6 +33,8 @@ vis-core = { path = "../core" }
 # The pure task-runner engines (no napi). `cache hash` reads the main worktree root through it, so
 # the shared cache directory resolves exactly like the Node path, which calls the same function.
 task-runner-core = { path = "../../../task-runner/native/core" }
+# `run`: the tasks of a fully cached run are keyed and looked up on every core.
+rayon = "1"
 # `hook run` fast path. `prek-identify` is pinned to the addon's version so both
 # classify files identically. The fast path compiles every pattern with `unicode(false)`
 # (see src/hook/filter.rs), so ASCII semantics match JS `RegExp` whichever regex features

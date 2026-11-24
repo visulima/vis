@@ -28,6 +28,6 @@ pub use run_graph::{
     build_task_graph, unkeyed_tasks, DependencyKind, DependsOn, NotReproducible, ProjectDependency, RunProject,
     RunTask, RunTaskGraph,
 };
-pub use run_key::{compute_task_keys, TaskKey, TaskKeys};
+pub use run_key::{compute_task_keys, TaskKey, TaskKeyer, TaskKeys};
 pub use task_hasher::{compute_task_hash, hash_command, hash_env_var, TaskHashDetails};
 pub use worktree::{get_main_worktree_root, is_linked_worktree, reset_worktree_cache};

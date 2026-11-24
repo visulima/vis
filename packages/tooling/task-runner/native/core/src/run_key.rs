@@ -148,17 +148,21 @@ fn project_nodes(workspace_root: &str, task: &RunTask) -> Result<Vec<Vec<String>
     Ok(nodes)
 }
 
-/// Computes the key of every task of `run <target>`. Windows is not reproduced.
-///
-/// `workspace_root` is the absolute workspace directory, `projects` the workspace
-/// in project order. See [`build_task_graph`] for the supported shape and
-/// [`NotReproducible`] for everything outside it.
-pub fn compute_task_keys(
+/// The part of every key that does not depend on a task: the checked workspace root, the task graph and the
+/// `__global__` hash.
+#[derive(Clone, Debug)]
+struct Prepared {
+    root: String,
+    graph: RunTaskGraph,
+    global: Option<String>,
+}
+
+fn prepare(
     workspace_root: &str,
     target: &str,
     projects: &[RunProject],
     depends_on: DependsOn,
-) -> Result<TaskKeys, NotReproducible> {
+) -> Result<Prepared, NotReproducible> {
     if cfg!(windows) {
         return Err(NotReproducible::UnsupportedPlatform);
     }
@@ -170,31 +174,58 @@ pub fn compute_task_keys(
     }
 
     let graph = build_task_graph(target, projects, depends_on)?;
-    let unkeyed = unkeyed_tasks(&graph, &Default::default())?;
     let global = global_hash(root)?;
+
+    Ok(Prepared { root: root.to_owned(), graph, global })
+}
+
+/// What a task's key hashes: the global inputs, the keys of the tasks it depends on (already in `hashes`), the
+/// command and the files of its project.
+fn task_details(
+    prepared: &Prepared,
+    target: &str,
+    task: &RunTask,
+    hashes: &HashMap<String, String>,
+) -> Result<TaskHashDetails, NotReproducible> {
+    let mut implicit_deps: Vec<Vec<String>> = Vec::new();
+
+    if let Some(global) = &prepared.global {
+        implicit_deps.push(vec!["__global__".to_owned(), global.clone()]);
+    }
+
+    for dependency in &task.dependencies {
+        implicit_deps.push(vec![format!("dep:{dependency}"), hashes[dependency].clone()]);
+    }
+
+    Ok(TaskHashDetails {
+        command: command_hash(task, target),
+        nodes: project_nodes(&prepared.root, task)?,
+        implicit_deps: (!implicit_deps.is_empty()).then_some(implicit_deps),
+        runtime: None,
+    })
+}
+
+/// Computes the key of every task of `run <target>`. Windows is not reproduced.
+///
+/// `workspace_root` is the absolute workspace directory, `projects` the workspace
+/// in project order. See [`build_task_graph`] for the supported shape and
+/// [`NotReproducible`] for everything outside it.
+pub fn compute_task_keys(
+    workspace_root: &str,
+    target: &str,
+    projects: &[RunProject],
+    depends_on: DependsOn,
+) -> Result<TaskKeys, NotReproducible> {
+    let prepared = prepare(workspace_root, target, projects, depends_on)?;
+    let graph = &prepared.graph;
+    let unkeyed = unkeyed_tasks(graph, &Default::default())?;
     let by_id: HashMap<&str, &RunTask> = graph.tasks.iter().map(|task| (task.id.as_str(), task)).collect();
     let mut hashes: HashMap<String, String> = HashMap::new();
     let mut details_by_id: HashMap<String, TaskHashDetails> = HashMap::new();
 
     for id in graph.execution_order()? {
-        let task = by_id[id.as_str()];
-        let mut implicit_deps: Vec<Vec<String>> = Vec::new();
-
-        if let Some(global) = &global {
-            implicit_deps.push(vec!["__global__".to_owned(), global.clone()]);
-        }
-
         // A dependency's hash is already known: the order puts dependencies first.
-        for dependency in &task.dependencies {
-            implicit_deps.push(vec![format!("dep:{dependency}"), hashes[dependency].clone()]);
-        }
-
-        let details = TaskHashDetails {
-            command: command_hash(task, target),
-            nodes: project_nodes(root, task)?,
-            implicit_deps: (!implicit_deps.is_empty()).then_some(implicit_deps),
-            runtime: None,
-        };
+        let details = task_details(&prepared, target, by_id[id.as_str()], &hashes)?;
 
         hashes.insert(id.clone(), compute_task_hash(&details));
         details_by_id.insert(id, details);
@@ -211,7 +242,41 @@ pub fn compute_task_keys(
         })
         .collect();
 
-    Ok(TaskKeys { graph, keys })
+    Ok(TaskKeys { graph: prepared.graph, keys })
+}
+
+/// The keys of a run whose tasks depend on nothing, one task at a time, so a caller that needs every key to be a
+/// cache hit can stop at the first one that is not. Each key is what [`compute_task_keys`] returns for the task:
+/// with no edge a key reads only its own project's files and the global inputs.
+///
+/// `key` takes `&self` and the keyer is `Sync`, so tasks can be keyed from several threads.
+#[derive(Clone, Debug)]
+pub struct TaskKeyer {
+    prepared: Prepared,
+    target: String,
+}
+
+impl TaskKeyer {
+    /// Checks the workspace root and builds the task graph, in the shape [`compute_task_keys`] does with
+    /// [`DependsOn::Nothing`].
+    pub fn new(workspace_root: &str, target: &str, projects: &[RunProject]) -> Result<Self, NotReproducible> {
+        let prepared = prepare(workspace_root, target, projects, DependsOn::Nothing)?;
+
+        Ok(Self { prepared, target: target.to_owned() })
+    }
+
+    /// The tasks in project order.
+    pub fn tasks(&self) -> &[RunTask] {
+        &self.prepared.graph.tasks
+    }
+
+    /// The key of the task at `index` of [`Self::tasks`].
+    pub fn key(&self, index: usize) -> Result<TaskKey, NotReproducible> {
+        let task = &self.prepared.graph.tasks[index];
+        let details = task_details(&self.prepared, &self.target, task, &HashMap::new())?;
+
+        Ok(TaskKey { id: task.id.clone(), hash: compute_task_hash(&details), keyed: true, details })
+    }
 }
 
 #[cfg(all(test, not(windows)))]
@@ -355,6 +420,55 @@ mod tests {
             chained.key("b:build").unwrap().hash,
             "a changed dependency changes the dependent"
         );
+    }
+
+    #[test]
+    fn the_keyer_gives_the_key_of_each_task_that_compute_task_keys_gives() {
+        let root = workspace("keyer");
+
+        write(&root, "tsconfig.json", "{}");
+
+        for name in ["a", "b", "c"] {
+            write(&root, &format!("packages/{name}/package.json"), "{}");
+            write(&root, &format!("packages/{name}/src/index.ts"), name);
+        }
+
+        let root_str = root.to_str().unwrap();
+        // `b` is chained to `a`, which a keyer that ignores edges must not fold in.
+        let projects = [project("a", "tsc", &[]), project("b", "tsc", &["a"]), project("c", "other", &[])];
+        let all = compute_task_keys(root_str, "build", &projects, DependsOn::Nothing).unwrap();
+        let keyer = TaskKeyer::new(root_str, "build", &projects).unwrap();
+
+        assert_eq!(keyer.tasks(), all.graph.tasks.as_slice());
+
+        for (index, expected) in all.keys.iter().enumerate() {
+            let key = keyer.key(index).unwrap();
+
+            assert_eq!((key.id, key.hash, key.keyed), (expected.id.clone(), expected.hash.clone(), expected.keyed));
+            assert_eq!(key.details.command, expected.details.command);
+            assert_eq!(key.details.nodes, expected.details.nodes);
+            assert_eq!(key.details.implicit_deps, expected.details.implicit_deps);
+        }
+    }
+
+    #[test]
+    fn the_keyer_reports_what_compute_task_keys_reports() {
+        let root = workspace("keyer-errors");
+
+        write(&root, "packages/a/.hidden", "x");
+        write(&root, "packages/b/package.json", "{}");
+
+        let root_str = root.to_str().unwrap();
+        let projects = [project("a", "tsc", &[]), project("b", "tsc", &[])];
+        let keyer = TaskKeyer::new(root_str, "build", &projects).unwrap();
+
+        assert_eq!(keyer.key(0).unwrap_err(), NotReproducible::NoInputFiles("a:build".into()));
+        assert!(keyer.key(1).is_ok());
+        assert_eq!(
+            TaskKeyer::new("relative", "build", &projects).unwrap_err(),
+            NotReproducible::UnsafeWorkspaceRoot("relative".into())
+        );
+        assert_eq!(TaskKeyer::new(root_str, "build", &[]).unwrap_err(), NotReproducible::NoTasks);
     }
 
     #[test]
