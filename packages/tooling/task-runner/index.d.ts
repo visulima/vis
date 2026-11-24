@@ -169,6 +169,12 @@ export declare function hashFilesBatch(filePaths: Array<string>, workspaceRoot: 
 export declare function hashFilesInDirectory(dir: string, workspaceRoot: string): Array<FileHash>;
 
 /**
+ * Hashes the global input files `names` below `workspace_root` (a missing or unreadable file is skipped), then the
+ * `extra` parts. Returns nothing when there is no content to hash.
+ */
+export declare function hashGlobalInputs(workspaceRoot: string, names: Array<string>, extra: Array<string>): string | null;
+
+/**
  * Computes an xxh3-128 hash from a string.
  * Useful for hashing command strings, JSON, etc.
  */
@@ -179,6 +185,19 @@ export declare function hashString(input: string): string;
  * Strings are concatenated and hashed, producing a single deterministic hash.
  */
 export declare function hashStrings(inputs: Array<string>): string;
+
+/**
+ * Computes the command hash of a task from the pieces its envelope carries: the JSON text of the command string,
+ * the canonical JSON text of the outputs list and the JSON text of the overrides with sorted keys.
+ */
+export declare function hashTaskCommand(
+    project: string,
+    target: string,
+    configuration: string | undefined | null,
+    commandJson: string,
+    outputs: string,
+    overridesJson: string,
+): string;
 
 /**
  * Returns true when `<workspace_root>/.git` exists and is a regular file

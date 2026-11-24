@@ -3,8 +3,6 @@ import { readFile, stat } from "node:fs/promises";
 // eslint-disable-next-line n/no-unsupported-features/node-builtins
 import { matchesGlob } from "node:path";
 
-// eslint-disable-next-line import/no-extraneous-dependencies -- bundled inline by packem from workspace devDependency
-import { createXxh3Hasher, xxh3Hash } from "@shared/xxh3";
 import { isAbsolute, join, relative, resolve } from "@visulima/path";
 
 import { normalizeFileset, resolveFilesetPattern } from "./external-inputs";
@@ -28,7 +26,7 @@ import type {
     Task,
     TaskHashDetails,
 } from "./types";
-import { hashStrings, sortObjectKeys } from "./utils";
+import { sortObjectKeys } from "./utils";
 
 /**
  * Byte layout of the command and task hashes. Bump it whenever the native hashers
@@ -104,11 +102,9 @@ interface TaskHasherOptions {
     globalInputs?: string[];
 
     /**
-     * Optional persistent mtime/size-indexed file snapshot. When set,
-     * `#hashFile` consults the snapshot first and only re-reads file
-     * contents when the file's mtime or size has changed since the
-     * previous run. Cuts cold-cache fingerprint time dramatically on
-     * large workspaces where most source files don't change run-to-run.
+     * Optional persistent mtime/size-indexed file snapshot. When set, every
+     * file the hasher keys on is recorded in it. The hasher itself does not
+     * read the snapshot: the native walk hashes every file it is given.
      *
      * The caller is responsible for `load()`ing the snapshot before
      * using the hasher and `save()`ing it after the run completes.
@@ -172,6 +168,11 @@ const getNativeBindings = (): NonNullable<ReturnType<typeof loadNativeBindings>>
 
     return cachedNative as NonNullable<typeof cachedNative>;
 };
+
+/**
+ * Hashes a name and its value as the shared core does for an env var: xxh3-128 of both, each followed by a NUL.
+ */
+const hashPair = (name: string, value: string): string => getNativeBindings().hashEnvVar(name, value);
 
 /**
  * Executes a runtime command and returns its output for hashing.
@@ -252,7 +253,7 @@ const hashRuntimeValue = async (runtime: string): Promise<string> => {
         runtimeCache.set(runtime, output);
     }
 
-    return hashStrings(runtime, output);
+    return hashPair(runtime, output);
 };
 
 /** Shell positional / special variables that are never real env state. */
@@ -323,8 +324,6 @@ class InProcessTaskHasher implements TaskHasher {
 
     readonly #globalEnv: string[];
 
-    readonly #fileHashCache = new Map<string, { hash: string; mtimeMs: number; size: number }>();
-
     readonly #native: NonNullable<ReturnType<typeof loadNativeBindings>>;
 
     readonly #smartLockfileHashing: boolean;
@@ -394,7 +393,7 @@ class InProcessTaskHasher implements TaskHasher {
         const implicitDeps: Record<string, string> = {};
         const runtime: Record<string, string> = {};
 
-        const globalHash = await this.#computeGlobalHash();
+        const globalHash = this.#computeGlobalHash();
 
         if (globalHash) {
             implicitDeps["__global__"] = globalHash;
@@ -423,7 +422,7 @@ class InProcessTaskHasher implements TaskHasher {
                 // eslint-disable-next-line no-await-in-loop -- runtime inputs processed within sequential input loop
                 runtime[input.runtime] = await hashRuntimeValue(input.runtime);
             } else if (isEnvironmentInput(input)) {
-                runtime[`env:${input.env}`] = hashStrings(input.env, this.#envSignature(input.env, task));
+                runtime[`env:${input.env}`] = hashPair(input.env, this.#envSignature(input.env, task));
             } else if (isExternalDependencyInput(input)) {
                 // eslint-disable-next-line no-await-in-loop -- external dependencies processed within sequential input loop
                 const depHashes = await Promise.all(input.externalDependencies.map(async (dep) => [dep, await this.#hashExternalDependency(dep)] as const));
@@ -451,14 +450,14 @@ class InProcessTaskHasher implements TaskHasher {
         const isUntracked = createEnvMatcher([...this.#untrackedEnvVars, ...(task.untrackedEnv ?? [])]);
 
         for (const envVariable of this.#envVars) {
-            runtime[`env:${envVariable}`] = hashStrings(envVariable, this.#envSignature(envVariable, task));
+            runtime[`env:${envVariable}`] = hashPair(envVariable, this.#envSignature(envVariable, task));
         }
 
         // Per-target `fingerprintEnv` names/patterns are explicit, so they
         // are hashed like `envVars`, minus anything the task marks untracked.
         for (const name of Object.keys(resolveEnvPatterns(task.fingerprintEnv ?? [], this.#envOf(task)))) {
             if (!isUntracked(name)) {
-                runtime[`env:${name}`] = hashStrings(name, this.#envSignature(name, task));
+                runtime[`env:${name}`] = hashPair(name, this.#envSignature(name, task));
             }
         }
 
@@ -475,7 +474,7 @@ class InProcessTaskHasher implements TaskHasher {
 
                     // Don't overwrite if the user already declared it.
                     if (runtime[key] === undefined && !isUntracked(name)) {
-                        runtime[key] = hashStrings(name, this.#envSignature(name, task));
+                        runtime[key] = hashPair(name, this.#envSignature(name, task));
                     }
                 }
             }
@@ -499,7 +498,7 @@ class InProcessTaskHasher implements TaskHasher {
 
                 for (const envName of Object.keys(frameworkEnvVariables)) {
                     if (!isUntracked(envName)) {
-                        runtime[`framework-env:${envName}`] = hashStrings(envName, this.#envSignature(envName, task));
+                        runtime[`framework-env:${envName}`] = hashPair(envName, this.#envSignature(envName, task));
                     }
                 }
             }
@@ -520,7 +519,7 @@ class InProcessTaskHasher implements TaskHasher {
                 contribute: (key, value) => {
                     // Validate at the boundary — plugins without TS
                     // types can pass nonsense and we'd otherwise crash
-                    // deep inside `hashStrings` (`Buffer.from(undefined)`
+                    // deep inside the hasher (`Buffer.from(undefined)`
                     // throws an opaque TypeError) or silently collide
                     // every empty-key contribution under `plugin:`.
                     if (typeof key !== "string" || key.length === 0) {
@@ -533,7 +532,7 @@ class InProcessTaskHasher implements TaskHasher {
                         throw new TypeError(`task:fingerprint contribute(${JSON.stringify(key)}) requires a string value, got ${typeof value}`);
                     }
 
-                    contributions[`plugin:${key}`] = hashStrings(key, value);
+                    contributions[`plugin:${key}`] = hashPair(key, value);
                 },
             };
 
@@ -554,9 +553,8 @@ class InProcessTaskHasher implements TaskHasher {
     }
 
     /**
-     * Hashes the command identity for a task using xxh3-128.
-     * Uses native Rust implementation when available, otherwise pure TS xxh3-ts.
-     * Both produce identical xxh3-128 output.
+     * Hashes the command identity for a task using xxh3-128, through the
+     * native hasher the `vis` CLI shares.
      */
     #hashCommand(task: Task): string {
         // Resolve the command text and outputs deterministically so the
@@ -567,15 +565,16 @@ class InProcessTaskHasher implements TaskHasher {
         const commandText = this.#resolveCommandText(task) ?? "";
         const outputsJson = JSON.stringify(canonicaliseOutputs(task.outputs));
 
-        // Native bindings expect a single overrides payload; fold command +
-        // outputs into it so the Rust hasher participates without an API change.
-        const compositeOverrides = JSON.stringify({
-            command: commandText,
-            outputs: outputsJson,
-            overrides: sortObjectKeys(task.overrides),
-        });
-
-        return this.#native.hashCommand(task.target.project, task.target.target, task.target.configuration ?? undefined, compositeOverrides);
+        // The envelope the three parts are hashed in lives in the shared core, so the native CLI keys a task the
+        // same way; only the JSON text of the parts is produced here.
+        return this.#native.hashTaskCommand(
+            task.target.project,
+            task.target.target,
+            task.target.configuration ?? undefined,
+            JSON.stringify(commandText),
+            outputsJson,
+            JSON.stringify(sortObjectKeys(task.overrides)),
+        );
     }
 
     /**
@@ -706,8 +705,7 @@ class InProcessTaskHasher implements TaskHasher {
             const incremental = this.#incrementalHasher;
 
             // Populate the persistent snapshot with the native batch so
-            // subsequent runs can reuse these hashes via the incremental
-            // fast-path in `#hashFile`. Stat in parallel — snapshot writes are
+            // subsequent runs can reuse these hashes. Stat in parallel — snapshot writes are
             // ordered by completion and cheap enough that a sequential loop
             // would dominate for large workspaces.
             const recordPromises: Promise<void>[] = [];
@@ -727,11 +725,6 @@ class InProcessTaskHasher implements TaskHasher {
                 // absolute checkout path in the cache key.
                 result[isAbsolute(path) ? relative(this.#workspaceRoot, path) : path] = hash;
 
-                // Intentionally NOT seeded into `#fileHashCache`: that cache is
-                // mtime/size-revalidated in `#hashFile`, but the native batch
-                // result carries no stat. Seeding a bare hash here is exactly the
-                // stale-read vector — a later `#hashFile` for the same path must
-                // re-validate against disk, not trust this.
                 if (incremental) {
                     recordPromises.push(
                         stat(absPath)
@@ -763,75 +756,15 @@ class InProcessTaskHasher implements TaskHasher {
         return result;
     }
 
-    async #hashFile(filePath: string): Promise<string | undefined> {
-        // Stat first so both cache layers can be revalidated against the
-        // file's current mtime+size. The previous form trusted the in-memory
-        // `#fileHashCache` unconditionally, so a file mutated mid-run (e.g. an
-        // upstream task rewriting a sibling task's declared input) returned a
-        // stale within-run hash and could seed a false cache hit downstream.
-        let fileStat: Awaited<ReturnType<typeof stat>> | undefined;
-
-        try {
-            fileStat = await stat(filePath);
-        } catch {
-            fileStat = undefined;
-        }
-
-        if (fileStat?.isFile()) {
-            // Layer 1: per-run, in-memory — reused only when mtime+size still match.
-            const cached = this.#fileHashCache.get(filePath);
-
-            // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- the `cached &&` guard narrows `cached` for the `cached.hash` return; an optional chain would not.
-            if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
-                return cached.hash;
-            }
-
-            // Layer 2: cross-run, persisted, mtime+size indexed. Skips the read
-            // when the snapshot still matches; falls back to a full read when cold.
-            if (this.#incrementalHasher) {
-                const snapshotHit = this.#incrementalHasher.getSnapshotHash(filePath, fileStat.mtimeMs, fileStat.size);
-
-                if (snapshotHit) {
-                    this.#fileHashCache.set(filePath, { hash: snapshotHit, mtimeMs: fileStat.mtimeMs, size: fileStat.size });
-
-                    return snapshotHit;
-                }
-            }
-
-            try {
-                const content = await readFile(filePath);
-                const hash = xxh3Hash(content);
-
-                this.#incrementalHasher?.recordSnapshot(filePath, hash, fileStat.mtimeMs, fileStat.size);
-                this.#fileHashCache.set(filePath, { hash, mtimeMs: fileStat.mtimeMs, size: fileStat.size });
-
-                return hash;
-            } catch {
-                return undefined;
-            }
-        }
-
-        // No usable stat (special file, race, or permission error). Read
-        // best-effort without caching by mtime — matches the prior
-        // non-incremental path, just without a stale-prone cache entry.
-        try {
-            const content = await readFile(filePath);
-
-            return xxh3Hash(content);
-        } catch {
-            return undefined;
-        }
-    }
-
     async #hashExternalDependency(depName: string): Promise<string> {
         try {
             const packageJsonPath = join(this.#workspaceRoot, "node_modules", depName, "package.json");
             const packageJsonContent = await readFile(packageJsonPath, "utf8");
             const packageJson = JSON.parse(packageJsonContent) as { version?: string };
 
-            return hashStrings(depName, packageJson.version ?? "unknown");
+            return hashPair(depName, packageJson.version ?? "unknown");
         } catch {
-            return hashStrings(depName, "not-installed");
+            return hashPair(depName, "not-installed");
         }
     }
 
@@ -839,45 +772,20 @@ class InProcessTaskHasher implements TaskHasher {
      * Computes a combined hash of all global inputs and global env vars.
      * Cached after first computation.
      */
-    async #computeGlobalHash(): Promise<string | undefined> {
+    #computeGlobalHash(): string | undefined {
         if (this.#globalHash !== undefined) {
             return this.#globalHash;
         }
 
-        const hash = createXxh3Hasher();
-        let hasContent = false;
+        const names = this.#globalInputs.filter((input) => !(this.#smartLockfileHashing && LOCKFILE_NAMES.has(input)));
+        const environment = this.#globalEnv.map((envName) => `globalEnv:${envName}=${this.#envSignature(envName)}`);
 
-        // Hash global input files (parallelized)
-        const globalFileHashes = await Promise.all(
-            this.#globalInputs
-                .filter((input) => !(this.#smartLockfileHashing && LOCKFILE_NAMES.has(input)))
-                .map(async (globalInput) => {
-                    const fileHash = await this.#hashFile(join(this.#workspaceRoot, globalInput));
-
-                    return fileHash ? { hash: fileHash, name: globalInput } : undefined;
-                }),
-        );
-
-        for (const entry of globalFileHashes) {
-            if (entry) {
-                hash.update(entry.name);
-                hash.update(entry.hash);
-                hasContent = true;
-            }
-        }
-
-        for (const envName of this.#globalEnv) {
-            hash.update(`globalEnv:${envName}=${this.#envSignature(envName)}`);
-            hasContent = true;
-        }
-
-        this.#globalHash = hasContent ? hash.digest() : "";
+        this.#globalHash = this.#native.hashGlobalInputs(this.#workspaceRoot, names, environment) ?? "";
 
         return this.#globalHash || undefined;
     }
 
     public clearCache(): void {
-        this.#fileHashCache.clear();
         this.#globalHash = undefined;
         this.#lockfileHasher?.clearCache();
     }
@@ -892,14 +800,11 @@ class InProcessTaskHasher implements TaskHasher {
      * @param filePath Absolute path to the file.
      * @returns The fresh xxh3 hash, or `undefined` if the file cannot be read.
      */
-    // eslint-disable-next-line class-methods-use-this
-    public async rehashFile(filePath: string): Promise<string | undefined> {
+    public rehashFile(filePath: string): Promise<string | undefined> {
         try {
-            const content = await readFile(filePath);
-
-            return xxh3Hash(content);
+            return Promise.resolve(this.#native.hashFile(filePath));
         } catch {
-            return undefined;
+            return Promise.resolve(undefined);
         }
     }
 }
@@ -909,29 +814,14 @@ class InProcessTaskHasher implements TaskHasher {
  * Rust xxh3-128 implementation.
  */
 const computeTaskHash = (hashDetails: TaskHashDetails): string => {
-    const native = getNativeBindings();
+    // The native hasher sorts every section by key itself.
+    const pairs = (record: Record<string, string> | undefined): string[][] | undefined => (record ? Object.entries(record) : undefined);
 
-    const nodes = Object.keys(hashDetails.nodes)
-        .toSorted()
-        .map((key) => [key, hashDetails.nodes[key] as string]);
-
-    const implicitDeps = hashDetails.implicitDeps
-        ? Object.keys(hashDetails.implicitDeps)
-            .toSorted()
-            .map((key) => [key, (hashDetails.implicitDeps as Record<string, string>)[key] as string])
-        : undefined;
-
-    const runtime = hashDetails.runtime
-        ? Object.keys(hashDetails.runtime)
-            .toSorted()
-            .map((key) => [key, (hashDetails.runtime as Record<string, string>)[key] as string])
-        : undefined;
-
-    return native.computeTaskHash({
+    return getNativeBindings().computeTaskHash({
         command: hashDetails.command,
-        implicitDeps,
-        nodes,
-        runtime,
+        implicitDeps: pairs(hashDetails.implicitDeps),
+        nodes: Object.entries(hashDetails.nodes),
+        runtime: pairs(hashDetails.runtime),
     });
 };
 

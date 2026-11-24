@@ -103,13 +103,22 @@ interface NativeBindings {
     // Task hashing
     hashCommand: (project: string, target: string, configuration: string | undefined, overridesJson: string) => string;
     hashEnvVar: (name: string, value: string) => string;
-
     // File hashing
     hashFile: (filePath: string) => string;
+
     hashFilesBatch: (filePaths: string[], workspaceRoot: string) => NativeFileHash[];
     hashFilesInDirectory: (directory: string, workspaceRoot: string) => NativeFileHash[];
+    hashGlobalInputs: (workspaceRoot: string, names: string[], extra: string[]) => string | null | undefined;
     hashString: (input: string) => string;
     hashStrings: (inputs: string[]) => string;
+    hashTaskCommand: (
+        project: string,
+        target: string,
+        configuration: string | undefined,
+        commandJson: string,
+        outputs: string,
+        overridesJson: string,
+    ) => string;
     isLinkedWorktree: (workspaceRoot: string) => boolean;
 
     resetWorktreeCache: () => void;
@@ -246,7 +255,13 @@ const loadNativeBindings = (): NativeBindings | undefined => {
 
         // Validate that the loaded binding has the expected API surface.
         // A stale .node binary may load successfully but be missing functions.
-        if (typeof loaded.hashCommand === "function" && typeof loaded.hashFile === "function" && typeof loaded.runConcurrent === "function") {
+        if (
+            typeof loaded.hashCommand === "function"
+            && typeof loaded.hashTaskCommand === "function"
+            && typeof loaded.hashGlobalInputs === "function"
+            && typeof loaded.hashFile === "function"
+            && typeof loaded.runConcurrent === "function"
+        ) {
             nativeBindings = loaded;
         } else {
             loadError = buildLoadError(new Error("native addon loaded but is missing expected exports (stale or version-mismatched binary)"));

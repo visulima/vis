@@ -4,13 +4,13 @@
 //! `#foldDependencyHashes`, then `computeTaskHash`.
 
 use std::collections::HashMap;
-use std::path::Path;
 
-use crate::file_hasher::{collect_files, hash_bytes, hash_files_batch};
+use crate::file_hasher::{collect_files, hash_files_batch};
+use crate::key_parts::{hash_global_inputs, hash_task_command, js_json_string};
 use crate::run_graph::{
     build_task_graph, has_glob_magic, unkeyed_tasks, DependsOn, NotReproducible, RunProject, RunTask, RunTaskGraph,
 };
-use crate::task_hasher::{compute_task_hash, hash_command, TaskHashDetails};
+use crate::task_hasher::{compute_task_hash, TaskHashDetails};
 
 /// The workspace-root files every task key covers, in this order
 /// (`DEFAULT_GLOBAL_INPUTS` in `task-hasher.ts`).
@@ -43,69 +43,31 @@ impl TaskKeys {
     }
 }
 
-/// Serialises `text` as `JSON.stringify` does: the escapes `\"` `\\` `\b` `\f` `\n`
-/// `\r` `\t`, `\u00xx` for the other control characters, everything else verbatim
-/// (Rust strings cannot hold the lone surrogates `JSON.stringify` escapes).
-pub(crate) fn js_json_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-
-    out.push('"');
-
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-
-    out.push('"');
-
-    out
-}
-
-/// The command hash of a plain script task: `hash_command` over the overrides the
-/// run builds for it, `{"command":…,"outputs":"[]","overrides":{"command":…,"visOptions":{}}}`
-/// (outputs are always empty in this shape, and `visOptions` is the empty options object).
+/// The command hash of a plain script task: the overrides the run builds for it are
+/// `{"command":…,"visOptions":{}}` and its outputs are always empty in this shape.
 fn command_hash(task: &RunTask, target: &str) -> String {
     let command = js_json_string(&task.command);
-    let overrides =
-        format!(r#"{{"command":{command},"outputs":"[]","overrides":{{"command":{command},"visOptions":{{}}}}}}"#);
 
-    hash_command(&task.project, target, None, &overrides)
+    hash_task_command(
+        &task.project,
+        target,
+        None,
+        &command,
+        "[]",
+        &format!(r#"{{"command":{command},"visOptions":{{}}}}"#),
+    )
 }
 
-/// `__global__`: xxh3-128 of `name + fileHash` (no separators) for each existing
-/// global input file, in order. `None` when none exists.
+/// `__global__`: the hash of the global input files, `None` when none exists. A file that exists but cannot be
+/// read is not reproducible (the Node hasher would leave it out; the native run hands such a workspace to Node).
 fn global_hash(workspace_root: &str) -> Result<Option<String>, NotReproducible> {
-    let mut combined = Vec::new();
+    let names = GLOBAL_INPUTS.map(str::to_owned);
+    let global = hash_global_inputs(workspace_root, &names, &[]);
 
-    for name in GLOBAL_INPUTS {
-        let path = Path::new(workspace_root).join(name);
-
-        // A missing file, a directory or any other non-file is skipped, as the hasher's `stat` + `readFile` skips it.
-        let Ok(metadata) = std::fs::metadata(&path) else { continue };
-
-        if !metadata.is_file() {
-            continue;
-        }
-
-        let content = std::fs::read(&path).map_err(|error| NotReproducible::UnreadableFile {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-
-        combined.extend_from_slice(name.as_bytes());
-        combined.extend_from_slice(hash_bytes(&content).as_bytes());
+    match global.unreadable {
+        Some((path, reason)) => Err(NotReproducible::UnreadableFile { path, reason }),
+        None => Ok(global.hash),
     }
-
-    Ok((!combined.is_empty()).then(|| hash_bytes(&combined)))
 }
 
 /// `nodes`: the files of the project, keyed by workspace-relative path.
@@ -282,8 +244,10 @@ impl TaskKeyer {
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+    use crate::file_hasher::hash_bytes;
     use crate::run_graph::{DependencyKind, ProjectDependency};
     use std::fs;
+    use std::path::Path;
 
     /// `xxh3_128` of the parts joined without a separator, the `__global__` layout.
     fn concat_hash(parts: &[&str]) -> String {

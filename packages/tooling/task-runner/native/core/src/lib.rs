@@ -8,6 +8,7 @@ pub mod concurrent;
 mod error;
 mod file_hasher;
 mod graph;
+mod key_parts;
 mod run_graph;
 mod run_key;
 mod task_hasher;
@@ -24,6 +25,7 @@ pub use graph::{
     find_all_cycles, find_back_edges, find_cycle, get_dependent_tasks, get_transitive_deps, topological_sort,
     CycleResult, TaskGraph,
 };
+pub use key_parts::{hash_global_inputs, hash_task_command, GlobalInputs};
 pub use run_graph::{
     build_task_graph, unkeyed_tasks, DependencyKind, DependsOn, NotReproducible, ProjectDependency, RunProject,
     RunTask, RunTaskGraph,
