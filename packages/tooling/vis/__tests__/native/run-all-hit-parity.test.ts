@@ -161,7 +161,7 @@ const mask = (text: string): string =>
     text
         .replaceAll(/section_(start|end):\d+:/g, "section_$1:T:")
         .replaceAll(/\(\d+ ms\)/g, "(N ms)")
-        .replaceAll(/Took \d+ ms/g, "Took N ms")
+        .replaceAll(/Took \d+ (?:ms|s|min|h)(?: \d+ (?:ms|s|min|h))*/g, "Took N ms")
         .replaceAll(/· \d+\.\ds/g, "· Ns");
 
 const lines = (text: string): string[] => mask(text).split("\n");
