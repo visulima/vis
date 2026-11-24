@@ -1,5 +1,7 @@
 /* eslint-disable perfectionist/sort-objects, @stylistic/quote-props -- the key order of the fixtures is what the tests are about */
-import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -499,6 +501,24 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             for (const text of ["foo: [1, 2]\n", "minimumReleaseAge: 1.5\n", "minimumReleaseAge: 007\n", "allowBuilds:\n  a: yes\n", "onlyBuiltDependencies:\n  - 123\n", "a: &x 1\n", "n:\n  a:\n    b: 1\n", "x: 1\nx: 2\n", "a:\n\t- b\n"]) {
                 harness.expectDelegation(workspaceFiles({ ...tree(), ...yaml(text), ...config({ policies: { firstSeen: { minutes: 10 }, installScripts: { allow: { esbuild: true } } } }) }), ARGS);
             }
+        });
+
+        it("declines before it walks `node_modules` when the yaml is outside the grammar", () => {
+            expect.hasAssertions();
+
+            const files = workspaceFiles({ ...tree(), "pnpm-workspace.yaml": "packages:\n  - \"packages/*\"\nminimumReleaseAge: 10 # minutes\n", ...config({ policies: { firstSeen: { minutes: 10 } } }) });
+            const [, nativeRoot] = harness.pair(files);
+
+            // The walk reads every `node_modules/*/package.json`; a pipe nobody writes to blocks that read for good, so a
+            // binary that walked first would not answer within the timeout.
+            mkdirSync(join(nativeRoot, "node_modules", "trap"), { recursive: true });
+            expect(spawnSync("mkfifo", [join(nativeRoot, "node_modules", "trap", "package.json")]).status).toBe(0);
+
+            const result = harness.runNative(ARGS, nativeRoot, {}, true, 10_000);
+
+            expect(result.error).toBeUndefined();
+            expect(result.status).toBe(70);
+            expect(result.stdout).toBe("");
         });
 
         it("a workspace that is not rooted at the working directory is declined", () => {

@@ -147,8 +147,8 @@ export class Harness {
         return spawnSync(process.execPath, [nodeEntry, ...this.command, ...args], { cwd, encoding: "utf8", env: Harness.environment(extra, ci) });
     }
 
-    public runNative(args: string[], cwd: string, extra: Record<string, string> = {}, ci = true): Result {
-        return spawnSync(this.nativeBinary, [...this.command, ...args], { cwd, encoding: "utf8", env: Harness.environment(extra, ci) });
+    public runNative(args: string[], cwd: string, extra: Record<string, string> = {}, ci = true, timeout?: number): Result {
+        return spawnSync(this.nativeBinary, [...this.command, ...args], { cwd, encoding: "utf8", env: Harness.environment(extra, ci), timeout });
     }
 
     /** Runs both sides on identical workspaces and expects identical outcomes; the native side must have answered. */

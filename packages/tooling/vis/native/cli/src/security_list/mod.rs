@@ -87,10 +87,14 @@ fn report() -> Option<String> {
     }
 
     let config = config(&cwd)?;
+
+    // Read before the walk of `node_modules`: a yaml outside the supported grammar is a hand-off, and the
+    // walk (the pnpm store included) would only be repeated by Node.
+    let snapshot = snapshot(&config.drift, &cwd)?;
     let found: Found = scan::walk(&cwd)?;
     let triage: Status = status(&found.packages, &config.allow, config.pin_versions);
     let conflicts = found.conflicts(&config.allow_bins)?;
-    let drift = drift(&config.drift, &cwd)?;
+    let drift = drift(&config.drift, &snapshot);
 
     let text = |value: &str| Json::Str(value.to_owned());
     let strings = |items: &[String]| Json::Array(items.iter().map(|item| text(item)).collect());
@@ -328,8 +332,22 @@ fn config(cwd: &Path) -> Option<Config> {
     Some(config)
 }
 
-/// `checkPmNativeConfigDrift(config, "pnpm", cwd)` as the JSON object `list.ts` prints.
-fn drift(input: &DriftInput, cwd: &Path) -> Option<Json> {
+/// What `pnpm-workspace.yaml` holds for the drift check, or `None` when it is outside the grammar of [`yaml`].
+/// The file is read only when the config has a setting to compare with it.
+fn snapshot(input: &DriftInput, cwd: &Path) -> Option<yaml::Snapshot> {
+    if input.allow.is_none() && input.minutes.is_none() && input.exclude.is_none() {
+        return Some(yaml::Snapshot::default());
+    }
+
+    match fs::read(cwd.join("pnpm-workspace.yaml")) {
+        Ok(bytes) => yaml::snapshot(std::str::from_utf8(&bytes).ok()?),
+        Err(_) => Some(yaml::Snapshot::default()),
+    }
+}
+
+/// `checkPmNativeConfigDrift(config, "pnpm", cwd)` as the JSON object `list.ts` prints, given the yaml's
+/// [`snapshot`].
+fn drift(input: &DriftInput, snapshot: &yaml::Snapshot) -> Json {
     let text = |value: &str| Json::Str(value.to_owned());
     let strings = |items: &[String]| Json::Array(items.iter().map(|item| text(item)).collect());
     let difference = |ours: &[String], theirs: &[String]| -> Vec<String> {
@@ -344,15 +362,6 @@ fn drift(input: &DriftInput, cwd: &Path) -> Option<Json> {
                 ("onlyInVis".to_owned(), strings(&only_in_vis)),
             ])
         })
-    };
-
-    let snapshot = if input.allow.is_some() || input.minutes.is_some() || input.exclude.is_some() {
-        match fs::read(cwd.join("pnpm-workspace.yaml")) {
-            Ok(bytes) => yaml::snapshot(std::str::from_utf8(&bytes).ok()?)?,
-            Err(_) => yaml::Snapshot::default(),
-        }
-    } else {
-        yaml::Snapshot::default()
     };
 
     let mut fields = Vec::new();
@@ -395,7 +404,7 @@ fn drift(input: &DriftInput, cwd: &Path) -> Option<Json> {
 
     report.extend(fields);
 
-    Some(Json::Object(report))
+    Json::Object(report)
 }
 
 #[cfg(test)]
@@ -428,7 +437,7 @@ mod tests {
             minutes: Some(20),
             exclude: Some(vec!["y".to_owned(), "y".to_owned()]),
         };
-        let text = stringify(&drift(&input, &dir).unwrap(), "");
+        let text = stringify(&drift(&input, &snapshot(&input, &dir).unwrap()), "");
         let _ = fs::remove_dir_all(&dir);
 
         assert_eq!(
@@ -438,12 +447,28 @@ mod tests {
     }
 
     #[test]
+    fn a_yaml_outside_the_grammar_is_declined_only_when_the_config_compares_with_it() {
+        let dir = std::env::temp_dir().join(format!("vis-security-grammar-{}", std::process::id()));
+
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("pnpm-workspace.yaml"), "minimumReleaseAge: 10 # minutes\n").unwrap();
+
+        let compares = DriftInput { minutes: Some(10), ..DriftInput::default() };
+        let declined = snapshot(&compares, &dir).is_none();
+        let ignored = snapshot(&DriftInput::default(), &dir).is_some();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(declined, "an inline comment is outside the grammar");
+        assert!(ignored, "the file is not read when nothing compares with it");
+    }
+
+    #[test]
     fn no_setting_means_no_drift() {
         let dir = std::env::temp_dir().join(format!("vis-security-nodrift-{}", std::process::id()));
 
         fs::create_dir_all(&dir).unwrap();
 
-        let text = stringify(&drift(&DriftInput::default(), &dir).unwrap(), "");
+        let text = stringify(&drift(&DriftInput::default(), &snapshot(&DriftInput::default(), &dir).unwrap()), "");
         let _ = fs::remove_dir_all(&dir);
 
         assert_eq!(text, r#"{"hasDrift":false,"packageManager":"pnpm"}"#);
