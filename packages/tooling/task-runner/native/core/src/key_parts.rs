@@ -4,8 +4,6 @@
 //! command and its overrides are) and never refuse. Whether a workspace is one the caller can reproduce is the
 //! caller's question (`run_key` answers it for the CLI; the Node hasher keys whatever it is given).
 
-use std::path::Path;
-
 use crate::file_hasher::hash_bytes;
 use crate::task_hasher::hash_command;
 
@@ -15,24 +13,26 @@ pub struct GlobalInputs {
     /// xxh3-128 of `name + fileHash` (no separators) for each existing global input file in `names` order, then of
     /// each `extra` part; `None` when there is none.
     pub hash: Option<String>,
-    /// The first global input that is a file but could not be read (it is left out of the hash), with the reason.
-    pub unreadable: Option<String>,
+    /// The first regular file that could not be read (it is left out of the hash): its path and the reason.
+    pub unreadable: Option<(String, String)>,
 }
 
 /// Hashes the global inputs of a workspace: the files `names` names below `workspace_root`, then the `extra` parts
 /// (the caller's own global signals, such as its `globalEnv` entries).
 ///
-/// A missing file, a directory or any other non-file is skipped. A file that exists but cannot be read is skipped as
-/// well and reported in [`GlobalInputs::unreadable`], so a caller that must not key on a partial read can refuse.
+/// A name is always read below the root, an absolute one included. A path that does not exist or is a directory is
+/// skipped. Anything else is read, a device or a pipe behind a symlink as well, and left out when the read fails; a
+/// regular file that cannot be read is also reported in [`GlobalInputs::unreadable`], so a caller that must not key
+/// on a partial read can refuse.
 pub fn hash_global_inputs(workspace_root: &str, names: &[String], extra: &[String]) -> GlobalInputs {
     let mut combined = Vec::new();
     let mut unreadable = None;
 
     for name in names {
-        let path = Path::new(workspace_root).join(name);
+        let path = format!("{}/{}", workspace_root.trim_end_matches('/'), name.trim_start_matches('/'));
         let Ok(metadata) = std::fs::metadata(&path) else { continue };
 
-        if !metadata.is_file() {
+        if metadata.is_dir() {
             continue;
         }
 
@@ -41,9 +41,10 @@ pub fn hash_global_inputs(workspace_root: &str, names: &[String], extra: &[Strin
                 combined.extend_from_slice(name.as_bytes());
                 combined.extend_from_slice(hash_bytes(&content).as_bytes());
             }
-            Err(error) => {
-                unreadable.get_or_insert_with(|| format!("{}: {error}", path.display()));
+            Err(error) if metadata.is_file() => {
+                unreadable.get_or_insert_with(|| (path.clone(), error.to_string()));
             }
+            Err(_) => {}
         }
     }
 
@@ -159,6 +160,29 @@ mod tests {
     }
 
     #[test]
+    fn a_global_input_is_read_below_the_root_and_a_device_behind_a_symlink_is_read() {
+        let root = workspace("edges");
+
+        fs::write(root.join("extra.txt"), "e").unwrap();
+        std::os::unix::fs::symlink("/dev/null", root.join(".env")).unwrap();
+
+        let root_str = root.to_str().unwrap();
+        let e = hash_bytes(b"e");
+        let empty = hash_bytes(b"");
+
+        assert_eq!(
+            hash_global_inputs(root_str, &names(&["/extra.txt"]), &[]).hash,
+            Some(hash_bytes(format!("/extra.txt{e}").as_bytes()))
+        );
+        // The path below the root is `<root>/<root>/extra.txt`, which does not exist.
+        assert_eq!(hash_global_inputs(root_str, &[format!("{root_str}/extra.txt")], &[]), GlobalInputs::default());
+        assert_eq!(
+            hash_global_inputs(root_str, &names(&[".env"]), &[]),
+            GlobalInputs { hash: Some(hash_bytes(format!(".env{empty}").as_bytes())), unreadable: None }
+        );
+    }
+
+    #[test]
     fn an_unreadable_global_input_is_left_out_and_reported() {
         let root = workspace("unreadable");
         let locked = root.join("locked.lock");
@@ -172,7 +196,7 @@ mod tests {
             let global = hash_global_inputs(root.to_str().unwrap(), &names(&["locked.lock", "ok.lock"]), &[]);
 
             assert_eq!(global.hash, Some(hash_bytes(format!("ok.lock{}", hash_bytes(b"ok")).as_bytes())));
-            assert!(global.unreadable.unwrap().contains("locked.lock"));
+            assert!(global.unreadable.unwrap().0.ends_with("/locked.lock"));
         }
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();

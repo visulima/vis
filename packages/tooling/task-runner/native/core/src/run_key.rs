@@ -65,7 +65,7 @@ fn global_hash(workspace_root: &str) -> Result<Option<String>, NotReproducible> 
     let global = hash_global_inputs(workspace_root, &names, &[]);
 
     match global.unreadable {
-        Some(reason) => Err(NotReproducible::UnreadableFile { path: workspace_root.to_owned(), reason }),
+        Some((path, reason)) => Err(NotReproducible::UnreadableFile { path, reason }),
         None => Ok(global.hash),
     }
 }

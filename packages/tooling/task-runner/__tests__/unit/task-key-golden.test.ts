@@ -8,7 +8,7 @@
  * outputs, extra override keys, a configuration, dependencies listed out of order, `globalEnv`, a glob input with a
  * negation and a project that has no input file.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -132,8 +132,11 @@ const initialTask = (name: string, overrides: Record<string, unknown>, extra: Pa
 const run = async (root: string): Promise<Record<string, string>> => {
     const initialTasks = [
         initialTask("core", {}),
-        initialTask("util", { visForwardedArgs: ["--flag", "a b"], visTaskArgEnv: { A: "2", Z: "1" } }),
-        initialTask("web", { visOptions: { pool: { kind: "x", size: 2 } } }),
+        // The keys below are written out of order on purpose: the key sorts them.
+        /* eslint-disable perfectionist/sort-objects */
+        initialTask("util", { visForwardedArgs: ["--flag", "a b"], visTaskArgEnv: { Z: "1", A: "2" } }),
+        initialTask("web", { visOptions: { pool: { size: 2, kind: "x" } } }),
+        /* eslint-enable perfectionist/sort-objects */
         initialTask("app", {}),
         initialTask("docs", {}),
         initialTask("lib", {}, { fingerprintEnv: ["GOLDEN_FP_*"] }),
@@ -268,6 +271,31 @@ describe.skipIf(process.platform === "win32")("golden task keys", () => {
             native.hashGlobalInputs(root, ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json", ".env", "packages"], ["globalEnv:X=1:y"]),
         ).toBe(expected);
         expect(native.hashGlobalInputs(root, ["missing", "packages"], [])).toBeNull();
+    });
+
+    it("keeps the global input hash for a device behind a symlink, a directory and an absolute entry", async () => {
+        expect.hasAssertions();
+
+        const root = createFixture();
+
+        put(root, "yarn.lock", "y");
+        put(root, "extra.txt", "e");
+        symlinkSync("/dev/null", join(root, ".env.local"));
+        mkdirSync(join(root, "tsconfig.base.json"));
+
+        const task = initialTask("core", {});
+        const globalHash = async (globalInputs: string[]): Promise<string | undefined> => {
+            const details = await new InProcessTaskHasher({ globalInputs, projects, workspaceRoot: root }).hashTask(task);
+
+            return details.implicitDeps?.["__global__"];
+        };
+
+        // Captured from the code that read each global input itself: a path outside the workspace's directory
+        // tree is read below the root, and anything that is not a directory is read, a device included.
+        await expect(globalHash([".env.local"])).resolves.toBe("3f405840b67d425b7aeeac360868b26b");
+        await expect(globalHash(["yarn.lock", ".env.local", "tsconfig.base.json"])).resolves.toBe("93ea5f0983c2126000217728a1fa8776");
+        await expect(globalHash(["/extra.txt", "yarn.lock"])).resolves.toBe("c0cd20cb04f12f0cd705b97193964856");
+        await expect(globalHash([join(root, "extra.txt")])).resolves.toBeUndefined();
     });
 
     it("keeps the key of a task with a configuration", async () => {
