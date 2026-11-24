@@ -1304,6 +1304,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             // Two aliases of one tool: Node walks `engines` in file order and the later one wins, so the run is Node's either way.
             it.each([
+                // The key order is the case: it is the order of the file.
+                // eslint-disable-next-line perfectionist/sort-objects
                 ["the lenient alias first", { nodejs: ">=1", node: ">=99999" }],
                 ["the strict alias first", { node: ">=99999", nodejs: ">=1" }],
             ])("delegates an engines that names node twice: %s", (_name, engines) => {
