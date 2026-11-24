@@ -127,6 +127,16 @@ fn shell_command(command: &str, shell_path: Option<&str>, windows: bool) -> (Str
     }
 }
 
+/// `program` and `args` run under `env -u SHELL`, which removes the variable `portable-pty` sets on
+/// every command. A caller that wants only its own variables (`inheritEnv: false`) must not find
+/// one it did not pass; one it did pass is kept (see `spawn_pty`).
+#[cfg(unix)]
+fn without_shell_variable(program: String, args: Vec<String>) -> (String, Vec<String>) {
+    let wrapped = ["-u", "SHELL", &program].map(String::from).into_iter().chain(args).collect();
+
+    ("/usr/bin/env".to_string(), wrapped)
+}
+
 /// Start `config.command` in a terminal and stream its output.
 ///
 /// Like `spawn_process`, this returns once the command is running; the close is reported through
@@ -153,13 +163,23 @@ pub(crate) fn spawn_pty(
     };
 
     let (program, args) = shell_command(&config.command, shell_path, cfg!(windows));
+
+    // `portable-pty` adds SHELL to every command, so a clean environment needs it taken out again,
+    // unless the caller set it, in which case the caller's value is what the command gets.
+    #[cfg(unix)]
+    let (program, args) =
+        if config.inherit_env == Some(false) && !config.env.iter().flatten().any(|(key, _)| key == "SHELL") {
+            without_shell_variable(program, args)
+        } else {
+            (program, args)
+        };
+
     let mut builder = CommandBuilder::new(program);
 
     builder.args(args);
     builder.cwd(cwd);
 
     // The terminal command inherits this process's environment unless the caller opted out.
-    // (`portable-pty` adds `SHELL` either way.)
     if config.inherit_env == Some(false) {
         builder.env_clear();
     }
@@ -384,6 +404,15 @@ mod tests {
         assert_eq!(decode(&[b"a\xFFb"]), ["a\u{FFFD}b", ""]);
         // A lone lead byte at the end of the stream is flushed as a replacement character.
         assert_eq!(decode(&[b"a\xE2"]), ["a", "\u{FFFD}"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_shell_variable_is_removed_by_running_the_command_under_env() {
+        assert_eq!(
+            without_shell_variable("/bin/sh".to_string(), vec!["-c".to_string(), "echo hi".to_string()]),
+            ("/usr/bin/env".to_string(), ["-u", "SHELL", "/bin/sh", "-c", "echo hi"].map(String::from).to_vec())
+        );
     }
 
     #[test]

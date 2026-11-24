@@ -107,8 +107,9 @@ interface NativeConcurrentRunResult {
 interface NativeConcurrentRun {
     /**
      * Kill every running command and start no queued one. `"interrupt"` (Ctrl+C) closes every
-     * command with exit code 0 and `killed: true`; `"terminate"` (the default) keeps their exit
-     * codes. Repeated calls, and calls after the run finished, do nothing.
+     * command with exit code 0 and `killed: true` in the result (the `close` events keep the real
+     * exit codes); `"terminate"` (the default) keeps the exit codes in the result too. Repeated
+     * calls, and calls after the run finished, do nothing.
      */
     abort: (mode?: "interrupt" | "terminate") => void;
     /** Resolves once every command has finished; may be awaited more than once. */

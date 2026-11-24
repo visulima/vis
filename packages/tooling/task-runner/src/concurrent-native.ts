@@ -113,13 +113,17 @@ const toProcessEvent = (event: NativeProcessEvent, run: NativeConcurrentRun, com
 
             return {
                 index,
-                kill: (signal?: string) => {
-                    try {
-                        run.kill(index, signal ?? "SIGTERM");
-                    } catch {
-                        // An unknown signal name: the JS spawner's `process.kill` fails the same way, silently.
-                    }
-                },
+                // A command that could not be spawned has no pid to kill, as in the JS spawner.
+                kill:
+                    event.pid === undefined
+                        ? undefined
+                        : (signal?: string) => {
+                            try {
+                                run.kill(index, signal ?? "SIGTERM");
+                            } catch {
+                                // An unknown signal name: the JS spawner's `process.kill` fails the same way, silently.
+                            }
+                        },
                 kind: "started",
                 pid: event.pid,
                 resize:

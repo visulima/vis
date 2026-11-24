@@ -258,8 +258,9 @@ impl ConcurrentRun {
     /// Stop the run: kill every running command and start no queued one.
     ///
     /// `"interrupt"` is a user interrupt (Ctrl+C): every command then closes with exit code 0 and
-    /// `killed: true`, because cancelling is not a failure. `"terminate"` (the default) keeps the
-    /// commands' exit codes. Calling it again, or after the run has finished, does nothing.
+    /// `killed: true` in the result, because cancelling is not a failure; the `close` events keep
+    /// the exit codes the commands really had. `"terminate"` (the default) keeps the exit codes in
+    /// the result too. Calling it again, or after the run has finished, does nothing.
     #[napi(ts_args_type = "mode?: 'interrupt' | 'terminate'")]
     pub fn abort(&self, mode: Option<String>) -> Result<()> {
         let graceful = match mode.as_deref() {

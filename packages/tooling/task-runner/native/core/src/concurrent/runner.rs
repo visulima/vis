@@ -258,6 +258,8 @@ impl RunState<'_> {
             ) {
                 Ok(info) => self.active.push(info),
                 Err(error) => {
+                    // Like a command that runs, it starts (there is no pid) before it ends.
+                    self.events.send(ProcessEvent::Started { index: index as u32, pid: None });
                     self.events.send(ProcessEvent::Error {
                         index: index as u32,
                         message: format!("Failed to spawn: {error}"),
@@ -280,14 +282,7 @@ impl RunState<'_> {
     /// Account for a command that has finished: report it, apply kill-others,
     /// and keep it for the result.
     fn record_close(&mut self, mut close_event: ConcurrentCloseEvent) {
-        if self.aborting {
-            close_event.killed = true;
-
-            if self.interrupted {
-                close_event.exit_code = 0;
-            }
-        }
-
+        // The event says what the command did, even when the run is being torn down.
         self.events.send(ProcessEvent::Close {
             index: close_event.index,
             exit_code: close_event.exit_code,
@@ -295,6 +290,16 @@ impl RunState<'_> {
             command_name: close_event.name.clone(),
             duration_ms: close_event.duration_ms,
         });
+
+        // The result says what that means for the run: a command ended by a teardown was killed,
+        // and an interrupt is a cancellation, not a failure.
+        if self.aborting {
+            close_event.killed = true;
+
+            if self.interrupted {
+                close_event.exit_code = 0;
+            }
+        }
 
         // Hard-kill: this is a peer-induced abort, not a user Ctrl+C.
         if !self.aborting && self.runner.should_kill_others(&close_event) {

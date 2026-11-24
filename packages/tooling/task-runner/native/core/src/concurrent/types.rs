@@ -230,9 +230,10 @@ pub enum ControlMessage {
     /// Stop the run: kill every running command and spawn no more.
     ///
     /// `graceful` marks a user interrupt (Ctrl+C): on Windows the commands get
-    /// `CTRL_BREAK_EVENT` first, and every close is reported with exit code 0
-    /// and `killed`, because cancelling is not a failure. Otherwise the
-    /// commands are terminated and keep their exit codes.
+    /// `CTRL_BREAK_EVENT` first, and every close in the result has exit code 0
+    /// and `killed`, because cancelling is not a failure; the `Close` events keep
+    /// the exit codes the commands really had. Otherwise the commands are
+    /// terminated and keep their exit codes.
     Abort { graceful: bool },
     /// Signal one running command's process tree. `None` uses the runner's
     /// `kill_signal`. Does nothing if the command is not running.
@@ -249,7 +250,8 @@ pub enum ControlMessage {
 pub enum ProcessEvent {
     /// Emitted exactly once per command, immediately after the child process
     /// has been spawned. `pid` is the OS pid, or `None` if the platform could
-    /// not return one. Consumers use it to register children for cleanup.
+    /// not return one, or if the command could not be spawned at all (an
+    /// `Error` and a `Close` follow). Consumers use it to register children for cleanup.
     Started { index: u32, pid: Option<u32> },
     /// One line of standard output.
     Stdout { index: u32, text: String },

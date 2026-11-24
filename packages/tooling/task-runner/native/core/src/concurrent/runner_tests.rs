@@ -676,6 +676,26 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_graceful_abort_close_event_keeps_the_raw_exit_code_while_the_result_says_zero() {
+        let mut run = start(vec![make_config("sleep 30", None)], &default_options());
+
+        run.wait_for_started(1).await;
+        run.control.send(ControlMessage::Abort { graceful: true }).unwrap();
+
+        let (result, events) = run.finish().await;
+        let close = events.iter().find_map(|e| match e {
+            ProcessEvent::Close { exit_code, killed, .. } => Some((*exit_code, *killed)),
+            _ => None,
+        });
+
+        // The event is what the command did; the result is what an interrupt means for the run.
+        assert_eq!(close, Some((143, true)));
+        assert_eq!((result.close_events[0].exit_code, result.close_events[0].killed), (0, true));
+        assert!(result.success);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_terminating_abort_keeps_the_exit_codes() {
         let mut run = start(vec![make_config("sleep 30", None)], &default_options());
 
@@ -793,11 +813,18 @@ mod tests {
         assert_eq!(result.close_events[1].exit_code, 0);
         assert!(!result.success);
 
-        let mut saw_error = false;
+        let mut kinds = Vec::new();
         while let Ok(event) = events.try_recv() {
-            saw_error |= matches!(event, ProcessEvent::Error { index: 0, .. });
+            if event.index() == 0 {
+                if let ProcessEvent::Started { pid, .. } = &event {
+                    assert_eq!(*pid, None, "nothing was spawned, so there is no pid");
+                }
+                kinds.push(event.kind());
+            }
         }
-        assert!(saw_error, "the spawn failure is reported as an error event");
+        // `started` comes first, as it does for a command that runs, so a consumer that tracks
+        // commands from `started` to `close` sees this one too.
+        assert_eq!(kinds, ["started", "error", "close"]);
     }
 
     #[tokio::test]
@@ -1228,6 +1255,37 @@ mod tests {
     }
 
     #[cfg(unix)]
+    async fn pty_shell_variable(env: &[(&str, &str)]) -> String {
+        // `env` lists what the command was given; the shell's own `$SHELL` is not that.
+        let mut config = pty_config("/usr/bin/env | /usr/bin/grep '^SHELL=' || echo unset");
+        config.inherit_env = Some(false);
+        config.env = Some(env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+        let run = start(vec![config], &default_options());
+
+        let (result, events) = run.finish().await;
+
+        assert!(result.success, "{events:?}");
+
+        stdout_of(&events).trim().to_string()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_with_inherit_env_false_gets_no_shell_variable() {
+        // `portable-pty` sets SHELL on every command; the caller asked for only its own variables.
+        assert_eq!(pty_shell_variable(&[("PATH", "/usr/bin:/bin")]).await, "unset");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_with_inherit_env_false_keeps_a_shell_variable_the_caller_passes() {
+        assert_eq!(
+            pty_shell_variable(&[("PATH", "/usr/bin:/bin"), ("SHELL", "/custom/shell")]).await,
+            "SHELL=/custom/shell"
+        );
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_a_pty_command_in_a_missing_directory_is_a_spawn_failure_not_the_home_directory() {
         let mut config = pty_config("pwd");
@@ -1238,7 +1296,8 @@ mod tests {
 
         assert_eq!(result.close_events[0].exit_code, 1);
         assert!(events.iter().any(|e| matches!(e, ProcessEvent::Error { .. })), "{events:?}");
-        assert!(!events.iter().any(|e| matches!(e, ProcessEvent::Started { .. })), "{events:?}");
+        let kinds: Vec<_> = events.iter().map(ProcessEvent::kind).collect();
+        assert_eq!(kinds, ["started", "error", "close"]);
     }
 
     #[cfg(unix)]
