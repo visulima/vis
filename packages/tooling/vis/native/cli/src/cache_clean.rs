@@ -25,7 +25,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process::exit;
 
 use crate::cache::dirs::{
     eviction_directories, resolve, resolve_cache_directory, store_directories, vis_cache_dir, Target,
@@ -37,7 +36,7 @@ use crate::cache::format::format_bytes;
 use crate::cache::quiet_workspace_root;
 use crate::cache::settings::read_settings;
 use crate::node_context::output_settings_are_default;
-use crate::output::write_streams;
+use crate::output::Output;
 use crate::pail::{Layout, Level};
 use crate::removal::{removable_directory, removable_file};
 use crate::text::is_ascii_graphic;
@@ -48,14 +47,6 @@ struct Request {
     target: Target,
     dry_run: bool,
     force: bool,
-}
-
-/// What one run prints, split the way pail splits it, and the exit status.
-#[derive(Default)]
-struct Output {
-    stdout: String,
-    stderr: String,
-    code: i32,
 }
 
 /// A removal decided before anything is printed.
@@ -114,9 +105,7 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         crate::process::delegate(raw);
     }
 
-    write_streams("cache clean", &plan.output.stdout, &plan.output.stderr);
-
-    exit(plan.output.code)
+    plan.output.emit("cache clean")
 }
 
 /// Parses the arguments after `cache clean`, or `None` for a shape that is Node's.
@@ -194,13 +183,6 @@ fn plan(args: &[String]) -> Option<Plan> {
     Some(plan)
 }
 
-/// One pail block, on the stream pail prints its level on.
-fn say(layout: Layout, output: &mut Output, level: Level, message: &str) {
-    let buffer = if level.to_stderr() { &mut output.stderr } else { &mut output.stdout };
-
-    buffer.push_str(&layout.block(level, message));
-}
-
 /// `isCacheDirectoryInsideWorkspace`: a proper descendant of the root, both normalised the way `@visulima/path` does.
 fn inside_workspace(directory: &str, root: &str) -> bool {
     let directory = resolve(directory, &[]);
@@ -236,7 +218,7 @@ fn task_cache(
     }
 
     if fs::metadata(directory).is_err() {
-        say(layout, &mut plan.output, Level::Info, &format!("No cache directory to clean at {directory}"));
+        plan.output.say(layout, Level::Info, &format!("No cache directory to clean at {directory}"));
 
         return Some(());
     }
@@ -255,9 +237,8 @@ fn task_cache(
 
         let noun = if count == 1 { "y" } else { "ies" };
 
-        say(
+        plan.output.say(
             layout,
-            &mut plan.output,
             Level::Info,
             &format!("Would remove {count} cache entr{noun} ({}) from {directory}", format_bytes(bytes)?),
         );
@@ -268,28 +249,19 @@ fn task_cache(
     // A path that cannot be resolved is skipped by Node, which then goes on to the deletion.
     if let (Ok(cache), Ok(workspace)) = (fs::canonicalize(directory), fs::canonicalize(root)) {
         if cache == workspace {
-            say(
-                layout,
-                &mut plan.output,
-                Level::Error,
+            plan.output.say(layout, Level::Error,
                 "Refusing to delete the workspace root. The cache directory resolved to the same path as the workspace.",
             );
-            plan.output.code = 1;
+            plan.output.exit_code = 1;
 
             return Some(());
         }
     }
 
     if !inside_workspace(directory, root_text) && !request.force {
-        say(
+        plan.output.say(layout, Level::Warning, &format!("Cache directory is outside the workspace root: {directory}"));
+        plan.output.say(
             layout,
-            &mut plan.output,
-            Level::Warning,
-            &format!("Cache directory is outside the workspace root: {directory}"),
-        );
-        say(
-            layout,
-            &mut plan.output,
             Level::Warning,
             "This will recursively delete the entire directory, including anything stored there by other tools.",
         );
@@ -299,13 +271,12 @@ fn task_cache(
             return None;
         }
 
-        say(
+        plan.output.say(
             layout,
-            &mut plan.output,
             Level::Error,
             "Refusing to clean an out-of-workspace cache without --force (stdin is not a TTY).",
         );
-        plan.output.code = 1;
+        plan.output.exit_code = 1;
 
         return Some(());
     }
@@ -324,7 +295,7 @@ fn task_cache(
 
     plan.removals
         .push(Removal::Tree { path: target.to_path_buf(), inside_workspace: inside_workspace(directory, root_text) });
-    say(layout, &mut plan.output, Level::Success, &format!("Cleared cache: {directory}"));
+    plan.output.say(layout, Level::Success, &format!("Cleared cache: {directory}"));
 
     Some(())
 }
@@ -343,7 +314,7 @@ fn store(
     if request.dry_run {
         let count = store_stats(&directories)?.entries;
 
-        say(layout, &mut plan.output, Level::Info, &format!("Would clear {count} cached {noun}{}.", plural(count)));
+        plan.output.say(layout, Level::Info, &format!("Would clear {count} cached {noun}{}.", plural(count)));
 
         return Some(());
     }
@@ -387,7 +358,7 @@ fn store(
     let count = files.len() as u64;
 
     if count > 0 {
-        say(layout, &mut plan.output, Level::Info, &format!("Cleared {count} cached {noun}{}.", plural(count)));
+        plan.output.say(layout, Level::Info, &format!("Cleared {count} cached {noun}{}.", plural(count)));
         plan.removals.push(Removal::Files(files));
     }
 

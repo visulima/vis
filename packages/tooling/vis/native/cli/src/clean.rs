@@ -21,23 +21,14 @@ use std::env;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process::exit;
 
 use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
 use crate::node_context::{any_ancestor_has, in_ci, DENO_FILES};
-use crate::output::write_streams;
+use crate::output::Output;
 use crate::pail::{Layout, Level};
 use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
-
-/// What one run prints, split the way pail splits it: error blocks go to stderr, the rest to
-/// stdout.
-#[derive(Default)]
-struct Output {
-    stdout: String,
-    stderr: String,
-}
 
 struct Plan {
     dry_run: bool,
@@ -61,19 +52,15 @@ pub fn run(raw: &[OsString]) -> ! {
 
     let mut out = Output::default();
 
-    let mut exit_code = 0;
-
     if plan.dry_run {
         dry_run_output(&plan, &mut out);
     } else {
         let outcome = remove_listed(&plan.directories, &plan.lockfiles);
 
-        exit_code = removal_output(&plan, &outcome, &mut out);
+        out.exit_code = removal_output(&plan, &outcome, &mut out);
     }
 
-    write_streams("clean", &out.stdout, &out.stderr);
-
-    exit(exit_code)
+    out.emit("clean")
 }
 
 /// The removal plan when the invocation is native, or `None` to delegate.
@@ -167,9 +154,9 @@ fn removal_order(mut directories: Vec<PathBuf>, root: &Path) -> Vec<PathBuf> {
 
 fn dry_run_output(plan: &Plan, out: &mut Output) {
     if plan.directories.is_empty() {
-        pail(plan, out, Level::Info, "No node_modules directories found.");
+        out.say(plan.layout, Level::Info, "No node_modules directories found.");
     } else {
-        pail(plan, out, Level::Info, "Would remove:");
+        out.say(plan.layout, Level::Info, "Would remove:");
 
         for directory in &plan.directories {
             out.stdout.push_str(&format!("  {}\n", directory.display()));
@@ -186,24 +173,24 @@ fn dry_run_output(plan: &Plan, out: &mut Output) {
 /// Prints the removal results the way the Node handler does, and returns the exit code.
 fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut Output) -> i32 {
     for directory in &outcome.removed {
-        pail(plan, out, Level::Success, &format!("Removed {directory}"));
+        out.say(plan.layout, Level::Success, &format!("Removed {directory}"));
     }
 
     for lockfile in &outcome.lockfiles_removed {
-        pail(plan, out, Level::Success, &format!("Removed {lockfile}"));
+        out.say(plan.layout, Level::Success, &format!("Removed {lockfile}"));
     }
 
     for error in &outcome.errors {
-        pail(plan, out, Level::Error, error);
+        out.say(plan.layout, Level::Error, error);
     }
 
     if outcome.removed.is_empty() && outcome.lockfiles_removed.is_empty() {
-        pail(plan, out, Level::Info, "No node_modules directories found.");
+        out.say(plan.layout, Level::Info, "No node_modules directories found.");
     } else {
         let count = outcome.removed.len();
         let noun = if count == 1 { "directory" } else { "directories" };
 
-        pail(plan, out, Level::Info, &format!("Cleaned {count} node_modules {noun}"));
+        out.say(plan.layout, Level::Info, &format!("Cleaned {count} node_modules {noun}"));
     }
 
     if outcome.errors.is_empty() {
@@ -211,14 +198,6 @@ fn removal_output(plan: &Plan, outcome: &CleanOutcome, out: &mut Output) -> i32 
     } else {
         1
     }
-}
-
-/// One pail block (see [`Layout::block`]). pail sends the error level to stderr and every other
-/// level to stdout.
-fn pail(plan: &Plan, out: &mut Output, level: Level, message: &str) {
-    let buffer = if level.to_stderr() { &mut out.stderr } else { &mut out.stdout };
-
-    buffer.push_str(&plan.layout.block(level, message));
 }
 
 #[cfg(test)]
