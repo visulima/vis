@@ -125,9 +125,9 @@ def command_run(argv):
 
 
 def normalised(prefix, suffix, sort):
-    text = mask(read(prefix + suffix)).replace(os.environ.get("TMPDIR_REAL", "\0"), "<tmp>")
+    text = mask(read(prefix + suffix))
     lines = [line.rstrip() for line in text.splitlines()]
-    # Blank lines and the wrapped pail frame carry no information; a sorted comparison also ignores their order.
+    # Blank lines carry no information.
     lines = [line for line in lines if line.strip()]
     return sorted(lines) if sort else lines
 
@@ -234,7 +234,7 @@ def gather(results):
         key = name[: -len(".meta.json")]
         timing = {}
         memory = {}
-        for suffix, owner in ((".json", "main"), (".cmp.json", "cmp")):
+        for suffix in (".json", ".cmp.json"):
             path = os.path.join(results, key + suffix)
             if os.path.exists(path):
                 for command, cell in summary_of(path, "time_wall_clock").items():
