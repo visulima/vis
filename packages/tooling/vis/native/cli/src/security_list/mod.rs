@@ -250,14 +250,22 @@ fn config(cwd: &Path) -> Option<Config> {
     let mut config =
         Config { pin_versions: security.get("pinVersions") == Some(&Value::Bool(true)), ..Config::default() };
 
-    // `allowBins[bin] === true`; any other shape of the value never matches.
-    if let Some(Value::Object(allow_bins)) = security.get("allowBins") {
-        if allow_bins.contains_key("__proto__") {
-            return None;
-        }
+    // `allowBins[bin] === true`. A string, number, boolean or `null` never yields `true` for any key, so it
+    // blesses nothing; an array does (`[true]["0"] === true`), and Node's lookup is not reproduced for it.
+    match security.get("allowBins") {
+        Some(Value::Array(_)) => return None,
+        Some(Value::Object(allow_bins)) => {
+            if allow_bins.contains_key("__proto__") {
+                return None;
+            }
 
-        config.allow_bins =
-            allow_bins.iter().filter(|(_, value)| **value == Value::Bool(true)).map(|(key, _)| key.clone()).collect();
+            config.allow_bins = allow_bins
+                .iter()
+                .filter(|(_, value)| **value == Value::Bool(true))
+                .map(|(key, _)| key.clone())
+                .collect();
+        }
+        _ => {}
     }
 
     let policies = match security.get("policies") {

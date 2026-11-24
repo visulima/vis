@@ -308,7 +308,24 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             run({ ...files, ...config({ allowBins: { a: false, b: 1, "c_one#c": true, "c_two#c": true, "c_three#c": true } }) });
             run({ ...files, ...config({ allowBins: null }) });
             run({ ...files, ...config({ allowBins: "x" }) });
-            run({ ...files, ...config({ allowBins: ["a"] }) });
+            run({ ...files, ...config({ allowBins: 1 }) });
+            run({ ...files, ...config({ allowBins: true }) });
+        });
+
+        it("hands an array-valued `allowBins` to Node, whose lookup `allowBins[bin]` indexes the array", () => {
+            expect.hasAssertions();
+
+            // `[true]["0"] === true` blesses a bin called `0` in Node.
+            const zero = workspaceFiles(conflicting(["0", "a"]));
+
+            for (const allowBins of [["a"], [], [false, true]]) {
+                harness.expectDelegation({ ...zero, ...config({ allowBins }) }, ARGS);
+            }
+
+            const blessed = harness.expectDelegation({ ...zero, ...config({ allowBins: [true] }) }, ARGS);
+
+            expect(blessed.stdout).not.toContain('"bin": "0"');
+            expect(blessed.stdout).toContain('"bin": "a"');
         });
 
         it.each([{ LANG: "en_US.UTF-8" }, { LC_ALL: "C" }, { LANG: "POSIX" }, { LC_ALL: "en_GB.UTF-8" }, { LC_MESSAGES: "" }])("sorts under the locale %j as Node does", (environment) => {

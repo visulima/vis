@@ -163,8 +163,8 @@ export class Harness {
         return native;
     }
 
-    /** The native side declines (exit 70 without the Node entry, files untouched) and the delegated run matches Node. */
-    public expectDelegation(files: Files, args: string[], extra: Record<string, string> = {}, ci = true): void {
+    /** The native side declines (exit 70 without the Node entry, files untouched) and the delegated run matches Node; returns the delegated run. */
+    public expectDelegation(files: Files, args: string[], extra: Record<string, string> = {}, ci = true): Result {
         const [nodeRoot, nativeRoot] = this.pair(files);
         const node = this.runNode(args, nodeRoot, extra, ci);
         const probe = this.materialize("native", files);
@@ -178,5 +178,7 @@ export class Harness {
         const native = this.runNative(args, nativeRoot, { ...extra, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }, ci);
 
         expect(Harness.outcome(native, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+
+        return native;
     }
 }
