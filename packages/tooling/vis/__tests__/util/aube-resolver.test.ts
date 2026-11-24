@@ -478,7 +478,7 @@ describe(resolveAubeInfo, () => {
 
         const { args } = resolveAubeInfo({ fields: [], json: true, package: "react" });
 
-        expect(args).toStrictEqual(["view", "--", "react", "--json"]);
+        expect(args).toStrictEqual(["view", "--json", "--", "react"]);
     });
 
     it("uses the first field and drops --json when both are passed (aube rejects the combination)", () => {
