@@ -382,6 +382,13 @@ export interface SeccompTrackingResult {
     exitCode: number;
     stdout: Buffer;
     stderr: Buffer;
+    /**
+     * Some accesses could not be recorded (an argument of a tracked
+     * syscall was unreadable, or a process used an ABI the tracker does
+     * not decode), so `accesses` is a lower bound and must not be cached
+     * as the complete set of inputs.
+     */
+    incomplete: boolean;
 }
 
 /**
