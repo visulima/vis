@@ -14,6 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -284,25 +285,30 @@ fn query_output(binary: &Path) -> Option<String> {
     status.success().then_some(text)
 }
 
-/// What `<binary> --version` printed, keyed by the file of the binary that printed it (a link and its target
-/// are one binary). A tool is asked once.
+/// What `<binary> --version` printed, keyed by the binary's file and the name it is invoked by. A multi-call binary
+/// (a version manager's shim, linked under `node`, `npm` and `pnpm`) picks its tool from that name, so one file
+/// under two names is two answers; the same file under the same name is one. A tool is asked once.
 #[derive(Default)]
 pub struct Versions {
-    known: BTreeMap<PathBuf, Option<String>>,
+    known: BTreeMap<(PathBuf, OsString), Option<String>>,
 }
 
 fn file_of(binary: &Path) -> PathBuf {
     fs::canonicalize(binary).unwrap_or_else(|_| binary.to_path_buf())
 }
 
+fn key_of(binary: &Path) -> (PathBuf, OsString) {
+    (file_of(binary), binary.file_name().map(OsString::from).unwrap_or_default())
+}
+
 impl Versions {
     /// The launcher's own Node reports its version without being asked again: `process.version` is what
-    /// `node --version` prints for the same binary (plus a newline).
+    /// `node --version` prints for the same binary (plus a newline), for a `node` that is that binary's file.
     pub fn with_launcher_node(node: Option<&str>, version: Option<&str>) -> Self {
         let mut known = BTreeMap::new();
 
         if let (Some(node), Some(version)) = (node, version) {
-            known.insert(file_of(Path::new(node)), Some(format!("{version}\n")));
+            known.insert((file_of(Path::new(node)), OsString::from("node")), Some(format!("{version}\n")));
         }
 
         Self { known }
@@ -312,15 +318,15 @@ impl Versions {
     pub fn output(&mut self, binary: &Path) -> Option<String> {
         self.fetch(&[binary.to_path_buf()]);
 
-        self.known.get(&file_of(binary)).cloned().flatten()
+        self.known.get(&key_of(binary)).cloned().flatten()
     }
 
     /// Asks for several binaries at once, the ones not known yet.
     pub fn fetch(&mut self, binaries: &[PathBuf]) {
-        let mut unknown: Vec<(PathBuf, &PathBuf)> = Vec::new();
+        let mut unknown: Vec<((PathBuf, OsString), &PathBuf)> = Vec::new();
 
         for binary in binaries {
-            let key = file_of(binary);
+            let key = key_of(binary);
 
             if !self.known.contains_key(&key) && !unknown.iter().any(|(known, _)| *known == key) {
                 unknown.push((key, binary));
@@ -630,6 +636,42 @@ mod tests {
 
             assert!(read_pins(&root).is_some(), "{engines}");
         }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_file_under_two_names_is_two_answers() {
+        use std::os::unix::fs::symlink;
+
+        let root = scratch("shims");
+        let shim = root.join("shim");
+
+        // A multi-call binary: it answers by the name it is started under.
+        fs::write(
+            &shim,
+            "#!/bin/sh\ncase \"$0\" in */node) echo v22.1.0;; */npm) echo 10.5.0;; *) echo 9.0.0;; esac\n",
+        )
+        .unwrap();
+        fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        symlink(&shim, root.join("node")).unwrap();
+        symlink(&shim, root.join("npm")).unwrap();
+
+        let mut versions = Versions::default();
+
+        assert_eq!(versions.output(&root.join("node")).as_deref(), Some("v22.1.0\n"));
+        assert_eq!(versions.output(&root.join("npm")).as_deref(), Some("10.5.0\n"));
+        // The same file under the same name (another path to it) is one answer, asked once.
+        assert_eq!(versions.known.len(), 2);
+        assert_eq!(versions.output(&root.join(".").join("npm")).as_deref(), Some("10.5.0\n"));
+        assert_eq!(versions.known.len(), 2);
+
+        // The launcher's version is for a `node` that is the launcher's file, not for the other names of it.
+        let mut launcher = Versions::with_launcher_node(root.join("node").to_str(), Some("v1.2.3"));
+
+        assert_eq!(launcher.output(&root.join("node")).as_deref(), Some("v1.2.3\n"));
+        assert_eq!(launcher.output(&root.join("npm")).as_deref(), Some("10.5.0\n"));
 
         let _ = fs::remove_dir_all(&root);
     }
