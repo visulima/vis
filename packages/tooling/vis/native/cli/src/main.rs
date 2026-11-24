@@ -52,6 +52,8 @@ mod pail;
 mod pm;
 mod pm_family;
 mod pm_shim;
+#[cfg(unix)]
+mod removal;
 mod replay;
 mod run;
 mod sbom;
