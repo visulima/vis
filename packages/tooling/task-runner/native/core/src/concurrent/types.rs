@@ -162,6 +162,21 @@ pub struct ConcurrentRunnerOptions {
     pub shell_path: Option<String>,
 }
 
+/// A request from the caller to a running `ConcurrentRunner`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlMessage {
+    /// Stop the run: kill every running command and spawn no more.
+    ///
+    /// `graceful` marks a user interrupt (Ctrl+C): on Windows the commands get
+    /// `CTRL_BREAK_EVENT` first, and every close is reported with exit code 0
+    /// and `killed`, because cancelling is not a failure. Otherwise the
+    /// commands are terminated and keep their exit codes.
+    Abort { graceful: bool },
+    /// Signal one running command's process tree. `None` uses the runner's
+    /// `kill_signal`. Does nothing if the command is not running.
+    Kill { index: u32, signal: Option<KillSignal> },
+}
+
 /// An event emitted during concurrent execution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProcessEvent {

@@ -12,6 +12,25 @@ export declare function collectFiles(dir: string): Array<string>;
  */
 export declare function computeTaskHash(details: NativeTaskHashDetails): string;
 
+/** A concurrent run that is already in progress. */
+export declare class ConcurrentRun {
+    /**
+     * Stop the run: kill every running command and start no queued one.
+     *
+     * `"interrupt"` is a user interrupt (Ctrl+C): every command then closes with exit code 0 and
+     * `killed: true`, because cancelling is not a failure. `"terminate"` (the default) keeps the
+     * commands' exit codes. Calling it again, or after the run has finished, does nothing.
+     */
+    abort(mode?: "interrupt" | "terminate"): void;
+    /**
+     * Signal one command's process tree (`signal` defaults to the run's `killSignal`).
+     * Returns false when the run has already finished; a command that is not running is ignored.
+     */
+    kill(index: number, signal?: string | undefined | null): boolean;
+    /** Resolves with the result once every command has finished. May be awaited more than once. */
+    done(): Promise<ConcurrentRunResult>;
+}
+
 /** Result of a close event for a single command. */
 export interface ConcurrentCloseEvent {
     /** Index of the command. */
@@ -20,7 +39,7 @@ export interface ConcurrentCloseEvent {
     command: string;
     /** The command name (if provided). */
     name?: string;
-    /** Exit code. -1 if killed by signal. */
+    /** Exit code; `128 + signal` if a signal ended the process. */
     exitCode: number;
     /** Whether the process was forcefully killed. */
     killed: boolean;
@@ -40,7 +59,7 @@ export interface ConcurrentCommandConfig {
     env?: Record<string, string>;
     /** Whether to use shell execution (default: true). */
     shell?: boolean;
-    /** Stdin mode: "null" (default), "pipe", or "inherit". */
+    /** Stdin mode: "null" (default), "pipe", or "inherit"; anything else is an error. */
     stdin?: string;
 }
 
@@ -51,14 +70,17 @@ export interface ConcurrentRunnerOptions {
      * 0 or absent means unlimited.
      */
     maxProcesses?: number;
-    /** Signal to send when killing processes (default: "SIGTERM"). */
+    /** Signal to send when killing processes (default: "SIGTERM"). An unknown name is an error. */
     killSignal?: string;
     /**
      * Conditions under which to kill other processes.
-     * Values: "success", "failure". Empty = never kill others.
+     * Values: "success", "failure" (anything else is an error). Empty = never kill others.
      */
     killOthers?: Array<string>;
-    /** Success condition: "first", "last", "all", or "command-<name|index>". */
+    /**
+     * Success condition: "first", "last", "all", or "command-<name|index>" (an optional leading "!"
+     * negates the command form). Anything else is an error.
+     */
     successCondition?: string;
     /** Milliseconds to wait after sending kill signal before sending SIGKILL. */
     killTimeout?: number;
@@ -291,7 +313,7 @@ export interface ProcessEvent {
     index: number;
     /** Text content (for stdout/stderr events). */
     text?: string;
-    /** Exit code (for close events). -1 if killed by signal. */
+    /** Exit code (for close events); `128 + signal` if a signal ended the process. */
     exitCode?: number;
     /** Whether the process was killed (for close events). */
     killed?: boolean;
@@ -383,6 +405,20 @@ export interface SeccompTrackingResult {
     stdout: Buffer;
     stderr: Buffer;
 }
+
+/**
+ * Start commands concurrently and return a handle to the run.
+ *
+ * Like `runConcurrentBatch`, `onLifecycle` receives only "started", "close" and "error" events.
+ * An unknown option value throws before anything is spawned.
+ *
+ * Commands originate from package.json scripts (trusted input).
+ */
+export declare function startConcurrent(
+    commands: Array<ConcurrentCommandConfig>,
+    options: ConcurrentRunnerOptions,
+    onLifecycle?: ((event: ProcessEvent) => void) | undefined | null,
+): ConcurrentRun;
 
 /**
  * Performs a topological sort of the task graph.

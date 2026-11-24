@@ -1,13 +1,14 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
 use super::completion::SuccessCondition;
 use super::process::{spawn_process, CompletionMessage, ProcessInfo};
-use super::signal;
 use super::types::{
-    ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, KillOthers,
-    KillSignal, ProcessEvent,
+    ConcurrentCloseEvent, ConcurrentCommandConfig, ConcurrentRunResult, ConcurrentRunnerOptions, ControlMessage,
+    KillOthers, KillSignal, ProcessEvent,
 };
 
 /// Orchestrates concurrent execution of multiple commands.
@@ -38,156 +39,72 @@ impl ConcurrentRunner {
     }
 
     /// Run all commands concurrently with real-time event streaming.
-    /// Events are sent to `event_tx` as they occur.
+    ///
+    /// Events are sent to `event_tx` as they occur. `control_rx` carries
+    /// requests from the caller to stop the run or kill one command; the runner
+    /// installs no signal handlers of its own, so whoever embeds it decides
+    /// which signals mean "abort" and forwards them here. Dropping the sender
+    /// does not stop the run.
+    ///
     /// Returns the final result after all processes complete.
-    pub async fn run(&self, event_tx: mpsc::UnboundedSender<ProcessEvent>) -> ConcurrentRunResult {
-        let (_signal_tx, mut signal_rx) = signal::create_signal_handler();
-        use super::signal::ReceivedSignal;
-
+    pub async fn run(
+        &self,
+        event_tx: mpsc::UnboundedSender<ProcessEvent>,
+        mut control_rx: mpsc::UnboundedReceiver<ControlMessage>,
+    ) -> ConcurrentRunResult {
         // Channel for process completion notifications
         let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionMessage>();
 
-        // Queue of command indices not yet spawned
-        let mut pending: VecDeque<usize> = (0..self.commands.len()).collect();
-        // Currently active process PIDs (for killing)
-        let mut active: Vec<ProcessInfo> = Vec::with_capacity(self.max_processes);
-        // Collected close events in completion order
-        let mut close_events: Vec<ConcurrentCloseEvent> = Vec::with_capacity(self.commands.len());
-        // Track how many processes are still running
-        let mut running_count: usize = 0;
-        // Whether we should abort (signal received or kill-others triggered)
-        let mut aborting = false;
-        // Whether the abort was caused by SIGINT (Ctrl+C) -- used to translate exit codes to 0
-        let mut sigint_abort = false;
+        let mut run = RunState {
+            runner: self,
+            event_tx,
+            completion_tx,
+            pending: (0..self.commands.len()).collect(),
+            active: Vec::with_capacity(self.max_processes),
+            close_events: Vec::with_capacity(self.commands.len()),
+            aborting: false,
+            interrupted: false,
+        };
 
-        // Spawn initial batch
-        self.spawn_batch(&mut pending, &mut active, &mut running_count, &event_tx, &completion_tx);
+        // An abort that was requested before the run started means nothing is spawned.
+        while let Ok(message) = control_rx.try_recv() {
+            run.handle_control(message);
+        }
 
-        // Main loop: wait for completions
-        while running_count > 0 {
+        run.spawn_batch();
+
+        let mut control_open = true;
+
+        while !run.active.is_empty() {
             tokio::select! {
-                msg = completion_rx.recv() => {
-                    if let Some(msg) = msg {
-                        running_count -= 1;
+                Some(message) = completion_rx.recv() => {
+                    run.active.retain(|process| process.index != message.index);
+                    run.record_close(message.close_event);
 
-                        // Remove from active list
-                        active.retain(|p| p.index != msg.index);
-
-                        // Mark as killed if we initiated the kill
-                        let mut close_event = msg.close_event;
-                        if aborting {
-                            close_event.killed = true;
-                            // SIGINT (Ctrl+C) translates to exit code 0 -- user cancellation
-                            // is not a failure. Matches concurrently behavior.
-                            if sigint_abort {
-                                close_event.exit_code = 0;
-                            }
-                        }
-
-                        // Send close event to JS
-                        let _ = event_tx.send(ProcessEvent::Close {
-                            index: close_event.index,
-                            exit_code: close_event.exit_code,
-                            killed: close_event.killed,
-                            command_name: close_event.name.clone(),
-                            duration_ms: close_event.duration_ms,
-                        });
-
-                        // Check kill-others condition. Hard-kill (graceful=false)
-                        // since this is a peer-induced abort, not a user Ctrl+C.
-                        if !aborting && self.should_kill_others(&close_event) {
-                            self.kill_all_with(&mut active, false);
-                            aborting = true;
-                        }
-
-                        close_events.push(close_event);
-
-                        // Spawn more if not aborting
-                        if !aborting {
-                            self.spawn_batch(
-                                &mut pending,
-                                &mut active,
-                                &mut running_count,
-                                &event_tx,
-                                &completion_tx,
-                            );
-                        }
+                    if !run.aborting {
+                        run.spawn_batch();
                     }
                 }
-                _ = signal_rx.changed() => {
-                    let sig = *signal_rx.borrow();
-                    if sig != ReceivedSignal::None && !aborting {
-                        let graceful = sig == ReceivedSignal::Interrupt;
-                        self.kill_all_with(&mut active, graceful);
-                        aborting = true;
-                        sigint_abort = graceful;
-                    }
-                }
+                message = control_rx.recv(), if control_open => match message {
+                    Some(message) => run.handle_control(message),
+                    None => control_open = false,
+                },
             }
         }
 
-        let success = self.success_condition.evaluate(&close_events);
+        let success = self.success_condition.evaluate(&run.close_events);
 
-        ConcurrentRunResult { close_events, success }
+        ConcurrentRunResult { close_events: run.close_events, success }
     }
 
-    fn spawn_batch(
-        &self,
-        pending: &mut VecDeque<usize>,
-        active: &mut Vec<ProcessInfo>,
-        running_count: &mut usize,
-        event_tx: &mpsc::UnboundedSender<ProcessEvent>,
-        completion_tx: &mpsc::UnboundedSender<CompletionMessage>,
-    ) {
-        while *running_count < self.max_processes {
-            if let Some(cmd_index) = pending.pop_front() {
-                let config = &self.commands[cmd_index];
-                match spawn_process(
-                    cmd_index as u32,
-                    config,
-                    event_tx.clone(),
-                    completion_tx.clone(),
-                    self.shell_path.as_deref(),
-                ) {
-                    Ok(info) => {
-                        active.push(info);
-                        *running_count += 1;
-                    }
-                    Err(e) => {
-                        // Send error event
-                        let _ = event_tx.send(ProcessEvent::Error {
-                            index: cmd_index as u32,
-                            message: format!("Failed to spawn: {}", e),
-                        });
-                        // Send synthetic close event so this command appears in results
-                        let _ = completion_tx.send(CompletionMessage {
-                            index: cmd_index as u32,
-                            close_event: ConcurrentCloseEvent {
-                                index: cmd_index as u32,
-                                command: config.command.clone(),
-                                name: config.name.clone(),
-                                exit_code: 1,
-                                killed: false,
-                                duration_ms: 0.0,
-                            },
-                        });
-                        *running_count += 1; // Will be decremented when completion is received
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Send termination signals to every active process.
+    /// Send termination signals to every process in `active`.
     ///
     /// `graceful = true` is reserved for user-initiated Ctrl+C / SIGINT —
     /// on Windows it routes through `CTRL_BREAK_EVENT` so well-behaved CLIs
     /// can clean up before the Job Object force-kill fires. The kill-others
     /// path passes `false` for an immediate hard kill.
-    fn kill_all_with(&self, active: &mut [ProcessInfo], graceful: bool) {
-        for info in active.iter_mut() {
+    fn kill_all_with(&self, active: &[ProcessInfo], graceful: bool) {
+        for info in active {
             #[cfg(windows)]
             {
                 if graceful {
@@ -200,33 +117,12 @@ impl ConcurrentRunner {
                     }
                     continue;
                 }
-                if let Some(ref job) = info.job {
-                    let _ = job.terminate(1);
-                    continue;
-                }
-                // Fallback when Job Object creation failed at spawn time:
-                // taskkill /F /T via kill_tree.
-                if let Some(pid) = info.pid {
-                    let _ = super::process_group::kill_tree(pid, self.kill_signal);
-                }
             }
 
-            // Unix: kill process group with the configured signal (default
-            // SIGTERM). Both graceful and non-graceful paths use the same
-            // signal here; escalation to SIGKILL happens below.
-            //
-            // Coverage: `runner_tests::test_kill_others_on_failure` exercises
-            // this branch with graceful=false. The graceful=true path is
-            // structurally identical on Unix — `kill_tree(pid, kill_signal)`
-            // is invoked regardless of the flag — so any regression in either
-            // direction is caught by that test.
             #[cfg(unix)]
-            {
-                let _ = graceful;
-                if let Some(pid) = info.pid {
-                    let _ = super::process_group::kill_tree(pid, self.kill_signal);
-                }
-            }
+            let _ = graceful;
+
+            self.signal_process(info, self.kill_signal);
         }
 
         // Schedule force-kill after timeout.
@@ -244,10 +140,6 @@ impl ConcurrentRunner {
         // this check, a 5s default kill_timeout is plenty of time for
         // the kernel to recycle the PID for an unrelated process,
         // which we would then SIGKILL.
-        use std::sync::atomic::AtomicBool;
-        use std::sync::atomic::Ordering;
-        use std::sync::Arc;
-
         let kill_timeout = self.kill_timeout_ms;
         let targets: Vec<(u32, Arc<AtomicBool>)> =
             active.iter().filter_map(|p| p.pid.map(|pid| (pid, Arc::clone(&p.terminated)))).collect();
@@ -264,10 +156,129 @@ impl ConcurrentRunner {
         }
     }
 
+    /// Terminate one process tree. Unix signals the process group with `signal`;
+    /// Windows ignores the signal and terminates the Job Object, or falls back to
+    /// `taskkill /F /T` when no Job Object could be created at spawn time.
+    fn signal_process(&self, info: &ProcessInfo, signal: KillSignal) {
+        #[cfg(windows)]
+        {
+            if let Some(ref job) = info.job {
+                let _ = job.terminate(1);
+                return;
+            }
+        }
+
+        if let Some(pid) = info.pid {
+            let _ = super::process_group::kill_tree(pid, signal);
+        }
+    }
+
     fn should_kill_others(&self, event: &ConcurrentCloseEvent) -> bool {
         self.kill_others.iter().any(|condition| match condition {
             KillOthers::Failure => event.exit_code != 0,
             KillOthers::Success => event.exit_code == 0,
         })
+    }
+}
+
+/// Mutable state of one `run`.
+struct RunState<'a> {
+    runner: &'a ConcurrentRunner,
+    event_tx: mpsc::UnboundedSender<ProcessEvent>,
+    completion_tx: mpsc::UnboundedSender<CompletionMessage>,
+    /// Indices of the commands not yet spawned.
+    pending: VecDeque<usize>,
+    /// Processes that have been spawned and have not completed.
+    active: Vec<ProcessInfo>,
+    /// Close events in completion order.
+    close_events: Vec<ConcurrentCloseEvent>,
+    /// Whether the run is being torn down (abort or kill-others); nothing more is spawned.
+    aborting: bool,
+    /// Whether the abort was a user interrupt, which turns exit codes into 0.
+    interrupted: bool,
+}
+
+impl RunState<'_> {
+    fn handle_control(&mut self, message: ControlMessage) {
+        match message {
+            ControlMessage::Abort { graceful } => {
+                if !self.aborting {
+                    self.runner.kill_all_with(&self.active, graceful);
+                    self.aborting = true;
+                    // A user interrupt is a cancellation, not a failure: closes report 0.
+                    self.interrupted = graceful;
+                }
+            }
+            ControlMessage::Kill { index, signal } => {
+                if let Some(info) = self.active.iter().find(|process| process.index == index) {
+                    self.runner.signal_process(info, signal.unwrap_or(self.runner.kill_signal));
+                }
+            }
+        }
+    }
+
+    /// Spawn queued commands until `max_processes` are running. A command that
+    /// cannot be spawned is closed on the spot, without taking a slot.
+    fn spawn_batch(&mut self) {
+        while !self.aborting && self.active.len() < self.runner.max_processes {
+            let Some(index) = self.pending.pop_front() else {
+                break;
+            };
+            let config = &self.runner.commands[index];
+
+            match spawn_process(
+                index as u32,
+                config,
+                self.event_tx.clone(),
+                self.completion_tx.clone(),
+                self.runner.shell_path.as_deref(),
+            ) {
+                Ok(info) => self.active.push(info),
+                Err(error) => {
+                    let _ = self.event_tx.send(ProcessEvent::Error {
+                        index: index as u32,
+                        message: format!("Failed to spawn: {error}"),
+                    });
+
+                    // The command still appears in the results.
+                    self.record_close(ConcurrentCloseEvent {
+                        index: index as u32,
+                        command: config.command.clone(),
+                        name: config.name.clone(),
+                        exit_code: 1,
+                        killed: false,
+                        duration_ms: 0.0,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Account for a command that has finished: report it, apply kill-others,
+    /// and keep it for the result.
+    fn record_close(&mut self, mut close_event: ConcurrentCloseEvent) {
+        if self.aborting {
+            close_event.killed = true;
+
+            if self.interrupted {
+                close_event.exit_code = 0;
+            }
+        }
+
+        let _ = self.event_tx.send(ProcessEvent::Close {
+            index: close_event.index,
+            exit_code: close_event.exit_code,
+            killed: close_event.killed,
+            command_name: close_event.name.clone(),
+            duration_ms: close_event.duration_ms,
+        });
+
+        // Hard-kill: this is a peer-induced abort, not a user Ctrl+C.
+        if !self.aborting && self.runner.should_kill_others(&close_event) {
+            self.runner.kill_all_with(&self.active, false);
+            self.aborting = true;
+        }
+
+        self.close_events.push(close_event);
     }
 }

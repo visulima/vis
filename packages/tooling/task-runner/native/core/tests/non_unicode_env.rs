@@ -19,8 +19,9 @@ async fn a_non_unicode_parent_variable_does_not_panic_the_run() {
     let commands = vec![ConcurrentCommandConfig { command: "echo ok".to_string(), ..Default::default() }];
     let runner = ConcurrentRunner::new(commands, &ConcurrentRunnerOptions::default());
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (_control_tx, control_rx) = mpsc::unbounded_channel();
 
-    let result = runner.run(event_tx).await;
+    let result = runner.run(event_tx, control_rx).await;
 
     assert!(result.success);
     assert_eq!(result.close_events[0].exit_code, 0);

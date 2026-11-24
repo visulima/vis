@@ -87,6 +87,23 @@ interface NativeConcurrentRunResult {
     success: boolean;
 }
 
+/**
+ * A concurrent run that is in progress, as returned by `startConcurrent`. The addon installs
+ * no signal handlers; the host forwards whatever it treats as "stop" to `abort`.
+ */
+interface NativeConcurrentRun {
+    /**
+     * Kill every running command and start no queued one. `"interrupt"` (Ctrl+C) closes every
+     * command with exit code 0 and `killed: true`; `"terminate"` (the default) keeps their exit
+     * codes. Repeated calls, and calls after the run finished, do nothing.
+     */
+    abort: (mode?: "interrupt" | "terminate") => void;
+    /** Resolves once every command has finished; may be awaited more than once. */
+    done: () => Promise<NativeConcurrentRunResult>;
+    /** Signal one command's process tree. False when the run has already finished. */
+    kill: (index: number, signal?: string | null) => boolean;
+}
+
 interface NativeBindings {
     collectFiles: (directory: string) => string[];
     computeTaskHash: (details: NativeTaskHashDetails) => string;
@@ -133,6 +150,11 @@ interface NativeBindings {
         options: NativeConcurrentRunnerOptions,
         onLifecycle?: ((event: NativeProcessEvent) => void) | null,
     ) => Promise<NativeConcurrentRunResult>;
+    startConcurrent: (
+        commands: NativeConcurrentCommandConfig[],
+        options: NativeConcurrentRunnerOptions,
+        onLifecycle?: ((event: NativeProcessEvent) => void) | null,
+    ) => NativeConcurrentRun;
     topologicalSort: (graph: NativeTaskGraph) => string[];
 
     /**
@@ -261,6 +283,7 @@ const loadNativeBindings = (): NativeBindings | undefined => {
             && typeof loaded.hashGlobalInputs === "function"
             && typeof loaded.hashFile === "function"
             && typeof loaded.runConcurrent === "function"
+            && typeof loaded.startConcurrent === "function"
         ) {
             nativeBindings = loaded;
         } else {
@@ -294,6 +317,7 @@ export type {
     NativeBindings,
     NativeConcurrentCloseEvent,
     NativeConcurrentCommandConfig,
+    NativeConcurrentRun,
     NativeConcurrentRunnerOptions,
     NativeConcurrentRunResult,
     NativeCycleResult,
