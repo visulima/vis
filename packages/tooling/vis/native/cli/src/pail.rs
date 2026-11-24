@@ -78,6 +78,48 @@ impl Layout {
     /// line ending in a newline.
     pub(crate) fn block(self, level: Level, message: &str) -> String {
         let limit = self.width - 3;
+        let mut text = self.header(level);
+
+        for line in wrap(message, limit) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+
+        text
+    }
+
+    /// A block whose message may hold line breaks and the two symbols the optimizer prints (`→`, `⚙`), as pail
+    /// prints it: the header, a blank line, the message with each of its lines wrapped on its own by display
+    /// width (both symbols are two columns wide there), a newline. `None` for any other non-ASCII character
+    /// and for a control character other than the line break: Node answers those.
+    pub(crate) fn block_fitting(self, level: Level, message: &str) -> Option<String> {
+        let limit = self.width - 3;
+        let mut lines = Vec::new();
+
+        for line in message.split('\n') {
+            if !line.chars().all(|character| matches!(character, ' '..='~' | '\u{2192}' | '\u{2699}')) {
+                return None;
+            }
+
+            lines.extend(wrap_with(line, limit, display_width));
+
+            // `Vr` returns no line for an empty one, and the join of the lines puts the line break back.
+            if line.is_empty() {
+                lines.push(String::new());
+            }
+        }
+
+        let mut text = self.header(level);
+
+        text.push_str(&lines.join("\n"));
+        text.push('\n');
+
+        Some(text)
+    }
+
+    /// The header line of a block and the blank line after it.
+    fn header(self, level: Level) -> String {
+        let limit = self.width - 3;
         let label = level.label();
         let clock = clock();
         let head = format!("{clock} {label} ");
@@ -100,11 +142,6 @@ impl Layout {
         }
 
         text.push_str("\n\n");
-
-        for line in wrap(message, limit) {
-            text.push_str(&line);
-            text.push('\n');
-        }
 
         text
     }
@@ -188,6 +225,17 @@ pub(crate) fn pail_width() -> Option<usize> {
 /// that does not fit therefore leads the next line. Widths are byte counts, which is exact for
 /// the ASCII the gate lets through.
 pub(crate) fn wrap(message: &str, limit: usize) -> Vec<String> {
+    wrap_with(message, limit, str::len)
+}
+
+/// The display width of a token of ASCII text and the two symbols `block_fitting` takes: both symbols are two
+/// columns wide in pail's measure (`→` is East Asian ambiguous, `⚙` an emoji).
+fn display_width(token: &str) -> usize {
+    token.chars().map(|character| if matches!(character, '\u{2192}' | '\u{2699}') { 2 } else { 1 }).sum()
+}
+
+/// [`wrap`] with the width of a token given by `width`.
+fn wrap_with(message: &str, limit: usize, width: fn(&str) -> usize) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut start = 0;
 
@@ -203,7 +251,7 @@ pub(crate) fn wrap(message: &str, limit: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     let mut current = String::new();
-    let mut width = 0;
+    let mut used = 0;
     let mut index = 0;
 
     while index < tokens.len() {
@@ -214,14 +262,14 @@ pub(crate) fn wrap(message: &str, limit: usize) -> Vec<String> {
             continue;
         }
 
-        if width + token.len() > limit && width > 0 {
+        if used + width(token) > limit && used > 0 {
             lines.push(std::mem::take(&mut current));
-            width = 0;
+            used = 0;
             continue;
         }
 
         current.push_str(token);
-        width += token.len();
+        used += width(token);
         index += 1;
     }
 
@@ -368,5 +416,41 @@ mod tests {
     fn only_the_warning_and_error_levels_go_to_stderr() {
         assert!(Level::Error.to_stderr() && Level::Warning.to_stderr());
         assert!(!Level::Info.to_stderr() && !Level::Success.to_stderr() && !Level::Notice.to_stderr());
+    }
+
+    /// What Node's pail printed (columns, message, output with the clock replaced) for lines holding `→` and `⚙`,
+    /// both two columns wide there. The cases sit on both sides of the wrap point.
+    const WIDE: &[(usize, &str, &str)] = &[
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → \ny\n"),
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx →\n y\n"),
+        (60, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...........................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (60, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...........................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (60, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...........................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (60, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO ...........................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → \ny\n"),
+        (50, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y", "HH:MM:SS INFO .................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → y\n"),
+        (80, "  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", "HH:MM:SS INFO ...............................................................\n\n  ⚙ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx → \nrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\n"),
+        (80, "\nTotal: 12 optimizations available (⚙ = codemod available).", "HH:MM:SS INFO ...............................................................\n\n\nTotal: 12 optimizations available (⚙ = codemod available).\n"),
+        (40, "\nTotal: 12 optimizations available (⚙ = codemod available).", "HH:MM:SS INFO .......................\n\n\nTotal: 12 optimizations available (⚙\n = codemod available).\n"),
+    ];
+
+    #[test]
+    fn wide_symbols_wrap_where_pail_wraps() {
+        for (columns, message, expected) in WIDE {
+            let text = Layout { width: *columns, colour: false }.block_fitting(Level::Info, message).unwrap();
+
+            assert_eq!(format!("HH:MM:SS{}", &text[8..]), *expected, "{columns} columns: {message:?}");
+        }
+    }
+
+    #[test]
+    fn other_characters_are_not_fitted() {
+        let layout = Layout { width: 80, colour: false };
+
+        assert!(layout.block_fitting(Level::Info, "caf\u{e9}").is_none());
+        assert!(layout.block_fitting(Level::Info, "tab\there").is_none());
+        assert!(layout.block_fitting(Level::Info, "line\nbreak").is_some());
     }
 }

@@ -379,6 +379,63 @@ fn valid_path(path: &str) -> bool {
         })
 }
 
+/// The workspace directories `resolveWorkspacePatterns` gives the commands that scan every project's
+/// `package.json` (`vis optimize`): the directories the YAML's `packages` patterns name that hold a
+/// `package.json`, deduplicated, minus those the built-in excludes and the root `.gitignore` drop. Unlike
+/// [`project_directories`], no project name, overlay or other ecosystem matters. `None` delegates: no pattern
+/// list in the workspace YAML, a pattern or `.gitignore` line outside the shapes above, or a non-ASCII name.
+pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> {
+    if cfg!(windows) || !root.is_absolute() || root.to_str().is_none() {
+        return None;
+    }
+
+    let mut patterns = None;
+
+    for file in WORKSPACE_YAML_NAMES {
+        let path = root.join(file);
+
+        if path.exists() {
+            let text = fs::read_to_string(&path).ok()?;
+
+            if !text.is_ascii() {
+                return None;
+            }
+
+            let found = yaml_packages(&text);
+
+            if !found.is_empty() {
+                patterns = Some(found);
+
+                break;
+            }
+        }
+    }
+
+    let directories = expand_patterns(root, &patterns?, &|directory| directory.join("package.json").exists())?;
+    let mut unique: Vec<String> = Vec::new();
+
+    for directory in directories {
+        if !unique.contains(&directory) {
+            unique.push(directory);
+        }
+    }
+
+    let rules = gitignore_rules(root)?;
+    let mut kept = Vec::new();
+
+    for directory in unique {
+        if !directory.is_ascii() {
+            return None;
+        }
+
+        if !is_ignored(&rules, &directory) {
+            kept.push(directory);
+        }
+    }
+
+    Some(kept)
+}
+
 fn star_match(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
     let (mut p, mut t) = (0, 0);

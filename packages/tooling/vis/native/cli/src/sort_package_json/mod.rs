@@ -21,7 +21,7 @@
 
 mod fields;
 mod gitignore;
-mod json;
+pub(crate) mod json;
 
 use std::env;
 use std::ffi::OsString;
