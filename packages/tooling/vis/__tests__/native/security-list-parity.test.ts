@@ -512,6 +512,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             // The walk reads every `node_modules/*/package.json`; a pipe nobody writes to blocks that read for good, so a
             // binary that walked first would not answer within the timeout.
             mkdirSync(join(nativeRoot, "node_modules", "trap"), { recursive: true });
+
             expect(spawnSync("mkfifo", [join(nativeRoot, "node_modules", "trap", "package.json")]).status).toBe(0);
 
             const result = harness.runNative(ARGS, nativeRoot, {}, true, 10_000);

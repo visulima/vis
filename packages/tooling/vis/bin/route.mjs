@@ -931,6 +931,8 @@ const sbomMayRunNatively = (platform, environment, args, cwd, interactive, holds
 
 // The output settings that change what the binary's log lines (and the commands that print JSON beside them) look like:
 // `NODE_ENV` of `test` or `debug`, `DEBUG`, `PAIL_LOG_LEVEL` and `CEREBRO_*`. A run with any of them stays in Node.
+// The binary keeps the same list in `output_settings_are_default` (`native/cli/src/advisories.rs`); the `NODE_ENV`, `DEBUG`,
+// `PAIL_LOG_LEVEL` and `CEREBRO_*` cases of `native/cli/tests/fixtures/routing.json` run both halves and fail when they differ.
 const outputSettingsAreDefault = (environment) =>
     !["debug", "test"].includes(environment.NODE_ENV)
     && environment.DEBUG === undefined

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -30,8 +30,9 @@ use oxc_ast::ast::Expression;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::advisories::{any_ancestor_has, in_ci, monorepo_root, DENO_FILES};
-use crate::error::WrapperError;
+use crate::advisories::{
+    any_ancestor_has, in_ci, monorepo_root, output_settings_are_default, write_stdout, DENO_FILES,
+};
 use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 
@@ -63,12 +64,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::delegate(raw_args);
     };
 
-    if let Err(error) = io::stdout().lock().write_all(output.as_bytes()).and_then(|()| io::stdout().lock().flush()) {
-        // A closed pipe is not an error worth reporting.
-        if error.kind() != io::ErrorKind::BrokenPipe {
-            WrapperError::write("security", "the output", error).exit();
-        }
-    }
+    write_stdout("security", "the output", &output);
 
     exit(0)
 }
@@ -179,11 +175,7 @@ fn context() -> Option<PathBuf> {
     }
 
     // The log level comes from NODE_ENV, `DEBUG` and `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-    {
+    if !output_settings_are_default() {
         return None;
     }
 

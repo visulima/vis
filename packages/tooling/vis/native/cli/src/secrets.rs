@@ -31,7 +31,7 @@ use serde::{Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
+use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
 use crate::pail::{Layout, Level as LogLevel};
 
 /// The tool version Node stamps into SARIF (`toolVersion` in the secrets handler).
@@ -146,11 +146,7 @@ fn context(args: &[String]) -> Option<Context> {
 
     // pail's level comes from NODE_ENV (`test` hides the notice and success lines, `debug` shows more),
     // `DEBUG` and `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`. Node answers for those.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-    {
+    if !output_settings_are_default() {
         return None;
     }
 
