@@ -172,6 +172,19 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
     return flags.every((flag) => known.has(flag)) && new Set(flags).size === flags.length;
 };
 
+// Whether `vis implode` can pass the binary's native gate (`plan` in `implode.rs`): no flag or one `--yes`/`-y`, in a
+// CI context off a terminal. The binary re-checks everything, including the workspace, the home directory and the
+// profiles it would edit, so this only skips the extra process for a call it would delegate anyway. Windows stays in Node.
+const implodeMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    const flags = args.slice(1);
+
+    return flags.length === 0 || (flags.length === 1 && (flags[0] === "--yes" || flags[0] === "-y"));
+};
+
 // Variables that send `vis run` to Node: the remote cache, the cache location, selection, concurrency,
 // logging. Same list as `NODE_ONLY_VARIABLES` in `native/cli/src/run.rs`; keep them in step. The CI providers'
 // log grouping (`GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`) is printed by the binary itself.
@@ -1063,6 +1076,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // The self-uninstall: `--yes`, or nothing to remove.
+    ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],

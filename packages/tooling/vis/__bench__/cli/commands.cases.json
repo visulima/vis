@@ -574,6 +574,10 @@
             "reason": "`hook run` is handed to Node by the runner by design"
         },
         {
+            "route": "implode",
+            "reason": "deletes the home directory it runs against, so a repeated run has nothing left to measure"
+        },
+        {
             "route": "link",
             "reason": "changes the workspace links (stub output only); covered by `unlink`/`dedupe` shape"
         },
