@@ -264,7 +264,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             "merge-group-zero": { before: shas["v3"], merge_group: { base_sha: zero } },
         })) {
             paths.payloads[name] = join(paths.scratch, `event-${name}.json`);
-            writeFileSync(paths.payloads[name] as string, JSON.stringify(payload));
+            writeFileSync(paths.payloads[name], JSON.stringify(payload));
         }
 
         paths.shared = join(paths.scratch, "shared");
