@@ -63,6 +63,7 @@ mod table;
 #[cfg_attr(not(test), allow(dead_code))]
 mod targets;
 mod term;
+mod toolchain;
 mod typosquat;
 mod vis_config;
 mod width_tables;

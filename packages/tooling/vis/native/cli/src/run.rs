@@ -34,6 +34,7 @@ use task_runner_core::{compute_task_keys, lookup_entry, CacheLookup, DependsOn, 
 use crate::advisories::{in_ci, native_context};
 use crate::targets::{script_targets, Targets};
 use crate::term;
+use crate::toolchain::{self, Pins, Versions};
 
 /// `DEFAULT_MAX_CACHE_AGE` of the task-runner cache: an entry older than this is swept by Node.
 const SWEEP_WINDOW: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -63,11 +64,6 @@ const NODE_ONLY_VARIABLES: [&str; 14] = [
     "VIS_RUNTIME",
     "VIS_RUN_CONCURRENCY_LIMIT",
 ];
-
-/// Files and directories of a toolchain pin: any of them sends the run to Node, which spawns the pinned
-/// tools and may install them.
-const TOOLCHAIN_FILES: [&str; 6] =
-    [".nvmrc", ".node-version", ".tool-versions", ".prototools", ".mise.toml", "mise.toml"];
 
 /// Lockfiles of the other package managers; the lockfile preflight looks at the first one it finds.
 const OTHER_LOCKFILES: [&str; 6] =
@@ -187,15 +183,20 @@ fn node_environment() -> Option<(&'static str, &'static str)> {
     Some((arch, platform))
 }
 
-/// `process.version` of the Node that runs the launcher, `v22.1.0` style. The launcher hand-off sets it
-/// (`node_contract::init` drops it for any other start), so a binary started on its own has none.
-fn node_version() -> Option<String> {
-    let version = env::var("VIS_NODE_VERSION").ok()?;
+/// `process.version` as a recorded value: `v22.1.0` style, nothing that would need escaping.
+fn node_version_text(version: &str) -> Option<String> {
     let digits = version.strip_prefix('v')?;
 
     (!digits.is_empty()
         && digits.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')))
-    .then_some(version)
+    .then(|| version.to_owned())
+}
+
+/// `process.version` of the Node that runs the launcher, `v22.1.0` style. The launcher hand-off sets it
+/// (`node_contract::init` drops it for any other start), so a binary started on its own has none and asks the
+/// Node it would delegate to (see [`attempt`]).
+fn launcher_node_version() -> Option<String> {
+    node_version_text(&env::var("VIS_NODE_VERSION").ok()?)
 }
 
 fn exists(path: &Path) -> bool {
@@ -206,20 +207,6 @@ fn modified_ms(path: &Path) -> Option<f64> {
     let modified = fs::metadata(path).ok()?.modified().ok()?;
 
     Some(modified.duration_since(UNIX_EPOCH).ok()?.as_secs_f64() * 1000.0)
-}
-
-/// Whether the toolchain preflight stays silent: a root `package.json` without `engines`,
-/// `packageManager` or `volta`, and none of the version files.
-fn no_toolchain_pin(root: &Path) -> Option<bool> {
-    if TOOLCHAIN_FILES.iter().any(|name| exists(&root.join(name))) || exists(&root.join(".config/mise.toml")) {
-        return Some(false);
-    }
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join("package.json")).ok()?).ok()?;
-    let manifest = manifest.as_object()?;
-
-    Some(!["engines", "packageManager", "volta"].iter().any(|key| manifest.contains_key(*key)))
 }
 
 /// `checkLockfileFreshness` for a pnpm workspace, answering only "passes": every other outcome (an
@@ -291,7 +278,7 @@ fn nothing_to_sweep(cache: &Path) -> bool {
 }
 
 /// What JavaScript's `String.prototype.trim` removes.
-fn is_js_whitespace(c: char) -> bool {
+pub(crate) fn is_js_whitespace(c: char) -> bool {
     matches!(
         c,
         '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
@@ -747,7 +734,11 @@ fn attempt(args: &[String]) -> Option<Answer> {
     let look = environment_look(args)?;
 
     let (arch, platform) = node_environment()?;
-    let node_version = node_version()?;
+    // `Some` with the launcher's hand-off; a start without it asks the Node it would delegate to, after the hits.
+    let launcher_version = match env::var_os("VIS_NODE_VERSION") {
+        Some(_) => Some(launcher_node_version()?),
+        None => None,
+    };
 
     // The root is the working directory, with no config and no Deno file at or above it, in a CI context.
     if !native_context() {
@@ -757,11 +748,13 @@ fn attempt(args: &[String]) -> Option<Answer> {
     let root = env::current_dir().ok()?;
 
     if ![".task-runner", ".task-runner-cache", ".vis/runs"].iter().all(|name| !exists(&root.join(name)))
-        || !no_toolchain_pin(&root)?
         || !lockfile_is_fresh(&root)
     {
         return None;
     }
+
+    // The pins Node's toolchain preflight reads; the ones this module cannot decide send the run to Node.
+    let pins = Pins::read(&root)?;
 
     let cache = cache_directory(&root)?;
 
@@ -787,6 +780,7 @@ fn attempt(args: &[String]) -> Option<Answer> {
     }
 
     let keys = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
+    let hashes: Vec<String> = keys.keys.iter().map(|key| key.hash.clone()).collect();
     let mut hits = Vec::with_capacity(keys.keys.len());
 
     for (graph_index, key) in keys.keys.into_iter().enumerate() {
@@ -817,6 +811,40 @@ fn attempt(args: &[String]) -> Option<Answer> {
     if !nothing_to_sweep(&cache) {
         return None;
     }
+
+    // Asking the pinned tools (and Node, for the summary) for their versions costs a process each, so it
+    // waits until every task has hit; they are asked at the same time.
+    let pin_binaries = pins.binaries()?;
+    let node_command = match launcher_version {
+        Some(_) => None,
+        None => Some(toolchain::resolve_command(&env::var("VIS_NODE").unwrap_or_else(|_| "node".to_owned()))?),
+    };
+    let mut versions = Versions::with_launcher_node(env::var("VIS_NODE").ok().as_deref(), launcher_version.as_deref());
+    let wanted: Vec<PathBuf> = pin_binaries.iter().cloned().chain(node_command.clone()).collect();
+
+    versions.fetch(&wanted);
+
+    if !pins.are_met(&pin_binaries, &mut versions) {
+        return None;
+    }
+
+    // Node asks the pinned tools before it reads the lockfile and keys the tasks, and a tool may change files while
+    // it answers (a pnpm that manages its own version records the pin in the lockfile the first time). The same
+    // question here comes after the lookups, so the lockfile and the keys are checked again, and a run whose
+    // answer moved them is Node's.
+    if !pins.is_empty() {
+        let again = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
+
+        if !lockfile_is_fresh(&root) || again.keys.iter().map(|key| &key.hash).ne(hashes.iter()) {
+            return None;
+        }
+    }
+
+    let node_version = match (launcher_version, node_command) {
+        (Some(version), _) => version,
+        (None, Some(command)) => node_version_text(versions.output(&command)?.strip_suffix('\n')?)?,
+        (None, None) => return None,
+    };
 
     let answer = Answer {
         look,

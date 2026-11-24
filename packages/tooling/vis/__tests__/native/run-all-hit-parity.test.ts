@@ -147,7 +147,7 @@ const runNative = (cwd: string, args: string[], stub: string, env: Record<string
             ...env,
             VIS_FALLBACK_ENTRY: stub,
             VIS_FALLBACK_ENTRY_OVERRIDE: stub,
-            VIS_NODE: process.execPath,
+            VIS_NODE: env["VIS_NODE"] ?? process.execPath,
             VIS_VERSION: version,
             ...(handoff ? { VIS_HANDOFF: "launcher", VIS_NODE_VERSION: process.version } : {}),
         },
@@ -282,17 +282,17 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     /** A workspace with a warm cache, and what Node printed and wrote for the all-hit run. */
-    const warm = (name: string, shape: Shape, mutate?: (root: string) => void) => {
+    const warm = (name: string, shape: Shape, mutate?: (root: string) => void, env: Record<string, string> = baseEnvironment()) => {
         const root = join(paths.scratch, name);
 
         generate(root, shape);
         mutate?.(root);
 
-        const cold = runNode(root, ["run", "build"]);
+        const cold = runNode(root, ["run", "build"], env);
 
         expect(cold.status).toBe(0);
 
-        const hit = runNode(root, ["run", "build"]);
+        const hit = runNode(root, ["run", "build"], env);
 
         expect(hit.status).toBe(0);
         expect(hit.stdout).toContain("read from cache");
@@ -569,12 +569,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("there is no install marker", (root) => {
             rmSync(join(root, "node_modules/.modules.yaml"));
         });
-        delegated("a toolchain pin exists (.nvmrc)", (root) => {
-            write(root, ".nvmrc", "22\n");
-        });
-        delegated("a toolchain pin exists (packageManager)", (root) => {
-            write(root, "package.json", JSON.stringify({ name: "root", packageManager: "pnpm@10.0.0", private: true }));
-        });
         delegated("run history exists", (root) => {
             mkdirSync(join(root, ".vis/runs"), { recursive: true });
         });
@@ -598,7 +592,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("only CONTINUOUS_INTEGRATION is set", () => undefined, baseEnvironment({ CONTINUOUS_INTEGRATION: "1" }, false));
         delegated("CI is empty", () => undefined, baseEnvironment({ CI: "" }, false));
         delegated("CI is false", () => undefined, baseEnvironment({ CI: "false" }, false));
-        delegated("the process was not started by the launcher", () => undefined, undefined, ["run", "build"], false);
         delegated("a flag is given", () => undefined, undefined, ["run", "build", "--no-cache"]);
         delegated("--parallel is given", () => undefined, undefined, ["run", "build", "--parallel=2"]);
         delegated("two targets are given", () => undefined, undefined, ["run", "build", "test"]);
@@ -709,13 +702,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(native.stdout).toBe(`${marker}\n`);
         });
 
-        it("ignores a stale VIS_NODE_VERSION when the launcher did not start it", () => {
-            expect.assertions(2);
+        it("ignores a stale VIS_NODE_VERSION when the launcher did not start it, and asks the Node it would delegate to", () => {
+            expect.assertions(3);
 
-            const native = runNative(fresh(base.root), ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE_VERSION: "v1.2.3" }), false);
+            const root = fresh(base.root);
+            const native = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE_VERSION: "v1.2.3" }), false);
 
-            expect(native.stdout).toBe(`${marker}\n`);
-            expect(native.status).toBe(99);
+            expect(native.stdout).not.toContain(marker);
+            expect(native.status).toBe(0);
+            expect((JSON.parse(readSummary(root)) as { environment: { nodeVersion: string } }).environment.nodeVersion).toBe(process.version);
         });
 
         it("records the launcher's Node version, not its own", () => {
@@ -899,6 +894,384 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(native.stdout).toBe(`${marker}\n`);
             expect(native.stderr).toBe("");
             expect(native.status).toBe(99);
+        });
+    });
+
+    describe("the toolchain pins and the Node version", () => {
+        const shape: Shape = { packages: 4 };
+
+        /** A directory of tools that print a version, first on PATH; `undefined` leaves the tool out, a string is the shell body. */
+        const stubDirectory = (name: string, tools: Record<string, string | undefined>): string => {
+            const directory = join(paths.scratch, `stubs-${name}`);
+
+            mkdirSync(directory, { recursive: true });
+
+            for (const [tool, body] of Object.entries(tools)) {
+                if (body !== undefined) {
+                    writeFileSync(join(directory, tool), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+                }
+            }
+
+            return directory;
+        };
+        const environmentWith = (directory: string, extra: Record<string, string> = {}): Record<string, string> =>
+            baseEnvironment({ PATH: `${directory}:${process.env["PATH"] ?? ""}`, ...extra });
+        /** The Node the Node CLI itself runs under, which the pins below are written against (a stub `node` would break the tasks). */
+        const major = process.versions.node.split(".")[0] as string;
+        const toolsAt = (versions: { node?: string; npm?: string; pnpm?: string }): Record<string, string | undefined> => {
+            return {
+                node: versions.node === undefined ? undefined : `echo ${versions.node}`,
+                npm: versions.npm === undefined ? undefined : `echo ${versions.npm}`,
+                pnpm: versions.pnpm === undefined ? undefined : `echo ${versions.pnpm}`,
+            };
+        };
+        const rootWith = (extra: Record<string, unknown>) => (root: string) => {
+            write(root, "package.json", JSON.stringify({ name: "root", private: true, scripts: { build: "echo root-build" }, ...extra }, undefined, 2));
+        };
+
+        interface PinCase {
+            files?: Record<string, string>;
+            manifest?: Record<string, unknown>;
+            name: string;
+            versions: { node?: string; npm?: string; pnpm?: string };
+        }
+
+        // Pins whose tools report a version that meets them: Node's preflight prints nothing, so the binary answers.
+        const met: PinCase[] = [
+            { manifest: { packageManager: "pnpm@10.4.1" }, name: "packageManager equal to the installed pnpm", versions: { pnpm: "10.4.1" } },
+            { manifest: { packageManager: "pnpm@10.4.1+sha512.0123456789abcdef" }, name: "packageManager with a checksum", versions: { pnpm: "10.4.1" } },
+            { manifest: { packageManager: "pnpm@10" }, name: "packageManager with only a major", versions: { pnpm: "10.4.1" } },
+            { manifest: { packageManager: "pnpm" }, name: "a packageManager without a version", versions: {} },
+            { manifest: { engines: { node: `>=${major}` } }, name: "engines.node as a range", versions: {} },
+            { manifest: { engines: { node: `^1 || ^${major}`, pnpm: "^10" } }, name: "engines for two tools", versions: { pnpm: "10.4.1" } },
+            // A stub `npm` on PATH breaks the tasks themselves, so this one asks the installed npm.
+            { manifest: { engines: { npm: ">=1" } }, name: "engines.npm against the installed npm", versions: {} },
+            { manifest: { engines: { node: `>=${major}`, vscode: "^1.90.0" } }, name: "engines with a key Node ignores", versions: {} },
+            { manifest: { engines: {} }, name: "empty engines", versions: {} },
+            { manifest: { engines: { node: 22 } }, name: "engines with a non-string value", versions: {} },
+            { files: { ".nvmrc": `v${major}\n` }, name: ".nvmrc", versions: {} },
+            { files: { ".node-version": `${process.versions.node}\r\n` }, name: ".node-version", versions: {} },
+            { files: { ".node-version": `${major}\n`, ".nvmrc": "\n" }, name: "an empty .nvmrc before a .node-version", versions: {} },
+            { files: { ".nvmrc": "lts/*\n" }, name: "an .nvmrc the range matcher does not know", versions: {} },
+            { files: { ".nvmrc": `${major}\n` }, manifest: { engines: { node: ">=99999" } }, name: ".nvmrc over engines.node", versions: {} },
+            {
+                files: { ".nvmrc": `${major}\n` },
+                manifest: { engines: { node: `>=${major}`, pnpm: "^10" }, packageManager: "pnpm@10.4.1" },
+                name: "every source at once",
+                versions: { pnpm: "10.4.1" },
+            },
+        ];
+
+        describe.each(met)("a pin that is met: $name", (pin) => {
+            const reference = { env: baseEnvironment(), root: "", stderr: "", stdout: "" };
+
+            beforeAll(() => {
+                const directory = stubDirectory(pin.name.replaceAll(/\W+/g, "-"), toolsAt(pin.versions));
+
+                reference.env = environmentWith(directory);
+                Object.assign(
+                    reference,
+                    warm(
+                        `pinned-${pin.name.replaceAll(/\W+/g, "-")}`,
+                        shape,
+                        (root) => {
+                            rootWith(pin.manifest ?? {})(root);
+
+                            for (const [file, content] of Object.entries(pin.files ?? {})) {
+                                write(root, file, content);
+                            }
+                        },
+                        reference.env,
+                    ),
+                );
+            }, 120_000);
+
+            it("answers like Node, and nothing else is written", () => {
+                expect.hasAssertions();
+
+                const root = fresh(reference.root);
+                const before = snapshot(root, "node_modules/.cache/vis");
+                const node = runNode(fresh(reference.root), ["run", "build"], reference.env);
+                const native = runNative(root, ["run", "build"], paths.stub, reference.env);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(native.status).toBe(0);
+                expect(native.stderr).toBe(node.stderr);
+                expect(node.stderr).toBe("");
+                expect(lines(native.stdout).toSorted()).toStrictEqual(lines(node.stdout).toSorted());
+                expect(blocksOf(native.stdout).toSorted()).toStrictEqual(blocksOf(node.stdout).toSorted());
+                expect(snapshot(root, "node_modules/.cache/vis")).toStrictEqual(before);
+                expect(normaliseSummary(readSummary(root))).toBe(normaliseSummary(readSummary(join(paths.scratch, `pinned-${pin.name.replaceAll(/\W+/g, "-")}`))));
+            });
+        });
+
+        // The same workspaces with a tool that does not meet the pin, is missing, or cannot report: Node may print or
+        // install, so the binary hands the run over before anything is printed or written.
+        const unmet: { env: (directory: string) => Record<string, string>; name: string; pin: Omit<PinCase, "name" | "versions">; tools: Record<string, string | undefined> }[] = [
+            { env: (d) => environmentWith(d), name: "pnpm older than the pin", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "9.1.0" }) },
+            { env: (d) => environmentWith(d), name: "pnpm newer than an exact pin", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "10.5.0" }) },
+            { env: (d) => environmentWith(d), name: "a pin prefix that is not a prefix of the version", pin: { manifest: { packageManager: "pnpm@10.4" } }, tools: toolsAt({ node: "v22.1.0", pnpm: "10.40.0" }) },
+            { env: (d) => environmentWith(d), name: "node below engines.node", pin: { manifest: { engines: { node: ">=24" } } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: "node past an upper bound", pin: { manifest: { engines: { node: ">=20 <22" } } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: "a caret on another major", pin: { manifest: { engines: { node: "^20" } } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: "npm below engines.npm", pin: { manifest: { engines: { npm: ">=11" } } }, tools: toolsAt({ node: "v22.1.0", npm: "10.5.0" }) },
+            { env: (d) => environmentWith(d), name: "npm that fails", pin: { manifest: { engines: { npm: ">=1" } } }, tools: { ...toolsAt({ node: "v22.1.0" }), npm: "exit 2" } },
+            { env: (d) => environmentWith(d), name: ".nvmrc on another major", pin: { files: { ".nvmrc": "20\n" } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: ".node-version on another version", pin: { files: { ".node-version": "22.2.0\n" } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: ".nvmrc over a looser engines.node", pin: { files: { ".nvmrc": "20\n" }, manifest: { engines: { node: ">=18" } } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => environmentWith(d), name: "a pinned tool that fails", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "exit 3" } },
+            { env: (d) => environmentWith(d), name: "a pinned tool that prints no version", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "echo unknown" } },
+            { env: (d) => environmentWith(d), name: "a pinned tool that is too slow", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: { ...toolsAt({ node: "v22.1.0" }), pnpm: "sleep 4; echo 10.4.1" } },
+            { env: (d) => environmentWith(d), name: "node that fails while pinned", pin: { manifest: { engines: { node: ">=20" } } }, tools: { node: "exit 1" } },
+            { env: (d) => baseEnvironment({ PATH: d }), name: "a pinned pnpm that is not on PATH", pin: { manifest: { packageManager: "pnpm@10.4.1" } }, tools: toolsAt({ node: "v22.1.0" }) },
+            { env: (d) => baseEnvironment({ PATH: `${d}:/usr/bin:/bin` }), name: "a pinned node that is not on PATH", pin: { manifest: { engines: { node: ">=20" } } }, tools: {} },
+        ];
+
+        describe("a pin that is not met leaves the run to Node untouched", () => {
+            const base = { root: "" };
+
+            beforeAll(() => {
+                // The cache is filled with no pin; the pin is added to a copy afterwards (the pins do not change the task keys).
+                base.root = warm("unmet", shape).root;
+            }, 120_000);
+
+            it.each(unmet.map((entry) => [entry.name, entry] as const))("%s", (name, entry) => {
+                expect.assertions(4);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory(`unmet-${name.replaceAll(/\W+/g, "-")}`, entry.tools);
+
+                rootWith(entry.pin.manifest ?? {})(root);
+
+                for (const [file, content] of Object.entries(entry.pin.files ?? {})) {
+                    write(root, file, content);
+                }
+
+                const before = snapshot(root);
+                const native = runNative(root, ["run", "build"], paths.stub, entry.env(directory));
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.stderr).toBe("");
+                expect(native.status).toBe(99);
+                expect(snapshot(root)).toStrictEqual(before);
+            }, 20_000);
+        });
+
+        describe("a pin the binary does not read leaves the run to Node untouched", () => {
+            const base = { root: "" };
+
+            beforeAll(() => {
+                base.root = warm("unread", shape).root;
+            }, 120_000);
+
+            it.each([
+                ["a pnpm-only volta pin", { manifest: { volta: { node: "22.1.0" } } }],
+                ["an empty volta field", { manifest: { volta: {} } }],
+                ["a yarn engines pin", { manifest: { engines: { yarn: ">=1" } } }],
+                ["a bun engines pin", { manifest: { engines: { bun: ">=1" } } }],
+                ["a yarn packageManager", { manifest: { packageManager: "yarn@4.0.0" } }],
+                ["a bun packageManager", { manifest: { packageManager: "bun@1.1.0" } }],
+                ["a go engines pin", { manifest: { engines: { go: "1.22" } } }],
+                ["a packageManager that is not a string", { manifest: { packageManager: 10 } }],
+                ["engines that is an array", { manifest: { engines: ["node"] } }],
+                ["engines that is a string", { manifest: { engines: "node" } }],
+                ["a .tool-versions file", { files: { ".tool-versions": "nodejs 22.1.0\n" } }],
+                ["a .prototools file", { files: { ".prototools": 'node = "22.1.0"\n' } }],
+                ["a .mise.toml file", { files: { ".mise.toml": '[tools]\nnode = "22.1.0"\n' } }],
+                ["a mise.toml file", { files: { "mise.toml": '[tools]\nnode = "22.1.0"\n' } }],
+                ["a .config/mise.toml file", { files: { ".config/mise.toml": '[tools]\nnode = "22.1.0"\n' } }],
+                ["an .nvmrc that is not ASCII", { files: { ".nvmrc": "22\u00A0\n" } }],
+                ["an .nvmrc that is a directory", { directories: [".nvmrc"] }],
+                ["a packageManager that is not ASCII", { manifest: { packageManager: "pnpm@10.4.1\u00E9" } }],
+            ] as [string, { directories?: string[]; files?: Record<string, string>; manifest?: Record<string, unknown> }][])("%s", (name, pin) => {
+                expect.assertions(4);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory("unread", toolsAt({ node: "v22.1.0", pnpm: "10.4.1" }));
+
+                rootWith(pin.manifest ?? {})(root);
+
+                for (const [file, content] of Object.entries(pin.files ?? {})) {
+                    write(root, file, content);
+                }
+
+                for (const entry of pin.directories ?? []) {
+                    mkdirSync(join(root, entry));
+                }
+
+                const before = snapshot(root);
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
+
+                expect(name).toBe(true);
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(snapshot(root)).toStrictEqual(before);
+            });
+        });
+
+        it("asks a tool once even when two pins name it", () => {
+            expect.hasAssertions();
+
+            const probes = join(paths.scratch, "probe-count.log");
+            const directory = stubDirectory("probe-count", { pnpm: `echo x >> ${probes}\necho 10.4.1` });
+            const env = environmentWith(directory);
+            const { root } = warm("probe-count", shape, rootWith({ engines: { pnpm: "^10" }, packageManager: "pnpm@10.4.1" }), env);
+
+            writeFileSync(probes, "");
+
+            const native = runNative(fresh(root), ["run", "build"], paths.stub, env);
+
+            expect(native.stdout).not.toContain(marker);
+            expect(readFileSync(probes, "utf8")).toBe("x\n");
+            expect(native.status).toBe(0);
+        });
+
+        describe("with the installed tools", () => {
+            const installed = spawnSync("pnpm", ["--version"], { encoding: "utf8" });
+            // A pnpm that manages its own version would fetch the pinned one into the (fresh) test home; this asks plain `pnpm --version`.
+            const env = baseEnvironment();
+
+            it.skipIf(installed.status !== 0)("answers a run pinned to the installed pnpm and Node range, like Node", () => {
+                expect.hasAssertions();
+
+                const pnpm = installed.stdout.trim();
+                const { root, stdout } = warm(
+                    "installed-tools",
+                    shape,
+                    (workspace) => {
+                        rootWith({ engines: { node: `>=${major}` }, packageManager: `pnpm@${pnpm}` })(workspace);
+
+                        // A version-managing pnpm adds the pinned version to the lockfile the first time it is asked, which a real
+                        // lockfile already holds; ask it once here and make the install marker newer again.
+                        spawnSync("pnpm", ["--version"], { cwd: workspace, env });
+
+                        const now = Date.now() / 1000;
+
+                        utimesSync(join(workspace, "pnpm-lock.yaml"), now - 60, now - 60);
+                        utimesSync(join(workspace, "node_modules/.modules.yaml"), now - 30, now - 30);
+                    },
+                    env,
+                );
+                const native = runNative(fresh(root), ["run", "build"], paths.stub, env);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(native.status).toBe(0);
+                expect(native.stderr).toBe("");
+                expect(lines(native.stdout).toSorted()).toStrictEqual(lines(stdout).toSorted());
+            }, 60_000);
+        });
+
+        describe("a pinned tool that changes the workspace while it answers", () => {
+            const base = { root: "" };
+
+            beforeAll(() => {
+                base.root = warm("changing-probe", shape).root;
+            }, 120_000);
+
+            // Node asks before it reads the lockfile and keys the tasks, so a change made by the answer is part of its run.
+            it.each([
+                ["the lockfile", "echo '# touched' >> pnpm-lock.yaml"],
+                ["a source file of a project", "echo 'export {};' >> packages/p1/src/index.ts"],
+                ["the manifest of a project", `echo '' >> packages/p2/package.json`],
+            ])("delegates when it changes %s", (name, change) => {
+                expect.assertions(4);
+
+                const root = fresh(base.root);
+                const directory = stubDirectory(`changing-${name.replaceAll(/\W+/g, "-")}`, { pnpm: `${change}\necho 10.4.1` });
+
+                rootWith({ packageManager: "pnpm@10.4.1" })(root);
+
+                const native = runNative(root, ["run", "build"], paths.stub, environmentWith(directory));
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(native.stderr).toBe("");
+                // The summary of the Node runs that filled the cache is still the last one.
+                expect(readSummary(root)).toBe(readSummary(base.root));
+            });
+        });
+
+        describe("the Node version without the launcher", () => {
+            const base = { root: "" };
+
+            beforeAll(() => {
+                base.root = warm("without-launcher", shape).root;
+            }, 120_000);
+
+            const recorded = (root: string): string => (JSON.parse(readSummary(root)) as { environment: { nodeVersion: string } }).environment.nodeVersion;
+
+            it.each(["v24.0.0-rc.1", "v26.99.0", "v27.0.0-nightly20261124abcdef0123"])("records the version of the Node the run would delegate to (VIS_NODE): %s", (nodeVersion) => {
+                expect.assertions(3);
+
+                const directory = stubDirectory(`vis-node-${nodeVersion}`, { node: `echo ${nodeVersion}` });
+                const root = fresh(base.root);
+                const native = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE: join(directory, "node") }), false);
+
+                expect(native.stdout).not.toContain(marker);
+                expect(native.status).toBe(0);
+                expect(recorded(root)).toBe(nodeVersion);
+            });
+
+            it("records the version of the `node` on PATH when VIS_NODE is not set", () => {
+                expect.assertions(2);
+
+                const directory = stubDirectory("path-node", { node: "echo v26.98.1" });
+                const root = fresh(base.root);
+                const env = baseEnvironment({ PATH: `${directory}:${process.env["PATH"] ?? ""}` });
+                const native = spawnSync(binary as string, ["run", "build"], { cwd: root, encoding: "utf8", env: { ...env, VIS_FALLBACK_ENTRY: paths.stub, VIS_FALLBACK_ENTRY_OVERRIDE: paths.stub } });
+
+                expect(native.stdout).not.toContain(marker);
+                expect(recorded(root)).toBe("v26.98.1");
+            });
+
+            it.each([
+                ["fails", "exit 1"],
+                ["prints nothing", "true"],
+                ["prints something that is not a version", "echo not-a-version"],
+                ["prints a version with a quote", 'echo \'v1.2"3\''],
+                ["prints two lines", "echo v22.1.0; echo v22.1.1"],
+                ["is too slow", "sleep 4; echo v22.1.0"],
+            ])("delegates when the Node it would delegate to %s", (_name, body) => {
+                expect.assertions(4);
+
+                // Only `--version` misbehaves; the delegated run (`node <entry> run build`) goes to the real Node.
+                const directory = stubDirectory(`bad-node-${_name.replaceAll(/\W+/g, "-")}`, { node: `if [ "$1" = "--version" ]; then ${body}; else exec ${process.execPath} "$@"; fi` });
+                const root = fresh(base.root);
+                const before = snapshot(root);
+                const native = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE: join(directory, "node") }), false);
+
+                expect(native.stdout).toBe(`${marker}\n`);
+                expect(native.status).toBe(99);
+                expect(native.stderr).toBe("");
+                expect(snapshot(root)).toStrictEqual(before);
+            }, 20_000);
+
+            it("delegates when no Node can be found", () => {
+                expect.assertions(2);
+
+                const root = fresh(base.root);
+                const before = snapshot(root);
+                const native = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ PATH: "/nonexistent", VIS_NODE: "no-such-node" }), false);
+
+                // The binary cannot start the Node it would delegate to either, so there is nothing to print.
+                expect(native.stdout).not.toContain("Successfully ran");
+                expect(snapshot(root)).toStrictEqual(before);
+            });
+
+            it("does not ask Node again when the launcher passed its version", () => {
+                expect.assertions(2);
+
+                const root = fresh(base.root);
+                const marker2 = join(paths.scratch, "node-was-asked");
+                const directory = stubDirectory("launcher-node", { node: `echo asked >> ${marker2}\necho v1.0.0` });
+
+                writeFileSync(marker2, "");
+
+                runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_NODE: join(directory, "node") }));
+
+                expect(readFileSync(marker2, "utf8")).toBe("");
+                expect(recorded(root)).toBe(process.version);
+            });
         });
     });
 
