@@ -309,3 +309,140 @@ describe.skipIf(process.platform === "win32")("golden task keys", () => {
         expect(computeTaskHash(details)).toBe(GOLDEN_CONFIGURATION);
     });
 });
+
+/**
+ * Keys of the input shapes whose key changed on purpose (the directory walk used to drop them):
+ *
+ * - a fileset whose base directory is named like an ignored directory (`{projectRoot}/dist/**`) or a project that
+ *   lives in a directory so named (`packages/coverage`) used to hash ZERO files, so editing them never changed
+ *   the key;
+ * - a symlinked file, and every file under a symlinked directory, used to be left out of the key.
+ *
+ * The values below were captured from the code after the change. What each key was before it, on the same fixture:
+ * `coverage` 744251fb…, `dangling` 26bf4409…, `dir-link` e2deaa9d…, `dist-base` f858c8b1…, `file-link` 9a1e5357….
+ * `cycle` has the key it always had: the cycle links add no file, so a cycle is the one shape here that keeps it.
+ * Every key of the first suite, none of which has such an input, is untouched.
+ */
+describe.skipIf(process.platform === "win32")("golden keys of inputs the walk used to drop", () => {
+    const linkedProjects: Record<string, ProjectConfiguration> = {
+        coverage: { root: "packages/coverage", targets: { build: { command: "true" } } },
+        cycle: { root: "packages/cycle", targets: { build: { command: "true" } } },
+        dangling: { root: "packages/dangling", targets: { build: { command: "true" } } },
+        "dir-link": { root: "packages/dir-link", targets: { build: { command: "true" } } },
+        "dist-base": { root: "packages/dist-base", targets: { build: { command: "true", inputs: ["{projectRoot}/dist/**"] } } },
+        "file-link": { root: "packages/file-link", targets: { build: { command: "true" } } },
+    };
+
+    const createLinkFixture = (): string => {
+        const root = createFixture();
+
+        put(root, "packages/dist-base/dist/out.js", "built\n");
+        put(root, "packages/coverage/src/index.ts", "export const covered = 1;\n");
+        put(root, "libs/shared/src/index.ts", "export const shared = 1;\n");
+        put(root, "libs/shared/src/deep/more.ts", "export const deeper = 2;\n");
+        put(root, "libs/shared/file.ts", "export const file = 1;\n");
+        put(root, "packages/file-link/src/own.ts", "export const own = 1;\n");
+        symlinkSync("../../../libs/shared/file.ts", join(root, "packages/file-link/src/shared.ts"));
+        put(root, "packages/dir-link/own.ts", "export const own = 1;\n");
+        symlinkSync("../../libs/shared/src", join(root, "packages/dir-link/shared"));
+        put(root, "packages/cycle/src/a.ts", "export const a = 1;\n");
+        symlinkSync("..", join(root, "packages/cycle/src/up"));
+        symlinkSync(".", join(root, "packages/cycle/self"));
+        put(root, "packages/dangling/own.ts", "export const own = 1;\n");
+        symlinkSync("../../libs/missing/target.ts", join(root, "packages/dangling/broken.ts"));
+
+        return root;
+    };
+
+    const keyOf = async (root: string, name: string): Promise<string> => {
+        const target = linkedProjects[name]?.targets?.["build"];
+        const task: Task = {
+            declaresInputs: target?.inputs !== undefined,
+            id: `${name}:build`,
+            outputs: [],
+            overrides: { command: target?.command, visOptions: {} },
+            projectRoot: linkedProjects[name]?.root,
+            target: { project: name, target: "build" },
+        };
+
+        return computeTaskHash(await new InProcessTaskHasher({ projects: linkedProjects, workspaceRoot: root }).hashTask(task));
+    };
+
+    const GOLDEN_LINKED: Record<string, string> = {
+        coverage: "212367c66beb210720cc4fefcc020a43",
+        cycle: "8a853a54424146fa1ee91efba3873e4b",
+        dangling: "de74b880eb4c56fb86ef242c86d20305",
+        "dir-link": "13139a8f9ee10d180bc48e2555e50145",
+        "dist-base": "4585155215428dfbb363bcbe1c51eecc",
+        "file-link": "2c3dd7ea5bd73b1dd479bcc98c5b220f",
+    };
+
+    it("keeps the key of every shape the walk used to drop", async () => {
+        expect.hasAssertions();
+
+        const root = createLinkFixture();
+        const keys: Record<string, string> = {};
+
+        for (const name of Object.keys(linkedProjects)) {
+            // eslint-disable-next-line no-await-in-loop -- one task at a time
+            keys[name] = await keyOf(root, name);
+        }
+
+        expect(keys).toStrictEqual(GOLDEN_LINKED);
+    });
+
+    it("changes the key when a file in a base directory named like an ignored one changes", async () => {
+        expect.hasAssertions();
+
+        const root = createLinkFixture();
+        const before = await keyOf(root, "dist-base");
+
+        put(root, "packages/dist-base/dist/out.js", "rebuilt\n");
+
+        await expect(keyOf(root, "dist-base")).resolves.not.toBe(before);
+
+        const coverage = await keyOf(root, "coverage");
+
+        put(root, "packages/coverage/src/index.ts", "export const covered = 2;\n");
+
+        await expect(keyOf(root, "coverage")).resolves.not.toBe(coverage);
+    });
+
+    it("changes the key when the target of a symlinked file or directory changes", async () => {
+        expect.hasAssertions();
+
+        const root = createLinkFixture();
+        const fileKey = await keyOf(root, "file-link");
+        const directoryKey = await keyOf(root, "dir-link");
+
+        put(root, "libs/shared/file.ts", "export const file = 2;\n");
+
+        await expect(keyOf(root, "file-link")).resolves.not.toBe(fileKey);
+        await expect(keyOf(root, "dir-link")).resolves.toBe(directoryKey);
+
+        put(root, "libs/shared/src/deep/more.ts", "export const deeper = 3;\n");
+
+        await expect(keyOf(root, "dir-link")).resolves.not.toBe(directoryKey);
+    });
+
+    it("keys a directory cycle without hanging, and a dangling link by a marker until its target exists", async () => {
+        expect.hasAssertions();
+
+        const root = createLinkFixture();
+        const dangling = await keyOf(root, "dangling");
+
+        await expect(keyOf(root, "cycle")).resolves.toMatch(/^[\da-f]{32}$/);
+
+        // The marker does not depend on where the link points, so retargeting a dangling link keeps the key.
+        rmSync(join(root, "packages/dangling/broken.ts"));
+        symlinkSync("/an/absolute/target.ts", join(root, "packages/dangling/broken.ts"));
+
+        await expect(keyOf(root, "dangling")).resolves.toBe(dangling);
+
+        put(root, "libs/missing/target.ts", "now here\n");
+        rmSync(join(root, "packages/dangling/broken.ts"));
+        symlinkSync("../../libs/missing/target.ts", join(root, "packages/dangling/broken.ts"));
+
+        await expect(keyOf(root, "dangling")).resolves.not.toBe(dangling);
+    });
+});

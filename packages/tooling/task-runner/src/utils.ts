@@ -58,10 +58,12 @@ const sortObjectKeys = (object: Record<string, unknown>): Record<string, unknown
  * Recursively collects all file paths in a directory,
  * skipping directories in the ignored set.
  *
- * Tracks visited real paths to prevent infinite loops from symlink cycles.
+ * Follows symlinks (files and directories) and lists their files under the spelling of the link, the way the
+ * native walk does (`native/core/src/file_hasher.rs`). A directory is not entered again while it is one of its own
+ * ancestors, which ends a symlink cycle. Only the ancestors of the current branch are tracked, not every directory
+ * seen so far: two links to one directory are both listed, whichever of them the concurrent walk reaches first.
  */
-const collectFiles = async (directory: string, ignoredDirectories: Set<string>, visitedRealPaths?: Set<string>): Promise<string[]> => {
-    const visited = visitedRealPaths ?? new Set<string>();
+const collectFiles = async (directory: string, ignoredDirectories: Set<string>, ancestorRealPaths: ReadonlySet<string> = new Set()): Promise<string[]> => {
     const results: string[] = [];
 
     try {
@@ -74,11 +76,11 @@ const collectFiles = async (directory: string, ignoredDirectories: Set<string>, 
         // Resolve real path to detect symlink cycles
         const resolvedPath = await realpath(directory);
 
-        if (visited.has(resolvedPath)) {
+        if (ancestorRealPaths.has(resolvedPath)) {
             return [];
         }
 
-        visited.add(resolvedPath);
+        const ancestors = new Set(ancestorRealPaths).add(resolvedPath);
 
         const entries = await readdir(directory, { withFileTypes: true });
 
@@ -90,7 +92,7 @@ const collectFiles = async (directory: string, ignoredDirectories: Set<string>, 
             const fullPath = join(directory, entry.name);
 
             if (entry.isDirectory()) {
-                return collectFiles(fullPath, ignoredDirectories, visited);
+                return collectFiles(fullPath, ignoredDirectories, ancestors);
             }
 
             if (entry.isFile()) {
@@ -107,7 +109,7 @@ const collectFiles = async (directory: string, ignoredDirectories: Set<string>, 
                     }
 
                     if (linkStat.isDirectory()) {
-                        return collectFiles(fullPath, ignoredDirectories, visited);
+                        return collectFiles(fullPath, ignoredDirectories, ancestors);
                     }
                 } catch {
                     // Broken symlink

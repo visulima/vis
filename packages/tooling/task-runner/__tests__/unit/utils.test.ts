@@ -209,6 +209,57 @@ describe(collectFiles, () => {
 
         expect(result.sort()).toStrictEqual([linkFile, realFile].sort());
     });
+
+    it.skipIf(process.platform === "win32")("should follow a symlinked directory under the spelling of the link", async () => {
+        expect.assertions(1);
+
+        await mkdir(join(temporaryDirectory, "libs", "shared", "src", "node_modules"), { recursive: true });
+        await mkdir(join(temporaryDirectory, "app", "src"), { recursive: true });
+        await writeFile(join(temporaryDirectory, "libs", "shared", "src", "index.ts"), "i");
+        await writeFile(join(temporaryDirectory, "libs", "shared", "src", "node_modules", "x.js"), "x");
+        await symlink(join(temporaryDirectory, "libs", "shared", "src"), join(temporaryDirectory, "app", "src", "shared"));
+
+        const result = await collectFiles(join(temporaryDirectory, "app"), new Set(["node_modules"]));
+
+        expect(result).toStrictEqual([join(temporaryDirectory, "app", "src", "shared", "index.ts")]);
+    });
+
+    it.skipIf(process.platform === "win32")("should end a directory cycle and list every alias of a directory that is not an ancestor", async () => {
+        expect.assertions(1);
+
+        const app = join(temporaryDirectory, "app");
+
+        await mkdir(join(app, "real"), { recursive: true });
+        await writeFile(join(app, "real", "r.ts"), "r");
+        await symlink("..", join(app, "real", "up"));
+        await symlink(".", join(app, "self"));
+        await symlink("real", join(app, "alias"));
+
+        const result = await collectFiles(app, new Set());
+
+        // Which of `real` and `alias` the walk meets first must not decide what is listed.
+        expect(result.sort()).toStrictEqual([join(app, "alias", "r.ts"), join(app, "real", "r.ts")]);
+    });
+
+    it.skipIf(process.platform === "win32")("should leave a dangling symlink out", async () => {
+        expect.assertions(1);
+
+        await writeFile(join(temporaryDirectory, "own.ts"), "o");
+        await symlink("missing.ts", join(temporaryDirectory, "broken.ts"));
+
+        await expect(collectFiles(temporaryDirectory, new Set())).resolves.toStrictEqual([join(temporaryDirectory, "own.ts")]);
+    });
+
+    it("should walk a root that is named like an ignored directory", async () => {
+        expect.assertions(1);
+
+        const base = join(temporaryDirectory, "dist");
+
+        await mkdir(base);
+        await writeFile(join(base, "a.js"), "a");
+
+        await expect(collectFiles(base, new Set(["dist"]))).resolves.toStrictEqual([join(base, "a.js")]);
+    });
 });
 
 describe(resolveTaskCwd, () => {

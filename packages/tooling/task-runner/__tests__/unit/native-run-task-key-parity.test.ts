@@ -374,6 +374,46 @@ describe.skipIf(isWindows)("native run task keys equal the orchestrator's keys",
         await expectParity(root, specs, false);
     });
 
+    it("hashes the same files behind symlinks: a link out of the project, a cycle and a dangling link", async () => {
+        expect.hasAssertions();
+
+        const specs: ProjectSpec[] = [{ name: "a", script: "tsc" }];
+        const root = createWorkspace(specs);
+
+        put(root, "libs/shared/src/index.ts", "shared");
+        put(root, "libs/shared/src/deep/more.ts", "more");
+        put(root, "libs/shared/file.ts", "file");
+        symlinkSync("../../../libs/shared/src", join(root, "packages/a/src/shared"));
+        symlinkSync("../../../libs/shared/file.ts", join(root, "packages/a/src/file.ts"));
+        symlinkSync("..", join(root, "packages/a/src/up"));
+        symlinkSync("../../libs/gone.ts", join(root, "packages/a/gone.ts"));
+
+        const node = await expectParity(root, specs, false);
+
+        // Editing the shared source moves the key: the link is part of the input set.
+        put(root, "libs/shared/src/deep/more.ts", "edited");
+
+        const edited = await expectParity(root, specs, false);
+
+        expect(edited.hashes["a:build"]).not.toBe(node.hashes["a:build"]);
+    });
+
+    it("hashes the files of a project that lives in a directory named like an ignored one", async () => {
+        expect.hasAssertions();
+
+        const specs: ProjectSpec[] = [{ dir: "coverage", name: "cov", script: "tsc" }, { dir: "dist", name: "built", script: "tsc" }];
+        const root = createWorkspace(specs);
+        const node = await expectParity(root, specs, false);
+
+        put(root, "packages/coverage/src/index.ts", "edited");
+        put(root, "packages/dist/src/index.ts", "edited");
+
+        const edited = await expectParity(root, specs, false);
+
+        expect(edited.hashes["cov:build"]).not.toBe(node.hashes["cov:build"]);
+        expect(edited.hashes["built:build"]).not.toBe(node.hashes["built:build"]);
+    });
+
     it("hashes the same global inputs: with and without a lockfile, tsconfig files and .env", async () => {
         expect.hasAssertions();
 
