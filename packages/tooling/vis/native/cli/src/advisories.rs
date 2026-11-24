@@ -238,6 +238,7 @@ pub(crate) fn write_stdout(command: &str, what: &str, text: &str) {
     }
 }
 
+#[cfg(unix)]
 /// Writes `stdout` and `stderr`, each even when the other fails, so a closed stdout does not hide errors; a
 /// closed pipe is not reported and any other failure ends the run with the wrapper's write error for `command`.
 pub(crate) fn write_streams(command: &str, stdout: &str, stderr: &str) {
