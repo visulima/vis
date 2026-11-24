@@ -315,3 +315,35 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 });
+
+describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis hook validate under a path that is not ASCII", () => {
+    const unicode = new Harness(["hook", "validate"]);
+
+    beforeAll(() => {
+        unicode.setup("vis-hook-validate-\u00E4-");
+    });
+
+    afterAll(() => {
+        unicode.teardown();
+    });
+
+    it("hands over, because git prints the top level and the linked worktrees as UTF-8 text", () => {
+        expect.hasAssertions();
+
+        const built = project({ "pre-commit": GOOD_SCRIPT }, { ".vis/hooks/config.json": GOOD_CONFIG });
+        const [nodeRoot, nativeRoot] = unicode.pair(built.files);
+
+        for (const root of [nodeRoot, nativeRoot]) {
+            prepare(root, ".vis/hooks", {}, built.executable);
+            git(root, "add", "-A");
+            git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x");
+            git(root, "worktree", "add", "-q", `${root}-wt`);
+        }
+
+        // A linked worktree without a dispatcher is a warning in Node; the binary must not call the directory clean.
+        const node = unicode.runNode([], nodeRoot);
+
+        expect(node.stdout).not.toContain("looks good");
+        expect(unicode.runNative([], nativeRoot).status).toBe(70);
+    });
+});

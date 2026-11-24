@@ -26,15 +26,30 @@ use crate::advisories::write_stdout;
 /// Entries of the hooks directory that are neither stage scripts nor an issue.
 const IGNORED_ENTRIES: [&str; 3] = ["_", "config.json", "README.md"];
 
-/// The trimmed standard output of `git <args>` in `directory` when it exits 0 with plain ASCII text.
-fn git(directory: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").args(args).current_dir(directory).stderr(Stdio::null()).output().ok()?;
+/// What `git <args>` printed in `directory`.
+enum Git {
+    /// It exited non-zero or did not start: the handler falls back to a default or reports an issue.
+    Failed,
+    /// Its trimmed standard output.
+    Text(String),
+}
 
-    if !output.status.success() || !output.stdout.is_ascii() {
+/// Runs `git <args>` in `directory`. `None` when it printed text that is not ASCII, which the handler reads as UTF-8 and
+/// this module does not reproduce.
+fn git(directory: &Path, args: &[&str]) -> Option<Git> {
+    let Ok(output) = Command::new("git").args(args).current_dir(directory).stderr(Stdio::null()).output() else {
+        return Some(Git::Failed);
+    };
+
+    if !output.status.success() {
+        return Some(Git::Failed);
+    }
+
+    if !output.stdout.is_ascii() {
         return None;
     }
 
-    Some(String::from_utf8(output.stdout).ok()?.trim().to_owned())
+    Some(Git::Text(String::from_utf8(output.stdout).ok()?.trim().to_owned()))
 }
 
 /// A `core.hooksPath` that names the hooks directory's dispatcher the way the handler expects, as a plain relative
@@ -47,11 +62,10 @@ fn expected_hooks_path(configured: &str, hooks_directory: &str) -> bool {
 }
 
 /// `checkoutRoots` (`src/commands/hook/install.ts`): the checkouts of the repository that exist, or `top_level`.
-fn checkout_roots(top_level: &Path) -> Vec<PathBuf> {
-    let listing = git(top_level, &["worktree", "list", "--porcelain"]);
+fn checkout_roots(top_level: &Path) -> Option<Vec<PathBuf>> {
     let mut roots: Vec<String> = Vec::new();
 
-    if let Some(listing) = listing {
+    if let Git::Text(listing) = git(top_level, &["worktree", "list", "--porcelain"])? {
         let mut current: Option<String> = None;
 
         for line in listing.split('\n') {
@@ -70,11 +84,7 @@ fn checkout_roots(top_level: &Path) -> Vec<PathBuf> {
 
     let present: Vec<PathBuf> = roots.into_iter().map(PathBuf::from).filter(|root| root.exists()).collect();
 
-    if present.is_empty() {
-        vec![top_level.to_path_buf()]
-    } else {
-        present
-    }
+    Some(if present.is_empty() { vec![top_level.to_path_buf()] } else { present })
 }
 
 /// Whether `sh -n` accepts the script.
@@ -125,17 +135,18 @@ fn scripts_are_clean(directory: &Path) -> Option<bool> {
 
 /// Whether the handler finds no issue for `root` and `hooks_directory`.
 fn is_clean(root: &Path, hooks_directory: &str) -> Option<()> {
-    let configured = git(root, &["config", "--local", "core.hooksPath"])?;
+    let Git::Text(configured) = git(root, &["config", "--local", "core.hooksPath"])? else { return None };
 
     if !expected_hooks_path(&configured, hooks_directory) {
         return None;
     }
 
-    let top_level = git(root, &["rev-parse", "--show-toplevel"])
-        .filter(|path| !path.is_empty())
-        .map_or_else(|| root.to_path_buf(), PathBuf::from);
+    let top_level = match git(root, &["rev-parse", "--show-toplevel"])? {
+        Git::Text(path) if !path.is_empty() => PathBuf::from(path),
+        _ => root.to_path_buf(),
+    };
 
-    for checkout in checkout_roots(&top_level) {
+    for checkout in checkout_roots(&top_level)? {
         if !checkout.join(&configured).exists() {
             return None;
         }
