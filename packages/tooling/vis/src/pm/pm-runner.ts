@@ -21,6 +21,7 @@ import {
     whichBin,
 } from "#native";
 
+import { VisUserError } from "../errors/vis-user-error";
 import {
     resolveAubeAdd,
     resolveAubeDedupe,
@@ -1107,7 +1108,21 @@ const runExec = (pm: InstallerInfo, options: ExecOptions, cwd: string, logger: C
         return runResolved(pm, resolveAubeExec(options), cwd, logger, extras);
     }
 
-    return resolveAndRun(pm, () => resolveExec(pm.name, pm.version, options), cwd, logger, extras);
+    // The resolver refuses flags the manager cannot honour (`--reverse` off pnpm, workspace flags on bun); that
+    // message is all the user needs.
+    return resolveAndRun(
+        pm,
+        () => {
+            try {
+                return resolveExec(pm.name, pm.version, options);
+            } catch (error) {
+                throw new VisUserError((error as Error).message, { cause: error });
+            }
+        },
+        cwd,
+        logger,
+        extras,
+    );
 };
 
 const runPmSubcommand = (pm: InstallerInfo, subcommand: string, args: string[], cwd: string, logger: Console, extras: RunOverrides = {}): number => {

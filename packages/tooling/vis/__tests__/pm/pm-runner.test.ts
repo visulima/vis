@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { detectPm, resolveInfo } from "../../src/pm/pm-runner";
+import { isUserError } from "../../src/errors/vis-user-error";
+import { detectPm, resolveInfo, runExec } from "../../src/pm/pm-runner";
 
 describe(detectPm, () => {
     it("should detect a valid package manager for the workspace", () => {
@@ -133,5 +134,29 @@ describe(resolveInfo, () => {
         // `--` guarantees the tool treats the `--registry=…` token as a positional package name
         // (for which it will then report "not found"), not as a flag override.
         expect(args).toStrictEqual(["view", "--", "--registry=evil.com"]);
+    });
+});
+
+describe(runExec, () => {
+    const options = { args: [], command: "eslint", filter: [], parallel: false, recursive: false, reverse: true, shellMode: false, workspaceRoot: false };
+
+    it("should refuse a flag the manager cannot honour with a message-only user error", () => {
+        expect.assertions(3);
+
+        const attempt = (): number => runExec({ name: "npm", useCorepack: false, version: "10.0.0" }, options, process.cwd(), console, { dry: true });
+
+        expect(attempt).toThrow(/--reverse/);
+
+        let thrown: unknown;
+
+        try {
+            attempt();
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(isUserError(thrown)).toBe(true);
+
+        expect(runExec({ name: "pnpm", useCorepack: false, version: "10.0.0" }, options, process.cwd(), { ...console, log: () => undefined }, { dry: true })).toBe(0);
     });
 });
