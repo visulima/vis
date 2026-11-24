@@ -76,7 +76,7 @@ const generate = (root: string, shape: Shape): void => {
 
         if (!shape.withoutScript?.includes(index)) {
             // Half of the tasks print something, so the stored output is replayed for them.
-            scripts["build"] = index % 2 === 0 ? `echo built-${index}` : "true";
+            scripts["build"] = index % 4 === 0 ? `echo "  first-${index}" && echo second-${index}` : index % 2 === 0 ? `echo built-${index}` : "true";
         }
 
         const hasScripts = !shape.noScripts?.includes(index);
@@ -159,11 +159,61 @@ const runLauncher = (cwd: string, args: string[], stub: string, env: Record<stri
 
 const mask = (text: string): string =>
     text
+        .replaceAll(/section_(start|end):\d+:/g, "section_$1:T:")
         .replaceAll(/\(\d+ ms\)/g, "(N ms)")
         .replaceAll(/Took \d+ ms/g, "Took N ms")
         .replaceAll(/· \d+\.\ds/g, "· Ns");
 
 const lines = (text: string): string[] => mask(text).split("\n");
+
+const ESC = String.fromCodePoint(27);
+const SEPARATOR = new RegExp(`^(?:${ESC}\\[2m)?\u2014{80}(?:${ESC}\\[22m)?$`);
+
+/**
+ * The output block of each task, in the order the lines come, each as one string: the grouping directives (or the
+ * separator lines) and the output between them. A sorted line comparison cannot see this structure: a block that
+ * interleaves with the `\u2713` line of another task, or lost a directive, has the same sorted lines.
+ */
+const blocksOf = (text: string): string[] => {
+    const blocks: string[] = [];
+    const isStart = (line: string): boolean => line.startsWith("::group::") || line.includes("section_start:") || line.startsWith("##[group]") || line.startsWith("--- ") || SEPARATOR.test(line);
+    const isEnd = (line: string): boolean => line.startsWith("::endgroup::") || line.includes("section_end:") || line.startsWith("##[endgroup]");
+    // A Buildkite block has no end line: it runs to the next line the renderer prints itself.
+    const endsBuildkite = (line: string): boolean => line === "" || line.includes("[cache]") || line.includes(">") || line.includes("VIS");
+    let current: { buildkite: boolean; lines: string[]; separated: boolean; separators: number } | undefined;
+
+    for (const line of lines(text)) {
+        if (current === undefined) {
+            if (isStart(line)) {
+                const separated = SEPARATOR.test(line);
+
+                current = { buildkite: line.startsWith("--- "), lines: [line], separated, separators: separated ? 1 : 0 };
+            }
+
+            continue;
+        }
+
+        if (current.buildkite && endsBuildkite(line)) {
+            blocks.push(current.lines.join("\n"));
+            current = undefined;
+
+            continue;
+        }
+
+        current.lines.push(line);
+
+        if (current.separated && SEPARATOR.test(line)) {
+            current.separators += 1;
+        }
+
+        if ((current.separated && current.separators === 2) || (!current.separated && !current.buildkite && isEnd(line))) {
+            blocks.push(current.lines.join("\n"));
+            current = undefined;
+        }
+    }
+
+    return blocks;
+};
 
 /** The summary with every run-specific value replaced, tasks in id order; key order is kept. */
 const normaliseSummary = (text: string): string => {
@@ -692,7 +742,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 
-    describe("the colour environment", () => {
+    describe("the colour and log grouping environment", () => {
+        // Four packages, two of them print (`built-2`, and a two-line output), so the blocks have something to wrap.
         const shape: Shape = { packages: 4 };
         const reference = { root: "" };
 
@@ -700,31 +751,132 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             reference.root = warm("colour", shape).root;
         }, 120_000);
 
-        const environments = [...COLOUR_ENVIRONMENTS, ...DELEGATED_COLOUR_ENVIRONMENTS];
+        /** The environments of a CI runner and its neighbours: the grouping compares exactly, the colour is presence based. */
+        const GROUPING_ENVIRONMENTS: Record<string, string>[] = [
+            { GITHUB_ACTIONS: "true" },
+            { GITHUB_ACTIONS: "1" },
+            { GITHUB_ACTIONS: "false" },
+            { GITHUB_ACTIONS: "TRUE" },
+            { GITHUB_WORKFLOW: "ci" },
+            { GITLAB_CI: "true" },
+            { GITLAB_CI: "1" },
+            { BUILDKITE: "true" },
+            { BUILDKITE: "1" },
+            { TF_BUILD: "True" },
+            { AGENT_NAME: "agent", TF_BUILD: "True" },
+            { TF_BUILD: "true" },
+            { TF_BUILD: "TRUE" },
+            { TF_BUILD: "yes" },
+            { AGENT_NAME: "agent", FORCE_COLOR: "0", TF_BUILD: "True" },
+            { GITHUB_ACTIONS: "true", GITLAB_CI: "true" },
+            { BUILDKITE: "true", GITLAB_CI: "true" },
+            { BUILDKITE: "true", TF_BUILD: "True" },
+            { GITHUB_ACTIONS: "true", GITLAB_CI: "true", TF_BUILD: "True" },
+            { GITHUB_ACTIONS: "true", TERM: "xterm-256color" },
+            { FORCE_COLOR: "1", GITLAB_CI: "true" },
+            { FORCE_COLOR: "0", GITLAB_CI: "true" },
+            { FORCE_COLOR: "", GITLAB_CI: "true" },
+            { FORCE_COLOR: "abc", GITHUB_ACTIONS: "true" },
+            { GITLAB_CI: "true", NO_COLOR: "1" },
+            { GITLAB_CI: "true", TERM: "dumb" },
+            { BUILDKITE: "true", TERM: "xterm-mono" },
+            { TRAVIS: "true" },
+            { DRONE: "true" },
+            { GITEA_ACTIONS: "true" },
+            { CI_NAME: "codeship" },
+            { CI_NAME: "other" },
+            { TERM: "xterm-mono" },
+            { FORCE_COLOR: "" },
+            { FORCE_COLOR: "abc" },
+            // What a real runner sets besides the provider's marker.
+            {
+                ACTIONS_CACHE_URL: "http://127.0.0.1:1/",
+                ACTIONS_ID_TOKEN_REQUEST_URL: "http://127.0.0.1:1/",
+                ACTIONS_RUNTIME_TOKEN: "token",
+                GITHUB_ACTIONS: "true",
+                GITHUB_REF: "refs/heads/main",
+                GITHUB_REPOSITORY: "owner/repo",
+                GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+                GITHUB_TOKEN: "token",
+                GITHUB_WORKFLOW: "ci",
+                RUNNER_OS: "Linux",
+            },
+            {
+                CI_COMMIT_SHA: "0123456789abcdef0123456789abcdef01234567",
+                CI_JOB_TOKEN: "token",
+                CI_PIPELINE_SOURCE: "push",
+                CI_PROJECT_PATH: "owner/repo",
+                GITLAB_CI: "true",
+            },
+            { BUILDKITE: "true", BUILDKITE_BUILD_ID: "1", BUILDKITE_COMMIT: "0123456789abcdef0123456789abcdef01234567" },
+            { AGENT_NAME: "agent", BUILD_SOURCEVERSION: "0123456789abcdef", SYSTEM_TEAMPROJECT: "p", TF_BUILD: "True" },
+        ];
+        const environments = [...COLOUR_ENVIRONMENTS, ...GROUPING_ENVIRONMENTS];
 
-        it.each(environments.map((colour) => [JSON.stringify(colour), colour] as const))("%s: native only where Node prints plain text", (_label, colour) => {
-            expect.assertions(1);
+        it.each(environments.map((colour) => [JSON.stringify(colour), colour] as const))("%s: native prints what Node prints", (_label, colour) => {
+            expect.hasAssertions();
 
-            const env = baseEnvironment(colour);
-            const root = fresh(reference.root);
-            const node = runNode(root, ["run", "build"], env);
-            const native = runNative(fresh(reference.root), ["run", "build"], paths.stub, env);
-            const answered = !native.stdout.includes(marker);
-            // Colour codes and CI log groups are not reproduced, so the binary must leave those runs to Node.
-            const plain = !node.stdout.includes("\u001B") && !node.stdout.includes("::group::") && node.stderr === "";
+            // The provider's own files (the step summary, the output file) are left alone by both sides.
+            const files = ["summary", "output"].map((name) => join(paths.scratch, `${name}-${counter}`));
 
-            // Either the binary answered and Node printed plain text with the same lines, or it left the run to Node untouched.
-            const expected = answered
-                ? { lines: lines(node.stdout).toSorted(), plain: true, status: 0, stderr: node.stderr }
-                : { lines: [marker, ""], plain: plain || true, status: 99, stderr: "" };
-            const actual = {
-                lines: answered ? lines(native.stdout).toSorted() : lines(native.stdout),
-                plain: !answered || plain,
-                status: native.status,
-                stderr: native.stderr,
-            };
+            for (const file of files) {
+                writeFileSync(file, "");
+            }
 
-            expect(actual).toStrictEqual(expected);
+            const env = baseEnvironment({ ...colour, ...(colour["GITHUB_ACTIONS"] === "true" ? { GITHUB_OUTPUT: files[1] as string, GITHUB_STEP_SUMMARY: files[0] as string } : {}) });
+            const node = runNode(fresh(reference.root), ["run", "build"], env);
+            const nativeRoot = fresh(reference.root);
+            const native = runNative(nativeRoot, ["run", "build"], paths.stub, env);
+
+            expect(native.stdout).not.toContain(marker);
+            expect(native.status).toBe(0);
+            expect(native.stderr).toBe(node.stderr);
+            expect(lines(native.stdout).toSorted()).toStrictEqual(lines(node.stdout).toSorted());
+            // Header and footer do not interleave with anything.
+            expect(lines(native.stdout).slice(0, 4)).toStrictEqual(lines(node.stdout).slice(0, 4));
+            expect(lines(native.stdout).slice(-6)).toStrictEqual(lines(node.stdout).slice(-6));
+            expect(blocksOf(native.stdout).toSorted()).toStrictEqual(blocksOf(node.stdout).toSorted());
+            expect(blocksOf(native.stdout)).toHaveLength(2);
+
+            for (const file of files) {
+                expect(readFileSync(file, "utf8")).toBe("");
+            }
+        });
+
+        it("groups a task's output the way each provider does", () => {
+            expect.assertions(8);
+
+            const output = (extra: Record<string, string>): string => runNative(fresh(reference.root), ["run", "build"], paths.stub, baseEnvironment(extra)).stdout;
+
+            expect(output({ GITHUB_ACTIONS: "true", NO_COLOR: "1" })).toContain("::group::\u2713 p2:build\nbuilt-2\n::endgroup::\n");
+            expect(output({ GITHUB_ACTIONS: "true", NO_COLOR: "1" })).toContain("::group::\u2713 p4:build\nfirst-4\nsecond-4\n::endgroup::\n");
+            expect(output({ BUILDKITE: "true", NO_COLOR: "1" })).toContain("--- \u2713 p2:build\nbuilt-2\n");
+            expect(output({ AGENT_NAME: "a", NO_COLOR: "1", TF_BUILD: "True" })).toContain("##[group]\u2713 p2:build\nbuilt-2\n##[endgroup]\n");
+            expect(output({ GITLAB_CI: "true", NO_COLOR: "1" })).toMatch(
+                new RegExp(`${ESC}\\[0Ksection_start:\\d+:p2_build_[\\da-f]{6}\\[collapsed=true\\]\\r${ESC}\\[0K\u2713 p2:build\\nbuilt-2\\n${ESC}\\[0Ksection_end:\\d+:p2_build_[\\da-f]{6}\\r${ESC}\\[0K\\n`),
+            );
+            expect(output({ GITHUB_ACTIONS: "true" })).toContain("::group::\u001B[32m\u2713\u001B[39m p2:build\nbuilt-2\n::endgroup::\n");
+            expect(output({ GITHUB_ACTIONS: "true" })).toContain("\u001B[1m\u001B[7m VIS \u001B[22m\u001B[27m \u001B[1m\u001B[37m\u2022\u001B[22m\u001B[39m  Running target build for 4 projects\n");
+            // No grouping directive without a provider, and no colour code with no colour.
+            expect(output({ NO_COLOR: "1" })).not.toMatch(new RegExp(String.raw`::group|section_start|##\[group|^--- |${ESC}`, "m"));
+        });
+
+        it("gives the GitLab section of a scoped task name the key Node gives it", () => {
+            expect.assertions(3);
+
+            const scoped = join(paths.scratch, "gitlab-scoped");
+
+            generate(scoped, { chain: true, packages: 3, scoped: true });
+            write(scoped, "packages/p2/package.json", JSON.stringify({ name: "@acme/p2", scripts: { build: "echo built-2" }, version: "1.0.0" }));
+            runNode(scoped, ["run", "build"]);
+
+            const env = baseEnvironment({ GITLAB_CI: "true", NO_COLOR: "1" });
+            const node = runNode(fresh(scoped), ["run", "build"], env);
+            const native = runNative(fresh(scoped), ["run", "build"], paths.stub, env);
+
+            expect(node.stdout).toMatch(/section_start:\d+:_acme_p2_build_[\da-f]{6}\[collapsed=true\]/);
+            expect(blocksOf(native.stdout)).toStrictEqual(blocksOf(node.stdout));
+            expect(lines(native.stdout).toSorted()).toStrictEqual(lines(node.stdout).toSorted());
         });
 
         it.each([{}, { TERM: "dumb" }, { NO_COLOR: "1" }, { FORCE_COLOR: "0" }, { TERM: "xterm-256color" }, { COLORTERM: "truecolor" }, { CLICOLOR_FORCE: "1" }, { COLUMNS: "50" }])(
@@ -739,17 +891,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             },
         );
 
-        it.each([{ GITHUB_ACTIONS: "true" }, { GITLAB_CI: "true" }, { BUILDKITE: "true" }, { TF_BUILD: "True" }, { FORCE_COLOR: "1" }, { FORCE_COLOR: "3" }, { CIRCLECI: "true" }])(
-            "leaves a coloured or grouped run to Node with %j",
-            (colour: Record<string, string>) => {
-                expect.assertions(2);
+        it.each(DELEGATED_COLOUR_ENVIRONMENTS.map((colour) => [JSON.stringify(colour), colour] as const))("%s: leaves the run to Node, which warns on stderr", (_label, colour) => {
+            expect.assertions(3);
 
-                const native = runNative(fresh(reference.root), ["run", "build"], paths.stub, baseEnvironment(colour));
+            const native = runNative(fresh(reference.root), ["run", "build"], paths.stub, baseEnvironment({ GITHUB_ACTIONS: "true", ...colour }));
 
-                expect(native.stdout).toBe(`${marker}\n`);
-                expect(native.status).toBe(99);
-            },
-        );
+            expect(native.stdout).toBe(`${marker}\n`);
+            expect(native.stderr).toBe("");
+            expect(native.status).toBe(99);
+        });
     });
 
     describe("a long name", () => {

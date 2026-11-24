@@ -173,16 +173,12 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
 };
 
 // Variables that send `vis run` to Node: the remote cache, the cache location, selection, concurrency,
-// logging, and the CI providers whose log grouping Node switches on. Same list as `NODE_ONLY_VARIABLES` and
-// `CI_GROUPING_VARIABLES` in `native/cli/src/run.rs`; keep them in step.
+// logging. Same list as `NODE_ONLY_VARIABLES` in `native/cli/src/run.rs`; keep them in step. The CI providers'
+// log grouping (`GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`) is printed by the binary itself.
 const RUN_NODE_ONLY_VARIABLES = [
-    "BUILDKITE",
     "CACHE_TOKEN",
     "DEBUG",
-    "GITHUB_ACTIONS",
-    "GITLAB_CI",
     "PAIL_LOG_LEVEL",
-    "TF_BUILD",
     "TURBO_API",
     "TURBO_TEAM",
     "TURBO_TOKEN",
