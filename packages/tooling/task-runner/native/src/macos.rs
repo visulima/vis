@@ -16,9 +16,11 @@
 //!
 //! ## Path resolution
 //!
-//! The dylib sends paths verbatim (it can't cheaply canonicalise in an
-//! arbitrary process). Relative paths are joined against the spawn `cwd`
-//! here; absolute paths pass through. The TypeScript caller does the
+//! The dylib resolves each path to an absolute one before sending it (`openat`
+//! directory descriptors via `F_GETPATH`, relative paths against the process's
+//! own current directory), since only the tracked process knows those. A path
+//! it could not resolve arrives relative and is joined against the spawn `cwd`
+//! here. The TypeScript caller does the
 //! workspace-root + exclusion filtering, identical to the seccomp path.
 
 #![cfg(target_os = "macos")]
@@ -397,7 +399,7 @@ fn signal_cancel(cancel_write: RawFd) {
     }
 }
 
-/// Join relative paths against the spawn cwd; pass absolutes through. Lossy
+/// Join the (rare) unresolved relative paths against the spawn cwd; pass absolutes through. Lossy
 /// UTF-8 — non-UTF-8 paths are rare and the JS side compares as strings.
 fn normalize(bytes: &[u8], cwd: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;

@@ -14,7 +14,7 @@
 //! dyld maps this dylib first and runs [`init`] (via `ctor`) before the
 //! target's `main`. `init` adopts the socket fd. Every interposed libc call
 //! forwards to the real implementation and then best-effort `send(2)`s one
-//! datagram `[u8 mode][path bytes]` to the parent.
+//! datagram `[u8 mode][absolute path bytes]` to the parent.
 //!
 //! ## `open`/`openat` are variadic
 //!
@@ -160,9 +160,57 @@ fn is_report_socket(fd: c_int) -> bool {
     named == 0 && c_int::from(addr.ss_family) == libc::AF_UNIX
 }
 
-/// Best-effort: send one `[mode][path]` datagram. Never blocks (`MSG_DONTWAIT`)
-/// and never errors out the caller — a full/closed socket just drops the record.
-unsafe fn report(path: *const c_char, mode: u8) {
+/// Fill `buf` with the absolute form of `path`, returning its length: absolute
+/// paths verbatim, relative ones joined to the directory `dirfd` refers to (or
+/// the current directory for `AT_FDCWD`). The parent cannot do this itself — it
+/// does not know the descriptor's directory or any `chdir` the process made.
+/// When the base cannot be resolved the relative path is sent as is and the
+/// parent falls back to joining it with the spawn directory.
+unsafe fn absolute_path(path: *const c_char, dirfd: c_int, buf: &mut [u8]) -> usize {
+    // SAFETY: `path` is a valid NUL-terminated C string from the caller.
+    let path_len = unsafe { libc::strlen(path) };
+    let relative = path_len > 0 && unsafe { *path } as u8 != b'/';
+    let mut len = 0;
+
+    if relative {
+        let base = buf.as_mut_ptr().cast::<c_char>();
+
+        // SAFETY: `buf` holds at least PATH_MAX bytes, which `getcwd` and
+        // `F_GETPATH` both require.
+        let resolved = unsafe {
+            if dirfd == libc::AT_FDCWD {
+                !libc::getcwd(base, buf.len()).is_null()
+            } else {
+                libc::fcntl(dirfd, libc::F_GETPATH, base) != -1
+            }
+        };
+
+        if resolved {
+            // SAFETY: both calls NUL-terminate on success.
+            len = unsafe { libc::strlen(base) };
+
+            // The root directory already ends in a separator.
+            if len < buf.len() && buf[len - 1] != b'/' {
+                buf[len] = b'/';
+                len += 1;
+            }
+        }
+    }
+
+    let room = buf.len() - len;
+    let copy = path_len.min(room);
+
+    // SAFETY: copying `copy <= room` bytes from the C string into the buffer.
+    unsafe { std::ptr::copy_nonoverlapping(path.cast::<u8>(), buf.as_mut_ptr().add(len), copy) };
+
+    len + copy
+}
+
+/// Best-effort: send one `[mode][absolute path]` datagram. Never blocks
+/// (`MSG_DONTWAIT`) and never errors out the caller — a full/closed socket just
+/// drops the record. `dirfd` is the directory a relative `path` is resolved
+/// against (`AT_FDCWD` for the plain, non-`*at` calls).
+unsafe fn report(path: *const c_char, dirfd: c_int, mode: u8) {
     if path.is_null() {
         return;
     }
@@ -195,13 +243,8 @@ unsafe fn report(path: *const c_char, mode: u8) {
 
     buf[0] = mode;
 
-    // SAFETY: `path` is a valid NUL-terminated C string from the caller.
-    let len = unsafe { libc::strlen(path) }.min(CAP - 1);
-
-    // SAFETY: copying `len <= CAP-1` bytes from the C string into the buffer.
-    unsafe {
-        std::ptr::copy_nonoverlapping(path.cast::<u8>(), buf.as_mut_ptr().add(1), len);
-    }
+    // SAFETY: `path` is non-null and NUL-terminated; the buffer is PATH_MAX bytes.
+    let len = unsafe { absolute_path(path, dirfd, &mut buf[1..]) };
 
     // SAFETY: send on the datagram socket; MSG_DONTWAIT keeps it non-blocking.
     unsafe {
@@ -236,7 +279,7 @@ unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -
     };
 
     if fd >= 0 {
-        unsafe { report(path, open_mode(flags)) };
+        unsafe { report(path, libc::AT_FDCWD, open_mode(flags)) };
     }
 
     fd
@@ -250,7 +293,7 @@ unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int
     };
 
     if fd >= 0 {
-        unsafe { report(path, open_mode(flags)) };
+        unsafe { report(path, dirfd, open_mode(flags)) };
     }
 
     fd
@@ -260,7 +303,7 @@ unsafe extern "C" fn hook_stat(path: *const c_char, buf: *mut libc::stat) -> c_i
     let rc = unsafe { libc::stat(path, buf) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     }
 
     rc
@@ -270,7 +313,7 @@ unsafe extern "C" fn hook_lstat(path: *const c_char, buf: *mut libc::stat) -> c_
     let rc = unsafe { libc::lstat(path, buf) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     }
 
     rc
@@ -280,7 +323,7 @@ unsafe extern "C" fn hook_access(path: *const c_char, amode: c_int) -> c_int {
     let rc = unsafe { libc::access(path, amode) };
 
     if rc == 0 {
-        unsafe { report(path, mode::STAT) };
+        unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     }
 
     rc
@@ -290,7 +333,7 @@ unsafe extern "C" fn hook_opendir(path: *const c_char) -> *mut DIR {
     let dir = unsafe { libc::opendir(path) };
 
     if !dir.is_null() {
-        unsafe { report(path, mode::READDIR) };
+        unsafe { report(path, libc::AT_FDCWD, mode::READDIR) };
     }
 
     dir
@@ -300,8 +343,8 @@ unsafe extern "C" fn hook_rename(old: *const c_char, new: *const c_char) -> c_in
     let rc = unsafe { libc::rename(old, new) };
 
     if rc == 0 {
-        unsafe { report(old, mode::WRITE) };
-        unsafe { report(new, mode::WRITE) };
+        unsafe { report(old, libc::AT_FDCWD, mode::WRITE) };
+        unsafe { report(new, libc::AT_FDCWD, mode::WRITE) };
     }
 
     rc
@@ -311,7 +354,7 @@ unsafe extern "C" fn hook_unlink(path: *const c_char) -> c_int {
     let rc = unsafe { libc::unlink(path) };
 
     if rc == 0 {
-        unsafe { report(path, mode::WRITE) };
+        unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
     rc

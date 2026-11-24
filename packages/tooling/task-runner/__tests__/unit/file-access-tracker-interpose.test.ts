@@ -194,6 +194,55 @@ describe.skipIf(!isSupported)("macOS interpose tracker", () => {
         });
     });
 
+    describe("relative paths", () => {
+        it("resolves an openat() path against its directory descriptor", async () => {
+            expect.assertions(2);
+
+            const directory = join(workspaceRoot, "at-read");
+            const target = join(directory, "inside.txt");
+
+            await mkdir(directory);
+            await writeFile(target, "data");
+
+            const result = await track([probe, "openat-read", directory, "inside.txt"]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+        });
+
+        it("resolves a relative path against the directory the process changed into", async () => {
+            expect.assertions(3);
+
+            const directory = join(workspaceRoot, "chdir-read");
+            const target = join(directory, "inside.txt");
+
+            await mkdir(directory);
+            await writeFile(target, "data");
+
+            const result = await track([probe, "chdir-read", directory, "inside.txt"]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+            expect(result.accesses.some((a) => a.path === join(workspaceRoot, "inside.txt"))).toBe(false);
+        });
+
+        it("resolves a relative path read by Node after process.chdir()", async () => {
+            expect.assertions(2);
+
+            const directory = join(workspaceRoot, "node-chdir");
+            const target = join(directory, "inside.txt");
+
+            await mkdir(directory);
+            await writeFile(target, "data");
+
+            const script = `process.chdir(${JSON.stringify(directory)}); require("node:fs").readFileSync("inside.txt")`;
+            const result = await track([process.execPath, "-e", script]);
+
+            expect(result.code).toBe(0);
+            expect(result.accesses.some((a) => a.path === target && a.type === "read")).toBe(true);
+        });
+    });
+
     describe("environment of the tracked child", () => {
         it("keeps its own report socket and dylib when the caller env carries stale values", async () => {
             expect.assertions(2);
