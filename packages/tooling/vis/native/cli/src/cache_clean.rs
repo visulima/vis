@@ -4,7 +4,7 @@
 //! (the shared directory, since `clean` takes no `--scope`) and the four per-user stores under `~/.vis/cache`
 //! (AI responses, Socket.dev reports, deps.dev records, Snyk records). The binary answers only what it can
 //! reproduce byte for byte, with the same files left on disk, and hands everything else to Node before it prints or
-//! removes anything:
+//! removes anything (a removal that fails despite the checks is the one exception, see [`run`]):
 //!
 //! - the flags of [`parse`], each once, with a known `--type`;
 //! - the quiet context of the cache commands, without a terminal on stdout, stderr or (for the confirmation case)
@@ -33,7 +33,7 @@ use crate::cache::{
     resolve, resolve_cache_directory, store_directories, store_stats, vis_cache_dir, Target,
 };
 use crate::pail::{Layout, Level};
-use crate::removal::{may_modify, removable_directory};
+use crate::removal::{removable_directory, removable_file};
 
 /// What the user asked for.
 struct Request {
@@ -53,7 +53,10 @@ struct Output {
 
 /// A removal decided before anything is printed.
 enum Removal {
-    Tree(PathBuf),
+    /// A task cache. Inside the workspace Node clears it with `Cache.clear`, which swallows a failure; outside it
+    /// (`--force`) a plain `rm` throws.
+    Tree { path: PathBuf, inside_workspace: bool },
+    /// The `.json` files of a store, which Node removes one by one and warns about the first failure.
     Files(Vec<PathBuf>),
 }
 
@@ -76,17 +79,32 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         crate::delegate(raw);
     };
 
+    // A failure that Node reports (an error or a warning with its own wording) is Node's to report: the run goes
+    // there, and it meets the same entry again. One that Node swallows is not an error. What Node prints for the
+    // sections that finished before the failure is not reproduced then, because they are done by the time it runs.
+    let mut reported_failure = false;
+
     for removal in &plan.removals {
         match removal {
-            Removal::Tree(directory) => {
-                let _ = fs::remove_dir_all(directory);
+            Removal::Tree { path, inside_workspace } => {
+                if fs::remove_dir_all(path).is_err() && !inside_workspace {
+                    // The `rm` throws, which ends Node's run before it reaches the stores.
+                    reported_failure = true;
+
+                    break;
+                }
             }
             Removal::Files(files) => {
-                for file in files {
-                    let _ = fs::remove_file(file);
+                // `rmSync` throws at the first file it cannot remove and leaves the rest.
+                if files.iter().any(|file| fs::remove_file(file).is_err()) {
+                    reported_failure = true;
                 }
             }
         }
+    }
+
+    if reported_failure {
+        crate::delegate(raw);
     }
 
     write_streams("cache clean", &plan.output.stdout, &plan.output.stderr);
@@ -252,7 +270,7 @@ fn task_cache(
         let mut count: usize = 0;
         let mut bytes: u64 = 0;
 
-        for entries_directory in eviction_directories(directory, true)? {
+        for entries_directory in eviction_directories(directory, true, false)? {
             let entries = collect_entries(&entries_directory)?;
 
             count += entries.len();
@@ -328,7 +346,8 @@ fn task_cache(
         return None;
     }
 
-    plan.removals.push(Removal::Tree(target.to_path_buf()));
+    plan.removals
+        .push(Removal::Tree { path: target.to_path_buf(), inside_workspace: inside_workspace(directory, root_text) });
     say(layout, &mut plan.output, Level::Success, &format!("Cleared cache: {directory}"));
 
     Some(())
@@ -384,7 +403,7 @@ fn store(
             files.push(entry.path());
         }
 
-        if files.len() > before && !may_modify(directory) {
+        if files[before..].iter().any(|file| !removable_file(file, Path::new(directory))) {
             return None;
         }
     }

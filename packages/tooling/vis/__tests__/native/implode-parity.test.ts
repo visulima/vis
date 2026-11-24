@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -196,6 +197,35 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(tree(native.home)).toStrictEqual(tree(node.home));
             // `writeFileSync` of `@visulima/fs` gives the rewritten file the default mode, not the one it replaced.
             expect(tree(native.home)[".zshrc"]).toMatch(/^file 644 /);
+        });
+
+        // The immutable flag lets the temporary file be written next to the profile but makes the rename over it fail, which Node
+        // reports as a warning and moves past: the other profiles are cleaned and ~/.vis is removed.
+        it.skipIf(process.platform !== "darwin")("warns about a profile that cannot be replaced and goes on", () => {
+            expect.hasAssertions();
+
+            const locked: string[] = [];
+
+            try {
+                const { native, node } = sides(installed({ ".bashrc": 'export PATH="$HOME/.vis/bin:$PATH"\nexport C=3\n' }));
+
+                for (const side of [native, node]) {
+                    locked.push(join(side.home, ".zshrc"));
+                    execFileSync("chflags", ["uchg", join(side.home, ".zshrc")]);
+                }
+
+                const nodeResult = harness.runNode(["--yes"], node.workspace, environmentOf(node));
+                const nativeResult = harness.runNative(["--yes"], native.workspace, environmentOf(native));
+
+                expect(nativeResult.status, `native stderr: ${nativeResult.stderr}`).toBe(0);
+                expect(nativeResult.stderr).toContain("warning: could not clean");
+                expect(normalized(nativeResult, native)).toStrictEqual(normalized(nodeResult, node));
+                expect(snapshot(native)).toStrictEqual(snapshot(node));
+            } finally {
+                for (const path of locked) {
+                    execFileSync("chflags", ["nouchg", path]);
+                }
+            }
         });
 
         it("keeps non-ASCII text and a byte order mark", () => {

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -71,6 +71,9 @@ const linkedWorktree = (side: Side): void => {
 
 const locked: string[] = [];
 
+/** Files made immutable (macOS `chflags uchg`), which `access(2)` does not report and a removal fails on. */
+const pinned: string[] = [];
+
 /** Makes a directory of a side read-only, to be restored after the case. */
 const lock = (side: Side, path: string): void => {
     const directory = join(side.home, path);
@@ -85,6 +88,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     afterEach(() => {
+        for (const file of pinned.splice(0)) {
+            execFileSync("chflags", ["nouchg", file]);
+        }
+
         for (const directory of locked.splice(0)) {
             if (existsSync(directory)) {
                 chmodSync(directory, 0o755);
@@ -266,6 +273,33 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 prepare: (side) => {
                     locked.push(join(side.root, CACHE, "locked"));
                     chmodSync(join(side.root, CACHE, "locked"), 0o555);
+                },
+            });
+        });
+
+        // The removal would fail after the plan was made, which Node reports in its own words.
+        it.skipIf(process.platform !== "darwin")("a task cache that holds an immutable file", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ workspace: { [`${CACHE}/entry/file`]: "x" } }, ["--type", "task"], {}, {
+                prepare: (side) => {
+                    const file = join(side.root, CACHE, "entry", "file");
+
+                    execFileSync("chflags", ["uchg", file]);
+                    pinned.push(file);
+                },
+            });
+        });
+
+        it.skipIf(process.platform !== "darwin")("a store record that is immutable", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ home: { ".vis/cache/ai/a.json": "{}" } }, ["--type", "ai"], {}, {
+                prepare: (side) => {
+                    const file = join(side.home, ".vis/cache/ai/a.json");
+
+                    execFileSync("chflags", ["uchg", file]);
+                    pinned.push(file);
                 },
             });
         });

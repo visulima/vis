@@ -382,6 +382,35 @@ fn a_slow_server_hits_the_global_timeout() {
 }
 
 #[test]
+fn the_global_timeout_covers_every_redirect_hop() {
+    // Each hop answers within the limit, but the five of them together do not.
+    let stub = spawn(|seen| {
+        thread::sleep(Duration::from_millis(250));
+
+        let hop = seen
+            .request_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|path| path.trim_start_matches("/hop").parse::<u32>().ok());
+
+        match hop {
+            Some(number) if number < 5 => reply("302 Found", &[("location", &format!("/hop{}", number + 1))], b""),
+            _ => ok("arrived"),
+        }
+    });
+    let client = HttpClient::new(HttpConfig { global_timeout: Duration::from_millis(700), ..HttpConfig::default() });
+    let started = std::time::Instant::now();
+    let error = client.get(&stub.url("/hop0"), &[]).unwrap_err();
+
+    assert!(matches!(error, HttpError::Timeout(_)), "{error:?}");
+    assert!(
+        started.elapsed() < Duration::from_millis(1200),
+        "the redirects ran past the limit: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn a_body_over_the_cap_is_too_large() {
     let stub = spawn(|_| ok(&"x".repeat(100)));
     let small = HttpClient::new(HttpConfig { max_body: 10, ..HttpConfig::default() });

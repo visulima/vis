@@ -1,9 +1,37 @@
 //! What a native command checks before it deletes a directory tree: Node's `rm` fails with a stack trace when a
-//! directory cannot be emptied, and a native run cannot hand over to Node once it has removed part of the tree.
+//! directory cannot be emptied, and a native run cannot hand over to Node cleanly once it has removed part of the
+//! tree. A removal that fails despite these checks (a race, or a restriction no check sees) is handed over anyway,
+//! after the fact, by the commands that use them.
 
 use std::ffi::CString;
-use std::fs;
+use std::fs::{self, Metadata};
 use std::path::Path;
+
+/// Whether the file system flags of `metadata` forbid removing or changing the entry (`chflags uchg` or `uappnd`,
+/// and the system versions of both), which `access(2)` does not report. Only macOS is checked: the equivalent on
+/// Linux (`chattr +i`) needs an `ioctl` on an open file.
+#[cfg(target_os = "macos")]
+fn locked(metadata: &Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+
+    // UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND
+    metadata.st_flags() & (0x2 | 0x4 | 0x2_0000 | 0x4_0000) != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn locked(_metadata: &Metadata) -> bool {
+    false
+}
+
+/// Whether the entry at `path` exists and its flags allow removing or changing it (see [`locked`]).
+fn unlocked(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| !locked(&metadata))
+}
+
+/// Whether `path`, an entry of `parent` that is not a directory, can be removed.
+pub(crate) fn removable_file(path: &Path, parent: &Path) -> bool {
+    may_modify(parent) && unlocked(path) && unlocked(parent)
+}
 
 /// Whether `directory` is a real directory whose whole tree this process may remove: its parent and every
 /// directory below it can be written and searched, and read. A symbolic link or a file is not.
@@ -12,7 +40,7 @@ pub(crate) fn removable_directory(directory: &Path, parent: &Path) -> bool {
         return false;
     };
 
-    if !metadata.is_dir() || !may_modify(parent) {
+    if !metadata.is_dir() || locked(&metadata) || !may_modify(parent) || !unlocked(parent) {
         return false;
     }
 
@@ -25,7 +53,11 @@ pub(crate) fn removable_directory(directory: &Path, parent: &Path) -> bool {
             entry.is_ok_and(|entry| {
                 let path = entry.path();
 
-                !entry.file_type().is_ok_and(|kind| kind.is_dir()) || removable_directory(&path, directory)
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    removable_directory(&path, directory)
+                } else {
+                    entry.metadata().is_ok_and(|metadata| !locked(&metadata))
+                }
             })
         })
 }
@@ -74,6 +106,28 @@ mod tests {
         assert!(!removable_directory(&root.join("tree"), &root));
 
         fs::set_permissions(root.join("tree/inner"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// An immutable file lets `access(2)` pass but fails the removal, so the tree must not count as removable.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_immutable_entry_cannot_be_removed() {
+        use std::process::Command;
+
+        let root = scratch("immutable");
+        let file = root.join("tree/inner/pinned");
+
+        fs::write(&file, "").unwrap();
+        assert!(Command::new("chflags").arg("uchg").arg(&file).status().unwrap().success());
+
+        assert!(!removable_directory(&root.join("tree"), &root));
+        assert!(!super::removable_file(&file, &root.join("tree/inner")));
+
+        assert!(Command::new("chflags").arg("nouchg").arg(&file).status().unwrap().success());
+        assert!(removable_directory(&root.join("tree"), &root));
+        assert!(super::removable_file(&file, &root.join("tree/inner")));
+
         fs::remove_dir_all(&root).unwrap();
     }
 

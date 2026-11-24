@@ -23,7 +23,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{output_settings_are_default, quiet_context, write_stdout};
+use crate::advisories::{output_settings_are_default, quiet_context, write_stdout, write_streams};
 use crate::cache::{is_plain, quiet_workspace_root, resolve};
 use crate::error::WrapperError;
 
@@ -72,25 +72,30 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         out.push_str(&format!("  Lines in {}\n", profile.path));
     }
 
+    // `cleanShellProfiles` is non-fatal: a profile that cannot be replaced (a busy bind mount, an immutable
+    // file) is warned about on stderr and left as it is, and the run goes on.
+    let mut warnings = String::new();
+
     for (profile, temporary) in &staged {
-        if let Err(error) = fs::rename(temporary, &profile.path) {
+        if fs::rename(temporary, &profile.path).is_err() {
             let _ = fs::remove_file(temporary);
 
-            write_stdout("implode", "the output", &out);
-            WrapperError::usage("implode", format!("could not clean {}: {error}", profile.path)).exit();
+            warnings.push_str(&format!("warning: could not clean {}\n", profile.path));
+
+            continue;
         }
 
         out.push_str(&format!("Cleaned {}\n", profile.path));
     }
 
     if let Err(error) = fs::remove_dir_all(&plan.vis_home) {
-        write_stdout("implode", "the output", &out);
+        write_streams("implode", &out, &warnings);
         WrapperError::usage("implode", format!("Failed to remove {}: {error}", plan.vis_home)).exit();
     }
 
     out.push_str(&format!("\n\u{2713} Removed {}\n\u{2713} vis has been uninstalled.\n", plan.vis_home));
 
-    write_stdout("implode", "the output", &out);
+    write_streams("implode", &out, &warnings);
 
     exit(0)
 }

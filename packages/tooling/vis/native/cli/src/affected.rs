@@ -182,6 +182,18 @@ fn resolve_shas(source: &dyn Source) -> Option<Shas> {
 
         if let Some(path) = non_empty(env("GITHUB_EVENT_PATH")) {
             let payload = source.event_payload(&path)?;
+
+            // A merge queue run has no pull request base: the queue entry names the commit it was built on.
+            let merge_group_base = payload
+                .get("merge_group")
+                .and_then(|group| group.get("base_sha"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+
+            if let Some(base) = non_empty_sha(merge_group_base) {
+                return Some(Shas { base, head });
+            }
+
             let before = payload.get("before").and_then(serde_json::Value::as_str).map(str::to_owned);
 
             if let Some(before) = non_empty_sha(before) {
@@ -702,6 +714,37 @@ mod tests {
         push.payload = None;
 
         assert_eq!(resolve_shas(&push), None);
+    }
+
+    #[test]
+    fn github_resolution_prefers_the_merge_group_base_over_the_push_before() {
+        let mut queue = fake(&[("GITHUB_ACTIONS", "true"), ("GITHUB_EVENT_PATH", "/e.json"), ("GITHUB_SHA", "f00")]);
+
+        queue.payload = Some(serde_json::json!({ "merge_group": { "base_sha": "b45e" } }));
+
+        assert_eq!(resolve_shas(&queue), shas("b45e", "f00"));
+
+        queue.payload = Some(serde_json::json!({ "before": "abc123", "merge_group": { "base_sha": "b45e" } }));
+
+        assert_eq!(resolve_shas(&queue), shas("b45e", "f00"));
+
+        // An empty, zero or non-string base falls through to `before`, then to the default branch.
+        for unusable in
+            [serde_json::json!(""), serde_json::json!(ZERO_SHA), serde_json::json!(7), serde_json::json!(null)]
+        {
+            queue.payload =
+                Some(serde_json::json!({ "before": "abc123", "merge_group": { "base_sha": unusable.clone() } }));
+
+            assert_eq!(resolve_shas(&queue), shas("abc123", "f00"));
+
+            queue.payload = Some(serde_json::json!({ "merge_group": { "base_sha": unusable } }));
+
+            assert_eq!(resolve_shas(&queue), shas("origin/main", "f00"));
+        }
+
+        queue.payload = Some(serde_json::json!({ "before": "abc123", "merge_group": "b45e" }));
+
+        assert_eq!(resolve_shas(&queue), shas("abc123", "f00"));
     }
 
     #[test]

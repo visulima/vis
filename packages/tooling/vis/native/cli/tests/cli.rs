@@ -8,6 +8,9 @@
 
 use std::process::Command;
 
+#[cfg(unix)]
+use sha2::{Digest, Sha256};
+
 /// The binary with a terminal size in its environment, so the help it renders has a width without asking
 /// a terminal (a run from a terminal would otherwise be handed to Node for it).
 fn binary() -> Command {
@@ -811,6 +814,60 @@ fn delegated_clean_forwards_a_non_utf8_argument_unchanged() {
     assert_eq!(recorded, b"clean\0caf\xe9\0", "argv reached the stub as {recorded:?}");
 }
 
+/// A pnpm workspace whose `vendor/lib` links to a directory holding a `node_modules`, and whose
+/// `packages/app/loop` links back to the root: the native `clean` must neither remove the linked
+/// directory's `node_modules` nor loop, and its dry run must list the paths the real run removes.
+#[cfg(unix)]
+#[test]
+fn native_clean_never_follows_a_symlink() {
+    let base = std::env::temp_dir().join(format!("vis-clean-links-{}", std::process::id()));
+    let workspace = base.join("workspace");
+    let outside = base.join("other-repo");
+
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(workspace.join("packages/app/node_modules")).unwrap();
+    std::fs::create_dir_all(workspace.join("vendor")).unwrap();
+    std::fs::create_dir_all(outside.join("node_modules")).unwrap();
+    std::fs::write(workspace.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+    std::fs::write(workspace.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+    std::fs::write(outside.join("node_modules/keep.js"), "").unwrap();
+    std::os::unix::fs::symlink(&outside, workspace.join("vendor/lib")).unwrap();
+    std::os::unix::fs::symlink(&workspace, workspace.join("packages/app/loop")).unwrap();
+
+    let workspace = workspace.canonicalize().unwrap();
+
+    let run = |flags: &[&str]| {
+        binary()
+            .arg("clean")
+            .args(flags)
+            .current_dir(&workspace)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("CI", "1")
+            .env("VIS_NO_UPDATE_CHECK", "1")
+            .output()
+            .expect("run binary")
+    };
+
+    let dry = run(&["--dry-run"]);
+    let dry_out = String::from_utf8_lossy(&dry.stdout).into_owned();
+
+    assert_eq!(dry.status.code(), Some(0), "a declined run exits 70: {dry:?}");
+    assert!(dry_out.contains("packages/app/node_modules"), "stdout was: {dry_out}");
+    assert!(!dry_out.contains("vendor"), "the dry run listed a path behind a link: {dry_out}");
+
+    let real = run(&[]);
+    let real_out = String::from_utf8_lossy(&real.stdout).into_owned();
+
+    assert_eq!(real.status.code(), Some(0), "stderr was: {}", String::from_utf8_lossy(&real.stderr));
+    assert!(real_out.contains("Removed") && real_out.contains("packages/app/node_modules"), "stdout was: {real_out}");
+    assert!(!real_out.contains("vendor"), "the run removed a path behind a link: {real_out}");
+    assert!(!workspace.join("packages/app/node_modules").exists());
+    assert!(outside.join("node_modules/keep.js").exists(), "a directory outside the workspace was deleted");
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
 /// Writes a monorepo root with a `vis.config.ts` pinning `install.backend`, a yarn lockfile the pin
 /// must override, a stub Node that must not run, and a stub for the pinned package manager on PATH. Returns the scratch base, the project and the bin dir.
 #[cfg(unix)]
@@ -1156,7 +1213,11 @@ impl EmitFixture {
             *__emit-config*)\n\
               echo run >> \"$VIS_TEST_COUNT\"\n\
               while [ $# -gt 0 ]; do if [ \"$1\" = \"--out\" ]; then out=\"$2\"; fi; shift; done\n\
-              /bin/cp \"$VIS_TEST_EMITTED\" \"$out\" ;;\n\
+              IFS= read -r line < \"$VIS_TEST_EMITTED\" || true\n\
+              case \"$line\" in\n\
+              *\\{digest\\}*) printf '%s' \"${line%%\\{digest\\}*}$VIS_TEST_DIGEST${line#*\\{digest\\}}\" > \"$out\" ;;\n\
+              *) printf '%s' \"$line\" > \"$out\" ;;\n\
+              esac ;;\n\
             *) echo \"NODE:$*\" ;;\n\
             esac\n";
 
@@ -1183,6 +1244,11 @@ impl EmitFixture {
             .env("VIS_FALLBACK_ENTRY", self.base.join("dist").join("bin.js"))
             .env("VIS_TEST_COUNT", self.base.join("count"))
             .env("VIS_TEST_EMITTED", self.base.join("emitted.json"))
+            // What the real emitter reports: the digest of the helper as it is when the config is evaluated.
+            .env(
+                "VIS_TEST_DIGEST",
+                format!("{:x}", Sha256::digest(std::fs::read(self.project.join("helper.ts")).unwrap())),
+            )
             .env("PATH", &self.bindir)
             .env_remove("VIS_INSTALLER")
             .env_remove("VIS_NO_CONFIG_CACHE")
@@ -1211,8 +1277,8 @@ impl Drop for EmitFixture {
 }
 
 #[cfg(unix)]
-const EMITTED_NPM: &str = "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
-    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\"}],\"env\":[],\"uncacheable\":[]}";
+const EMITTED_NPM: &str = "{\"version\":2,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\
+    \"files\":[{\"path\":\"{helper}\",\"kind\":\"file\",\"digest\":\"{digest}\"}],\"env\":[],\"uncacheable\":[]}";
 
 /// A config that needs evaluation is evaluated once; the next runs read the stored result without Node,
 /// and editing a module the config imports evaluates it again.
@@ -1256,7 +1322,7 @@ fn the_config_cache_can_be_turned_off() {
 fn a_config_that_is_not_data_is_delegated_to_node() {
     let fixture = EmitFixture::new(
         "node-only",
-        "{\"version\":1,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
+        "{\"version\":2,\"status\":\"node-only\",\"files\":[],\"env\":[],\"uncacheable\":[],\"nonData\":[\"$.plugins[0]\"]}",
     );
 
     assert!(fixture.run(&[]).starts_with("NODE:"));
@@ -1271,7 +1337,7 @@ fn a_config_that_is_not_data_is_delegated_to_node() {
 fn a_result_that_cannot_be_tracked_is_left_to_node() {
     let fixture = EmitFixture::new(
         "untracked",
-        "{\"version\":1,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
+        "{\"version\":2,\"status\":\"ok\",\"config\":{\"install\":{\"backend\":\"npm\"}},\"files\":[],\"env\":[],\"uncacheable\":[\"uses the network\"]}",
     );
 
     assert!(fixture.run(&[]).starts_with("NODE:"));

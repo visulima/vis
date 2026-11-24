@@ -6,8 +6,9 @@ description: "Remove node_modules (and optionally lockfiles and stale package di
 # vis clean
 
 Remove `node_modules` from every workspace project, and optionally lockfiles and stale
-package directories. Removal is symlink-safe (it never follows symlinks or Windows
-junctions into their targets).
+package directories. Removal is symlink-safe: the search never follows a symlink or a Windows
+junction, so a link to a directory outside the workspace is left alone, and `--dry-run` lists exactly
+the paths a real run removes.
 
 The workspace **root's own `node_modules` is always removed last** — package
 `node_modules` symlink into the root store and the running `vis` resolves its own

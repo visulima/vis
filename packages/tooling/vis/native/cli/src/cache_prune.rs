@@ -13,7 +13,15 @@
 //!   or that its number coercion reads differently, is Node's;
 //! - the quiet context of the cache commands, a layout pail's header can be reproduced for, printable ASCII paths and a
 //!   message that fits one line (the "Nothing to prune" text holds an em dash, which pail's wrap counts differently);
-//! - entries that are plain directories or files, never a symbolic link, and a tree this process can remove in full.
+//! - entries that are plain directories or files, never a symbolic link, and a tree this process can remove in full
+//!   (see [`crate::removal`]); a branch directory whose name is not UTF-8 is Node's too, because Node names its
+//!   mangled path in a block of its own.
+//!
+//! A removal that fails anyway (a race, or a restriction no check sees) is handled as Node handles it. The age and
+//! size limits swallow the error and the "Pruned" line comes from counting the entries again, so the line is built
+//! from the directory as it is after the removals. `--keep-last` rejects with an error: the removals stop where Node's
+//! stop and the run is handed to Node, which meets the same entry and reports it. What Node prints for the
+//! directories this run had already finished is not reproduced then, because they are done by the time it runs.
 
 use std::env;
 use std::ffi::OsString;
@@ -28,7 +36,7 @@ use crate::cache::{
     read_settings, sorted_entries, sum_directory_size, Scope,
 };
 use crate::pail::{Layout, Level};
-use crate::removal::{may_modify, removable_directory};
+use crate::removal::{removable_directory, removable_file};
 
 /// `DEFAULT_MAX_CACHE_AGE` of the task runner's cache: seven days.
 const DEFAULT_MAX_CACHE_AGE: f64 = 7.0 * 24.0 * 60.0 * 60.0 * 1000.0;
@@ -49,10 +57,35 @@ struct Request {
     max_size: Option<f64>,
 }
 
+/// One path to remove.
+struct Removal {
+    path: PathBuf,
+    /// Dropped by `--keep-last`, whose removal failure Node does not swallow.
+    keep_last: bool,
+}
+
+/// The "Pruned" or "Nothing to prune" line of one directory, worked out from what the plan expects to remove and
+/// recounted from the directory itself when a removal fails.
+struct Summary {
+    directory: String,
+    entries_before: usize,
+    bytes_before: u64,
+    removed: usize,
+    reclaimed: u64,
+}
+
+enum Part {
+    Text(String),
+    Summary(Summary),
+}
+
 /// What a run prints (pail's info and success levels go to stdout, and prune prints no other level) and removes.
 struct Plan {
-    stdout: String,
-    removals: Vec<PathBuf>,
+    layout: Layout,
+    parts: Vec<Part>,
+    removals: Vec<Removal>,
+    /// A directory was reported gone because an earlier removal of this run takes it away.
+    gone_by_removal: bool,
 }
 
 /// Answer `vis cache prune` natively, or delegate to Node. Never returns.
@@ -61,13 +94,87 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         crate::delegate(raw);
     };
 
-    for path in &plan.removals {
-        let _ = if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+    let (mut failed, mut keep_last_failed) = (false, false);
+    // Where `--keep-last` failed: Node's `Promise.all` has tried every entry of that directory by then, and the
+    // rejection ends the run before any age or size limit (or a later directory) is looked at.
+    let mut failed_directory: Option<&Path> = None;
+
+    for removal in &plan.removals {
+        let path = &removal.path;
+
+        if failed_directory.is_some_and(|directory| !removal.keep_last || path.parent() != Some(directory)) {
+            break;
+        }
+
+        if (if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }).is_err() {
+            failed = true;
+
+            if removal.keep_last {
+                keep_last_failed = true;
+                failed_directory = path.parent();
+            }
+        }
     }
 
-    write_streams("cache prune", &plan.stdout, "");
+    // `--keep-last` rejects when a removal fails, which only Node can report.
+    let stdout = if keep_last_failed { None } else { render(&plan, failed) };
+
+    let Some(stdout) = stdout else {
+        crate::delegate(raw);
+    };
+
+    write_streams("cache prune", &stdout, "");
 
     exit(0)
+}
+
+/// What the run prints. With `recount`, the "Pruned" line of each directory is rebuilt from the entries left on
+/// disk, as `runPrune` does it, because a removal failed and the plan no longer says what happened. `None` when the
+/// output can no longer be reproduced.
+fn render(plan: &Plan, recount: bool) -> Option<String> {
+    // A directory reported gone because its container was to be removed is not gone when that removal failed.
+    if recount && plan.gone_by_removal {
+        return None;
+    }
+
+    let mut stdout = String::new();
+
+    for part in &plan.parts {
+        match part {
+            Part::Text(text) => stdout.push_str(text),
+            Part::Summary(summary) if recount => {
+                let after = collect_entries(&summary.directory)?;
+                let bytes_after = after.iter().try_fold(0, |total, entry| add_safe(total, entry.size))?;
+
+                stdout.push_str(&summary_message(
+                    plan.layout,
+                    summary.entries_before.saturating_sub(after.len()),
+                    summary.bytes_before.checked_sub(bytes_after)?,
+                )?);
+            }
+            Part::Summary(summary) => {
+                stdout.push_str(&summary_message(plan.layout, summary.removed, summary.reclaimed)?)
+            }
+        }
+    }
+
+    Some(stdout)
+}
+
+/// The closing line of one directory. `None` for a "Nothing to prune" that pail wraps where this cannot reproduce it:
+/// the em dash is one column and three bytes, and the line is printed only where both ways of counting fit it.
+fn summary_message(layout: Layout, removed: usize, reclaimed: u64) -> Option<String> {
+    if removed == 0 {
+        if layout.width.saturating_sub(3) < NOTHING_TO_PRUNE.len() {
+            return None;
+        }
+
+        return Some(layout.block(Level::Info, NOTHING_TO_PRUNE));
+    }
+
+    let noun = if removed == 1 { "y" } else { "ies" };
+
+    Some(layout.block(Level::Success, &format!("Pruned {removed} entr{noun}, freed {}.", format_bytes(reclaimed)?)))
 }
 
 /// A whole number without a sign, a leading zero or an exponent, short enough for an exact conversion.
@@ -181,7 +288,7 @@ fn plan(args: &[String]) -> Option<Plan> {
     let layout = Layout::detect(args)?;
     let settings = read_settings(&cwd, &root)?;
     let directories = evict_directories(&root, request.cache_dir.as_deref(), request.scope, &settings)?;
-    let mut plan = Plan { stdout: String::new(), removals: Vec::new() };
+    let mut plan = Plan { layout, parts: Vec::new(), removals: Vec::new(), gone_by_removal: false };
 
     for directory in &directories {
         if !directory.bytes().all(|byte| byte.is_ascii_graphic()) {
@@ -189,7 +296,7 @@ fn plan(args: &[String]) -> Option<Plan> {
         }
 
         if directories.len() > 1 {
-            plan.stdout.push_str(&layout.block(Level::Info, &format!("# {directory}")));
+            plan.parts.push(Part::Text(layout.block(Level::Info, &format!("# {directory}"))));
         }
 
         prune_directory(&request, directory, layout, &mut plan)?;
@@ -203,10 +310,12 @@ fn prune_directory(request: &Request, directory: &str, layout: Layout, plan: &mu
     let base = Path::new(directory);
 
     // A directory an earlier one of this run removed (the branch container, once it has expired) is not there any more.
-    let gone = fs::metadata(base).is_err() || plan.removals.iter().any(|removed| base.starts_with(removed));
+    let under_removal = plan.removals.iter().any(|removal| base.starts_with(&removal.path));
+    let gone = fs::metadata(base).is_err() || under_removal;
 
     if gone {
-        plan.stdout.push_str(&layout.block(Level::Info, &format!("No cache directory to prune at {directory}")));
+        plan.gone_by_removal |= under_removal;
+        plan.parts.push(Part::Text(layout.block(Level::Info, &format!("No cache directory to prune at {directory}"))));
 
         return Some(());
     }
@@ -219,41 +328,39 @@ fn prune_directory(request: &Request, directory: &str, layout: Layout, plan: &mu
         dropped.extend(before[keep..].iter().map(|entry| entry.hash.clone()));
     }
 
+    let dropped_by_keep_last = dropped.len();
+
     expire(request, base, &mut dropped)?;
 
     let dropped_entries: Vec<_> = before.iter().filter(|entry| dropped.contains(&entry.hash)).collect();
     let removed = dropped_entries.len();
     let reclaimed = dropped_entries.iter().try_fold(0, |total, entry| add_safe(total, entry.size))?;
 
-    for name in &dropped {
+    for (index, name) in dropped.iter().enumerate() {
         let path = base.join(name);
 
         // `--keep-last` fails on a removal that does not work, and one that fails half-way cannot be handed back.
         let metadata = fs::symlink_metadata(&path).ok()?;
         let removable = !metadata.is_symlink()
-            && if metadata.is_dir() { removable_directory(&path, base) } else { may_modify(base) };
+            && if metadata.is_dir() { removable_directory(&path, base) } else { removable_file(&path, base) };
 
         if !removable {
             return None;
         }
 
-        plan.removals.push(path);
+        plan.removals.push(Removal { path, keep_last: index < dropped_by_keep_last });
     }
 
-    let message = if removed == 0 {
-        // The em dash is one column and three bytes; the line is printed only where both ways of counting fit it.
-        if layout.width.saturating_sub(3) < NOTHING_TO_PRUNE.len() {
-            return None;
-        }
+    // Checked now, so that a line this cannot reproduce goes to Node before anything is removed.
+    summary_message(layout, removed, reclaimed)?;
 
-        layout.block(Level::Info, NOTHING_TO_PRUNE)
-    } else {
-        let noun = if removed == 1 { "y" } else { "ies" };
-
-        layout.block(Level::Success, &format!("Pruned {removed} entr{noun}, freed {}.", format_bytes(reclaimed)?))
-    };
-
-    plan.stdout.push_str(&message);
+    plan.parts.push(Part::Summary(Summary {
+        directory: directory.to_owned(),
+        entries_before: before.len(),
+        bytes_before: before.iter().try_fold(0, |total, entry| add_safe(total, entry.size))?,
+        removed,
+        reclaimed,
+    }));
 
     Some(())
 }
@@ -348,6 +455,77 @@ mod tests {
         assert_eq!(request.max_age, Some(129_600_000.0));
         assert_eq!(request.max_size, Some(524_288_000.0));
         assert!(request.scope == Scope::All);
+    }
+
+    /// A cache directory of `names` entries, each a directory holding one 10-byte file.
+    fn scratch_cache(name: &str, entries: &[&str]) -> String {
+        let directory = std::env::temp_dir().join(format!("vis-prune-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+
+        for entry in entries {
+            fs::create_dir_all(directory.join(entry)).unwrap();
+            fs::write(directory.join(entry).join("file"), "0123456789").unwrap();
+        }
+
+        directory.to_str().unwrap().to_owned()
+    }
+
+    fn summary_plan(directory: &str, removed: usize, reclaimed: u64) -> Plan {
+        let layout = Layout { width: 200, colour: false };
+        let entries = collect_entries(directory).unwrap();
+
+        Plan {
+            layout,
+            parts: vec![Part::Summary(Summary {
+                directory: directory.to_owned(),
+                entries_before: entries.len(),
+                bytes_before: entries.iter().map(|entry| entry.size).sum(),
+                removed,
+                reclaimed,
+            })],
+            removals: Vec::new(),
+            gone_by_removal: false,
+        }
+    }
+
+    #[test]
+    fn the_pruned_line_reports_what_the_removals_did_not_what_the_plan_expected() {
+        let directory = scratch_cache("recount", &["aaa", "bbb", "ccc"]);
+        let plan = summary_plan(&directory, 2, 20);
+
+        // The plan expected two entries to go, but only one of the removals worked.
+        fs::remove_dir_all(Path::new(&directory).join("aaa")).unwrap();
+
+        assert!(render(&plan, false).unwrap().contains("Pruned 2 entries, freed 20.0Bytes."));
+
+        let recounted = render(&plan, true).unwrap();
+
+        assert!(recounted.contains("Pruned 1 entry, freed 10.0Bytes."), "{recounted}");
+
+        // Nothing went at all: the "nothing to prune" line, as Node counts it.
+        fs::write(Path::new(&directory).join("zzz"), "").unwrap();
+        fs::create_dir_all(Path::new(&directory).join("aaa")).unwrap();
+        fs::write(Path::new(&directory).join("aaa/file"), "0123456789").unwrap();
+
+        let untouched = summary_plan(&directory, 1, 10);
+
+        assert!(render(&untouched, true).unwrap().contains("Nothing to prune"));
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_container_reported_gone_is_handed_to_node_when_its_removal_failed() {
+        let directory = scratch_cache("gone", &["aaa"]);
+        let mut plan = summary_plan(&directory, 0, 0);
+
+        plan.gone_by_removal = true;
+
+        assert!(render(&plan, false).is_some());
+        assert!(render(&plan, true).is_none());
+
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

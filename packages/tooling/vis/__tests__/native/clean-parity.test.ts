@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -182,6 +182,37 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
             expect(removedBy(nativeRoot, nativeBefore)).toStrictEqual(removedBy(nodeRoot, nodeBefore));
         });
+    });
+
+    // A link to a directory outside the workspace, and one back to the workspace root: neither walk follows them, so the
+    // dry run lists what the real run removes, nothing outside is deleted and the cycle ends.
+    it.each([["--dry-run"], [""]])("never follows a symbolic link (flags: %j)", (flag: string) => {
+        expect.assertions(6);
+
+        const flags = flag === "" ? [] : [flag];
+        const roots = [workspaceFor("workspace"), workspaceFor("workspace")] as const;
+        const outsides = roots.map((root) => `${root}-outside`);
+
+        for (const [index, root] of roots.entries()) {
+            const outside = outsides[index] as string;
+
+            mkdirSync(join(outside, "node_modules"), { recursive: true });
+            writeFileSync(join(outside, "node_modules", "keep.js"), "");
+            mkdirSync(join(root, "vendor"), { recursive: true });
+            symlinkSync(outside, join(root, "vendor", "lib"));
+            symlinkSync(root, join(root, "packages", "a", "loop"));
+        }
+
+        const [nodeRoot, nativeRoot] = roots;
+        const node = runNode(flags, nodeRoot);
+        const native = runNative(flags, nativeRoot);
+
+        expect(native.status).toBe(node.status);
+        expect(normalize(native.stdout, nativeRoot)).toBe(normalize(node.stdout, nodeRoot));
+        expect(normalize(native.stderr, nativeRoot)).toBe(normalize(node.stderr, nodeRoot));
+        expect(native.stdout).not.toContain("vendor");
+        expect(existsSync(join(outsides[0] as string, "node_modules", "keep.js"))).toBe(true);
+        expect(existsSync(join(outsides[1] as string, "node_modules", "keep.js"))).toBe(true);
     });
 
     it.skipIf(privileged)("writes a removal error to stderr and the successful removals to stdout", () => {

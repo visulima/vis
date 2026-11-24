@@ -1,5 +1,7 @@
-import { chmodSync, existsSync, symlinkSync, utimesSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -65,7 +67,27 @@ const withCache = (): Fixture => {
     return { workspace: cache() };
 };
 
+const nonUtf8Name = (directory: string): Buffer => Buffer.concat([Buffer.from(`${directory}/caf`), Buffer.from([0xe9])]);
+
+/** Whether the file system under the temporary directory takes a name that is not UTF-8. */
+const acceptsNonUtf8Names = ((): boolean => {
+    const probe = nonUtf8Name(mkdtempSync(join(tmpdir(), "vis-utf8-probe-")));
+
+    try {
+        mkdirSync(probe);
+
+        return true;
+    } catch {
+        return false;
+    } finally {
+        rmSync(dirname(probe.toString("latin1")), { force: true, recursive: true });
+    }
+})();
+
 const locked: string[] = [];
+
+/** Files made immutable (macOS `chflags uchg`), which `access(2)` does not report and a removal fails on. */
+const pinned: string[] = [];
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis cache prune: native vs Node", () => {
     beforeAll(() => {
@@ -73,6 +95,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     afterEach(() => {
+        for (const file of pinned.splice(0)) {
+            execFileSync("chflags", ["nouchg", file]);
+        }
+
         for (const directory of locked.splice(0)) {
             if (existsSync(directory)) {
                 chmodSync(directory, 0o755);
@@ -261,6 +287,50 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                     aged({ old1: 30 * DAY })(side);
                     locked.push(join(side.root, CACHE, "old1", "locked"));
                     chmodSync(join(side.root, CACHE, "old1", "locked"), 0o555);
+                },
+            });
+        });
+
+        // The removal would fail after the plan was made, so the native path must see it first.
+        it.skipIf(process.platform !== "darwin")("an expired entry that holds an immutable file", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ workspace: { ...entry(CACHE, "old1", [10]), ...entry(CACHE, "new1", [10]) } }, [], {}, {
+                prepare: (side) => {
+                    aged({ new1: HOUR, old1: 30 * DAY })(side);
+
+                    const file = join(side.root, CACHE, "old1", "file-0");
+
+                    execFileSync("chflags", ["uchg", file]);
+                    pinned.push(file);
+                },
+            });
+        });
+
+        it.skipIf(process.platform !== "darwin")("an entry that --keep-last drops and that holds an immutable file", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ workspace: { ...entry(CACHE, "old1", [10]), ...entry(CACHE, "new1", [10]) } }, ["--keep-last", "1"], {}, {
+                prepare: (side) => {
+                    aged({ new1: HOUR, old1: 2 * HOUR })(side);
+
+                    const file = join(side.root, CACHE, "old1", "file-0");
+
+                    execFileSync("chflags", ["uchg", file]);
+                    pinned.push(file);
+                },
+            });
+        });
+
+        // Node prints a block that names the mangled path of a branch directory whose name is not UTF-8. Some file systems
+        // (APFS) refuse such a name, and the case is skipped there.
+        it.skipIf(!acceptsNonUtf8Names)("a branch directory whose name is not UTF-8", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ workspace: { ...cache(), "vis.config.ts": "export default { branchScopedCache: true };\n" } }, [], {}, {
+                prepare: (side) => {
+                    prepared(side);
+                    mkdirSync(nonUtf8Name(join(side.root, CACHE, "branches")), { recursive: true });
                 },
             });
         });
