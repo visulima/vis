@@ -236,7 +236,7 @@ const downloadAndIngest = async (request: IngestRequest): Promise<IngestOutcome>
             (current, total) => request.onProgress?.(current, total, "ingest"),
         );
     } finally {
-        // Rust deletes the zip after a successful ingest; this removes the residual when a step threw first.
+        // The native ingest only reads the zip, so this is the single place it is removed.
         await unlink(zipPath).catch(() => undefined);
     }
 };
