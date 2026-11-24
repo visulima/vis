@@ -103,6 +103,8 @@ vis security keys-refresh --clear   # only drop the cache, do not refetch
 vis security keys-refresh --json    # emit the refresh result as JSON for tooling
 ```
 
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, the Rust binary runs `vis security keys-refresh --json` (alone or with `--clear`) without starting Node, over its own HTTPS client. The request takes 15 seconds at most, or `VIS_HTTP_TIMEOUT` seconds when that variable is set (and `VIS_HTTP_CONNECT_TIMEOUT` for the connection). `VIS_NPM_KEYS_URL` still overrides the endpoint. The binary hands the run to Node before anything is printed or written for: the text form, any other flag, a proxy, CA or Node option in the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_OPTIONS`), a redirect, a key URL that is not a plain `http(s)` URL (credentials, an IPv6 literal, a port from 10080 down that `fetch` refuses), a cache file that is not a JSON object with a `keys` array, and an answer that is 2xx but not a JSON object.
+
 ### verify-lockfile
 
 Re-validate the **entire resolved lockfile closure** against the supply-chain policies — vis's counterpart to pnpm v11's lockfile-verification phase. Unlike the pre-install marshalls (which only inspect packages being _added_), this catches a tampered/poisoned lockfile even on npm/yarn/bun and even when nothing is being added.

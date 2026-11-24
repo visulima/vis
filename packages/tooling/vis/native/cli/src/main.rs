@@ -46,14 +46,13 @@ mod exec;
 mod graph;
 mod help;
 mod hook;
-// No command uses the client yet; the first one lands with it.
-#[allow(dead_code)]
 mod http;
 mod ignore;
 #[cfg(unix)]
 mod implode;
 mod info;
 mod install;
+mod keys_refresh;
 mod list;
 mod manifest;
 mod node_contract;
@@ -238,6 +237,12 @@ fn main() {
         // is printed; help is left to the arm below.
         "security" if args.get(1).map(String::as_str) == Some("list") && !surface::asks_for_help(&args) => {
             security_list::run(&args, &raw_args)
+        }
+        // `vis security keys-refresh --json [--clear]` — the npm signing-key cache, refreshed over the native HTTP client in
+        // a CI context at the root of a pnpm workspace. Every other shape and every input it cannot reproduce is
+        // delegated inside `keys_refresh::run`, before anything is printed or written; help is left to the arm below.
+        "security" if args.get(1).map(String::as_str) == Some("keys-refresh") && !surface::asks_for_help(&args) => {
+            keys_refresh::run(&args, &raw_args)
         }
         // `vis shim status` — the shim directory and `PATH`, native in a CI context at the root of a pnpm workspace.
         // Every other shape and `shim install|uninstall` (Node's) are delegated inside `shim_status::run`; help is left

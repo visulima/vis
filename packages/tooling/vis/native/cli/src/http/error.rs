@@ -15,7 +15,11 @@ pub(crate) enum HttpError {
     /// A time limit ran out; the text names the phase (`connect`, `global`, `receive response`, ...).
     Timeout(String),
     /// The server answered outside 200-299 (after following redirects).
-    Status { code: u16, body: String },
+    Status {
+        code: u16,
+        #[allow(dead_code, reason = "the body of an error page is for the commands that print it")]
+        body: String,
+    },
     /// The body could not be decompressed, or is not the text or JSON the caller asked for.
     Decode(String),
     /// The body is larger than the cap.
@@ -27,18 +31,6 @@ pub(crate) enum HttpError {
 }
 
 impl HttpError {
-    pub(crate) fn is_timeout(&self) -> bool {
-        matches!(self, Self::Timeout(_))
-    }
-
-    /// The status code of a [`HttpError::Status`].
-    pub(crate) fn status(&self) -> Option<u16> {
-        match self {
-            Self::Status { code, .. } => Some(*code),
-            _ => None,
-        }
-    }
-
     /// Maps what `ureq` reports for a request to `host` to one of the cases above.
     pub(crate) fn from_ureq(error: ureq::Error, host: &str) -> Self {
         match error {

@@ -180,7 +180,6 @@ fn get_returns_status_and_body_and_sends_the_headers() {
     let stub = spawn(|_| ok("{\"a\":1}"));
     let response = client().get(&stub.url("/pkg?x=1"), &[("accept", "application/json")]).unwrap();
 
-    assert_eq!(response.status, 200);
     assert_eq!(response.text().unwrap(), "{\"a\":1}");
     assert_eq!(response.json().unwrap()["a"], 1);
 
@@ -322,9 +321,7 @@ fn a_redirect_loop_ends_in_an_error() {
 #[test]
 fn post_json_sends_the_body_and_the_content_type() {
     let stub = spawn(|_| ok("{}"));
-    let response = client().post_json(&stub.url("/bulk"), &[("x-key", "v")], "{\"a\":[1,2]}").unwrap();
-
-    assert_eq!(response.status, 200);
+    client().post_json(&stub.url("/bulk"), &[("x-key", "v")], "{\"a\":[1,2]}").unwrap();
 
     let seen = &stub.requests()[0];
 
@@ -366,7 +363,7 @@ fn a_non_2xx_status_is_an_error_that_keeps_the_body() {
     let stub = spawn(|_| reply("404 Not Found", &[], b"nope"));
     let error = client().get(&stub.url("/missing"), &[]).unwrap_err();
 
-    assert_eq!(error.status(), Some(404));
+    assert!(matches!(error, HttpError::Status { code: 404, .. }));
     assert_eq!(error.to_string(), "http status: 404");
     assert!(matches!(&error, HttpError::Status { body, .. } if body == "nope"));
 }
@@ -380,7 +377,7 @@ fn a_slow_server_hits_the_global_timeout() {
     let slow = HttpClient::new(HttpConfig { global_timeout: Duration::from_millis(300), ..HttpConfig::default() });
     let error = slow.get(&stub.url("/"), &[]).unwrap_err();
 
-    assert!(error.is_timeout(), "{error:?}");
+    assert!(matches!(error, HttpError::Timeout(_)), "{error:?}");
     assert!(error.to_string().starts_with("timeout: "));
 }
 
