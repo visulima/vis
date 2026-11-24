@@ -186,10 +186,7 @@ pub fn node_config_root(cwd: &Path) -> Option<PathBuf> {
 /// `.ts`/`.js` names (never `.json`). Node also picks its runtime from a bun lockfile, and a runtime
 /// of bun overrides any pinned backend, so a bun lockfile on the way up leaves the pin to Node.
 pub fn node_reads_pin(cwd: &Path) -> bool {
-    const NODE_CONFIG_FILES: [&str; 6] =
-        ["vis.config.ts", "vis.config.mts", "vis.config.cts", "vis.config.js", "vis.config.mjs", "vis.config.cjs"];
-
-    let has_config = NODE_CONFIG_FILES.iter().any(|name| cwd.join(name).is_file());
+    let has_config = NAMES.iter().filter(|name| !name.ends_with(".json")).any(|name| cwd.join(name).is_file());
     let bun_lockfile =
         cwd.ancestors().any(|directory| directory.join("bun.lock").exists() || directory.join("bun.lockb").exists());
 
