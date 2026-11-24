@@ -818,6 +818,7 @@ fn attempt(args: &[String]) -> Option<Answer> {
     // waits until every task has hit; they are asked at the same time. Node asks before it starts the clock of
     // the run, so the time this takes is not part of the run's duration.
     let probe_clock = Instant::now();
+    let probe_started = SystemTime::now();
     let pin_binaries = pins.binaries()?;
     let node_command = match launcher_version {
         Some(_) => None,
@@ -835,8 +836,9 @@ fn attempt(args: &[String]) -> Option<Answer> {
     // Node asks the pinned tools before it reads the lockfile and keys the tasks, and a tool may change files while
     // it answers (a pnpm that manages its own version records the pin in the lockfile the first time). The same
     // question here comes after the lookups, so the lockfile and the keys are checked again, and a run whose
-    // answer moved them is Node's.
-    if !pins.is_empty() {
+    // answer moved them is Node's. Any executable asked after the hits can do that, the Node of a start without the
+    // launcher included (a wrapper or a version manager's shim), so this does not depend on a pin.
+    if !pins.is_empty() || node_command.is_some() {
         let again = compute_task_keys(root.to_str()?, &target, &projects, DependsOn::Nothing).ok()?;
 
         if !lockfile_is_fresh(&root) || again.keys.iter().map(|key| &key.hash).ne(hashes.iter()) {
@@ -851,13 +853,15 @@ fn attempt(args: &[String]) -> Option<Answer> {
     };
 
     let probed = probe_clock.elapsed();
-    let now = SystemTime::now();
+    // The run ends where the questions began, which is after every task on this one timeline; a wall clock that was
+    // set back in between must not put the end before a task's own end.
+    let ended = hits.iter().map(|hit| hit.ended).fold(probe_started, SystemTime::max);
     let answer = Answer {
         look,
         hits,
         target,
         started,
-        ended: now.checked_sub(probed).unwrap_or(now),
+        ended,
         milliseconds: clock.elapsed().saturating_sub(probed).as_millis() as u64,
         arch,
         platform,
