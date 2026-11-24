@@ -246,36 +246,6 @@ fn normalize(root: &str, value: &str) -> Option<String> {
     Some(if value.starts_with('/') { value.to_owned() } else { resolve(root, &[value]) })
 }
 
-/// `getMainWorktreeRoot` (`task-runner/native/core/src/worktree.rs`): the main checkout's root when
-/// `root` is a linked worktree, else `None`.
-fn main_worktree_root(root: &Path) -> Option<PathBuf> {
-    let canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let metadata = fs::metadata(canonical.join(".git")).ok()?;
-
-    if metadata.is_dir() || !metadata.is_file() {
-        return None;
-    }
-
-    let output = Command::new("git").args(["rev-parse", "--git-common-dir"]).current_dir(&canonical).output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let common_dir = stdout.trim();
-
-    if common_dir.is_empty() {
-        return None;
-    }
-
-    let common =
-        if Path::new(common_dir).is_absolute() { PathBuf::from(common_dir) } else { canonical.join(common_dir) };
-    let main = fs::canonicalize(common.parent()?).ok()?;
-
-    (main != canonical).then_some(main)
-}
-
 /// `resolveSharedCacheDirectory`.
 pub(crate) fn resolve_cache_directory(
     root: &Path,
@@ -298,7 +268,11 @@ pub(crate) fn resolve_cache_directory(
         return normalize(root_text, chosen);
     }
 
-    let anchor = if shared { main_worktree_root(root) } else { None };
+    let anchor = if shared {
+        task_runner_core::get_main_worktree_root(root.to_str()?).ok().flatten().map(PathBuf::from)
+    } else {
+        None
+    };
     let anchor_text = match &anchor {
         Some(path) => path.to_str().filter(|text| is_plain(text) && text.starts_with('/'))?,
         None => root_text,

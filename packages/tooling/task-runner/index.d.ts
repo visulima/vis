@@ -144,10 +144,11 @@ export declare function getDependentTasks(graph: NativeTaskGraph, taskId: string
  * returns the path to the main worktree root.
  *
  * Returns:
- * - `Ok(Some(main_root))` when `<workspace_root>/.git` is a *file* (gitlink) —
- *   shells out to `git rev-parse --git-common-dir` and resolves to its parent.
- * - `Ok(None)` for primary checkouts, missing `.git`, shallow checkouts where
- *   `git rev-parse` fails, or when the `git` binary is not available.
+ * - `Ok(Some(main_root))` when `<workspace_root>/.git` is a *file* (gitlink) and
+ *   the checkout is a linked worktree: the top level of the main worktree.
+ * - `Ok(None)` for primary checkouts, submodules and `--separate-git-dir`
+ *   checkouts (each is its own main worktree), missing `.git`, shallow checkouts
+ *   where `git rev-parse` fails, or when the `git` binary is not available.
  *
  * Results are memoized per canonicalized workspace_root for the lifetime of
  * the process. Symlinks in the input path are resolved before lookup so that

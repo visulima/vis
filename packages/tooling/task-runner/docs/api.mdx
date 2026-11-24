@@ -268,7 +268,7 @@ Pure-TypeScript fallbacks ship for everything the native addon exposes (parallel
 
 ## Worktree detection
 
-Three top-level helpers wrap the native worktree API with a pure-Node fallback (uses `git rev-parse --git-common-dir`). They share a per-process memoization cache and are safe to call from any code path — the cache directory resolver, affected detection, and lockfile resolution all use them to point at the right `.git` inside linked git worktrees.
+Three top-level helpers wrap the native worktree API with a pure-Node fallback (it reads `git rev-parse --git-dir` and `--git-common-dir`). They share a per-process memoization cache and are safe to call from any code path — the cache directory resolver, affected detection, and lockfile resolution all use them to point at the right `.git` inside linked git worktrees.
 
 ```typescript
 import { getMainWorktreeRoot, isLinkedWorktree, resetWorktreeCache } from "@visulima/task-runner";
@@ -277,6 +277,8 @@ const mainRoot = getMainWorktreeRoot(workspaceRoot);
 // mainRoot is the absolute path to the primary checkout for a linked
 // worktree, or undefined for primary checkouts / non-git directories.
 ```
+
+The main worktree root is the top level of the main checkout. A submodule and a `git init --separate-git-dir` checkout are their own main worktree (`undefined`), and a linked worktree of a submodule resolves to that submodule, not to the superproject. A worktree of a bare repository resolves to the directory that holds the bare repository. A linked worktree of a `--separate-git-dir` checkout also returns `undefined`: git does not record where that checkout is.
 
 | Function                             | Returns               | Notes                                                                                                            |
 | ------------------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------- |

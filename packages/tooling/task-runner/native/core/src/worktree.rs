@@ -18,10 +18,12 @@ fn cache() -> &'static RwLock<HashMap<PathBuf, Option<PathBuf>>> {
 /// returns the path to the main worktree root.
 ///
 /// Returns:
-/// - `Ok(Some(main_root))` when `<workspace_root>/.git` is a *file* (gitlink) —
-///   shells out to `git rev-parse --git-common-dir` and resolves to its parent.
-/// - `Ok(None)` for primary checkouts, missing `.git`, shallow checkouts where
-///   `git rev-parse` fails, or when the `git` binary is not available.
+/// - `Ok(Some(main_root))` when `<workspace_root>/.git` is a *file* (gitlink) and
+///   the checkout is a linked worktree (its git dir differs from the common one):
+///   the top level of the main worktree.
+/// - `Ok(None)` for primary checkouts, submodules and `--separate-git-dir`
+///   checkouts (each is its own main worktree), missing `.git`, shallow checkouts
+///   where `git rev-parse` fails, or when the `git` binary is not available.
 ///
 /// Results are memoized per canonicalized workspace_root for the lifetime of
 /// the process. Symlinks in the input path are resolved before lookup so that
@@ -78,37 +80,84 @@ fn detect_main_worktree(workspace_root: &Path) -> Option<PathBuf> {
         return None;
     }
 
-    // Linked worktree: `.git` is a file (gitlink). Ask git for the common dir
-    // (which is `<main>/.git`) and use its parent as the main worktree root.
+    // `.git` is a file (gitlink): a linked worktree, a submodule, or a checkout made with
+    // `--separate-git-dir`. Only a linked worktree has a main checkout to share a cache with.
     if !metadata.file_type().is_file() {
         return None;
     }
 
-    let output =
-        Command::new("git").args(["rev-parse", "--git-common-dir"]).current_dir(workspace_root).output().ok()?;
+    let git_dir = rev_parse(workspace_root, "--git-dir")?;
+    let common_dir = rev_parse(workspace_root, "--git-common-dir")?;
+
+    // A submodule or a separate-git-dir checkout owns its git dir: it is its own main worktree.
+    if git_dir == common_dir {
+        return None;
+    }
+
+    let main_root = main_checkout(&common_dir)?;
+
+    if main_root == workspace_root {
+        return None;
+    }
+
+    Some(main_root)
+}
+
+/// `git rev-parse <flag>` run in `directory`, canonicalized (git prints it relative to `directory`
+/// for a plain layout and absolute otherwise).
+fn rev_parse(directory: &Path, flag: &str) -> Option<PathBuf> {
+    let output = Command::new("git").args(["rev-parse", flag]).current_dir(directory).output().ok()?;
 
     if !output.status.success() {
         return None;
     }
 
     let stdout = String::from_utf8(output.stdout).ok()?;
-    let common_dir = stdout.trim();
+    let text = stdout.trim();
 
-    if common_dir.is_empty() {
+    if text.is_empty() {
         return None;
     }
 
-    let common_dir_path =
-        if Path::new(common_dir).is_absolute() { PathBuf::from(common_dir) } else { workspace_root.join(common_dir) };
+    canonicalize_existing(&directory.join(text))
+}
 
-    let main_root = common_dir_path.parent()?.to_path_buf();
-    let canonical_main = canonicalize_existing(&main_root)?;
+/// The top level of the main worktree of the repository whose shared git dir is `common_dir`, when git
+/// records it:
+///
+/// - `core.worktree` in the shared config (or its `config.worktree`) names it when the git dir does not sit inside the checkout
+///   (a submodule's `<super>/.git/modules/<name>`); it is relative to the git dir.
+/// - A git dir named `.git` sits inside it: the main worktree is its parent.
+/// - A bare repository has no main worktree; its parent is the anchor, so worktrees of `<layout>/repo.git`
+///   share `<layout>`.
+///
+/// Otherwise `None`: a checkout made with `--separate-git-dir` has none of those, and nothing in the git
+/// dir says where the checkout is. The worktree then keeps its own cache rather than one in a guessed place.
+///
+/// `git worktree list` is not used: for such layouts it reports the git dir itself as the main entry.
+fn main_checkout(common_dir: &Path) -> Option<PathBuf> {
+    let config = |args: &[&str]| -> Option<String> {
+        // `--git-dir` (not `--file <dir>/config`) so `config.worktree` is read too: with
+        // `extensions.worktreeConfig`, which `git sparse-checkout init` enables, git moves
+        // `core.worktree` there.
+        let output = Command::new("git").arg("--git-dir").arg(common_dir).arg("config").args(args).output().ok()?;
 
-    if canonical_main == workspace_root {
-        return None;
+        let text = String::from_utf8(output.stdout).ok()?;
+
+        (output.status.success() && !text.trim().is_empty()).then(|| text.trim().to_owned())
+    };
+
+    if let Some(worktree) = config(&["--get", "core.worktree"]) {
+        return canonicalize_existing(&common_dir.join(worktree));
     }
 
-    Some(canonical_main)
+    if common_dir.file_name().is_some_and(|name| name == ".git")
+        || config(&["--bool", "--get", "core.bare"]).as_deref() == Some("true")
+    {
+        return canonicalize_existing(common_dir.parent()?);
+    }
+
+    None
 }
 
 fn canonicalize(path: &str) -> PathBuf {
