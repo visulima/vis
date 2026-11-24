@@ -242,66 +242,10 @@ fn table(
     let mut out = Output::default();
     let previous_task = previous.summary.as_ref().and_then(|(_, task)| task.as_ref());
 
-    if !(is_ascii_graphic(&request.task_id)
-        && is_ascii_graphic(&summary.id)
-        && is_ascii_printable(&task.cache_status)
-        && task.hash.as_deref().is_none_or(is_ascii_printable))
-    {
-        return None;
-    }
-
-    out.stdout.push_str(&layout.block(Level::Info, &format!("Why {}? (run {})", request.task_id, summary.id)));
-    out.stdout.push('\n');
-    out.stdout.push_str(&format!("  status:  {}\n", task.cache_status));
-    out.stdout.push_str(&format!("  hash:    {}\n", task.hash.as_deref().unwrap_or("(none)")));
-
-    if task.hash_source.as_deref() == Some("declared-fallback") {
-        out.stdout.push_str(
-            "  key:     declared-fallback (tracker observed no workspace access; keyed on declared inputs)\n",
-        );
-    }
-
-    match previous_task {
-        Some(previous_task) => {
-            let run = previous.summary.as_ref().map_or("?", |(summary, _)| summary.id.as_str());
-
-            if !(is_ascii_printable(run) && previous_task.hash.as_deref().is_none_or(is_ascii_printable)) {
-                return None;
-            }
-
-            out.stdout
-                .push_str(&format!("  prev:    {}  [run {run}]\n", previous_task.hash.as_deref().unwrap_or("(none)")));
-        }
-        None => out.stdout.push_str("  prev:    (no prior run found)\n"),
-    }
-
-    out.stdout.push('\n');
+    render_header(&mut out.stdout, request, found, previous, layout)?;
 
     if task.details.is_none() {
-        // Trace-mode tasks keep no declared hash inputs: their explanation is the recorded miss reason.
-        match reasons.filter(|reasons| !reasons.is_empty()) {
-            Some(reasons) => {
-                if !reasons.iter().all(Reason::printable) {
-                    return None;
-                }
-
-                out.stdout.push_str("Cache miss reasons (trace-mode fingerprint):\n");
-
-                for reason in reasons {
-                    out.stdout.push_str(&format!("  - {}\n", reason.describe()));
-                }
-            }
-            None => out.stdout.push_str(&layout.block(
-                Level::Info,
-                "No hash inputs recorded for this run (trace-mode tasks record a miss reason only when the cache misses).",
-            )),
-        }
-
-        out.stdout.push('\n');
-        out.stdout.push_str(&layout.block(
-            Level::Info,
-            &format!("Tracked files and env of this run: vis cache hash {} --run {}", request.task_id, summary.id),
-        ));
+        render_trace_reasons(&mut out.stdout, reasons, request, summary, layout)?;
 
         return Some(out);
     }
@@ -322,10 +266,98 @@ fn table(
         return Some(out);
     }
 
-    out.stdout.push_str("Hash inputs that changed since the previous run:\n\n");
+    render_diff(&mut out.stdout, diff, root, layout)?;
+
+    Some(out)
+}
+
+/// The title and the `status`, `hash`, `key` and `prev` lines, then a blank line.
+fn render_header(
+    out: &mut String,
+    request: &Request,
+    found: &Found,
+    previous: &Previous,
+    layout: Layout,
+) -> Option<()> {
+    let Found { summary, task, .. } = *found;
+    let previous_task = previous.summary.as_ref().and_then(|(_, task)| task.as_ref());
+
+    if !(is_ascii_graphic(&request.task_id)
+        && is_ascii_graphic(&summary.id)
+        && is_ascii_printable(&task.cache_status)
+        && task.hash.as_deref().is_none_or(is_ascii_printable))
+    {
+        return None;
+    }
+
+    out.push_str(&layout.block(Level::Info, &format!("Why {}? (run {})", request.task_id, summary.id)));
+    out.push('\n');
+    out.push_str(&format!("  status:  {}\n", task.cache_status));
+    out.push_str(&format!("  hash:    {}\n", task.hash.as_deref().unwrap_or("(none)")));
+
+    if task.hash_source.as_deref() == Some("declared-fallback") {
+        out.push_str("  key:     declared-fallback (tracker observed no workspace access; keyed on declared inputs)\n");
+    }
+
+    match previous_task {
+        Some(previous_task) => {
+            let run = previous.summary.as_ref().map_or("?", |(summary, _)| summary.id.as_str());
+
+            if !(is_ascii_printable(run) && previous_task.hash.as_deref().is_none_or(is_ascii_printable)) {
+                return None;
+            }
+
+            out.push_str(&format!("  prev:    {}  [run {run}]\n", previous_task.hash.as_deref().unwrap_or("(none)")));
+        }
+        None => out.push_str("  prev:    (no prior run found)\n"),
+    }
+
+    out.push('\n');
+
+    Some(())
+}
+
+/// Trace-mode tasks keep no declared hash inputs: their explanation is the recorded miss reason.
+fn render_trace_reasons(
+    out: &mut String,
+    reasons: Option<&[Reason]>,
+    request: &Request,
+    summary: &Summary,
+    layout: Layout,
+) -> Option<()> {
+    match reasons.filter(|reasons| !reasons.is_empty()) {
+        Some(reasons) => {
+            if !reasons.iter().all(Reason::printable) {
+                return None;
+            }
+
+            out.push_str("Cache miss reasons (trace-mode fingerprint):\n");
+
+            for reason in reasons {
+                out.push_str(&format!("  - {}\n", reason.describe()));
+            }
+        }
+        None => out.push_str(&layout.block(
+            Level::Info,
+            "No hash inputs recorded for this run (trace-mode tasks record a miss reason only when the cache misses).",
+        )),
+    }
+
+    out.push('\n');
+    out.push_str(&layout.block(
+        Level::Info,
+        &format!("Tracked files and env of this run: vis cache hash {} --run {}", request.task_id, summary.id),
+    ));
+
+    Some(())
+}
+
+/// The inputs that changed since the previous run, then the path of the last summary file.
+fn render_diff(out: &mut String, diff: &Diff, root: &Path, layout: Layout) -> Option<()> {
+    out.push_str("Hash inputs that changed since the previous run:\n\n");
 
     if diff.command_changed {
-        out.stdout.push_str("  command:  changed\n");
+        out.push_str("  command:  changed\n");
     }
 
     for (name, bucket) in [("nodes", &diff.nodes), ("runtime", &diff.runtime), ("implicitDeps", &diff.implicit_deps)] {
@@ -333,7 +365,7 @@ fn table(
             continue;
         }
 
-        out.stdout.push_str(&format!("  {name}:\n"));
+        out.push_str(&format!("  {name}:\n"));
 
         for (sign, keys) in [("+", &bucket.added), ("~", &bucket.changed), ("-", &bucket.removed)] {
             for key in keys {
@@ -341,12 +373,12 @@ fn table(
                     return None;
                 }
 
-                out.stdout.push_str(&format!("    {sign} {key}\n"));
+                out.push_str(&format!("    {sign} {key}\n"));
             }
         }
     }
 
-    out.stdout.push('\n');
+    out.push('\n');
 
     let last = summary_path(root, None);
     let last = last.to_str()?;
@@ -355,9 +387,9 @@ fn table(
         return None;
     }
 
-    out.stdout.push_str(&layout.block(Level::Info, &format!("Last summary file: {last}")));
+    out.push_str(&layout.block(Level::Info, &format!("Last summary file: {last}")));
 
-    Some(out)
+    Some(())
 }
 
 /// The output for the request, or `None` to delegate.
