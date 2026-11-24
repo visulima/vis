@@ -210,6 +210,17 @@
             "expect": "Would remove"
         },
         {
+            "id": "cache-prune",
+            "args": [
+                "cache",
+                "prune"
+            ],
+            "route": "cache",
+            "family": "warm",
+            "scales": true,
+            "expect": "Nothing to prune"
+        },
+        {
             "id": "cache-hash",
             "args": [
                 "cache",

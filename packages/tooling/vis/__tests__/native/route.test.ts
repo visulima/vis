@@ -525,6 +525,40 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis cache prune` gate (cachePruneMayRunNatively)", () => {
+        const ci = { CI: "1" };
+
+        it.each([
+            [["cache", "prune"]],
+            [["cache", "prune", "--keep-last", "30"]],
+            [["cache", "prune", "--max-age-days=3", "--max-size", "500MB"]],
+            [["cache", "prune", "--scope", "all", "--cache-dir", "x"]],
+        ])("routes `vis %j` in a non-interactive CI context", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+        });
+
+        it.each([[["cache", "prune", "--dry-run"]], [["cache", "prune", "extra"]], [["cache", "prune", "--no-color"]], [["cache", "prune", "--keep-last", "-1"]]])(
+            "keeps `vis %j` in Node",
+            (args: string[]) => {
+                expect.assertions(1);
+
+                expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+            },
+        );
+
+        it.each([
+            ["outside CI", "linux", {}, false],
+            ["on a terminal", "linux", ci, true],
+            ["on Windows", "win32", ci, false],
+        ])("keeps `vis cache prune` in Node %s", (_label: string, platform: string, environment: Record<string, string>, interactive: boolean) => {
+            expect.assertions(1);
+
+            expect(routesToNative(["cache", "prune"], platform, environment, "/work/app", interactive)).toBe(false);
+        });
+    });
+
     // The binary decides pail's colour itself (`piped_colour_level` in term.rs, the same rules as Node's detection) and prints
     // the codes Node prints, so a colour environment no longer keeps a command in Node. What it cannot decide stays there.
     describe("colour environments", () => {
@@ -538,6 +572,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["install", ["install"], { CI: "1" }],
             ["cache clean", ["cache", "clean", "--dry-run"], { CI: "1" }],
             ["cache hash", ["cache", "hash", "app:build"], { CI: "1" }],
+            ["cache prune", ["cache", "prune"], { CI: "1" }],
             ["cache why", ["cache", "why", "app:build"], { CI: "1" }],
             ["replay", ["replay"], { CI: "1" }],
             ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
@@ -546,7 +581,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
-        const PRINTS_PAIL_LINES = new Set(["cache clean", "cache hash", "cache why", "clean", "install", "replay", "secrets"]);
+        const PRINTS_PAIL_LINES = new Set(["cache clean", "cache hash", "cache prune", "cache why", "clean", "install", "replay", "secrets"]);
 
         const ANSWERED: Record<string, string>[] = [
             { GITHUB_ACTIONS: "true" },
