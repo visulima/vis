@@ -1,0 +1,255 @@
+{
+    "$comment": "Maximum median wall time in milliseconds per command and variant: the larger of twice the median and the median plus 10 ms, from the runs on the machine named in `machine` (a new run is merged into an existing file: entries it did not measure stay, and where both exist the larger limit is kept). Machine-relative: re-derive them with `run-commands.sh --write-budgets` on another machine. Not checked in CI (timings on shared runners are too noisy); run `run-commands.sh --check-budgets` locally.",
+    "machine": "Apple M4, 10 cores, Darwin arm64, Node v22.23.4, hyperfine 2.0.0, bun 1.4.4, pnpm 11.28.2, 2026-11-24",
+    "headroom": 2,
+    "budgets": {
+        "add": {
+            "binary": 16,
+            "launcher": 64,
+            "node": 371
+        },
+        "advisories-bloom-status": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 346
+        },
+        "cache-hash@1": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 352
+        },
+        "cache-hash@20": {
+            "binary": 12,
+            "launcher": 55,
+            "node": 352
+        },
+        "cache-hash@200": {
+            "binary": 13,
+            "launcher": 55,
+            "node": 353
+        },
+        "cache-list@1": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 352
+        },
+        "cache-list@20": {
+            "binary": 13,
+            "launcher": 55,
+            "node": 355
+        },
+        "cache-list@200": {
+            "binary": 16,
+            "launcher": 63,
+            "node": 383
+        },
+        "cache-size@1": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 351
+        },
+        "cache-size@20": {
+            "binary": 13,
+            "launcher": 56,
+            "node": 357
+        },
+        "cache-size@200": {
+            "binary": 16,
+            "launcher": 63,
+            "node": 381
+        },
+        "cache-why@1": {
+            "binary": 12,
+            "launcher": 56,
+            "node": 351
+        },
+        "cache-why@20": {
+            "binary": 12,
+            "launcher": 55,
+            "node": 349
+        },
+        "cache-why@200": {
+            "binary": 13,
+            "launcher": 56,
+            "node": 349
+        },
+        "clean-dry-run": {
+            "binary": 13,
+            "launcher": 58,
+            "node": 357
+        },
+        "complete": {
+            "node": 343
+        },
+        "dedupe": {
+            "binary": 15,
+            "launcher": 62,
+            "node": 360
+        },
+        "dlx-no-info": {
+            "binary": 15,
+            "launcher": 63,
+            "node": 165
+        },
+        "exec": {
+            "binary": 18,
+            "launcher": 69,
+            "node": 164
+        },
+        "help": {
+            "binary": 13,
+            "launcher": 56,
+            "node": 325
+        },
+        "ignore": {
+            "binary": 12,
+            "launcher": 56,
+            "node": 348
+        },
+        "info": {
+            "binary": 15,
+            "launcher": 62,
+            "node": 387
+        },
+        "install-frozen": {
+            "binary": 33,
+            "launcher": 81,
+            "node": 616
+        },
+        "list-json@1": {
+            "binary": 13,
+            "launcher": 55,
+            "node": 356
+        },
+        "list-json@20": {
+            "binary": 17,
+            "launcher": 65,
+            "node": 383
+        },
+        "list-json@200": {
+            "binary": 133,
+            "launcher": 188,
+            "node": 592
+        },
+        "list@1": {
+            "binary": 13,
+            "launcher": 57,
+            "node": 357
+        },
+        "list@20": {
+            "binary": 17,
+            "launcher": 64,
+            "node": 383
+        },
+        "list@200": {
+            "binary": 129,
+            "launcher": 185,
+            "node": 585
+        },
+        "outdated": {
+            "binary": 15,
+            "launcher": 61,
+            "node": 361
+        },
+        "pm": {
+            "binary": 15,
+            "launcher": 60,
+            "node": 354
+        },
+        "remove": {
+            "binary": 15,
+            "launcher": 61,
+            "node": 356
+        },
+        "replay-list@1": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 350
+        },
+        "replay-list@20": {
+            "binary": 12,
+            "launcher": 54,
+            "node": 350
+        },
+        "replay-list@200": {
+            "binary": 12,
+            "launcher": 55,
+            "node": 349
+        },
+        "run-cold@1": {
+            "launcher": 687,
+            "node": 673
+        },
+        "run-cold@20": {
+            "launcher": 964,
+            "node": 772
+        },
+        "run-cold@200": {
+            "launcher": 1646,
+            "node": 1717
+        },
+        "run-hit@1": {
+            "binary": 13,
+            "launcher": 59,
+            "node": 500
+        },
+        "run-hit@20": {
+            "binary": 19,
+            "launcher": 72,
+            "node": 576
+        },
+        "run-hit@200": {
+            "binary": 172,
+            "launcher": 228,
+            "node": 1043
+        },
+        "run-late-miss@20": {
+            "binary": 19,
+            "launcher": 795,
+            "node": 727
+        },
+        "run-late-miss@200": {
+            "binary": 173,
+            "launcher": 1591,
+            "node": 1210
+        },
+        "secrets-quiet": {
+            "node": 3360
+        },
+        "sort-package-json-check@1": {
+            "binary": 13,
+            "launcher": 57,
+            "node": 358
+        },
+        "sort-package-json-check@20": {
+            "binary": 13,
+            "launcher": 59,
+            "node": 361
+        },
+        "sort-package-json-check@200": {
+            "binary": 17,
+            "launcher": 68,
+            "node": 383
+        },
+        "sync-ci-workflow-check": {
+            "binary": 16,
+            "launcher": 67,
+            "node": 391
+        },
+        "version": {
+            "binary": 12,
+            "launcher": 56,
+            "node": 242
+        },
+        "why": {
+            "binary": 15,
+            "launcher": 61,
+            "node": 360
+        },
+        "x": {
+            "binary": 69,
+            "launcher": 122,
+            "node": 93
+        }
+    }
+}

@@ -1,0 +1,609 @@
+{
+    "$comment": "Scenarios of run-commands.sh. `route` is the name the routing table (`bin/route.mjs`) knows the command by; `family` picks the fixture state (base: untouched workspace; warm: task cache filled by a Node run; runs: one recorded run in .vis/runs); `scales` runs the scenario for every --sizes value, otherwise only for the default size; `stubs` puts stand-in package managers on PATH (so no network and no real install runs); `handoff` gives the bare binary the environment the launcher sets (a binary started without it hands `run` to Node); `mode` is a late-miss or cold run; `compare` is how output is compared with Node (exact; sorted lines where the order of interleaved lines may differ; exit: only the exit code, where the output differs from Node's and the difference is not isolated); `expect` is a substring the Node reference output must contain, so a fixture that makes the command print an error cannot pass as a measurement; `label` tells the run scenarios apart; `comparatorFixture` plain is a non-workspace project (some comparators cannot find a bin in a workspace root); `comparators` are real tools run in a separate copy of the fixture, with the real PATH; `floor` is the stand-in package manager run directly (the spawn cost the command cannot go below).",
+    "cases": [
+        {
+            "id": "version",
+            "args": [
+                "--version"
+            ],
+            "route": "--version",
+            "family": "base",
+            "comparators": [
+                {
+                    "name": "node -e 0",
+                    "argv": [
+                        "node",
+                        "-e",
+                        "0"
+                    ]
+                },
+                {
+                    "name": "pnpm --version",
+                    "argv": [
+                        "pnpm",
+                        "--version"
+                    ]
+                },
+                {
+                    "name": "bun --version",
+                    "argv": [
+                        "bun",
+                        "--version"
+                    ]
+                }
+            ],
+            "expect": "."
+        },
+        {
+            "id": "help",
+            "args": [
+                "--help"
+            ],
+            "route": "help",
+            "family": "base"
+        },
+        {
+            "id": "complete",
+            "args": [
+                "complete",
+                "--",
+                "vis",
+                ""
+            ],
+            "route": "complete",
+            "family": "base"
+        },
+        {
+            "id": "list",
+            "args": [
+                "list"
+            ],
+            "route": "list",
+            "family": "base",
+            "scales": true,
+            "comparators": [
+                {
+                    "name": "pnpm ls -r --depth -1",
+                    "argv": [
+                        "pnpm",
+                        "ls",
+                        "-r",
+                        "--depth",
+                        "-1"
+                    ]
+                },
+                {
+                    "name": "bun pm ls",
+                    "argv": [
+                        "bun",
+                        "pm",
+                        "ls"
+                    ]
+                }
+            ],
+            "expect": "@bench/pkg-001"
+        },
+        {
+            "id": "list-json",
+            "args": [
+                "list",
+                "--json"
+            ],
+            "route": "list",
+            "family": "base",
+            "scales": true,
+            "expect": "@bench/pkg-001"
+        },
+        {
+            "id": "clean-dry-run",
+            "args": [
+                "clean",
+                "--dry-run"
+            ],
+            "route": "clean",
+            "family": "base",
+            "expect": "Would remove"
+        },
+        {
+            "id": "ignore",
+            "args": [
+                "ignore"
+            ],
+            "route": "ignore",
+            "family": "base"
+        },
+        {
+            "id": "sort-package-json-check",
+            "args": [
+                "sort-package-json",
+                "--check"
+            ],
+            "route": "sort-package-json",
+            "family": "base",
+            "scales": true,
+            "expect": "sorted"
+        },
+        {
+            "id": "sync-ci-workflow-check",
+            "args": [
+                "sync",
+                "ci-workflow",
+                "--check",
+                "--provider=github"
+            ],
+            "route": "sync",
+            "family": "base",
+            "expect": "out of date"
+        },
+        {
+            "id": "secrets-quiet",
+            "args": [
+                "secrets",
+                "--quiet"
+            ],
+            "route": "secrets",
+            "family": "base"
+        },
+        {
+            "id": "advisories-bloom-status",
+            "args": [
+                "advisories",
+                "bloom",
+                "status",
+                "--format",
+                "json",
+                "--cache-dir",
+                "advisories-cache"
+            ],
+            "route": "advisories",
+            "family": "base",
+            "expect": "cacheDir"
+        },
+        {
+            "id": "sbom",
+            "args": [
+                "sbom"
+            ],
+            "route": "sbom",
+            "family": "base"
+        },
+        {
+            "id": "cache-list",
+            "args": [
+                "cache",
+                "list",
+                "--format",
+                "json"
+            ],
+            "route": "cache",
+            "family": "warm",
+            "scales": true,
+            "expect": "\"entries\""
+        },
+        {
+            "id": "cache-size",
+            "args": [
+                "cache",
+                "size",
+                "--type",
+                "task",
+                "--format",
+                "json"
+            ],
+            "route": "cache",
+            "family": "warm",
+            "scales": true,
+            "expect": "\"exists\""
+        },
+        {
+            "id": "cache-hash",
+            "args": [
+                "cache",
+                "hash",
+                "@bench/pkg-001:build",
+                "--format",
+                "json"
+            ],
+            "route": "cache",
+            "family": "warm",
+            "scales": true,
+            "expect": "\"hash\""
+        },
+        {
+            "id": "cache-why",
+            "args": [
+                "cache",
+                "why",
+                "@bench/pkg-001:build",
+                "--format",
+                "json"
+            ],
+            "route": "cache",
+            "family": "runs",
+            "scales": true,
+            "expect": "\"diff\""
+        },
+        {
+            "id": "replay-list",
+            "args": [
+                "replay",
+                "--list"
+            ],
+            "route": "replay",
+            "family": "runs",
+            "scales": true,
+            "expect": "mtime"
+        },
+        {
+            "id": "run-hit",
+            "args": [
+                "run",
+                "build"
+            ],
+            "route": "run",
+            "family": "warm",
+            "scales": true,
+            "handoff": true,
+            "compare": "sorted",
+            "comparators": [
+                {
+                    "name": "pnpm -r run",
+                    "argv": [
+                        "pnpm",
+                        "-r",
+                        "run",
+                        "build"
+                    ]
+                },
+                {
+                    "name": "npm run -ws",
+                    "argv": [
+                        "npm",
+                        "run",
+                        "build",
+                        "--workspaces",
+                        "--if-present"
+                    ]
+                },
+                {
+                    "name": "bun run --filter",
+                    "argv": [
+                        "bun",
+                        "run",
+                        "--filter",
+                        "*",
+                        "build"
+                    ]
+                }
+            ],
+            "label": "all tasks cache hits",
+            "expect": "read from cache"
+        },
+        {
+            "id": "run-late-miss",
+            "args": [
+                "run",
+                "build"
+            ],
+            "route": "run",
+            "family": "warm",
+            "scales": true,
+            "handoff": true,
+            "mode": "late",
+            "compare": "sorted",
+            "label": "last task a cache miss",
+            "expect": "Successfully ran target build"
+        },
+        {
+            "id": "run-cold",
+            "args": [
+                "run",
+                "build"
+            ],
+            "route": "run",
+            "family": "base",
+            "scales": true,
+            "handoff": true,
+            "mode": "cold",
+            "compare": "sorted",
+            "label": "cold, empty cache",
+            "expect": "Successfully ran target build"
+        },
+        {
+            "id": "exec",
+            "args": [
+                "exec",
+                "noopbin"
+            ],
+            "route": "exec",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "exec",
+                "noopbin"
+            ],
+            "comparators": [
+                {
+                    "name": "pnpm exec",
+                    "argv": [
+                        "pnpm",
+                        "exec",
+                        "noopbin"
+                    ]
+                },
+                {
+                    "name": "npm exec",
+                    "argv": [
+                        "npm",
+                        "exec",
+                        "noopbin"
+                    ]
+                },
+                {
+                    "name": "bun x",
+                    "argv": [
+                        "bun",
+                        "x",
+                        "noopbin"
+                    ]
+                }
+            ],
+            "compare": "exit",
+            "compareReason": "the printed output differs from Node's (cause not isolated: the binary passes the command to the package manager)",
+            "comparatorFixture": "plain",
+            "label": "output differs from Node, exit code compared"
+        },
+        {
+            "id": "x",
+            "args": [
+                "x",
+                "hello.ts"
+            ],
+            "route": "x",
+            "family": "base",
+            "comparators": [
+                {
+                    "name": "bun hello.ts",
+                    "argv": [
+                        "bun",
+                        "hello.ts"
+                    ]
+                },
+                {
+                    "name": "node -e 0",
+                    "argv": [
+                        "node",
+                        "-e",
+                        "0"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "pm",
+            "args": [
+                "pm",
+                "list"
+            ],
+            "route": "pm",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "list"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "why",
+            "args": [
+                "why",
+                "left-pad"
+            ],
+            "route": "why",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "why",
+                "left-pad"
+            ],
+            "comparators": [
+                {
+                    "name": "pnpm why",
+                    "argv": [
+                        "pnpm",
+                        "why",
+                        "left-pad"
+                    ]
+                },
+                {
+                    "name": "bun pm why",
+                    "argv": [
+                        "bun",
+                        "pm",
+                        "why",
+                        "left-pad"
+                    ]
+                }
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "outdated",
+            "args": [
+                "outdated"
+            ],
+            "route": "outdated",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "outdated"
+            ],
+            "comparators": [
+                {
+                    "name": "pnpm outdated",
+                    "argv": [
+                        "pnpm",
+                        "outdated"
+                    ]
+                },
+                {
+                    "name": "bun outdated",
+                    "argv": [
+                        "bun",
+                        "outdated"
+                    ]
+                }
+            ],
+            "compare": "exit",
+            "compareReason": "the printed output differs from Node's (cause not isolated: the binary passes the command to the package manager)",
+            "label": "output differs from Node, exit code compared"
+        },
+        {
+            "id": "dlx-no-info",
+            "args": [
+                "dlx",
+                "--no-info",
+                "cowsay"
+            ],
+            "route": "dlx",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "dlx",
+                "cowsay"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "info",
+            "args": [
+                "info",
+                "react",
+                "version"
+            ],
+            "route": "info",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "view",
+                "--",
+                "react",
+                "version"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "install-frozen",
+            "args": [
+                "install",
+                "--frozen-lockfile"
+            ],
+            "route": "install",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "install",
+                "--frozen-lockfile",
+                "--ignore-scripts"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "add",
+            "args": [
+                "add",
+                "react",
+                "--no-marshall-check"
+            ],
+            "route": "add",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "add",
+                "react",
+                "--ignore-scripts"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "remove",
+            "args": [
+                "remove",
+                "lodash"
+            ],
+            "route": "remove",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "remove",
+                "lodash"
+            ],
+            "expect": "stub-pm"
+        },
+        {
+            "id": "dedupe",
+            "args": [
+                "dedupe"
+            ],
+            "route": "dedupe",
+            "family": "base",
+            "stubs": true,
+            "floor": [
+                "pnpm",
+                "dedupe"
+            ],
+            "expect": "stub-pm"
+        }
+    ],
+    "notMeasured": [
+        {
+            "route": "affected",
+            "reason": "needs a sparse-checkout repository"
+        },
+        {
+            "route": "hook",
+            "reason": "`hook run` is handed to Node by the runner by design"
+        },
+        {
+            "route": "link",
+            "reason": "changes the workspace links (stub output only); covered by `unlink`/`dedupe` shape"
+        },
+        {
+            "route": "unlink",
+            "reason": "same stand-in package manager path as `remove`"
+        },
+        {
+            "route": "self-update",
+            "reason": "asks the registry for the newest version (network)"
+        },
+        {
+            "route": "view",
+            "reason": "alias of `info`"
+        },
+        {
+            "route": "i",
+            "reason": "alias of `install`"
+        },
+        {
+            "route": "__native-info",
+            "reason": "internal"
+        },
+        {
+            "route": "__pm-shim",
+            "reason": "internal"
+        },
+        {
+            "route": "-V",
+            "reason": "alias of `--version`"
+        }
+    ]
+}
