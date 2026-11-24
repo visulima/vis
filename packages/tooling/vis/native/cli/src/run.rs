@@ -703,13 +703,18 @@ fn write_summary(answer: &Answer) -> Option<()> {
     fs::write(directory.join("last-summary.json"), answer.summary()).ok()
 }
 
+/// The status a run is handed back with: `EX_TEMPFAIL`, which a launcher that is not waiting for it shows as a
+/// failure and never as success. The launcher (`HANDBACK_STATUS` in `bin/vis.mjs`) names this same value.
+const HANDBACK_STATUS: i32 = 75;
+
 /// Leaves the run to Node, with nothing printed or written. A binary started by the JS launcher, which is
-/// already a Node process, gets the run back instead of starting a second Node: the launcher names a status in
-/// `VIS_HANDBACK_STATUS` and runs the Node CLI in its own process when the binary exits with it. Started any
-/// other way, the binary starts Node itself.
+/// already a Node process, gets the run back instead of starting a second Node: the launcher names
+/// [`HANDBACK_STATUS`] in `VIS_HANDBACK_STATUS` and runs the Node CLI in its own process when the binary exits
+/// with it. Any other value, or a start without the launcher, has the binary start Node itself, so a forged
+/// variable cannot make a run that did not happen exit as if it had.
 fn leave_to_node(raw_args: &[OsString]) -> ! {
-    if let Some(status) = env::var("VIS_HANDBACK_STATUS").ok().and_then(|text| text.parse::<i32>().ok()) {
-        exit(status);
+    if env::var("VIS_HANDBACK_STATUS").is_ok_and(|text| text.parse() == Ok(HANDBACK_STATUS)) {
+        exit(HANDBACK_STATUS);
     }
 
     crate::delegate(raw_args)

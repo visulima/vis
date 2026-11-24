@@ -626,6 +626,21 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(standalone.stderr).toBe("");
         });
 
+        it("starts Node itself for any hand-back status but the launcher's, even with the hand-off marker", () => {
+            expect.assertions(6);
+
+            const root = fresh(base.root);
+
+            write(root, "packages/p3/src/index.ts", "export const changed = true;\n");
+
+            for (const status of ["0", "3", "75x"]) {
+                const forged = runNative(root, ["run", "build"], paths.stub, baseEnvironment({ VIS_HANDBACK_STATUS: status }));
+
+                expect(forged.status).toBe(99);
+                expect(forged.stdout).toBe(`${marker}\n`);
+            }
+        });
+
         it("delegates when the working directory is not the workspace root", () => {
             expect.assertions(2);
 
