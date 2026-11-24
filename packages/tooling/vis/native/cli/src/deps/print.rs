@@ -4,7 +4,7 @@
 use super::data::{Package, Workspace};
 use super::lint::Report;
 use super::Selection;
-use crate::sort_package_json::json::{stringify, Json};
+use crate::json::{stringify, Json};
 use crate::term::Style;
 
 /// The plural `s` of `count` things.

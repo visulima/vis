@@ -2,7 +2,7 @@
 //! `applySortOrder` (both in `src/commands/sort-package-json/handler.ts`) and `formatPackageJsonFields`
 //! (`src/util/format-package-json-fields.ts`). Each works on the ordered [`Json`] tree.
 
-use super::json::Json;
+use crate::json::Json;
 
 /// The condition names of `exports` objects, in the order they are listed first.
 const CANONICAL_EXPORT_CONDITIONS: [&str; 6] = ["types", "node-addons", "node", "import", "require", "default"];
@@ -164,8 +164,8 @@ fn order_conditions(entries: &mut Vec<(String, Json)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::json::{parse, stringify};
     use super::*;
+    use crate::json::{parse, stringify};
 
     fn formatted(text: &str, format: Format) -> String {
         let Some(Json::Object(mut entries)) = parse(text) else {

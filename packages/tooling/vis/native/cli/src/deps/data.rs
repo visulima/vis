@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::sort_package_json::json::{parse, Json};
+use crate::json::{parse, Json};
 use crate::workspace::{directories_for_patterns, yaml_workspace_patterns};
 
 /// A dependency block, in the order `iterateWorkspaceDeps` reads them.

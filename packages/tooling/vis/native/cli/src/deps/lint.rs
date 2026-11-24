@@ -12,7 +12,7 @@ use std::path::Path;
 
 use super::data::{DepType, Instance, Package, Workspace};
 use super::Selection;
-use crate::sort_package_json::json::Json;
+use crate::json::Json;
 use crate::workspace::{child_directories, directories_for_patterns};
 
 pub(super) struct WorkspaceProtocol {
