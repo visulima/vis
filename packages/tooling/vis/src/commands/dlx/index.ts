@@ -1,16 +1,14 @@
 import type { InferOptions } from "@visulima/cerebro";
 import { defineCommand } from "@visulima/cerebro";
 
+import { negatable } from "../../util/negatable-option";
+
 const dlxOptionDefinitions = {
-    info: {
-        description: "Always show the first-run info panel (size, security score, permissions, changelog), even for an approved package",
+    ...negatable({
+        description: "Always show the first-run info panel (size, security score, permissions, changelog), even for an approved package; --no-info disables it entirely (also via VIS_DLX_NO_INFO)",
+        name: "info",
         type: Boolean,
-    },
-    "no-info": {
-        defaultValue: false,
-        description: "Disable the first-run info panel entirely (also via VIS_DLX_NO_INFO)",
-        type: Boolean,
-    },
+    }),
     offline: {
         defaultValue: false,
         description: "Resolve from local store only — fail rather than fetch from the registry. Pair with `vis install` for hardened npx-style workflows.",
