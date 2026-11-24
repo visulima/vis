@@ -89,9 +89,13 @@ struct Body<'a> {
     keys: Option<&'a RawValue>,
 }
 
-/// Answers `vis security keys-refresh --json` natively or hands the whole invocation to Node.
+/// Answers `vis security keys-refresh --json` natively or hands the whole invocation to Node. A hand-off names
+/// its reason on stderr when `VIS_DEBUG_DECLINE` is set (see `delegate_because`).
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let Some(outcome) = answer(args) else { crate::delegate(raw_args) };
+    let outcome = match answer(args) {
+        Ok(outcome) => outcome,
+        Err(reason) => crate::delegate_because(&reason, raw_args),
+    };
 
     write_stdout("security", "the output", &outcome.stdout);
 
@@ -120,19 +124,25 @@ fn network_environment_is_plain() -> bool {
     NETWORK_VARIABLES.iter().all(|name| env::var_os(name).is_none())
 }
 
-fn answer(args: &[String]) -> Option<Outcome> {
-    let flags = parse(args)?;
+/// The outcome of a run, or the reason it is Node's.
+fn answer(args: &[String]) -> Result<Outcome, String> {
+    let flags = parse(args).ok_or("not `security keys-refresh --json [--clear]`")?;
 
-    if !cfg!(unix)
-        || !output_settings_are_default()
-        || io::stdout().is_terminal()
-        || !native_context()
-        || !network_environment_is_plain()
-    {
-        return None;
+    for (declined, reason) in [
+        (!cfg!(unix), "not a unix platform"),
+        (!output_settings_are_default(), "an output setting (NODE_ENV, DEBUG, PAIL_LOG_LEVEL, CEREBRO_*) is set"),
+        (io::stdout().is_terminal(), "stdout is a terminal"),
+        (!native_context(), "not a CI run at the root of a pnpm workspace with a quiet stderr"),
+        (!network_environment_is_plain(), "a proxy, CA or Node option is set in the environment"),
+    ] {
+        if declined {
+            return Err(reason.to_owned());
+        }
     }
 
-    let file = PathBuf::from(vis_cache_dir()?).join("registry-keys").join("npmjs.json");
+    let file = PathBuf::from(vis_cache_dir().ok_or("no cache directory (HOME is not a plain absolute path)")?)
+        .join("registry-keys")
+        .join("npmjs.json");
 
     if flags.clear {
         return clear(&file);
@@ -141,36 +151,33 @@ fn answer(args: &[String]) -> Option<Outcome> {
     let url = match env::var("VIS_NPM_KEYS_URL") {
         Ok(url) => url,
         Err(env::VarError::NotPresent) => DEFAULT_KEYS_URL.to_owned(),
-        Err(env::VarError::NotUnicode(_)) => return None,
+        Err(env::VarError::NotUnicode(_)) => return Err("VIS_NPM_KEYS_URL is not Unicode".to_owned()),
     };
 
     if !url_is_plain(&url) {
-        return None;
+        return Err(format!("VIS_NPM_KEYS_URL {url:?} is not a URL `fetch` and the client read alike"));
     }
 
     refresh(&file, &url)
 }
 
 /// `clearRegistryKeysCache`: remove the file when there is one.
-fn clear(file: &Path) -> Option<Outcome> {
+fn clear(file: &Path) -> Result<Outcome, String> {
     let cleared = match fs::symlink_metadata(file) {
         Ok(metadata) if metadata.is_file() => {
-            fs::remove_file(file).ok()?;
+            fs::remove_file(file).map_err(|error| format!("the cache file cannot be removed: {error}"))?;
 
             true
         }
-        Ok(_) => return None,
+        Ok(_) => return Err("the cache path is not a regular file".to_owned()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-        Err(_) => return None,
+        Err(error) => return Err(format!("the cache file cannot be read: {error}")),
     };
 
-    Some(Outcome {
-        stdout: document(&[("cleared", cleared.to_string()), ("refetched", "false".to_owned())]),
-        status: 0,
-    })
+    Ok(Outcome { stdout: document(&[("cleared", cleared.to_string()), ("refetched", "false".to_owned())]), status: 0 })
 }
 
-fn refresh(file: &Path, url: &str) -> Option<Outcome> {
+fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
     let cached = read_cache(file)?;
     // Redirects are Node's: `fetch` follows a different set of them than the client does (https to http, the
     // ports and credentials of the target), so a run that meets one is handed over whole.
@@ -181,16 +188,17 @@ fn refresh(file: &Path, url: &str) -> Option<Outcome> {
     // do: the old keys when there are some, the `fetch-failed` document otherwise.
     let fetched = match client.get(url, &[("accept", "application/json")]) {
         Ok(response) => {
-            let keys = fetched_keys(response.text().ok()?)?;
+            let text = response.text().map_err(|error| format!("the answer is not UTF-8 text: {error}"))?;
+            let keys = fetched_keys(text).ok_or("a 2xx answer that is not a JSON object Node reads the same way")?;
 
             store(file, &keys).then_some(keys)
         }
         // `fetch` has no size limit, so a body over this client's is Node's to read.
-        Err(HttpError::TooLarge { .. } | HttpError::Redirect(_)) => return None,
+        Err(error @ (HttpError::TooLarge { .. } | HttpError::Redirect(_))) => return Err(error.to_string()),
         Err(_) => None,
     };
 
-    Some(match (fetched, cached) {
+    Ok(match (fetched, cached) {
         (Some(keys), _) => Outcome {
             stdout: document(&[
                 ("cleared", "false".to_owned()),
@@ -222,24 +230,29 @@ fn refresh(file: &Path, url: &str) -> Option<Outcome> {
     })
 }
 
-/// The cache entry on disk: `Some(None)` when there is none, `Some(Some(_))` for an object with a `keys`
-/// array, and `None` (hand-off) for anything else, which Node removes or fails on.
-fn read_cache(file: &Path) -> Option<Option<Cached>> {
+/// The cache entry on disk: `Ok(None)` when there is none, `Ok(Some(_))` for an object with a `keys` array,
+/// and the reason for a hand-off for anything else, which Node removes or fails on.
+fn read_cache(file: &Path) -> Result<Option<Cached>, String> {
     let metadata = match fs::symlink_metadata(file) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Some(None),
-        Err(_) => return None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("the cache file cannot be read: {error}")),
     };
 
     if !metadata.is_file() {
-        return None;
+        return Err("the cache path is not a regular file".to_owned());
     }
 
-    let Value::Object(entry) = serde_json::from_str::<Value>(&fs::read_to_string(file).ok()?).ok()? else {
-        return None;
+    let text = fs::read_to_string(file).map_err(|error| format!("the cache file cannot be read: {error}"))?;
+    let Ok(Value::Object(entry)) = serde_json::from_str::<Value>(&text) else {
+        return Err("the cache file is not a JSON object".to_owned());
     };
 
-    Some(Some(Cached { count: entry.get("keys")?.as_array()?.len() }))
+    entry
+        .get("keys")
+        .and_then(Value::as_array)
+        .map(|keys| Some(Cached { count: keys.len() }))
+        .ok_or_else(|| "the cache file has no `keys` array".to_owned())
 }
 
 /// A fetched key set: how many keys, and the `keys` text to cache.
@@ -392,7 +405,7 @@ mod tests {
 
         let file = directory.join("npmjs.json");
 
-        assert!(matches!(read_cache(&file), Some(None)));
+        assert!(matches!(read_cache(&file), Ok(None)));
 
         for (text, expected) in [
             (r#"{"createdAt":1,"keys":[1,2,3],"ttlMs":2}"#, Some(3)),
@@ -405,7 +418,11 @@ mod tests {
         ] {
             fs::write(&file, text).unwrap();
 
-            assert_eq!(read_cache(&file).map(|cached| cached.map(|cached| cached.count)), expected.map(Some), "{text}");
+            assert_eq!(
+                read_cache(&file).ok().map(|cached| cached.map(|cached| cached.count)),
+                expected.map(Some),
+                "{text}"
+            );
         }
 
         fs::remove_dir_all(&directory).unwrap();

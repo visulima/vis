@@ -319,6 +319,17 @@ fn native_info() {
     println!("  pkg-version    : {}", env::var("VIS_VERSION").unwrap_or_else(|_| unset()));
 }
 
+/// [`delegate`], after naming the gate that declined the run on stderr when `VIS_DEBUG_DECLINE` is set (to
+/// anything but `0` or the empty string). Nothing is printed otherwise, so the delegated run's stderr stays
+/// Node's alone.
+fn delegate_because<S: AsRef<OsStr>>(reason: &str, args: &[S]) -> ! {
+    if env::var_os("VIS_DEBUG_DECLINE").is_some_and(|value| !value.is_empty() && value != "0") {
+        eprintln!("vis: handing the run to Node: {reason}");
+    }
+
+    delegate(args)
+}
+
 /// Hand the full argv off to the Node CLI, inheriting stdio and forwarding the
 /// child's exit status. Never returns.
 fn delegate<S: AsRef<OsStr>>(args: &[S]) -> ! {

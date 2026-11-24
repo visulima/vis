@@ -51,7 +51,7 @@ const answers = {
     "/no-content": (res) => { res.statusCode = 204; res.end(); },
 };
 const server = http.createServer((req, res) => (answers[req.url.split("?")[0]] ?? ((r) => { r.statusCode = 404; r.end(); }))(res));
-server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address().port) + "\n"));
 `;
 
 let scratch: string;
@@ -125,9 +125,10 @@ const run = ({ args = ["--json"], cache, exactCache = false, extra = {}, native,
     const node = harness.runNode(args, nodeRoot, environment(nodeHome));
 
     if (native) {
-        const answered = harness.runNative(args, nativeRoot, environment(nativeHome));
+        // `VIS_DEBUG_DECLINE` makes a hand-off name the gate that declined, so a failure here says why.
+        const answered = harness.runNative(args, nativeRoot, environment(nativeHome, { VIS_DEBUG_DECLINE: "1" }));
 
-        expect(answered.status, `native stderr: ${answered.stderr}`).not.toBe(70);
+        expect(answered.status, `native stderr: ${answered.stderr} (VIS_NPM_KEYS_URL=${url})`).not.toBe(70);
         expect(Harness.outcome(answered, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
         expect(homeState(nativeHome)).toStrictEqual(homeState(nodeHome));
 
@@ -161,7 +162,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     beforeAll(async () => {
         harness.setup("vis-keys-refresh-parity-");
         scratch = mkdtempSync(join(tmpdir(), "vis-keys-refresh-homes-"));
-        stub = spawn(process.execPath, ["-e", STUB], { stdio: ["ignore", "pipe", "inherit"] });
+        // CI runs the suite with `FORCE_COLOR=3`, which makes Node colour a number written with `console.log` even into a pipe, so the stub
+        // gets that variable here on purpose: its port must reach `base` as plain digits whatever the colour settings are.
+        stub = spawn(process.execPath, ["-e", STUB], { env: Harness.environment({ FORCE_COLOR: "3" }), stdio: ["ignore", "pipe", "inherit"] });
         base = await new Promise<string>((resolve) => {
             stub.stdout?.once("data", (chunk: Buffer) => {
                 resolve(`http://127.0.0.1:${chunk.toString().trim()}`);
@@ -173,6 +176,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         stub.kill();
         harness.teardown();
         rmSync(scratch, { force: true, recursive: true });
+    });
+
+    it("reaches the stub at a plain URL even when the runner forces colour", () => {
+        expect.hasAssertions();
+        expect(base).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     });
 
     describe("a refresh that works", () => {
