@@ -3232,13 +3232,14 @@
       "name": "dlx",
       "options": [
         {
-          "description": "Always show the first-run info panel (size, security score, permissions, changelog), even for an approved package",
-          "name": "info",
+          "description": "Disable --info.",
+          "hidden": true,
+          "name": "no-info",
           "type": "boolean"
         },
         {
-          "description": "Disable the first-run info panel entirely (also via VIS_DLX_NO_INFO)",
-          "name": "no-info",
+          "description": "Always show the first-run info panel (size, security score, permissions, changelog), even for an approved package; --no-info disables it entirely (also via VIS_DLX_NO_INFO)",
+          "name": "info",
           "type": "boolean"
         },
         {

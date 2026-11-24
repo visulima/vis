@@ -528,7 +528,7 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
     ];
 
     const DLX_DELEGATED_CASES: DelegatedCase[] = [
-    // The first-run gate runs: it fetches package metadata and may prompt, which is Node's before any output.
+    // The first-run gate may run (it skips itself in CI, without a terminal and with `--yes`, which the binary does not decide): Node's before any output.
         ...[
             ["dlx", "cowsay"],
             ["dlx", "cowsay", "hi"],

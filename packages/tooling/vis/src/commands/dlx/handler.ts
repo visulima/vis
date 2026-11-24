@@ -26,13 +26,11 @@ const execute = async ({ argument, logger, options, process: proc, visConfig, wo
     const gateTargets = options.shellMode ? additionalPackages : [pkg as string, ...additionalPackages];
 
     for (const target of gateTargets) {
-        // cerebro folds `--no-info` onto `info` and deletes the negated key, so
-        // `info` is the only signal that reaches here: `false` means the panel
-        // was explicitly suppressed, `true` means it was not. `--info` and the
-        // default are indistinguishable by design — both leave it `true` — so
-        // the env var stays the second way to suppress.
-        const noInfo = !options.info || isTruthyEnv(proc.env.VIS_DLX_NO_INFO);
-        const forceInfo = !noInfo && options.info;
+        // `info` is tri-state: `true` for `--info`, `false` for `--no-info`, absent otherwise. Only an
+        // explicit `--info` forces the panel; absent, the gate decides (it skips itself in CI, with no
+        // terminal and with `--yes`). The env var is the second way to suppress the panel.
+        const noInfo = options.info === false || isTruthyEnv(proc.env.VIS_DLX_NO_INFO);
+        const forceInfo = options.info === true;
 
         const gate = await maybeGateFirstRun({
             forceInfo,

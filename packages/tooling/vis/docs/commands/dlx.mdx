@@ -37,3 +37,10 @@ vis install && vis dlx --offline typescript tsc --version
 | `--shell-mode` | `-c`  | `false` | Execute within shell environment                                                                                                   |
 | `--silent`     | `-s`  | `false` | Suppress output except command results                                                                                             |
 | `--offline`    |       | `false` | Resolve from local store only — fail rather than fetch from the registry. Pair with `vis install` for hardened npx-style workflows |
+| `--info`       |       |         | Always show the first-run info panel (size, security score, permissions, changelog), even in CI or for an approved package         |
+| `--no-info`    |       |         | Never show the first-run panel (also via `VIS_DLX_NO_INFO`)                                                                        |
+| `--yes`        | `-y`  | `false` | Skip the first-run panel and the confirmation (also via `VIS_DLX_YES`); this approves every package                                |
+
+## First-run panel
+
+The first time `vis dlx` runs a registry package it fetches the package's metadata and, in an interactive terminal, shows a panel (size, security score, permissions, changelog) and asks for confirmation. In CI, with no terminal, or with `--yes` it makes no registry request and shows nothing; pass `--info` to show the panel anyway. `--no-info` and `VIS_DLX_NO_INFO` turn it off in every case.
