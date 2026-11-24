@@ -485,7 +485,43 @@ describe("launcher routing (bin/route.mjs)", () => {
         it("leaves the other cache subcommands to Node", () => {
             expect.assertions(1);
 
-            expect(routesToNative(["cache", "clean"], "linux", ci, "/work/app", false)).toBe(false);
+            expect(routesToNative(["cache", "doctor"], "linux", ci, "/work/app", false)).toBe(false);
+        });
+    });
+
+    describe("`vis cache clean` gate (cacheCleanMayRunNatively)", () => {
+        const ci = { CI: "1" };
+
+        it.each([
+            [["cache", "clean"]],
+            [["cache", "clean", "--dry-run"]],
+            [["cache", "clean", "--force", "--type", "task"]],
+            [["cache", "clean", "--type=ai", "--cache-dir", "x"]],
+        ])("routes `vis %j` in a non-interactive CI context", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(true);
+        });
+
+        it.each([
+            [["cache", "clean", "--scope", "all"]],
+            [["cache", "clean", "extra"]],
+            [["cache", "clean", "--no-color"]],
+            [["cache", "clean", "--dry-run=true"]],
+        ])("keeps `vis %j` in Node", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it.each([
+            ["outside CI", "linux", {}, false],
+            ["on a terminal", "linux", ci, true],
+            ["on Windows", "win32", ci, false],
+        ])("keeps `vis cache clean` in Node %s", (_label: string, platform: string, environment: Record<string, string>, interactive: boolean) => {
+            expect.assertions(1);
+
+            expect(routesToNative(["cache", "clean"], platform, environment, "/work/app", interactive)).toBe(false);
         });
     });
 
@@ -500,6 +536,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["clean", ["clean"], { CI: "1" }],
             ["ignore", ["ignore"], { CI: "1" }],
             ["install", ["install"], { CI: "1" }],
+            ["cache clean", ["cache", "clean", "--dry-run"], { CI: "1" }],
             ["cache hash", ["cache", "hash", "app:build"], { CI: "1" }],
             ["cache why", ["cache", "why", "app:build"], { CI: "1" }],
             ["replay", ["replay"], { CI: "1" }],
@@ -509,7 +546,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
-        const PRINTS_PAIL_LINES = new Set(["cache hash", "cache why", "clean", "install", "replay", "secrets"]);
+        const PRINTS_PAIL_LINES = new Set(["cache clean", "cache hash", "cache why", "clean", "install", "replay", "secrets"]);
 
         const ANSWERED: Record<string, string>[] = [
             { GITHUB_ACTIONS: "true" },

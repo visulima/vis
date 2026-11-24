@@ -336,7 +336,24 @@ const selfUpdateMayRunNatively = (platform, environment, args, interactive) => {
     return true;
 };
 
-const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size", "why"]);
+const CACHE_NATIVE_SUBCOMMANDS = new Set(["clean", "hash", "list", "size", "why"]);
+
+// Whether `vis cache clean` can pass the binary's native gate (`plan` in `cache_clean.rs`): `--cache-dir <dir>`, `--type <store>`,
+// `--dry-run` and `--force`, in a CI context off a terminal where pail's layout is decidable (every message is a pail block).
+// The binary re-checks everything, including the directory it would delete, so this only skips the extra process for a
+// call it would delegate anyway.
+const CACHE_CLEAN_VALUE_FLAG = /^--(?:cache-dir|type)$/;
+const CACHE_CLEAN_FLAG = /^--(?:cache-dir|type)=.+$|^--(?:dry-run|force)$/;
+
+const cacheCleanMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    const flags = args.slice(2);
+
+    return flags.every((token, index) => CACHE_CLEAN_FLAG.test(token) || CACHE_CLEAN_VALUE_FLAG.test(token) || (!token.startsWith("-") && CACHE_CLEAN_VALUE_FLAG.test(flags[index - 1] ?? "")));
+};
 
 // Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
 // re-checks everything, including the flags, the root and the config; this only skips the extra process
@@ -345,6 +362,10 @@ const CACHE_NATIVE_SUBCOMMANDS = new Set(["hash", "list", "size", "why"]);
 const cacheMayRunNatively = (subcommand, platform, environment, args, interactive) => {
     if (subcommand === "hash" || subcommand === "why") {
         return cacheHashMayRunNatively(platform, environment, args, interactive);
+    }
+
+    if (subcommand === "clean") {
+        return cacheCleanMayRunNatively(platform, environment, args, interactive);
     }
 
     return platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment);
@@ -1060,7 +1081,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
-    // `cache list`, `cache size` (`cache.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
+    // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
         ({ args, environment, interactive, platform, subcommand }) => {

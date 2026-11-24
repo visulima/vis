@@ -29,6 +29,8 @@ mod add;
 mod advisories;
 mod affected;
 mod cache;
+#[cfg(unix)]
+mod cache_clean;
 mod cache_hash;
 mod cache_why;
 mod ci_workflow;
@@ -54,6 +56,8 @@ mod pail;
 mod pm;
 mod pm_family;
 mod pm_shim;
+#[cfg(unix)]
+mod removal;
 mod replay;
 mod run;
 mod sbom;
@@ -148,6 +152,13 @@ fn main() {
             if matches!(args.get(1).map(String::as_str), Some("list" | "size")) && !surface::asks_for_help(&args) =>
         {
             cache::run(&args, &raw_args)
+        }
+        // `vis cache clean` — the task cache and the per-user stores in a CI context, with the same messages and
+        // removals as the Node handler. Every other shape, and every directory, store or environment it cannot
+        // reproduce, is delegated inside `cache_clean::run`, before anything is printed or removed.
+        #[cfg(unix)]
+        "cache" if args.get(1).map(String::as_str) == Some("clean") && !surface::asks_for_help(&args) => {
+            cache_clean::run(&args, &raw_args)
         }
         // `vis run <target>` — answered natively only when every task is a local cache hit (a CI context,
         // started by the launcher). Everything else is handed to Node before anything is printed, inside

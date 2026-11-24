@@ -196,6 +196,20 @@
             "expect": "\"exists\""
         },
         {
+            "id": "cache-clean-dry-run",
+            "args": [
+                "cache",
+                "clean",
+                "--type",
+                "task",
+                "--dry-run"
+            ],
+            "route": "cache",
+            "family": "warm",
+            "scales": true,
+            "expect": "Would remove"
+        },
+        {
             "id": "cache-hash",
             "args": [
                 "cache",

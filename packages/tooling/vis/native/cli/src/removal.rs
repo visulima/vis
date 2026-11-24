@@ -1,0 +1,92 @@
+//! What a native command checks before it deletes a directory tree: Node's `rm` fails with a stack trace when a
+//! directory cannot be emptied, and a native run cannot hand over to Node once it has removed part of the tree.
+
+use std::ffi::CString;
+use std::fs;
+use std::path::Path;
+
+/// Whether `directory` is a real directory whose whole tree this process may remove: its parent and every
+/// directory below it can be written and searched, and read. A symbolic link or a file is not.
+pub(crate) fn removable_directory(directory: &Path, parent: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(directory) else {
+        return false;
+    };
+
+    if !metadata.is_dir() || !may_modify(parent) {
+        return false;
+    }
+
+    let Ok(entries) = fs::read_dir(directory) else {
+        return false;
+    };
+
+    may_modify(directory)
+        && entries.into_iter().all(|entry| {
+            entry.is_ok_and(|entry| {
+                let path = entry.path();
+
+                !entry.file_type().is_ok_and(|kind| kind.is_dir()) || removable_directory(&path, directory)
+            })
+        })
+}
+
+/// `access(2)` with write and search permission, which removing an entry of `directory` needs.
+pub(crate) fn may_modify(directory: &Path) -> bool {
+    let Ok(text) = CString::new(directory.as_os_str().as_encoded_bytes()) else {
+        return false;
+    };
+
+    // SAFETY: `text` is a NUL-terminated string that lives for the whole call.
+    unsafe { libc::access(text.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    use super::removable_directory;
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("vis-removal-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(directory.join("tree/inner")).unwrap();
+
+        directory
+    }
+
+    #[test]
+    fn a_tree_of_writable_directories_can_be_removed() {
+        let root = scratch("writable");
+
+        assert!(removable_directory(&root.join("tree"), &root));
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_directory_below_the_tree_cannot() {
+        let root = scratch("locked");
+
+        fs::set_permissions(root.join("tree/inner"), fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(!removable_directory(&root.join("tree"), &root));
+
+        fs::set_permissions(root.join("tree/inner"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_symbolic_link_or_a_file_is_not_a_tree() {
+        let root = scratch("link");
+
+        fs::write(root.join("file"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("tree"), root.join("link")).unwrap();
+
+        assert!(!removable_directory(&root.join("file"), &root));
+        assert!(!removable_directory(&root.join("link"), &root));
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

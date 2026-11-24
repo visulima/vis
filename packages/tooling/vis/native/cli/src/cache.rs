@@ -61,7 +61,7 @@ enum Scope {
 
 /// `CacheTarget` in `context.ts`.
 #[derive(Clone, Copy, PartialEq)]
-enum Target {
+pub(crate) enum Target {
     All,
     Task,
     Ai,
@@ -71,7 +71,7 @@ enum Target {
 }
 
 impl Target {
-    fn includes(self, kind: Target) -> bool {
+    pub(crate) fn includes(self, kind: Target) -> bool {
         self == Target::All || self == kind
     }
 }
@@ -156,11 +156,11 @@ fn parse(args: &[String]) -> Option<Options> {
 }
 
 /// The config values the cache commands read.
-struct Settings {
-    branch_scoped: bool,
+pub(crate) struct Settings {
+    pub(crate) branch_scoped: bool,
     /// `sharedWorktreeCache !== false`.
-    shared_worktree: bool,
-    cache_directory: Option<String>,
+    pub(crate) shared_worktree: bool,
+    pub(crate) cache_directory: Option<String>,
 }
 
 /// The settings of the workspace root, or `None` when Node must answer.
@@ -168,7 +168,7 @@ struct Settings {
 /// Node reads `vis.config.*` from the workspace root only, so a config anywhere else on the way up is
 /// one this path cannot tell Node's treatment of. At the root the config must be a literal, and free of the
 /// keys that change what Node does before the command runs.
-fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
+pub(crate) fn read_settings(cwd: &Path, root: &Path) -> Option<Settings> {
     let others = cwd.ancestors().chain(root.ancestors()).filter(|directory| *directory != root).any(has_config_file);
 
     if others || root.join("vis.config.json").exists() {
@@ -277,7 +277,12 @@ fn main_worktree_root(root: &Path) -> Option<PathBuf> {
 }
 
 /// `resolveSharedCacheDirectory`.
-fn resolve_cache_directory(root: &Path, option: Option<&str>, config: Option<&str>, shared: bool) -> Option<String> {
+pub(crate) fn resolve_cache_directory(
+    root: &Path,
+    option: Option<&str>,
+    config: Option<&str>,
+    shared: bool,
+) -> Option<String> {
     let root_text = root.to_str().filter(|text| is_plain(text))?;
     let env_value = match env::var("VIS_CACHE_DIRECTORY") {
         Ok(value) => Some(value),
@@ -394,6 +399,41 @@ fn has_unscoped_entries(base: &str) -> bool {
     found
 }
 
+/// `evictionDirectories`: `base` and, when branch scoping applies, the subtree of every branch. `None` when a
+/// branch directory has a name `@visulima/path` would rewrite.
+#[cfg(unix)]
+pub(crate) fn eviction_directories(base: &str, branch_scoped: bool) -> Option<Vec<String>> {
+    let mut directories = vec![base.to_owned()];
+
+    if !branch_scoped {
+        return Some(directories);
+    }
+
+    let branches = resolve(base, &[BRANCH_SCOPE_DIRECTORY]);
+
+    if fs::metadata(&branches).is_err() {
+        return Some(directories);
+    }
+
+    // A failing read makes Node's `readdirSync` throw, which its `catch` turns into the base alone.
+    let Some(entries) = sorted_entries(Path::new(&branches)) else {
+        return Some(directories);
+    };
+
+    for entry in entries.iter().filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir())) {
+        if has_backslash(&entry.file_name()) {
+            return None;
+        }
+
+        // A name that is not UTF-8 reaches Node mangled, and the directory it names reads as empty.
+        if let Some(path) = entry.path().to_str() {
+            directories.push(path.to_owned());
+        }
+    }
+
+    Some(directories)
+}
+
 /// `directoriesFor("read")` of `resolveCacheDirectoryFromContext`.
 fn read_directories(root: &Path, options: &Options, settings: &Settings) -> Option<Vec<String>> {
     let config = settings.cache_directory.as_deref();
@@ -435,10 +475,10 @@ fn read_directories(root: &Path, options: &Options, settings: &Settings) -> Opti
 // Entries.
 // ---------------------------------------------------------------------------------------------
 
-struct Entry {
-    hash: String,
-    mtime_ms: f64,
-    size: u64,
+pub(crate) struct Entry {
+    pub(crate) hash: String,
+    pub(crate) mtime_ms: f64,
+    pub(crate) size: u64,
 }
 
 /// `Stats.mtimeMs`: seconds and nanoseconds combined in floating point.
@@ -471,7 +511,7 @@ pub(crate) fn sorted_entries(directory: &Path) -> Option<Vec<fs::DirEntry>> {
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// `a + b`, or `None` once the sum is one a JavaScript number would round.
-fn add_safe(a: u64, b: u64) -> Option<u64> {
+pub(crate) fn add_safe(a: u64, b: u64) -> Option<u64> {
     a.checked_add(b).filter(|sum| *sum <= MAX_SAFE_INTEGER)
 }
 
@@ -482,7 +522,7 @@ fn total_size(entries: &[Entry]) -> Option<u64> {
 
 /// Whether `@visulima/path` would read a backslash in `name` as a separator: Node joins every name it
 /// reads, so a path it builds from such a name is not the one on disk.
-fn has_backslash(name: &OsStr) -> bool {
+pub(crate) fn has_backslash(name: &OsStr) -> bool {
     name.as_encoded_bytes().contains(&b'\\')
 }
 
@@ -527,7 +567,7 @@ fn sum_directory_size(directory: &Path) -> Option<u64> {
 }
 
 /// `collectCacheEntries`, newest first. `None` when a name or a size needs Node's own handling.
-fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
+pub(crate) fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
     let Some(names) = sorted_entries(Path::new(directory)) else {
         return Some(Vec::new());
     };
@@ -577,8 +617,8 @@ fn collect_entries(directory: &str) -> Option<Vec<Entry>> {
 
 /// `AuxStats` without the directory.
 #[derive(Default)]
-struct Stats {
-    entries: u64,
+pub(crate) struct Stats {
+    pub(crate) entries: u64,
     newest: Option<f64>,
     oldest: Option<f64>,
     total: u64,
@@ -586,7 +626,7 @@ struct Stats {
 
 /// The `getCacheStats` shared by the AI, Socket.dev, deps.dev and Snyk stores: the `.json` files of
 /// each directory. `None` when Node would throw (an unreadable directory, a file that cannot be stat-ed).
-fn store_stats(directories: &[PathBuf]) -> Option<Stats> {
+pub(crate) fn store_stats(directories: &[PathBuf]) -> Option<Stats> {
     let mut stats = Stats::default();
 
     for directory in directories {
@@ -622,7 +662,7 @@ fn store_stats(directories: &[PathBuf]) -> Option<Stats> {
 }
 
 /// `~/.vis/cache`, from a plain absolute `HOME` (what `os.homedir()` returns on POSIX).
-fn vis_cache_dir() -> Option<String> {
+pub(crate) fn vis_cache_dir() -> Option<String> {
     let home = env::var("HOME").ok().filter(|home| home.starts_with('/') && is_plain(home))?;
 
     Some(resolve(&home, &[".vis", "cache"]))
@@ -639,7 +679,7 @@ const FORMAT_BYTES_LIMIT: u64 = 1 << 45;
 /// `formatBytes(n, { decimals: 1, space: false })` of `@visulima/humanizer`: metric names over 1024
 /// steps, one fixed decimal rounded half away from zero, en-US grouping. `None` for sizes the
 /// floating-point unit choice of Node could disagree on.
-fn format_bytes(bytes: u64) -> Option<String> {
+pub(crate) fn format_bytes(bytes: u64) -> Option<String> {
     const UNITS: [&str; 5] = ["Bytes", "KB", "MB", "GB", "TB"];
 
     if bytes == 0 {
@@ -820,7 +860,7 @@ fn stats_block(label: &str, directory: Option<&str>, stats: &Stats) -> Option<St
 }
 
 /// The directories of the auxiliary stores, as `vis-paths.ts` and the security caches lay them out.
-fn store_directories(target: Target, home_cache: &str) -> Vec<PathBuf> {
+pub(crate) fn store_directories(target: Target, home_cache: &str) -> Vec<PathBuf> {
     let join = |parts: &[&str]| PathBuf::from(resolve(home_cache, parts));
 
     match target {
