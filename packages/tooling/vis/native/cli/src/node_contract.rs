@@ -61,6 +61,12 @@ pub fn init() {
     }
 }
 
+/// The `@visulima/vis` version: `VIS_VERSION` (set by the launcher, or by [`init`]), else this crate's own
+/// version for a binary run on its own.
+pub fn version() -> String {
+    env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned())
+}
+
 /// What a binary installed inside a package sets, `None` meaning "must be unset".
 fn owned_env(
     layout: &Layout,
