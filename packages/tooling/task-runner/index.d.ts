@@ -27,6 +27,17 @@ export declare class ConcurrentRun {
      * Returns false when the run has already finished; a command that is not running is ignored.
      */
     kill(index: number, signal?: string | undefined | null): boolean;
+    /**
+     * Write `data` to a running command's stdin (a pipe, or a pty). Returns false when the run
+     * has already finished; a command that is not running, or has neither, is ignored. The write
+     * is queued, never waited for, so a child that does not read cannot block the caller.
+     */
+    write(index: number, data: string): boolean;
+    /**
+     * Resize a running pty command's terminal. Returns false when the run has already finished;
+     * a command that is not running in a pty is ignored. Throws if a dimension is 0 or above 65535.
+     */
+    resize(index: number, cols: number, rows: number): boolean;
     /** Resolves with the result once every command has finished. May be awaited more than once. */
     done(): Promise<ConcurrentRunResult>;
 }
@@ -59,8 +70,15 @@ export interface ConcurrentCommandConfig {
     env?: Record<string, string>;
     /** Whether to use shell execution (default: true). */
     shell?: boolean;
-    /** Stdin mode: "null" (default), "pipe", or "inherit"; anything else is an error. */
+    /** Stdin mode: "null" (default), "pipe", "inherit" or "pty"; anything else is an error. */
     stdin?: string;
+    /**
+     * Whether the command inherits this process's environment under `env` (default: true).
+     * `false` gives it no variables but `env`.
+     */
+    inheritEnv?: boolean;
+    /** Initial terminal size for `stdin: "pty"` (default: 80x24). */
+    ptySize?: PtySize;
 }
 
 /** Options controlling the concurrent runner behavior. */
@@ -90,6 +108,11 @@ export interface ConcurrentRunnerOptions {
      * Format: "/path/to/shell" — args are always ["-c", command].
      */
     shellPath?: string;
+    /**
+     * Whether `startConcurrent` reports `stdout` and `stderr` events (default: false, only
+     * "started", "close" and "error"). Ignored by the other entry points.
+     */
+    streamOutput?: boolean;
 }
 
 /** Overall result of a concurrent run. */
@@ -331,6 +354,28 @@ export interface ProcessEvent {
 }
 
 /**
+ * What `startConcurrent` hands its callback: events in the order they happened, and, as the
+ * very last batch, how the run ended.
+ *
+ * Every event of a run is delivered before the batch that carries `result` or `error`, so a
+ * caller that settles its promise from that batch has seen everything first.
+ */
+export interface ProcessEventBatch {
+    /** Events in the order they happened; empty in the final batch. */
+    events: Array<ProcessEvent>;
+    /** Present in the final batch only: the outcome of the run. */
+    result?: ConcurrentRunResult;
+    /** Present in the final batch only, instead of `result`, if the run itself failed. */
+    error?: string;
+}
+
+/** Size of a pseudo-terminal, in character cells. */
+export interface PtySize {
+    cols: number;
+    rows: number;
+}
+
+/**
  * Clears the memoization cache. Primarily useful for tests; production code
  * should never call this since worktree topology does not change at runtime.
  */
@@ -416,7 +461,10 @@ export interface SeccompTrackingResult {
 /**
  * Start commands concurrently and return a handle to the run.
  *
- * Like `runConcurrentBatch`, `onLifecycle` receives only "started", "close" and "error" events.
+ * `onBatch` receives the events in the order they happened, several at a time, and the outcome
+ * of the run as the last batch (`result`, or `error` if the run itself failed); every event is
+ * delivered before it. Only "started", "close" and "error" events are reported unless
+ * `options.streamOutput` is set, which adds the "stdout" and "stderr" lines (for a pty, raw chunks).
  * An unknown option value throws before anything is spawned.
  *
  * Commands originate from package.json scripts (trusted input).
@@ -424,7 +472,7 @@ export interface SeccompTrackingResult {
 export declare function startConcurrent(
     commands: Array<ConcurrentCommandConfig>,
     options: ConcurrentRunnerOptions,
-    onLifecycle?: ((event: ProcessEvent) => void) | undefined | null,
+    onBatch?: ((batch: ProcessEventBatch) => void) | undefined | null,
 ): ConcurrentRun;
 
 /**

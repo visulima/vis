@@ -47,7 +47,9 @@ interface NativeConcurrentCommandConfig {
     command: string;
     cwd?: string;
     env?: Record<string, string>;
+    inheritEnv?: boolean;
     name?: string;
+    ptySize?: { cols: number; rows: number };
     shell?: boolean;
     stdin?: string;
 }
@@ -58,6 +60,7 @@ interface NativeConcurrentRunnerOptions {
     killTimeout?: number;
     maxProcesses?: number;
     shellPath?: string;
+    streamOutput?: boolean;
     successCondition?: string;
 }
 
@@ -71,6 +74,16 @@ interface NativeProcessEvent {
     message?: string;
     pid?: number;
     text?: string;
+}
+
+/**
+ * What `startConcurrent` hands its callback: events in the order they happened and, as the very
+ * last batch, how the run ended. Every event is delivered before the batch with `result` or `error`.
+ */
+interface NativeProcessEventBatch {
+    error?: string;
+    events: NativeProcessEvent[];
+    result?: NativeConcurrentRunResult;
 }
 
 interface NativeConcurrentCloseEvent {
@@ -102,6 +115,10 @@ interface NativeConcurrentRun {
     done: () => Promise<NativeConcurrentRunResult>;
     /** Signal one command's process tree. False when the run has already finished. */
     kill: (index: number, signal?: string | null) => boolean;
+    /** Resize a running pty command's terminal. False when the run has already finished. */
+    resize: (index: number, cols: number, rows: number) => boolean;
+    /** Write to a running command's stdin (a pipe or a pty). False when the run has already finished. */
+    write: (index: number, data: string) => boolean;
 }
 
 interface NativeBindings {
@@ -153,7 +170,7 @@ interface NativeBindings {
     startConcurrent: (
         commands: NativeConcurrentCommandConfig[],
         options: NativeConcurrentRunnerOptions,
-        onLifecycle?: ((event: NativeProcessEvent) => void) | null,
+        onBatch?: ((batch: NativeProcessEventBatch) => void) | null,
     ) => NativeConcurrentRun;
     topologicalSort: (graph: NativeTaskGraph) => string[];
 
@@ -329,6 +346,7 @@ export type {
     NativeCycleResult,
     NativeFileHash,
     NativeProcessEvent,
+    NativeProcessEventBatch,
     NativeSeccompFileAccess,
     NativeSeccompSpawnOptions,
     NativeSeccompTrackingResult,
