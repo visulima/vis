@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -51,6 +52,21 @@ const stores = (): Record<string, string> => {
 
 const full = (): Fixture => {
     return { home: stores(), workspace: taskCache() };
+};
+
+const git = (cwd: string, ...args: string[]): void => {
+    const result = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd, encoding: "utf8" });
+
+    expect(result.status, `git ${args.join(" ")}: ${result.stderr}`).toBe(0);
+};
+
+/** Makes the workspace of a side a primary checkout and runs the case in a linked worktree of it, which shares the primary one's cache. */
+const linkedWorktree = (side: Side): void => {
+    git(side.root, "init", "-q", "-b", "main");
+    git(side.root, "add", "-f", ".gitignore", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "packages/app/package.json");
+    git(side.root, "commit", "-q", "-m", "init");
+    git(side.root, "worktree", "add", "-q", "-b", "linked", join(side.home, "linked"));
+    side.workspace = join(side.home, "linked");
 };
 
 const locked: string[] = [];
@@ -184,6 +200,18 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(result.stderr).toContain("Refusing to delete the workspace root");
         });
 
+        it("refuses to clear the shared cache from a linked worktree without --force, and clears it with --force", () => {
+            expect.hasAssertions();
+
+            const fixture = { workspace: { ...taskCache(), ".gitignore": "node_modules\n" } };
+            const refused = suite.expectParity(fixture, ["--type", "task"], {}, { prepare: linkedWorktree });
+
+            expect(refused.status).toBe(1);
+
+            suite.expectParity(fixture, ["--type", "task", "--force"], {}, { prepare: linkedWorktree });
+            suite.expectParity(fixture, ["--type", "task", "--dry-run"], {}, { prepare: linkedWorktree });
+        });
+
         it("does not touch an empty store directory or a missing one", () => {
             expect.hasAssertions();
 
@@ -195,6 +223,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             suite.expectParity(full(), [], environment);
             suite.expectParity(full(), ["--dry-run"], environment);
+            // The warning and the error blocks go to stderr, and the long warning wraps.
+            suite.expectParity(full(), ["--cache-dir", "."], environment);
+            suite.expectParity({ home: { [`ext/${CACHE}/aaaa/code`]: "0" } }, (side) => ["--type", "task", "--cache-dir", join(side.home, "ext", CACHE)], environment);
         });
     });
 
@@ -211,7 +242,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             suite.expectDelegation({ home: { "ext/custom/aaaa/code": "0" } }, (side) => ["--type", "task", "--cache-dir", join(side.home, "ext", "custom"), "--force"]);
         });
 
-        it("a cache directory that holds the workspace", () => {
+        it("a cache directory above the workspace", () => {
             expect.hasAssertions();
 
             suite.expectDeclined({ workspace: taskCache() }, (side) => ["--type", "task", "--cache-dir", dirname(side.root), "--force"]);
@@ -292,10 +323,19 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             suite.expectDelegation(full(), [], environment);
         });
 
-        it("when the workspace has a vis.config that has to be evaluated", () => {
+        it.each([["task"], ["ai"], ["all"]])("when the workspace has a vis.config that has to be evaluated, with --type %s", (type) => {
             expect.hasAssertions();
 
-            suite.expectDelegation({ workspace: { ...taskCache(), "vis.config.ts": 'export default { taskRunner: { cacheDirectory: ["x"].join("") } };\n' } }, ["--type", "task"]);
+            suite.expectDelegation(
+                { home: stores(), workspace: { ...taskCache(), "vis.config.ts": 'export default { taskRunner: { cacheDirectory: ["x"].join("") } };\n' } },
+                ["--type", type],
+            );
+        });
+
+        it("when the workspace has a vis.config.json", () => {
+            expect.hasAssertions();
+
+            suite.expectDelegation({ home: stores(), workspace: { "vis.config.json": "{}\n" } }, ["--type", "snyk"]);
         });
     });
 });

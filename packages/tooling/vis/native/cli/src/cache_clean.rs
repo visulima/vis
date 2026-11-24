@@ -157,10 +157,6 @@ fn parse(args: &[String]) -> Option<Request> {
 
 /// The plan when the invocation is native, or `None` to delegate.
 fn plan(args: &[String]) -> Option<Plan> {
-    if !cfg!(unix) {
-        return None;
-    }
-
     let request = parse(args)?;
     let cwd = env::current_dir().ok()?;
     let root = quiet_workspace_root(&cwd)?;
@@ -172,8 +168,10 @@ fn plan(args: &[String]) -> Option<Plan> {
     let layout = Layout::detect(args)?;
     let mut plan = Plan { output: Output::default(), removals: Vec::new() };
 
+    // Read for every target: a config that has to be evaluated is Node's whichever store is cleared.
+    let settings = read_settings(&cwd, &root)?;
+
     if request.target.includes(Target::Task) {
-        let settings = read_settings(&cwd, &root)?;
         let directory = resolve_cache_directory(
             &root,
             request.cache_dir.as_deref(),

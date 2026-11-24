@@ -39,6 +39,12 @@ export const tree = (root: string): Record<string, string> => {
 
     for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
         const path = join(entry.parentPath, entry.name);
+
+        // Repository metadata holds clocks, hashes and absolute paths that differ between the two sides.
+        if (relative(root, path).split("/").includes(".git")) {
+            continue;
+        }
+
         const stats = lstatSync(path);
         // eslint-disable-next-line no-bitwise -- the permission bits of the mode
         const mode = (stats.mode & 0o7777).toString(8);
