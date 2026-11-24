@@ -106,7 +106,7 @@ pub fn resolve(config_path: &Path) -> Option<Resolved> {
         return None;
     }
 
-    let version = vis_version();
+    let version = crate::node_contract::version();
     let entry = entry_path(config_path, &version);
 
     if let Some(stored) = read_entry(&entry, config_path, &version) {
@@ -154,10 +154,6 @@ fn contains_any(value: &Value, needles: &[String]) -> bool {
         }),
         _ => false,
     }
-}
-
-fn vis_version() -> String {
-    env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned())
 }
 
 /// `<cache dir>/config/<key>.json`, keyed by the config path and the vis version. The cache directory

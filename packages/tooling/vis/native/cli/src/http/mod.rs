@@ -72,7 +72,7 @@ impl HttpConfig {
     /// `VIS_HTTP_TIMEOUT` and `VIS_HTTP_CONNECT_TIMEOUT` are not set, for a caller that has to match limits of its
     /// own.
     pub(crate) fn from_env(global_timeout: Duration, connect_timeout: Duration) -> Self {
-        let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+        let version = crate::node_contract::version();
 
         Self {
             proxy: Proxy::try_from_env(),

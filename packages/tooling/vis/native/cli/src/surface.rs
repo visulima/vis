@@ -5,7 +5,6 @@
 //! Anything this module is not certain about is left to the Node CLI by
 //! returning `None`.
 
-use std::env;
 use std::io::{self, Write};
 
 use crate::help::{Help, Style};
@@ -108,7 +107,7 @@ pub fn answer(args: &[String]) -> Option<i32> {
     }
 
     let manifest = Manifest::load();
-    let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+    let version = crate::node_contract::version();
     // The bare group's listing goes to stderr but takes its colour from stdout, as in the Node CLI. A colour or
     // width only Node can decide (a width asked of a terminal) hands the run to it before any output.
     let destination = if group_listing && !request.wants_help() { term::Stream::Stderr } else { term::Stream::Stdout };
