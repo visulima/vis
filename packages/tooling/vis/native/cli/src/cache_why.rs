@@ -22,12 +22,15 @@ use std::path::Path;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 
-use crate::cache_hash::{
-    json_text, parse, summary_path, Details, FailureJson, Loaded, Output, Probe, ProbeId, Request, Summary, Task,
-};
+use crate::cache_hash::{parse, Request};
 use crate::js::PROTOTYPE_NAMES;
+use crate::output::Output;
 use crate::pail::{Layout, Level};
-use crate::summary::{context, emit, find_task, load_summary, present, read_run_file, run_files, utf16_order, Ordered};
+use crate::run_summary::{summary_path, Details, Probe, ProbeId, Summary, Task};
+use crate::summary::{
+    context, find_task, json_text, load_summary, missing_summary, present, read_run_file, run_files, task_not_in_run,
+    utf16_order, Ordered,
+};
 use crate::text::{is_ascii_graphic, is_ascii_printable};
 
 /// The message of the "first run" block holds an em dash, which pail's wrap measures differently from the
@@ -358,49 +361,15 @@ fn table(
 }
 
 /// The output for the request, or `None` to delegate.
-fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Option<Output> {
-    let mut out = Output { exit_code: 1, ..Output::default() };
-
-    let summary = match loaded {
-        Loaded::Found(summary) => summary,
-        Loaded::Missing if request.json => {
-            out.stdout = json_text(&FailureJson {
-                error: "no-summary",
-                run_id: request.run.as_deref(),
-                task_id: &request.task_id,
-            })?;
-
-            return Some(out);
-        }
-        Loaded::Missing => {
-            let data = root.join(".vis");
-
-            let message = match &request.run {
-                None => format!(
-                    "No previous run summary found. Run a task first to populate `{}`.",
-                    data.join("last-summary.json").to_str()?
-                ),
-                Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
-            };
-
-            if !(is_ascii_graphic(&request.task_id) && is_ascii_graphic(data.to_str()?)) {
-                return None;
-            }
-
-            out.stderr = layout.block(Level::Error, &message);
-
-            return Some(out);
-        }
+fn answer(request: &Request, summary: Option<Summary>, root: &Path, layout: Layout) -> Option<Output> {
+    let Some(summary) = summary else {
+        return missing_summary(root, request.run.as_deref(), Some(&request.task_id), request.json, layout);
     };
 
     let Some(raw) = find_task(&summary.tasks, &request.task_id)? else {
-        if request.json {
-            out.stdout = json_text(&FailureJson {
-                error: "task-not-in-summary",
-                run_id: Some(&summary.id),
-                task_id: &request.task_id,
-            })?;
+        let mut out = task_not_in_run(&request.task_id, &summary.id, request.json, layout)?;
 
+        if request.json {
             return Some(out);
         }
 
@@ -416,18 +385,11 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
             }
         }
 
-        if !(is_ascii_graphic(&request.task_id) && is_ascii_graphic(&summary.id)) {
-            return None;
-        }
-
-        out.stderr =
-            layout.block(Level::Error, &format!("Task \"{}\" was not part of run {}.", request.task_id, summary.id));
-
         // `join(", ") || "(none)"`: an empty joined string falls back as well.
         let joined = ids.join(", ");
         let listed = if joined.is_empty() { "(none)" } else { joined.as_str() };
 
-        out.stdout = layout.block(Level::Info, &format!("Tasks in this run: {listed}"));
+        out.say(layout, Level::Info, &format!("Tasks in this run: {listed}"));
 
         return Some(out);
     };
@@ -446,7 +408,7 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
     let diff = diff_details(task.details.as_ref(), previous_task.and_then(|task| task.details.as_ref()));
 
     if request.json {
-        out.stdout = json_text(&WhyJson {
+        let stdout = json_text(&WhyJson {
             diff: &diff,
             previous_run_id: previous.summary.as_ref().map(|(summary, _)| summary.id.as_str()),
             previous_task: previous_task.map(|task| PreviousTaskJson {
@@ -464,9 +426,8 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
                 task_id: &task.task_id,
             },
         })?;
-        out.exit_code = 0;
 
-        return Some(out);
+        return Some(Output { stdout, ..Output::default() });
     }
 
     let mut printed = table(
@@ -487,12 +448,9 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
 fn native(args: &[String]) -> Option<Output> {
     let request = parse(args)?;
     let (root, layout) = context(args, request.json)?;
-    let loaded = match load_summary::<Summary>(&summary_path(&root, request.run.as_deref()))? {
-        Some(summary) => Loaded::Found(summary),
-        None => Loaded::Missing,
-    };
+    let summary = load_summary::<Summary>(&summary_path(&root, request.run.as_deref()))?;
 
-    answer(&request, loaded, &root, layout)
+    answer(&request, summary, &root, layout)
 }
 
 /// Answers `vis cache why` natively or hands the whole invocation to Node.
@@ -501,7 +459,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::process::delegate(raw_args);
     };
 
-    emit("cache why", &out)
+    out.emit("cache why")
 }
 
 #[cfg(test)]

@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cache_hash::root_collation;
+use crate::collation::root_collation;
 use crate::graph::{project_graph, GraphResult};
 use crate::js;
 use crate::node_context::{ci_root_context, quiet_context};
