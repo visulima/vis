@@ -215,6 +215,29 @@ pub(crate) fn in_ci() -> bool {
         .any(|key| env::var_os(key).is_some_and(|value| value != "0" && value != "false"))
 }
 
+/// Whether none of the settings that change what Node prints for a run are in the environment: pail's level
+/// (`NODE_ENV` of `test` or `debug`, `DEBUG`, `PAIL_LOG_LEVEL`) and cerebro's output level (`CEREBRO_*`). A run with
+/// any of them goes to Node. The launcher keeps the same list in `outputSettingsAreDefault` (`bin/route.mjs`);
+/// the shared cases of `native/cli/tests/fixtures/routing.json` run both halves for each variable and fail when
+/// the two differ.
+pub(crate) fn output_settings_are_default() -> bool {
+    !(env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
+        || env::var_os("DEBUG").is_some()
+        || env::var_os("PAIL_LOG_LEVEL").is_some()
+        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_")))
+}
+
+/// Writes `text` to stdout and flushes, ignoring a closed pipe; any other failure ends the run with the
+/// wrapper's write error for `command`.
+pub(crate) fn write_stdout(command: &str, what: &str, text: &str) {
+    if let Err(error) = io::stdout().lock().write_all(text.as_bytes()).and_then(|()| io::stdout().lock().flush()) {
+        // A closed pipe is not an error worth reporting.
+        if error.kind() != io::ErrorKind::BrokenPipe {
+            WrapperError::write(command, what, error).exit();
+        }
+    }
+}
+
 pub(crate) const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
 
 /// Whether `directory` or one of its ancestors holds a file named in `names`.

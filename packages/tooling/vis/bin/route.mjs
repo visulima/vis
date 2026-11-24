@@ -929,6 +929,75 @@ const sbomMayRunNatively = (platform, environment, args, cwd, interactive, holds
     return output !== undefined && (output === "-" || pailOutputIsDecidable(environment, args));
 };
 
+// The output settings that change what the binary's log lines (and the commands that print JSON beside them) look like:
+// `NODE_ENV` of `test` or `debug`, `DEBUG`, `PAIL_LOG_LEVEL` and `CEREBRO_*`. A run with any of them stays in Node.
+// The binary keeps the same list in `output_settings_are_default` (`native/cli/src/advisories.rs`); the `NODE_ENV`, `DEBUG`,
+// `PAIL_LOG_LEVEL` and `CEREBRO_*` cases of `native/cli/tests/fixtures/routing.json` run both halves and fail when they differ.
+const outputSettingsAreDefault = (environment) =>
+    !["debug", "test"].includes(environment.NODE_ENV)
+    && environment.DEBUG === undefined
+    && environment.PAIL_LOG_LEVEL === undefined
+    && !Object.keys(environment).some((key) => key.startsWith("CEREBRO_"));
+
+// The flags `vis optimize` takes natively (`parse` in `optimize/mod.rs`): the boolean ones and `--format table|json`, each at
+// most once (`-d` is `--dry-run`).
+const OPTIMIZE_BOOLEAN_FLAGS = [["--dry-run", "-d"], ["--pin"], ["--prod"], ["--no-install"]];
+
+// The flag at `flags[index]`: its name and the index after it (and its value), or `undefined` when the binary does not take it.
+const optimizeFlagAt = (flags, index) => {
+    const booleanFlag = OPTIMIZE_BOOLEAN_FLAGS.find((names) => names.includes(flags[index]));
+
+    if (booleanFlag !== undefined) {
+        return [booleanFlag[0], index + 1];
+    }
+
+    const given = optionValue(flags, index, "--format");
+
+    return Array.isArray(given) && ["json", "table"].includes(given[0]) ? ["--format", given[1]] : undefined;
+};
+
+const optimizeShapeIsNative = (flags) => {
+    const seen = new Set();
+    let index = 0;
+
+    while (index < flags.length) {
+        const flag = optimizeFlagAt(flags, index);
+
+        if (flag === undefined || seen.has(flag[0])) {
+            return false;
+        }
+
+        seen.add(flag[0]);
+        [, index] = flag;
+    }
+
+    return true;
+};
+
+// Whether `vis optimize` can pass the binary's native gate (`parse` and `context` in `optimize/mod.rs`): the report without a
+// terminal, for a pnpm workspace whose root is the working directory, in a CI context with no `vis.config`, and none of the
+// variables that change what pail prints. The binary re-checks everything, including the workspace patterns, the manifests and
+// the package manager; this only skips the extra process when it would delegate anyway. It stays in Node on Windows.
+const optimizeMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && optimizeShapeIsNative(args.slice(1));
+};
+
+// Whether `vis security list` can pass the binary's native gate (`args_are_native` and `context` in `security_list/mod.rs`):
+// `--json` and nothing else, for a pnpm workspace whose root is the working directory, in a CI context. The command prints no
+// pail line in this form, so the colour and width of pail do not matter, but the Node runtime's own colour warning does. The
+// binary re-checks everything, including the config, the package manager and every manifest under `node_modules`.
+const securityListMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && args.length === 3 && args[2] === "--json";
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -976,6 +1045,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
+    // The report without a terminal (`--dry-run`, `--format`, `--pin`, `--prod`); a terminal is the interactive picker, which stays in Node.
+    ["optimize", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => optimizeMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // A recorded run, a task of it, or the list of runs.
     ["replay", ({ args, environment, interactive, platform }) => helpOrNative(args, () => replayMayRunNatively(platform, environment, args, interactive))],
     // `run <target>`, answered only when every task is a cache hit; the binary hands every other run to Node.
@@ -984,6 +1055,17 @@ const NATIVE_SHAPE_GATES = new Map([
     ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // `security list --json`; the other `security` subcommands write files or use the network, and follow the help rule below.
+    [
+        "security",
+        ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
+            if (subcommand !== "list") {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => securityListMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+        },
+    ],
     // `--check` and the up-to-date verdicts; an install is handed to Node before anything is printed.
     ["self-update", ({ args, environment, interactive, platform }) => helpOrNative(args, () => selfUpdateMayRunNatively(platform, environment, args, interactive))],
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.

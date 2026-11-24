@@ -31,7 +31,9 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
-use crate::advisories::{any_ancestor_has, in_ci, monorepo_root, native_root_is_cwd, DENO_FILES};
+use crate::advisories::{
+    any_ancestor_has, in_ci, monorepo_root, native_root_is_cwd, output_settings_are_default, DENO_FILES,
+};
 use crate::targets::{self, Targets};
 
 use plan::{build_plan, Provider, Workspace};
@@ -139,11 +141,7 @@ fn native_root(args: &[String]) -> Option<std::path::PathBuf> {
     }
 
     // pail's level comes from NODE_ENV, `DEBUG` and `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-    {
+    if !output_settings_are_default() {
         return None;
     }
 

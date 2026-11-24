@@ -47,6 +47,7 @@ mod install;
 mod list;
 mod manifest;
 mod node_contract;
+mod optimize;
 mod pail;
 mod pm;
 mod pm_family;
@@ -55,6 +56,7 @@ mod replay;
 mod run;
 mod sbom;
 mod secrets;
+mod security_list;
 mod self_update;
 mod sort_package_json;
 mod summary;
@@ -171,11 +173,21 @@ fn main() {
         // reproduce byte for byte (any error included) is delegated inside `sort_package_json::run`; help is left to
         // the arm below.
         "sort-package-json" if !surface::asks_for_help(&args) => sort_package_json::run(&args, &raw_args),
+        // `vis optimize` — the non-interactive report (`--dry-run`, `--format`, `--pin`, `--prod`), native for a pnpm
+        // workspace in CI. Every other shape and every input it cannot reproduce is delegated inside
+        // `optimize::run`, before anything is printed; help is left to the arm below.
+        "optimize" if !surface::asks_for_help(&args) => optimize::run(&args, &raw_args),
         // `vis sync ci-workflow` — the generator and its `--check`, native for a JS-only pnpm workspace in CI.
         // Every other shape, and every input it cannot reproduce byte for byte, is delegated inside
         // `ci_workflow::run`; help is left to the arm below.
         "sync" if args.get(1).map(String::as_str) == Some("ci-workflow") && !surface::asks_for_help(&args) => {
             ci_workflow::run(&args, &raw_args)
+        }
+        // `vis security list --json` — the read-only build-script triage, native for a pnpm workspace in CI. Every
+        // other shape and every input it cannot reproduce is delegated inside `security_list::run`, before anything
+        // is printed; help is left to the arm below.
+        "security" if args.get(1).map(String::as_str) == Some("list") && !surface::asks_for_help(&args) => {
+            security_list::run(&args, &raw_args)
         }
         // `vis self-update [version] [--check] [--force] [--silent]` — the npm query and the verdicts that need
         // no install, native in a CI context; an install, every other shape and `--help` (left to the arm
