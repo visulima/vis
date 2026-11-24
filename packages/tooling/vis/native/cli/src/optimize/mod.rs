@@ -21,7 +21,6 @@ use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -29,8 +28,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context, write_stdout};
 use crate::js::is_js_whitespace;
+use crate::node_context::{ci_root_context, quiet_context};
+use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
 use crate::sort_package_json::json::Json;
 use crate::vis_config::{self, ConfigState};
@@ -156,26 +156,12 @@ fn parse(args: &[String]) -> Option<Options> {
 
 /// Whether Node would reach the same answer, and the layout pail prints in. `None` is a delegation.
 fn context(args: &[String]) -> Option<(Layout, PathBuf)> {
-    if !cfg!(unix) || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
-        return None;
-    }
-
-    // pail's level comes from NODE_ENV (`test` hides the success lines, `debug` shows more), `DEBUG` and
-    // `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`. Node answers for those.
-    if !output_settings_are_default() {
-        return None;
-    }
-
     let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // Node works from the workspace root, which this crate finds for a pnpm workspace; the report is the
     // same only when that root is the working directory.
-    if monorepo_root(&cwd).as_deref() != Some(cwd.as_path())
-        || env::var_os("VIS_MONOREPO_ROOT").is_some_and(|inherited| Path::new(&inherited) != cwd)
-        || !quiet_context(&cwd, &cwd)
-        || vis_config::read(&cwd) != ConfigState::Absent
-    {
+    if !ci_root_context(&cwd) || !quiet_context(&cwd, &cwd) || vis_config::read(&cwd) != ConfigState::Absent {
         return None;
     }
 

@@ -34,9 +34,9 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::error::WrapperError;
 use crate::js::is_index_like;
+use crate::node_context::{in_ci, monorepo_root, quiet_context};
 use crate::pail::{pail_width, Layout, Level};
 
 /// A recorded hash is cut to this many characters in the table, then `…` follows.

@@ -1475,3 +1475,71 @@ fn x_reports_a_missing_bun_binary() {
     assert_eq!(code, Some(127));
     assert_eq!(stderr, "vis x: runtime is bun but the `bun` binary is not on PATH. Install it from https://bun.sh.\n");
 }
+
+/// A copy of a fixture workspace outside the repository, where no ancestor holds a root marker.
+#[cfg(unix)]
+fn copy_fixture(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+
+        if entry.file_type().unwrap().is_dir() {
+            copy_fixture(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// Runs `vis list` natively (a CI run at the root of a pnpm workspace) with the given stdout.
+#[cfg(unix)]
+fn list_natively(name: &str, stdout: std::process::Stdio) -> std::process::Output {
+    let workspace = std::env::temp_dir().join(format!("vis-cli-test-{name}-{}", std::process::id()));
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/list/basic");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    copy_fixture(&fixture, &workspace);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vis"))
+        .arg("list")
+        .current_dir(&workspace)
+        .env_clear()
+        .env("CI", "1")
+        .env("COLUMNS", "80")
+        .env("LINES", "24")
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("run binary");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+
+    output
+}
+
+#[cfg(unix)]
+#[test]
+fn a_listing_is_answered_natively_into_a_pipe() {
+    let output = list_natively("list-open", std::process::Stdio::piped());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("alpha"), "stdout: {stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_listing_into_a_closed_pipe_ends_quietly_with_status_zero() {
+    // `vis list | head -0`: the reader is gone before the listing is written. Node ignores the closed pipe.
+    let (reader, writer) = std::io::pipe().unwrap();
+
+    drop(reader);
+
+    let output = list_natively("list-closed", std::process::Stdio::from(writer));
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}

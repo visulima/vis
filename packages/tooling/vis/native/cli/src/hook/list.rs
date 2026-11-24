@@ -16,11 +16,12 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal};
+use std::io;
 use std::path::Path;
 use std::process::exit;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
+use crate::node_context::context_is_native;
+use crate::output::write_stdout;
 
 pub(super) const DEFAULT_HOOKS_DIRECTORY: &str = ".vis/hooks";
 
@@ -260,12 +261,6 @@ fn lines(hooks_directory: &str, stages: &[Stage]) -> Vec<String> {
     }
 
     lines
-}
-
-/// Whether Node would reach the same answer from the working directory: a unix CI run off a terminal at the root of a
-/// pnpm workspace, with none of the settings that change what Node prints.
-pub(crate) fn context_is_native() -> bool {
-    cfg!(unix) && output_settings_are_default() && !io::stdout().is_terminal() && native_context()
 }
 
 /// The text Node prints, or `None` when Node has to answer.

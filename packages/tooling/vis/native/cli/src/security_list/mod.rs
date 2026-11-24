@@ -22,7 +22,6 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -30,10 +29,9 @@ use oxc_ast::ast::Expression;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::advisories::{
-    any_ancestor_has, in_ci, monorepo_root, output_settings_are_default, write_stdout, DENO_FILES,
-};
 use crate::js::{is_index_like, is_truthy};
+use crate::node_context::{any_ancestor_has, ci_root_context, DENO_FILES};
+use crate::output::write_stdout;
 use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 
@@ -166,30 +164,9 @@ fn report() -> Option<String> {
 /// The working directory when Node would reach the same answer from the workspace root: a unix CI run with no
 /// terminal, the root of a pnpm workspace, and none of the variables that change what Node prints.
 fn context() -> Option<PathBuf> {
-    if !cfg!(unix)
-        || !in_ci()
-        || io::stdout().is_terminal()
-        || io::stderr().is_terminal()
-        || crate::term::node_warns_about_colour()
-    {
-        return None;
-    }
-
-    // The log level comes from NODE_ENV, `DEBUG` and `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`.
-    if !output_settings_are_default() {
-        return None;
-    }
-
     let cwd = env::current_dir().ok()?;
 
-    if monorepo_root(&cwd).as_deref() != Some(cwd.as_path())
-        || env::var_os("VIS_MONOREPO_ROOT").is_some_and(|inherited| Path::new(&inherited) != cwd)
-        || any_ancestor_has(&cwd, &DENO_FILES)
-    {
-        return None;
-    }
-
-    Some(cwd)
+    (ci_root_context(&cwd) && !any_ancestor_has(&cwd, &DENO_FILES)).then_some(cwd)
 }
 
 /// The keys `object` holds, in source order, when it is a literal object.

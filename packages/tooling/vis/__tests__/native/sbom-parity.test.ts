@@ -702,6 +702,8 @@ const SBOM_FILE = "sbom.cdx.json";
 const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] = [
     ["basic", []],
     ["basic", ["--output", "-"]],
+    // Node reads `VIS_MONOREPO_ROOT || cwd`, so an empty value is no value.
+    ["basic", ["--output", "-"], { VIS_MONOREPO_ROOT: "" }],
     ["basic", ["--output=-", "--include-dev"]],
     ["basic", ["--format", "json", "--output", "nested/dir/out.json"]],
     ["basic", ["--output", "{root}/abs/out.json"]],

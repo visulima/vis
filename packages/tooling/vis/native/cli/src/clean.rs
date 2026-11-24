@@ -19,17 +19,16 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
-use crate::error::WrapperError;
+use crate::node_context::{any_ancestor_has, in_ci, DENO_FILES};
+use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
-
-const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];
 
 /// What one run prints, split the way pail splits it: error blocks go to stderr, the rest to
 /// stdout.
@@ -71,25 +70,9 @@ pub fn run(raw: &[OsString]) -> ! {
         exit_code = removal_output(&plan, &outcome, &mut out);
     }
 
-    // Each stream is written even when the other fails, so a closed stdout does not hide errors.
-    let stdout = write_stream(&mut io::stdout().lock(), &out.stdout);
-    let stderr = write_stream(&mut io::stderr().lock(), &out.stderr);
-
-    for result in [stdout, stderr] {
-        match result {
-            Ok(()) => {}
-            // A closed pipe is not an error worth reporting.
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-            Err(error) => WrapperError::write("clean", "the output", error).exit(),
-        }
-    }
+    write_streams("clean", &out.stdout, &out.stderr);
 
     exit(exit_code)
-}
-
-fn write_stream(stream: &mut impl Write, text: &str) -> io::Result<()> {
-    stream.write_all(text.as_bytes())?;
-    stream.flush()
 }
 
 /// The removal plan when the invocation is native, or `None` to delegate.
@@ -108,7 +91,10 @@ fn plan(args: &[String]) -> Option<Plan> {
     let layout = Layout::detect(args)?;
     let root = env::current_dir().ok()?;
 
-    if !workspace_root_is_cwd(&root) || vis_config::read(&root) != ConfigState::Absent || deno_file_applies(&root) {
+    if !workspace_root_is_cwd(&root)
+        || vis_config::read(&root) != ConfigState::Absent
+        || any_ancestor_has(&root, &DENO_FILES)
+    {
         return None;
     }
 
@@ -161,16 +147,12 @@ fn workspace_root_is_cwd(cwd: &Path) -> bool {
     if cwd
         .ancestors()
         .skip(1)
-        .any(|directory| crate::advisories::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
+        .any(|directory| crate::node_context::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
     {
         return false;
     }
 
     cwd.join("pnpm-lock.yaml").exists() && cwd.join("pnpm-workspace.yaml").exists()
-}
-
-fn deno_file_applies(cwd: &Path) -> bool {
-    cwd.ancestors().any(|directory| DENO_FILES.iter().any(|name| directory.join(name).exists()))
 }
 
 /// The removal order of `clean_workspace`: the root's own `node_modules` last.
@@ -241,13 +223,6 @@ fn pail(plan: &Plan, out: &mut Output, level: Level, message: &str) {
     let buffer = if level.to_stderr() { &mut out.stderr } else { &mut out.stdout };
 
     buffer.push_str(&plan.layout.block(level, message));
-}
-
-/// `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.
-fn in_ci() -> bool {
-    ["CI", "CONTINUOUS_INTEGRATION"]
-        .iter()
-        .any(|key| env::var_os(key).is_some_and(|value| value != "0" && value != "false"))
 }
 
 #[cfg(test)]

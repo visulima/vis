@@ -10,6 +10,8 @@ use std::path::{Component, Path};
 
 use rayon::prelude::*;
 
+use crate::vis_config::has_vis_config;
+
 /// Outcome of resolving a root's project directories.
 #[derive(Debug, PartialEq)]
 pub enum Membership {
@@ -44,19 +46,6 @@ const NON_JS_MARKERS: &[&str] = &[
     "build.zig.zon",
 ];
 const NON_JS_SUFFIXES: &[&str] = &[".gemspec", ".csproj", ".fsproj"];
-
-/// Config files that can change the result, checked at the root and every ancestor. The names mirror
-/// `CONFIG_FILES` in `src/config/config.ts`, plus the `.json` form, a deliberate extra that Node does
-/// not load. The walk is broader than Node, which reads only the workspace root's config.
-const CONFIG_NAMES: [&str; 7] = [
-    "vis.config.ts",
-    "vis.config.mts",
-    "vis.config.cts",
-    "vis.config.js",
-    "vis.config.mjs",
-    "vis.config.cjs",
-    "vis.config.json",
-];
 
 /// Per-package overlays. A project with one delegates, since the overlay can change its target set.
 const OVERLAY_NAMES: [&str; 7] =
@@ -98,7 +87,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
         return None;
     }
 
-    if !config_vetted && root.ancestors().any(|dir| CONFIG_NAMES.iter().any(|name| dir.join(name).exists())) {
+    if !config_vetted && has_vis_config(root) {
         return None;
     }
 

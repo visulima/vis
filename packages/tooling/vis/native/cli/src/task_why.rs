@@ -20,10 +20,10 @@
 //! - not the root project (`.`): Node drops its scripts that only forward to another project.
 
 use std::ffi::OsString;
-use std::io::IsTerminal;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 use crate::js::PROTOTYPE_NAMES;
+use crate::node_context::context_is_native;
+use crate::output::write_stdout;
 use crate::targets::{script_targets, Targets};
 
 /// What the handler prints for a task nothing depends on and that depends on nothing: a blank line, the title, a blank
@@ -50,12 +50,7 @@ fn answer(args: &[String]) -> Option<String> {
     let (id, project, target) = parse(args)?;
 
     // `workspace.projects[name]` finds an inherited member of `Object.prototype` for these names in Node.
-    if !cfg!(unix)
-        || PROTOTYPE_NAMES.contains(&project)
-        || !output_settings_are_default()
-        || std::io::stdout().is_terminal()
-        || !native_context()
-    {
+    if PROTOTYPE_NAMES.contains(&project) || !context_is_native() {
         return None;
     }
 

@@ -22,7 +22,6 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -32,8 +31,9 @@ use serde_json::value::RawValue;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::advisories::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
 use crate::js::{is_truthy, js_number, json_number};
+use crate::node_context::{ci_root_context, quiet_context};
+use crate::output::write_streams;
 use crate::pail::{Layout, Level as LogLevel};
 
 /// The tool version Node stamps into SARIF (`toolVersion` in the secrets handler).
@@ -142,26 +142,12 @@ fn context(args: &[String]) -> Option<Context> {
         return None;
     }
 
-    if !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
-        return None;
-    }
-
-    // pail's level comes from NODE_ENV (`test` hides the notice and success lines, `debug` shows more),
-    // `DEBUG` and `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`. Node answers for those.
-    if !output_settings_are_default() {
-        return None;
-    }
-
     let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // Node scans the workspace root; the text view prints paths relative to the working directory.
     // Both agree only when the root is the working directory.
-    if monorepo_root(&cwd).as_deref() != Some(cwd.as_path()) {
-        return None;
-    }
-
-    if env::var_os("VIS_MONOREPO_ROOT").is_some_and(|inherited| Path::new(&inherited) != cwd) {
+    if !ci_root_context(&cwd) {
         return None;
     }
 
@@ -936,11 +922,6 @@ fn answer(plan: &Plan, context: &Context) -> Option<Output> {
     Some(out)
 }
 
-fn write_stream(stream: &mut impl Write, text: &str) -> io::Result<()> {
-    stream.write_all(text.as_bytes())?;
-    stream.flush()
-}
-
 /// Answers `vis secrets` natively or hands the whole invocation to Node. `args` keeps the raw
 /// argv for the delegation; the `String` view is only for matching. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
@@ -950,20 +931,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::delegate(raw_args);
     };
 
-    // Each stream is written even when the other fails.
-    let results = [
-        write_stream(&mut io::stdout().lock(), &output.stdout),
-        write_stream(&mut io::stderr().lock(), &output.stderr),
-    ];
-
-    for result in results {
-        // A closed pipe is not an error worth reporting.
-        if let Err(error) = result {
-            if error.kind() != io::ErrorKind::BrokenPipe {
-                crate::error::WrapperError::write("secrets", "the output", error).exit();
-            }
-        }
-    }
+    write_streams("secrets", &output.stdout, &output.stderr);
 
     exit(output.code)
 }

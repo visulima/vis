@@ -19,8 +19,9 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::advisories::{monorepo_root, quiet_context};
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
+use crate::node_context::{monorepo_root, quiet_context};
+use crate::output::write_stdout;
 use crate::vis_config::{self, ConfigState};
 
 /// `maxBuffer` of Node's `execFile` / `spawnSync`. Output at or above it makes Node fail, so the
@@ -551,11 +552,7 @@ fn answer(args: &[String]) -> Option<String> {
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     match answer(args) {
         Some(text) => {
-            use std::io::Write;
-
-            if std::io::stdout().write_all(text.as_bytes()).and_then(|()| std::io::stdout().flush()).is_err() {
-                std::process::exit(1);
-            }
+            write_stdout("affected", "the affected projects", &text);
 
             std::process::exit(0);
         }

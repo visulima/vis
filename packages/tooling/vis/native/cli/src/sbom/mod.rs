@@ -22,15 +22,16 @@ mod semver;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::cache_hash::root_collation;
 use crate::graph::{project_graph, GraphResult};
 use crate::js;
+use crate::node_context::{ci_root_context, quiet_context};
+use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
 use crate::vis_config::{self, ConfigState};
 use vis_core::date::iso_from_millis;
@@ -142,27 +143,8 @@ fn parse(args: &[String]) -> Option<Plan> {
 /// Whether Node would reach the same answer: a CI context off a terminal, no output settings that change
 /// the status lines, and `cwd` the workspace root of a pnpm workspace with no config.
 fn context(cwd: &Path) -> bool {
-    if !cfg!(unix) || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
-        return false;
-    }
-
-    // pail's level comes from NODE_ENV (`test` hides the notice and success lines, `debug` shows more), `DEBUG` and
-    // `PAIL_LOG_LEVEL`, and cerebro's output level from `CEREBRO_*`.
-    if env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-    {
-        return false;
-    }
-
-    if monorepo_root(cwd).as_deref() != Some(cwd)
-        || env::var_os("VIS_MONOREPO_ROOT").is_some_and(|inherited| Path::new(&inherited) != cwd)
-    {
-        return false;
-    }
-
-    quiet_context(cwd, cwd)
+    ci_root_context(cwd)
+        && quiet_context(cwd, cwd)
         && vis_config::read(cwd) == ConfigState::Absent
         && root_collation()
         && !OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists())
@@ -258,12 +240,9 @@ fn answer(args: &[String]) -> Option<i32> {
             return None;
         }
 
-        let mut stdout = io::stdout().lock();
+        write_stdout("sbom", "the SBOM", &text);
 
-        return stdout
-            .write_all(text.as_bytes())
-            .and_then(|()| stdout.flush())
-            .map_or_else(|error| Some(i32::from(error.kind() != io::ErrorKind::BrokenPipe)), |()| Some(0));
+        return Some(0);
     };
 
     let target: PathBuf =
@@ -276,15 +255,13 @@ fn answer(args: &[String]) -> Option<i32> {
     fs::create_dir_all(target.parent()?).ok()?;
     fs::write(&target, &text).ok()?;
 
-    let mut stdout = io::stdout().lock();
     let message = layout.block(Level::Success, &format!("SBOM written to {}", target.display()))
         + &layout.block(
             Level::Notice,
             &format!("{} components, {} dependency edges", bom.component_count(), bom.dependency_count()),
         );
 
-    // A closed pipe is not an error worth reporting.
-    let _ = stdout.write_all(message.as_bytes()).and_then(|()| stdout.flush());
+    write_stdout("sbom", "the confirmation", &message);
 
     Some(0)
 }

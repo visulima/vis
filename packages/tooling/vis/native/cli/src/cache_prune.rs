@@ -30,11 +30,12 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::advisories::{output_settings_are_default, write_streams};
 use crate::cache::{
     add_safe, collect_entries, evict_directories, format_bytes, has_backslash, now_ms, quiet_workspace_root,
     read_settings, sorted_entries, sum_directory_size, Scope,
 };
+use crate::node_context::output_settings_are_default;
+use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::removal::{removable_directory, removable_file};
 

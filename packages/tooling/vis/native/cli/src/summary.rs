@@ -18,11 +18,11 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
-use crate::advisories::{in_ci, monorepo_root, quiet_context};
 use crate::cache::{mtime_ms, sorted_entries};
 use crate::cache_hash::{Output, Probe, ProbeId, Summary};
 use crate::error::WrapperError;
 use crate::js::{is_index_like, MAX_SAFE_INTEGER};
+use crate::node_context::{in_ci, monorepo_root, quiet_context};
 use crate::pail::{pail_width, Layout};
 
 /// The workspace root and pail layout of a run the native path may answer, or `None` when Node has

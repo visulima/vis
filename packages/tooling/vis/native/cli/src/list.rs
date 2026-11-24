@@ -20,9 +20,10 @@ use std::path::Path;
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::advisories::monorepo_root;
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
 use crate::js::RESERVED_NAMES;
+use crate::node_context::monorepo_root;
+use crate::output::write_stdout;
 use crate::vis_config;
 
 /// Detector trigger files and dependency names, generated from `BUILT_IN_DETECTORS`.
@@ -427,7 +428,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         let cwd = env::current_dir().ok()?;
         let root = monorepo_root(&cwd)?;
 
-        if !crate::advisories::quiet_context(&cwd, &root) || vis_config::requires_node(&vis_config::read(&root)) {
+        if !crate::node_context::quiet_context(&cwd, &root) || vis_config::requires_node(&vis_config::read(&root)) {
             return None;
         }
 
@@ -442,11 +443,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
     match answer() {
         Some(text) => {
-            use std::io::Write;
-
-            if std::io::stdout().write_all(text.as_bytes()).and_then(|()| std::io::stdout().flush()).is_err() {
-                std::process::exit(1);
-            }
+            write_stdout("list", "the listing", &text);
 
             std::process::exit(0);
         }

@@ -26,10 +26,10 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::process::{exit, Command, Stdio};
 
-use crate::error::WrapperError;
+use crate::output::{write_stderr, write_stdout};
 
 const PACKAGE: &str = "@visulima/vis";
 
@@ -147,7 +147,7 @@ fn native_context() -> Option<String> {
 
     let cwd = env::current_dir().ok()?;
 
-    crate::advisories::quiet_context(&cwd, &cwd).then_some(current)
+    crate::node_context::quiet_context(&cwd, &cwd).then_some(current)
 }
 
 /// `npm view @visulima/vis version`: the trimmed answer and the stderr text, or `None` when npm cannot
@@ -194,26 +194,12 @@ fn decide(options: &Options, current: &str, latest: &str) -> Verdict {
 
 /// One line on stdout, flushed as it is written.
 fn say(text: &str) {
-    finish_write(write_all(&mut io::stdout().lock(), format!("{text}\n").as_bytes()));
+    write_stdout("self-update", "the output", format!("{text}\n"));
 }
 
 fn show_stderr(bytes: &[u8]) {
     if !bytes.is_empty() {
-        finish_write(write_all(&mut io::stderr().lock(), bytes));
-    }
-}
-
-fn write_all(stream: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
-    stream.write_all(bytes)?;
-    stream.flush()
-}
-
-/// A closed pipe is not worth reporting; any other write failure is.
-fn finish_write(result: io::Result<()>) {
-    match result {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-        Err(error) => WrapperError::write("self-update", "the output", error).exit(),
+        write_stderr("self-update", "the output", bytes);
     }
 }
 

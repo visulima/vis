@@ -43,31 +43,6 @@ fn run_resolved(verb: &str, resolved: ResolvedCommand, cwd: &Path) -> Result<i32
     Ok(code)
 }
 
-/// Walk up from `cwd` looking for a `vis.config.*` file.
-pub(crate) fn has_vis_config(cwd: &Path) -> bool {
-    const NAMES: [&str; 7] = [
-        "vis.config.ts",
-        "vis.config.mts",
-        "vis.config.cts",
-        "vis.config.js",
-        "vis.config.mjs",
-        "vis.config.cjs",
-        "vis.config.json",
-    ];
-
-    let mut current = Some(cwd.to_path_buf());
-
-    while let Some(directory) = current {
-        if NAMES.iter().any(|name| directory.join(name).exists()) {
-            return true;
-        }
-
-        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
-    }
-
-    false
-}
-
 /// A token is a "known" flag if it matches one of `bools` (a switch) or `values`
 /// (consumes the next token). Returns the parsed switches/values plus the
 /// forwarded rest (positionals + unknown flags, in order).
@@ -182,7 +157,7 @@ pub(crate) fn corepack_applies(cwd: &Path) -> bool {
 fn ancestor_may_be_workspace_root(cwd: &Path) -> bool {
     cwd.ancestors()
         .skip(1)
-        .any(|ancestor| crate::advisories::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
+        .any(|ancestor| crate::node_context::ROOT_MARKERS.iter().any(|name| ancestor.join(name).exists()))
 }
 
 /// `--config`, `--cwd` and `--runtime` change which config and workspace Node uses. Native

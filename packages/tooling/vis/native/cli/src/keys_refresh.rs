@@ -35,7 +35,7 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, IsTerminal};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,10 +44,11 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use crate::advisories::{native_context, output_settings_are_default, write_stdout};
 use crate::cache::vis_cache_dir;
 use crate::http::{HttpClient, HttpConfig, HttpError};
-use crate::js::{json_number, json_string};
+use crate::js::{json_number, json_string, pretty_document};
+use crate::node_context::context_decline;
+use crate::output::write_stdout;
 
 const DEFAULT_KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
 /// `DEFAULT_FETCH_TIMEOUT_MS` of the Node module.
@@ -138,16 +139,12 @@ fn network_environment_is_plain() -> bool {
 fn answer(args: &[String]) -> Result<Outcome, String> {
     let flags = parse(args).ok_or("not `security keys-refresh --json [--clear]`")?;
 
-    for (declined, reason) in [
-        (!cfg!(unix), "not a unix platform"),
-        (!output_settings_are_default(), "an output setting (NODE_ENV, DEBUG, PAIL_LOG_LEVEL, CEREBRO_*) is set"),
-        (io::stdout().is_terminal(), "stdout is a terminal"),
-        (!native_context(), "not a CI run at the root of a pnpm workspace with a quiet stderr"),
-        (!network_environment_is_plain(), "a proxy, CA or Node option is set in the environment"),
-    ] {
-        if declined {
-            return Err(reason.to_owned());
-        }
+    if let Some(reason) = context_decline() {
+        return Err(reason.to_owned());
+    }
+
+    if !network_environment_is_plain() {
+        return Err("a proxy, CA or Node option is set in the environment".to_owned());
     }
 
     let file = PathBuf::from(vis_cache_dir().ok_or("no cache directory (HOME is not a plain absolute path)")?)
@@ -184,7 +181,10 @@ fn clear(file: &Path) -> Result<Outcome, String> {
         Err(error) => return Err(format!("the cache file cannot be read: {error}")),
     };
 
-    Ok(Outcome { stdout: document(&[("cleared", cleared.to_string()), ("refetched", "false".to_owned())]), status: 0 })
+    Ok(Outcome {
+        stdout: pretty_document(&[("cleared", cleared.to_string()), ("refetched", "false".to_owned())]),
+        status: 0,
+    })
 }
 
 fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
@@ -207,7 +207,7 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
 
     Ok(match (fetched, cached) {
         (Some(keys), _) => Outcome {
-            stdout: document(&[
+            stdout: pretty_document(&[
                 ("cleared", "false".to_owned()),
                 ("fromCache", "false".to_owned()),
                 ("keyCount", keys.count.to_string()),
@@ -217,7 +217,7 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
             status: 0,
         },
         (None, Some(old)) => Outcome {
-            stdout: document(&[
+            stdout: pretty_document(&[
                 ("cleared", "false".to_owned()),
                 ("fromCache", "true".to_owned()),
                 ("keyCount", old.count.to_string()),
@@ -227,7 +227,7 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
             status: 0,
         },
         (None, None) => Outcome {
-            stdout: document(&[
+            stdout: pretty_document(&[
                 ("cleared", "false".to_owned()),
                 ("error", "\"fetch-failed\"".to_owned()),
                 ("refetched", "false".to_owned()),
@@ -449,13 +449,6 @@ fn store(file: &Path, keys: &Fetched) -> bool {
     file.parent().is_some_and(|directory| fs::create_dir_all(directory).is_ok()) && fs::write(file, entry).is_ok()
 }
 
-/// `JSON.stringify(object, undefined, 2)` and a newline, for values already written as JSON.
-fn document(fields: &[(&str, String)]) -> String {
-    let lines: Vec<String> = fields.iter().map(|(name, value)| format!("  \"{name}\": {value}")).collect();
-
-    format!("{{\n{}\n}}\n", lines.join(",\n"))
-}
-
 /// A URL `fetch` and this client read the same way: lower-case `http` or `https`, printable ASCII without
 /// backslashes, a fragment or an IPv6 literal, no user name or password, and no port from the list `fetch` refuses.
 fn url_is_plain(url: &str) -> bool {
@@ -583,7 +576,7 @@ mod tests {
     #[test]
     fn the_documents_are_json_stringify_with_two_spaces() {
         assert_eq!(
-            document(&[("cleared", "true".to_owned()), ("refetched", "false".to_owned())]),
+            pretty_document(&[("cleared", "true".to_owned()), ("refetched", "false".to_owned())]),
             "{\n  \"cleared\": true,\n  \"refetched\": false\n}\n"
         );
     }

@@ -37,8 +37,8 @@ use rayon::prelude::*;
 use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer};
 use vis_core::date::iso_from_millis;
 
-use crate::advisories::{in_ci, native_context};
 use crate::js::{is_js_whitespace, json_string, random_uuid};
+use crate::node_context::{in_ci, native_context};
 use crate::targets::{script_targets_below, Targets};
 use crate::term;
 use crate::toolchain::{self, Pins, Versions};
