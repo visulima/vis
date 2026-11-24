@@ -74,8 +74,7 @@ pub async fn run_concurrent_batch(
                     // intentionally dropped here — batch mode doesn't
                     // expose them, and callers that need them should
                     // use `runConcurrent` instead.
-                    let kind = event.kind.as_str();
-                    if kind == "started" || kind == "close" || kind == "error" {
+                    if !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. }) {
                         cb.call(Ok(event.into()), ThreadsafeFunctionCallMode::NonBlocking);
                     }
                 }

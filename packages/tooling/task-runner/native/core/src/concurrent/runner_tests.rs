@@ -54,12 +54,12 @@ mod tests {
         let mut stdout_count = 0;
         let mut close_count = 0;
         while let Ok(event) = event_rx.try_recv() {
-            match event.kind.as_str() {
-                "stdout" => {
+            match event {
+                ProcessEvent::Stdout { text, .. } => {
                     stdout_count += 1;
-                    assert_eq!(event.text.as_deref(), Some("hello"));
+                    assert_eq!(text, "hello");
                 }
-                "close" => close_count += 1,
+                ProcessEvent::Close { .. } => close_count += 1,
                 _ => {}
             }
         }
@@ -77,26 +77,26 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
         let _ = runner.run(event_tx).await;
 
-        let mut started: Vec<ProcessEvent> = Vec::new();
+        let mut started: Vec<(u32, Option<u32>)> = Vec::new();
         let mut close_seen_before_started = false;
         let mut close_seen = false;
         while let Ok(event) = event_rx.try_recv() {
-            match event.kind.as_str() {
-                "started" => {
+            match event {
+                ProcessEvent::Started { index, pid } => {
                     if close_seen {
                         close_seen_before_started = true;
                     }
-                    started.push(event);
+                    started.push((index, pid));
                 }
-                "close" => close_seen = true,
+                ProcessEvent::Close { .. } => close_seen = true,
                 _ => {}
             }
         }
 
         assert_eq!(started.len(), 1, "expected exactly one started event");
-        assert_eq!(started[0].index, 0);
-        assert!(started[0].pid.is_some(), "started event should carry a pid");
-        assert!(started[0].pid.unwrap() > 0, "pid should be a positive integer");
+        assert_eq!(started[0].0, 0);
+        assert!(started[0].1.is_some(), "started event should carry a pid");
+        assert!(started[0].1.unwrap() > 0, "pid should be a positive integer");
         assert!(!close_seen_before_started, "started event must arrive before close event");
     }
 
@@ -198,9 +198,9 @@ mod tests {
 
         let mut has_stderr = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stderr" {
+            if let ProcessEvent::Stderr { text, .. } = event {
                 has_stderr = true;
-                assert_eq!(event.text.as_deref(), Some("error"));
+                assert_eq!(text, "error");
             }
         }
         assert!(has_stderr, "expected stderr event");
@@ -228,7 +228,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("hello_from_rust") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "hello_from_rust") {
                 found = true;
             }
         }
@@ -276,15 +276,15 @@ mod tests {
         }
 
         // Find the close event index
-        let close_idx = events.iter().position(|e| e.kind == "close");
-        let stdout_events: Vec<_> = events.iter().filter(|e| e.kind == "stdout").collect();
+        let close_idx = events.iter().position(|e| matches!(e, ProcessEvent::Close { .. }));
+        let stdout_events: Vec<_> = events.iter().filter(|e| matches!(e, ProcessEvent::Stdout { .. })).collect();
 
         assert!(close_idx.is_some(), "expected a close event");
         assert_eq!(stdout_events.len(), 3, "expected 3 stdout lines");
 
         // All stdout events must come before the close event
         for (i, event) in events.iter().enumerate() {
-            if event.kind == "stdout" {
+            if matches!(event, ProcessEvent::Stdout { .. }) {
                 assert!(
                     i < close_idx.unwrap(),
                     "stdout event at index {} came after close event at index {}",
@@ -340,12 +340,8 @@ mod tests {
 
         let mut found_tmp = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" {
-                if let Some(text) = &event.text {
-                    if text.contains("tmp") {
-                        found_tmp = true;
-                    }
-                }
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text.contains("tmp")) {
+                found_tmp = true;
             }
         }
         assert!(found_tmp, "expected /tmp in pwd output");
@@ -370,7 +366,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("direct-mode") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "direct-mode") {
                 found = true;
             }
         }
@@ -397,7 +393,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("piped") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "piped") {
                 found = true;
             }
         }
@@ -443,7 +439,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("pipe-test") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "pipe-test") {
                 found = true;
             }
         }
@@ -465,7 +461,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = event_rx.try_recv() {
-            if event.kind == "stdout" && event.text.as_deref() == Some("custom-shell") {
+            if matches!(&event, ProcessEvent::Stdout { text, .. } if text == "custom-shell") {
                 found = true;
             }
         }

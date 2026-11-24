@@ -45,7 +45,7 @@ pub(crate) fn spawn_process(
     // Surface the pid to the consumer before any output streams,
     // so JS-side signal handlers can register the child for cleanup
     // before it has a chance to emit anything.
-    let _ = event_tx.send(ProcessEvent::started(index, pid));
+    let _ = event_tx.send(ProcessEvent::Started { index, pid });
 
     // Spawn stdout reader -- returns JoinHandle so we can wait for it
     let mut stdout_handle: Option<JoinHandle<()>> =
@@ -247,7 +247,7 @@ where
     R: AsyncRead + Unpin,
 {
     let emit = |text: String| {
-        let event = if is_stderr { ProcessEvent::stderr(index, text) } else { ProcessEvent::stdout(index, text) };
+        let event = if is_stderr { ProcessEvent::Stderr { index, text } } else { ProcessEvent::Stdout { index, text } };
 
         let _ = tx.send(event);
     };
@@ -471,8 +471,15 @@ mod tests {
     /// Receive the next event's text within `within`, or `None` on timeout/close.
     async fn next_text(rx: &mut mpsc::UnboundedReceiver<ProcessEvent>, within: Duration) -> Option<String> {
         match timeout(within, rx.recv()).await {
-            Ok(Some(event)) => event.text,
+            Ok(Some(ProcessEvent::Stdout { text, .. } | ProcessEvent::Stderr { text, .. })) => Some(text),
             _ => None,
+        }
+    }
+
+    fn text_of(event: ProcessEvent) -> String {
+        match event {
+            ProcessEvent::Stdout { text, .. } | ProcessEvent::Stderr { text, .. } => text,
+            other => panic!("expected an output event, got {other:?}"),
         }
     }
 
@@ -552,9 +559,7 @@ mod tests {
 
         let event = timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
 
-        assert_eq!(event.kind, "stderr");
-        assert_eq!(event.index, 7);
-        assert_eq!(event.text.as_deref(), Some("err-line"));
+        assert_eq!(event, ProcessEvent::Stderr { index: 7, text: "err-line".to_string() });
 
         drop(writer);
         handle.await.unwrap();
@@ -586,7 +591,7 @@ mod tests {
 
         let mut total = 0usize;
         while let Ok(event) = rx.try_recv() {
-            total += event.text.map_or(0, |t| t.len());
+            total += text_of(event).len();
         }
         assert_eq!(total, 50 * 1024 * 1024, "no byte may be lost to the cap");
     }
@@ -610,7 +615,7 @@ mod tests {
 
         let mut lengths = Vec::new();
         while let Ok(event) = rx.try_recv() {
-            lengths.push(event.text.unwrap().len());
+            lengths.push(text_of(event).len());
         }
 
         assert!(lengths.iter().all(|&l| l <= super::MAX_LINE_BYTES), "every event stays under the cap: {lengths:?}");
@@ -631,7 +636,7 @@ mod tests {
         handle.await.unwrap();
 
         let event = rx.try_recv().unwrap();
-        assert_eq!(event.text.unwrap().len(), 200_000);
+        assert_eq!(text_of(event).len(), 200_000);
         assert!(rx.try_recv().is_err());
     }
 

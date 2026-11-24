@@ -88,13 +88,13 @@ impl ConcurrentRunner {
                         }
 
                         // Send close event to JS
-                        let _ = event_tx.send(ProcessEvent::close(
-                            close_event.index,
-                            close_event.exit_code,
-                            close_event.killed,
-                            close_event.name.clone(),
-                            close_event.duration_ms,
-                        ));
+                        let _ = event_tx.send(ProcessEvent::Close {
+                            index: close_event.index,
+                            exit_code: close_event.exit_code,
+                            killed: close_event.killed,
+                            command_name: close_event.name.clone(),
+                            duration_ms: close_event.duration_ms,
+                        });
 
                         // Check kill-others condition. Hard-kill (graceful=false)
                         // since this is a peer-induced abort, not a user Ctrl+C.
@@ -158,7 +158,10 @@ impl ConcurrentRunner {
                     }
                     Err(e) => {
                         // Send error event
-                        let _ = event_tx.send(ProcessEvent::error(cmd_index as u32, format!("Failed to spawn: {}", e)));
+                        let _ = event_tx.send(ProcessEvent::Error {
+                            index: cmd_index as u32,
+                            message: format!("Failed to spawn: {}", e),
+                        });
                         // Send synthetic close event so this command appears in results
                         let _ = completion_tx.send(CompletionMessage {
                             index: cmd_index as u32,

@@ -39,28 +39,44 @@ pub struct ConcurrentRunnerOptions {
 }
 
 /// An event emitted during concurrent execution.
-/// Discriminated by the `kind` field.
-#[derive(Debug, Clone)]
-pub struct ProcessEvent {
-    /// Event type: "started", "stdout", "stderr", "close", "error".
-    pub kind: String,
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProcessEvent {
+    /// Emitted exactly once per command, immediately after the child process
+    /// has been spawned. `pid` is the OS pid, or `None` if the platform could
+    /// not return one. Consumers use it to register children for cleanup.
+    Started { index: u32, pid: Option<u32> },
+    /// One line of standard output.
+    Stdout { index: u32, text: String },
+    /// One line of standard error.
+    Stderr { index: u32, text: String },
+    /// The command finished. A signalled child has exit code `128 + signal`.
+    Close { index: u32, exit_code: i32, killed: bool, command_name: Option<String>, duration_ms: f64 },
+    /// The command could not be spawned.
+    Error { index: u32, message: String },
+}
+
+impl ProcessEvent {
     /// Index of the command that produced this event.
-    pub index: u32,
-    /// Text content (for stdout/stderr events).
-    pub text: Option<String>,
-    /// Exit code (for close events). -1 if killed by signal.
-    pub exit_code: Option<i32>,
-    /// Whether the process was killed (for close events).
-    pub killed: Option<bool>,
-    /// Error message (for error events).
-    pub message: Option<String>,
-    /// Command name (for close events).
-    pub command_name: Option<String>,
-    /// Duration in milliseconds (for close events).
-    pub duration_ms: Option<f64>,
-    /// OS process id (for started events). `None` when the platform
-    /// could not provide a pid for the freshly spawned child.
-    pub pid: Option<u32>,
+    pub fn index(&self) -> u32 {
+        match self {
+            Self::Started { index, .. }
+            | Self::Stdout { index, .. }
+            | Self::Stderr { index, .. }
+            | Self::Close { index, .. }
+            | Self::Error { index, .. } => *index,
+        }
+    }
+
+    /// Name of the event type as the JS API spells it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Started { .. } => "started",
+            Self::Stdout { .. } => "stdout",
+            Self::Stderr { .. } => "stderr",
+            Self::Close { .. } => "close",
+            Self::Error { .. } => "error",
+        }
+    }
 }
 
 /// Result of a close event for a single command.
@@ -72,7 +88,7 @@ pub struct ConcurrentCloseEvent {
     pub command: String,
     /// The command name (if provided).
     pub name: Option<String>,
-    /// Exit code. -1 if killed by signal.
+    /// Exit code; `128 + signal` if a signal ended the process.
     pub exit_code: i32,
     /// Whether the process was forcefully killed.
     pub killed: bool,
@@ -87,80 +103,4 @@ pub struct ConcurrentRunResult {
     pub close_events: Vec<ConcurrentCloseEvent>,
     /// Whether the run succeeded according to the success condition.
     pub success: bool,
-}
-
-impl ProcessEvent {
-    /// Emitted exactly once per command, immediately after the child
-    /// process has been spawned. `pid` is the OS pid (or `None` if the
-    /// platform could not return one). Consumers use this to register
-    /// children for SIGINT/SIGTERM cleanup at the JS layer.
-    pub(crate) fn started(index: u32, pid: Option<u32>) -> Self {
-        Self {
-            kind: "started".to_string(),
-            index,
-            text: None,
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid,
-        }
-    }
-
-    pub(crate) fn stdout(index: u32, text: String) -> Self {
-        Self {
-            kind: "stdout".to_string(),
-            index,
-            text: Some(text),
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
-    }
-
-    pub(crate) fn stderr(index: u32, text: String) -> Self {
-        Self {
-            kind: "stderr".to_string(),
-            index,
-            text: Some(text),
-            exit_code: None,
-            killed: None,
-            message: None,
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
-    }
-
-    pub(crate) fn close(index: u32, exit_code: i32, killed: bool, name: Option<String>, duration_ms: f64) -> Self {
-        Self {
-            kind: "close".to_string(),
-            index,
-            text: None,
-            exit_code: Some(exit_code),
-            killed: Some(killed),
-            message: None,
-            command_name: name,
-            duration_ms: Some(duration_ms),
-            pid: None,
-        }
-    }
-
-    pub(crate) fn error(index: u32, message: String) -> Self {
-        Self {
-            kind: "error".to_string(),
-            index,
-            text: None,
-            exit_code: None,
-            killed: None,
-            message: Some(message),
-            command_name: None,
-            duration_ms: None,
-            pid: None,
-        }
-    }
 }
