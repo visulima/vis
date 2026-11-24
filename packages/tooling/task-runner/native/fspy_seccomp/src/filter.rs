@@ -9,38 +9,39 @@
 //! takes ~80 lines and works on every Linux target with no C
 //! dependency.
 //!
-//! BPF program shape:
+//! BPF program shape (`x32` row only on x86_64):
 //!
 //! ```text
 //! ld [arch]                  // seccomp_data.arch (32 bits)
-//! jeq <native_arch>, 1, 0    // if matches: skip kill; else: kill
-//! ret KILL_PROCESS
+//! jeq <native_arch>, 0, notify
 //! ld [nr]                    // seccomp_data.nr (32 bits)
+//! jset <x32_bit>, notify, 0  // x32 syscalls share the x86_64 audit arch
 //! for each tracked syscall:
-//!     jeq <nr>, <to_notify>, 0
+//!     jeq <nr>, notify, 0
 //! ret ALLOW
-//! to_notify:
+//! notify:
 //! ret USER_NOTIF
 //! ```
+//!
+//! A syscall of a foreign ABI (an i386 binary on x86_64, an AArch32 binary
+//! on aarch64, an x32 syscall) cannot be decoded with this table: its
+//! numbers mean different calls. It is neither killed nor silently allowed;
+//! it is sent to the supervisor like a tracked syscall, which lets it run
+//! and marks the whole trace incomplete (see [`is_native_call`]) so the
+//! cache does not trust it. The cost is one supervisor round trip per
+//! syscall of such a process.
 
 use std::io;
 use std::os::raw::c_long;
 use std::os::unix::io::RawFd;
 
 use libc::{
-    c_uint, seccomp_data, sock_filter, sock_fprog, syscall, SYS_seccomp, BPF_ABS, BPF_JEQ, BPF_JMP, BPF_JUMP, BPF_K,
-    BPF_LD, BPF_RET, BPF_STMT, BPF_W, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_RET_ALLOW, SECCOMP_RET_USER_NOTIF,
+    c_uint, seccomp_data, sock_filter, sock_fprog, syscall, SYS_seccomp, BPF_ABS, BPF_JEQ, BPF_JMP, BPF_JSET, BPF_K,
+    BPF_LD, BPF_RET, BPF_W, SECCOMP_FILTER_FLAG_NEW_LISTENER, SECCOMP_RET_ALLOW, SECCOMP_RET_USER_NOTIF,
     SECCOMP_SET_MODE_FILTER,
 };
 
 use crate::syscalls::TrackedSyscall;
-
-/// `SECCOMP_RET_KILL_THREAD` (value 0) is used on the arch-
-/// mismatch branch — running with the wrong syscall numbers would
-/// let calls through silently, so terminating the offending thread
-/// is the safe fallback. Use KILL_THREAD rather than KILL_PROCESS
-/// for broader kernel-config compatibility.
-const SECCOMP_RET_KILL_THREAD: c_uint = 0x0000_0000;
 
 /// `AUDIT_ARCH_*` aren't in libc. Hard-coded per arch from
 /// `<linux/audit.h>`. Only arches that ALSO have a populated
@@ -48,11 +49,26 @@ const SECCOMP_RET_KILL_THREAD: c_uint = 0x0000_0000;
 /// the filter would build a no-op tracker (every syscall resolves
 /// to `None`, so nothing is intercepted). A new arch needs BOTH a
 /// constant here and its numbers in `syscalls.rs`.
+/// The syscall ABI a filter is built for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Abi {
+    /// `AUDIT_ARCH_*` of the ABI whose syscall numbers the table holds.
+    pub audit_arch: c_uint,
+    /// Bit set in `seccomp_data.nr` by a syscall of a second ABI that shares
+    /// `audit_arch` (`__X32_SYSCALL_BIT` on x86_64); `None` when there is none.
+    pub alias_bit: Option<c_uint>,
+}
+
+impl Abi {
+    pub const X86_64: Self = Self { audit_arch: 0xc000_003e, alias_bit: Some(0x4000_0000) };
+    pub const AARCH64: Self = Self { audit_arch: 0xc000_00b7, alias_bit: None };
+}
+
 #[cfg(target_arch = "x86_64")]
-const NATIVE_AUDIT_ARCH: c_uint = 0xc000_003e;
+pub const NATIVE_ABI: Abi = Abi::X86_64;
 
 #[cfg(target_arch = "aarch64")]
-const NATIVE_AUDIT_ARCH: c_uint = 0xc000_00b7;
+pub const NATIVE_ABI: Abi = Abi::AARCH64;
 
 // Gate unsupported arches at compile time rather than shipping a
 // silent no-op. riscv64 has an AUDIT_ARCH (0xc000_00f3) but no
@@ -81,7 +97,8 @@ compile_error!(
 /// same thread, or `seccomp(2)` returns `EACCES` for a non-root
 /// process.
 pub unsafe fn install(tracked: &[TrackedSyscall]) -> io::Result<RawFd> {
-    let prog = build_bpf(tracked);
+    let numbers: Vec<i32> = tracked.iter().filter_map(TrackedSyscall::nr).collect();
+    let prog = build_program(NATIVE_ABI, &numbers)?;
     let fprog = sock_fprog {
         len: u16::try_from(prog.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "BPF program exceeds 65535 instructions"))?,
@@ -106,9 +123,34 @@ pub unsafe fn install(tracked: &[TrackedSyscall]) -> io::Result<RawFd> {
     Ok(rc as RawFd)
 }
 
-/// Construct the BPF program. ~5 fixed instructions for the arch
-/// guard + 1 per tracked syscall + 2 final returns (allow, notify).
-fn build_bpf(tracked: &[TrackedSyscall]) -> Vec<sock_filter> {
+/// Whether a trapped syscall belongs to the ABI the syscall table was built
+/// for. `false` for a foreign architecture and for the x32 alias: their
+/// numbers mean different syscalls, so [`crate::syscalls::classify`] must not
+/// decode them. Mirrors the checks the BPF program makes.
+pub fn is_native_call(abi: Abi, arch: u32, nr: i32) -> bool {
+    arch == abi.audit_arch && abi.alias_bit.is_none_or(|bit| nr as u32 & bit == 0)
+}
+
+fn insn(code: c_uint, jt: u8, jf: u8, k: u32) -> sock_filter {
+    sock_filter { code: code as u16, jt, jf, k }
+}
+
+/// Relative offset of a BPF jump from instruction `from` to instruction `to`
+/// (`to` is executed after skipping `to - from - 1` instructions). The
+/// offset field is 8 bits, so a longer jump cannot be encoded.
+fn jump(from: usize, to: usize) -> io::Result<u8> {
+    u8::try_from(to - from - 1).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("BPF jump of {} instructions exceeds 255: too many tracked syscalls", to - from - 1),
+        )
+    })
+}
+
+/// Construct the BPF program for `abi` and the given syscall numbers:
+/// 3 fixed instructions (+1 for an alias ABI), one `jeq` per syscall and the
+/// two final returns (allow, notify). Fails when a jump cannot be encoded.
+pub(crate) fn build_program(abi: Abi, syscall_numbers: &[i32]) -> io::Result<Vec<sock_filter>> {
     // Field offsets in `struct seccomp_data` — stable kernel ABI:
     //   nr        : offset 0  (i32)
     //   arch      : offset 4  (u32)
@@ -117,36 +159,200 @@ fn build_bpf(tracked: &[TrackedSyscall]) -> Vec<sock_filter> {
     let arch_offset = std::mem::offset_of!(seccomp_data, arch) as u32;
     let nr_offset = std::mem::offset_of!(seccomp_data, nr) as u32;
 
-    // Pre-filter out syscalls that don't exist on this arch — they
-    // contribute no BPF instruction. Doing this once lets the jump
-    // offsets stay simple (count of remaining checks).
-    let resolved: Vec<i32> = tracked.iter().filter_map(|s| s.nr()).collect();
+    let load = BPF_LD | BPF_W | BPF_ABS;
+    let jeq = BPF_JMP | BPF_JEQ | BPF_K;
+    let ret = BPF_RET | BPF_K;
 
-    let mut prog = Vec::with_capacity(5 + resolved.len() + 1);
+    let alias = usize::from(abi.alias_bit.is_some());
+    let first_jeq = 3 + alias;
+    let allow_at = first_jeq + syscall_numbers.len();
+    let notify_at = allow_at + 1;
 
-    // 1. Load seccomp_data.arch
-    prog.push(unsafe { BPF_STMT((BPF_LD | BPF_W | BPF_ABS) as u16, arch_offset) });
-    // 2. If arch matches native, skip the kill; else fall through.
-    prog.push(unsafe { BPF_JUMP((BPF_JMP | BPF_JEQ | BPF_K) as u16, NATIVE_AUDIT_ARCH, 1, 0) });
-    // 3. Kill on arch mismatch — running with wrong syscall
-    //    numbers would let calls through silently. Safer to terminate.
-    prog.push(unsafe { BPF_STMT((BPF_RET | BPF_K) as u16, SECCOMP_RET_KILL_THREAD) });
-    // 4. Load seccomp_data.nr
-    prog.push(unsafe { BPF_STMT((BPF_LD | BPF_W | BPF_ABS) as u16, nr_offset) });
+    let mut prog = Vec::with_capacity(notify_at + 1);
 
-    // 5. For each tracked syscall, jeq to the NOTIFY return at the
-    //    end. Distance from this jeq to NOTIFY = (remaining checks
-    //    after this one) + 1 (skip the ALLOW return).
-    let n = resolved.len();
-    for (i, nr) in resolved.iter().enumerate() {
-        let jt = u8::try_from(n - 1 - i + 1).unwrap_or(0xff);
-        prog.push(unsafe { BPF_JUMP((BPF_JMP | BPF_JEQ | BPF_K) as u16, *nr as u32, jt, 0) });
+    // 0. Load seccomp_data.arch
+    prog.push(insn(load, 0, 0, arch_offset));
+    // 1. Native arch: go on to the syscall number; any other arch: notify,
+    //    so the supervisor can flag the trace as incomplete.
+    prog.push(insn(jeq, 0, jump(1, notify_at)?, abi.audit_arch));
+    // 2. Load seccomp_data.nr
+    prog.push(insn(load, 0, 0, nr_offset));
+    // 3. The alias ABI (x32) shares the arch value: notify on its marker bit.
+    if let Some(bit) = abi.alias_bit {
+        prog.push(insn(BPF_JMP | BPF_JSET | BPF_K, jump(3, notify_at)?, 0, bit));
+    }
+    // 4. One jeq per tracked syscall, jumping to the notify return.
+    for (i, nr) in syscall_numbers.iter().enumerate() {
+        prog.push(insn(jeq, jump(first_jeq + i, notify_at)?, 0, *nr as u32));
+    }
+    // 5. Default action: allow.
+    prog.push(insn(ret, 0, 0, SECCOMP_RET_ALLOW));
+    // 6. Notify target.
+    prog.push(insn(ret, 0, 0, SECCOMP_RET_USER_NOTIF));
+
+    Ok(prog)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::syscalls;
+
+    const AUDIT_ARCH_I386: u32 = 0x4000_0003;
+    const AUDIT_ARCH_ARM: u32 = 0x4000_0028;
+    const X32_BIT: i32 = 0x4000_0000;
+
+    /// Evaluates the subset of classic BPF the program uses (`ld abs`, `jeq`,
+    /// `jset`, `ret`) against a `seccomp_data` with the given arch and nr, so
+    /// the tests check what the kernel would decide rather than the layout.
+    fn evaluate(prog: &[sock_filter], arch: u32, nr: i32) -> u32 {
+        let arch_offset = std::mem::offset_of!(seccomp_data, arch) as u32;
+        let nr_offset = std::mem::offset_of!(seccomp_data, nr) as u32;
+        let mut acc = 0_u32;
+        let mut pc = 0_usize;
+
+        loop {
+            let i = &prog[pc];
+            pc += 1;
+
+            match u32::from(i.code) {
+                c if c == BPF_LD | BPF_W | BPF_ABS => {
+                    acc = if i.k == arch_offset {
+                        arch
+                    } else if i.k == nr_offset {
+                        nr as u32
+                    } else {
+                        panic!("load of unexpected seccomp_data offset {}", i.k)
+                    };
+                }
+                c if c == BPF_JMP | BPF_JEQ | BPF_K => pc += usize::from(if acc == i.k { i.jt } else { i.jf }),
+                c if c == BPF_JMP | BPF_JSET | BPF_K => pc += usize::from(if acc & i.k != 0 { i.jt } else { i.jf }),
+                c if c == BPF_RET | BPF_K => return i.k,
+                c => panic!("unexpected BPF opcode {c:#x}"),
+            }
+        }
     }
 
-    // 6. Default action: allow.
-    prog.push(unsafe { BPF_STMT((BPF_RET | BPF_K) as u16, SECCOMP_RET_ALLOW) });
-    // 7. Notify target (jumped to from any matched jeq above).
-    prog.push(unsafe { BPF_STMT((BPF_RET | BPF_K) as u16, SECCOMP_RET_USER_NOTIF) });
+    const NOTIFY: u32 = SECCOMP_RET_USER_NOTIF;
+    const ALLOW: u32 = SECCOMP_RET_ALLOW;
 
-    prog
+    #[test]
+    fn native_tracked_syscalls_notify_and_others_are_allowed() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let prog = build_program(abi, &[2, 257, 437]).unwrap();
+
+            for nr in [2, 257, 437] {
+                assert_eq!(evaluate(&prog, abi.audit_arch, nr), NOTIFY, "{abi:?} nr {nr}");
+            }
+            for nr in [0, 1, 3, 256, 258, 436, 438, 1000] {
+                assert_eq!(evaluate(&prog, abi.audit_arch, nr), ALLOW, "{abi:?} nr {nr}");
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_arch_is_notified_not_killed_or_allowed() {
+        // i386 `open` is nr 5 and x86_64 `read` is 0. A foreign-ABI child must neither die
+        // with SIGSYS (KILL_THREAD) nor run unobserved (ALLOW).
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let prog = build_program(abi, &[2, 257]).unwrap();
+
+            for arch in [AUDIT_ARCH_I386, AUDIT_ARCH_ARM, 0] {
+                for nr in [0, 2, 5, 257, 1000] {
+                    assert_eq!(evaluate(&prog, arch, nr), NOTIFY, "{abi:?} arch {arch:#x} nr {nr}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_other_native_arch_counts_as_foreign() {
+        let prog = build_program(Abi::X86_64, &[2]).unwrap();
+
+        assert_eq!(evaluate(&prog, Abi::AARCH64.audit_arch, 56), NOTIFY);
+    }
+
+    #[test]
+    fn x32_syscalls_are_notified_on_x86_64_only() {
+        let prog = build_program(Abi::X86_64, &[2, 257]).unwrap();
+
+        // Same audit arch, number | __X32_SYSCALL_BIT: would otherwise slip past the jeq list.
+        for nr in [0, 2, 257, 1000] {
+            assert_eq!(evaluate(&prog, Abi::X86_64.audit_arch, nr | X32_BIT), NOTIFY, "x32 nr {nr}");
+        }
+
+        // aarch64 has no alias ABI: the program has no such branch.
+        let prog = build_program(Abi::AARCH64, &[56]).unwrap();
+
+        assert_eq!(evaluate(&prog, Abi::AARCH64.audit_arch, 1000), ALLOW);
+    }
+
+    #[test]
+    fn is_native_call_agrees_with_the_program() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let prog = build_program(abi, &[2, 257]).unwrap();
+
+            for arch in
+                [abi.audit_arch, AUDIT_ARCH_I386, AUDIT_ARCH_ARM, Abi::X86_64.audit_arch, Abi::AARCH64.audit_arch]
+            {
+                for nr in [0, 2, 5, 257, 1000, 2 | X32_BIT, 1000 | X32_BIT] {
+                    let native = is_native_call(abi, arch, nr);
+                    let decision = evaluate(&prog, arch, nr);
+
+                    // A call the supervisor will not decode must reach it: foreign => notify.
+                    if !native {
+                        assert_eq!(decision, NOTIFY, "{abi:?} arch {arch:#x} nr {nr:#x}");
+                    }
+                }
+            }
+
+            assert!(is_native_call(abi, abi.audit_arch, 257));
+            assert!(!is_native_call(abi, AUDIT_ARCH_I386, 5));
+        }
+
+        assert!(!is_native_call(Abi::X86_64, Abi::X86_64.audit_arch, 257 | X32_BIT));
+    }
+
+    /// Longest syscall list whose farthest jump (the arch check) still fits in 8 bits.
+    fn max_syscalls(abi: Abi) -> usize {
+        255 - 2 - usize::from(abi.alias_bit.is_some())
+    }
+
+    #[test]
+    fn the_largest_encodable_list_builds_and_still_decides_correctly() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let n = max_syscalls(abi);
+            let numbers: Vec<i32> = (1..=n as i32).collect();
+            let prog = build_program(abi, &numbers).unwrap();
+
+            // First, middle and last entries all reach the notify return.
+            for nr in [1, n as i32 / 2, n as i32] {
+                assert_eq!(evaluate(&prog, abi.audit_arch, nr), NOTIFY, "{abi:?} nr {nr}");
+            }
+            assert_eq!(evaluate(&prog, abi.audit_arch, n as i32 + 1), ALLOW);
+            assert_eq!(evaluate(&prog, AUDIT_ARCH_I386, 1), NOTIFY);
+        }
+    }
+
+    #[test]
+    fn a_list_that_needs_a_jump_past_255_is_an_error_not_a_clamped_jump() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let numbers: Vec<i32> = (1..=max_syscalls(abi) as i32 + 1).collect();
+            let err = build_program(abi, &numbers).unwrap_err();
+
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{abi:?}");
+            assert!(err.to_string().contains("exceeds 255"), "{err}");
+        }
+    }
+
+    #[test]
+    fn the_real_table_traps_every_tracked_syscall_on_this_arch() {
+        let numbers: Vec<i32> = syscalls::tracked().iter().filter_map(TrackedSyscall::nr).collect();
+        let prog = build_program(NATIVE_ABI, &numbers).unwrap();
+
+        assert!(!numbers.is_empty());
+        for nr in &numbers {
+            assert_eq!(evaluate(&prog, NATIVE_ABI.audit_arch, *nr), NOTIFY, "nr {nr}");
+        }
+    }
 }
