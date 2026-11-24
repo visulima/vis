@@ -429,22 +429,8 @@ fn static_value(expression: &Expression<'_>) -> Option<Value> {
         Expression::ObjectExpression(object) => {
             let mut map = Map::new();
 
-            for property in &object.properties {
-                let ObjectPropertyKind::ObjectProperty(property) = property else {
-                    return None;
-                };
-
-                if property.computed || property.method || property.kind != PropertyKind::Init {
-                    return None;
-                }
-
-                let key = match &property.key {
-                    PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
-                    PropertyKey::StringLiteral(literal) => literal.value.to_string(),
-                    _ => return None,
-                };
-
-                if map.insert(key, static_value(&property.value)?).is_some() {
+            for (key, value) in object_properties(object)? {
+                if map.insert(key, static_value(value)?).is_some() {
                     return None;
                 }
             }
@@ -512,6 +498,19 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
 
         state
+    }
+
+    #[test]
+    fn a_key_with_a_lone_surrogate_is_not_a_literal_anywhere_in_the_config() {
+        // The parser has no UTF-8 form for it, and Node would print it as an escape.
+        assert_eq!(
+            config("surrogate-key", "vis.config.ts", "export default { nested: { \"\\ud800\": 1 } };\n"),
+            ConfigState::Dynamic
+        );
+        assert_eq!(
+            config("surrogate-top", "vis.config.ts", "export default { \"\\ud800\": 1 };\n"),
+            ConfigState::Dynamic
+        );
     }
 
     #[test]
