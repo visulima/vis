@@ -170,8 +170,6 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
             }
         }
         "bun" => {
-            // `bunx` runs one binary once in the current directory; every selection flag would be
-            // dropped and the command would still exit 0.
             refuse_exec_flags("bun", "`bunx <command>`", &opts, true)?;
 
             bin = "bunx".into();
