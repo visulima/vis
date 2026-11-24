@@ -5,6 +5,7 @@
 //! (a manifest that is not strict JSON, a dependency block that is an array, a `workspaces` field next to the YAML,
 //! `overrides` in the workspace YAML) is `None`, and the command goes to Node.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -133,8 +134,9 @@ pub(super) fn read(root: &Path) -> Option<Workspace> {
     Some(Workspace { instances, packages, patterns, root: root.to_path_buf() })
 }
 
-/// Whether the workspace YAML has an `overrides:` key at any depth. Node reads those into `pnpm.overrides`
-/// instances with a full YAML parser; the lines are enough to tell that there are none. `None` when it is unreadable.
+/// Whether the workspace YAML mentions `overrides` at all. Node reads the key into `pnpm.overrides` instances with a
+/// full YAML parser (quoted keys, flow mappings and spaces before the colon included); the word is enough to tell that
+/// there are none. `None` when it is unreadable.
 fn yaml_declares_overrides(root: &Path) -> Option<bool> {
     let path = root.join("pnpm-workspace.yaml");
 
@@ -142,7 +144,7 @@ fn yaml_declares_overrides(root: &Path) -> Option<bool> {
         return Some(false);
     }
 
-    Some(fs::read_to_string(path).ok()?.lines().any(|line| line.trim_start().starts_with("overrides:")))
+    Some(fs::read_to_string(path).ok()?.contains("overrides"))
 }
 
 /// The string-valued entries of the block `dep_type` of `package`. `None` when JavaScript would read the block as
@@ -168,12 +170,21 @@ fn entries(package: &Json, dep_type: DepType) -> Option<Vec<(&str, &str)>> {
 
 /// `iterateWorkspaceDeps`: every dependency of every package.
 fn instances(packages: &[Package]) -> Option<Vec<Instance>> {
-    let internal: Vec<&str> = packages.iter().filter_map(|package| package.name.as_deref()).collect();
+    let internal: HashSet<&str> = packages.iter().filter_map(|package| package.name.as_deref()).collect();
     let mut found = Vec::new();
 
     for (index, package) in packages.iter().enumerate() {
+        // `colorize` closes and re-opens its style around a line feed, which the printers do not do.
+        if package.name.as_deref().is_some_and(has_control_character) {
+            return None;
+        }
+
         for dep_type in DepType::ALL {
             for (name, specifier) in entries(&package.json, dep_type)? {
+                if has_control_character(name) || has_control_character(specifier) {
+                    return None;
+                }
+
                 found.push(Instance {
                     dep_name: name.to_owned(),
                     dep_type,
@@ -186,4 +197,8 @@ fn instances(packages: &[Package]) -> Option<Vec<Instance>> {
     }
 
     Some(found)
+}
+
+fn has_control_character(text: &str) -> bool {
+    text.chars().any(char::is_control)
 }

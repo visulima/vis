@@ -334,6 +334,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectDelegation({ ...clean(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\noverrides:\n  lodash: ^4\n' }, []);
             harness.expectDelegation({ ...clean(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  - "!packages/b"\n' }, []);
             harness.expectDelegation({ ...clean(), "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - x\n" }, []);
+            harness.expectDelegation({ ...clean(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n"overrides":\n  lodash: ^4\n' }, []);
+            harness.expectDelegation({ ...clean(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\noverrides : { lodash: ^4 }\n' }, []);
             harness.expectDelegation({ ...clean(), "aube-workspace.yaml": 'packages:\n  - "packages/*"\n' }, []);
             harness.expectDelegation({ ...clean(), "packages/a/package.json": "{ not json" }, []);
             harness.expectDelegation({ ...clean(), "packages/a/package.json": '{ "name": "a", // note\n "dependencies": {} }\n' }, []);
@@ -343,6 +345,15 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectDelegation({ ...clean(), "package.json": json({ dependencies: ["x"], name: "root", private: true }) }, ["--root-deps"]);
             harness.expectDelegation({ ...clean(), "packages/a/package.json": json({ devDependencies: [], name: "a" }) }, []);
             harness.expectDelegation({ ...clean(), "vis.config.ts": "export default {};\n" }, []);
+        });
+
+        it("a name or specifier with a control character is declined", () => {
+            expect.hasAssertions();
+
+            const files = workspaceFiles({ ...project("a", { dependencies: { b: "1\n2" } }), ...project("b") });
+
+            harness.expectDelegation(files, [], { FORCE_COLOR: "1" });
+            harness.expectDelegation(workspaceFiles({ ...project("a", { dependencies: { "x\ny": "1" } }) }), ["--format", "json"]);
         });
 
         it("a pattern the directory listing does not reproduce is declined for the lints that read it", () => {

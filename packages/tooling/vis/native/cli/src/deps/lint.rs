@@ -6,6 +6,7 @@
 //! no issue in either, which is all the printers need. `banned-deps` has nothing to ban without a
 //! policy.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -185,23 +186,18 @@ fn workspace_protocol(instances: &[Instance]) -> Vec<WorkspaceProtocol> {
 
 fn redefine_root(instances: &[Instance]) -> Vec<RedefineRoot> {
     let in_scope = |instance: &Instance| DEFAULT_REDEFINE_TYPES.contains(&instance.dep_type);
-    let mut roots: Vec<(&str, DepType, &str)> = Vec::new();
+    let mut roots: HashMap<&str, (DepType, &str)> = HashMap::new();
 
     // The root is package 0; a later declaration of a name replaces an earlier one.
     for instance in instances.iter().filter(|instance| instance.package == 0 && in_scope(instance)) {
-        let entry = (instance.dep_name.as_str(), instance.dep_type, instance.specifier.as_str());
-
-        match roots.iter_mut().find(|known| known.0 == entry.0) {
-            Some(known) => *known = entry,
-            None => roots.push(entry),
-        }
+        roots.insert(&instance.dep_name, (instance.dep_type, &instance.specifier));
     }
 
     instances
         .iter()
         .filter(|instance| instance.package != 0 && in_scope(instance))
         .filter_map(|instance| {
-            let (_, root_dep_type, root_specifier) = roots.iter().find(|known| known.0 == instance.dep_name)?;
+            let (root_dep_type, root_specifier) = roots.get(instance.dep_name.as_str())?;
 
             Some(RedefineRoot {
                 child_specifier: instance.specifier.clone(),
@@ -218,7 +214,7 @@ fn redefine_root(instances: &[Instance]) -> Vec<RedefineRoot> {
 /// `lintWorkspaceVersions` with the default `highest` strategy: an external dependency that two packages declare with
 /// two different specifiers is a drift.
 fn has_version_drift(instances: &[Instance]) -> bool {
-    let mut seen: Vec<(&str, &str)> = Vec::new();
+    let mut seen: HashMap<&str, &str> = HashMap::new();
 
     for instance in instances {
         let eligible = !instance.is_internal
@@ -226,14 +222,8 @@ fn has_version_drift(instances: &[Instance]) -> bool {
             && !instance.specifier.starts_with("workspace:")
             && !instance.specifier.starts_with("catalog:");
 
-        if !eligible {
-            continue;
-        }
-
-        match seen.iter_mut().find(|known| known.0 == instance.dep_name) {
-            Some(known) if known.1 != instance.specifier => return true,
-            Some(_) => {}
-            None => seen.push((&instance.dep_name, &instance.specifier)),
+        if eligible && *seen.entry(&instance.dep_name).or_insert(&instance.specifier) != instance.specifier {
+            return true;
         }
     }
 
@@ -275,17 +265,9 @@ fn is_plain(text: &str) -> bool {
 /// packages declare with two different values is a drift. `None` when a value is outside the plain text this module
 /// reads, or the package has a `devEngines` field, whose entries it does not read.
 fn has_custom_type_drift(packages: &[Package]) -> Option<bool> {
-    let mut seen: Vec<(String, String)> = Vec::new();
-    let mut drifts = |key: String, specifier: &str| -> bool {
-        match seen.iter().find(|known| known.0 == key) {
-            Some(known) => known.1 != specifier,
-            None => {
-                seen.push((key, specifier.to_owned()));
-
-                false
-            }
-        }
-    };
+    let mut seen: HashMap<String, String> = HashMap::new();
+    let mut drifts =
+        |key: String, specifier: &str| -> bool { seen.entry(key).or_insert_with(|| specifier.to_owned()) != specifier };
 
     for package in packages {
         if package.json.get("devEngines").is_some() {
@@ -348,10 +330,10 @@ fn root_private(packages: &[Package]) -> Option<Option<Json>> {
     }
 }
 
-/// `lintRootPackageManager`: whether the root's `packageManager` is not a string of the form `name@version`.
+/// `lintRootPackageManager`: whether the root's `packageManager` is not a string of the form `name@version`
+/// (`/^[a-z][\w-]*@\S+$/i`). `None` when the value is not ASCII, where `\S` would mean something else.
 fn root_package_manager(packages: &[Package]) -> Option<bool> {
-    let Some(value) = packages[0].json.get("packageManager") else { return Some(true) };
-    let Json::Str(text) = value else { return Some(true) };
+    let Some(Json::Str(text)) = packages[0].json.get("packageManager") else { return Some(true) };
 
     if !text.is_ascii() {
         return None;
@@ -361,17 +343,13 @@ fn root_package_manager(packages: &[Package]) -> Option<bool> {
         .bytes()
         .position(|byte| !(byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
         .unwrap_or(text.len());
-    let rest = &text[name_end..];
-    let starts_with_letter = text.bytes().next().is_some_and(|byte| byte.is_ascii_alphabetic());
-    let version = rest.strip_prefix('@');
+    let version = text[name_end..].strip_prefix('@');
+    let is_valid = text.starts_with(|character: char| character.is_ascii_alphabetic())
+        && version.is_some_and(|version| {
+            !version.is_empty() && !version.bytes().any(|byte| byte.is_ascii_whitespace() || byte == 0x0b)
+        });
 
-    Some(
-        !(starts_with_letter
-            && version.is_some_and(|version| {
-                !version.is_empty()
-                    && !version.bytes().any(|byte| byte.is_ascii_whitespace() || byte == 0x0b || byte == 0x0c)
-            })),
-    )
+    Some(!is_valid)
 }
 
 fn root_deps(packages: &[Package]) -> Option<Vec<String>> {
