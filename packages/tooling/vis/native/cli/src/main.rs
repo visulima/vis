@@ -35,12 +35,14 @@ mod ci_workflow;
 mod clean;
 mod complete;
 mod config_cache;
+mod dlx;
 mod error;
 mod exec;
 mod graph;
 mod help;
 mod hook;
 mod ignore;
+mod info;
 mod install;
 mod list;
 mod manifest;
@@ -177,6 +179,12 @@ fn main() {
         // `vis install` (alias `i`) with no packages — the plain install in a CI context. Every other
         // shape, and every root, config or environment the gates reject, is delegated inside `install::run`.
         "install" | "i" if !surface::asks_for_help(&args) => install::run(&args, &raw_args),
+        // `vis dlx <package> [args...]` — only the runs where the first-run gate does nothing (`--no-info`, shell mode
+        // without `-p`, non-registry specs). Every other shape is delegated inside `dlx::run`, before any output.
+        "dlx" if !surface::asks_for_help(&args) => dlx::run(&args, &raw_args),
+        // `vis info <package> [field...] [--json]` (alias `view`) — the registry view in a CI context. Every
+        // other shape, and every root, config or environment the gates reject, is delegated inside `info::run`.
+        "info" | "view" if !surface::asks_for_help(&args) => info::run(&args, &raw_args),
         // `vis pm <subcommand>` — package-manager utility passthrough.
         "pm" => pm::run(if args.len() > 1 { &args[1..] } else { &[] }),
         // `vis x <file>` — native file runner (spawn node-with-preload / bun),

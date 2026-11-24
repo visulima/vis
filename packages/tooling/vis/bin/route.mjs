@@ -553,6 +553,104 @@ const addColourIsPlain = (environment) => {
 const addMayRunNatively = (platform, environment, args, interactive) =>
     installContextIsNative(platform, environment, args, interactive) && addColourIsPlain(environment) && addShapeIsNative(args.slice(1));
 
+// A word of `vis info` the binary passes through (`is_plain_word` in `native/cli/src/info.rs`): the package, then the fields.
+const INFO_WORD = /^[a-z@][\w@/.~^<>=*|+:#,-]*$/i;
+
+// Whether `vis info` / `vis view` can pass the binary's native gate (`plan` in `info.rs`): plain words, at least one, and
+// `--json` at most once, in the context `vis install` needs. The binary re-checks everything, including the workspace
+// root, the config and the installer; this only skips the extra process when it would delegate anyway.
+const infoMayRunNatively = (platform, environment, args, interactive) => {
+    if (!installContextIsNative(platform, environment, args, interactive)) {
+        return false;
+    }
+
+    const flags = args.slice(1);
+    const words = flags.filter((flag) => flag !== "--json");
+
+    return flags.length - words.length <= 1 && words.length > 0 && words.every((word) => INFO_WORD.test(word) && word !== "true" && word !== "false");
+};
+
+// The flags `vis dlx` takes natively (`parse` in `dlx.rs`), each at most once.
+const DLX_FLAGS = [["--no-info"], ["-y", "--yes"], ["--offline"], ["-s", "--silent"], ["-c", "--shell-mode"]];
+
+// The words of `vis dlx`, its `-p` packages and its flags, or `undefined` for a shape the binary does not answer: no other
+// flag, no `--`, and `-p <word>` directly followed by another flag, because the option takes every word up to the next one.
+const dlxShape = (rest) => {
+    const shape = { flags: new Set(), packages: [], words: [] };
+    const isFlag = (token) => token === "-p" || token === "--package" || DLX_FLAGS.some((names) => names.includes(token));
+
+    for (let index = 0; index < rest.length; index += 1) {
+        const token = rest[index];
+
+        if (token === "-p" || token === "--package") {
+            const [value, after] = [rest[index + 1], rest[index + 2]];
+
+            if (value === undefined || value === "" || value.startsWith("-") || after === undefined || !isFlag(after)) {
+                return undefined;
+            }
+
+            shape.packages.push(value);
+            index += 1;
+        } else if (token.startsWith("-")) {
+            const group = DLX_FLAGS.find((names) => names.includes(token));
+
+            if (group === undefined || shape.flags.has(group[0])) {
+                return undefined;
+            }
+
+            shape.flags.add(group[0]);
+        } else {
+            shape.words.push(token);
+        }
+    }
+
+    return shape.words.length > 0 ? shape : undefined;
+};
+
+// `isRegistrySpec` of the first-run gate (`src/dlx/first-run.ts`): not a path, URL or protocol alias.
+const PATH_SPEC = /^[./~]/;
+
+const isRegistrySpec = (spec) => {
+    const bare = spec.startsWith("@") ? spec.slice(1) : spec;
+
+    return spec !== "" && !PATH_SPEC.test(spec) && !bare.includes(":");
+};
+
+// `isTruthyEnv` for an ASCII value; the binary leaves any other to Node, where `trim` and Rust's differ.
+const isAscii = (text) => [...text].every((character) => character.codePointAt(0) <= 0x7F);
+
+const dlxGateIsSwitchedOff = (environment, shape) => {
+    const value = environment.VIS_DLX_NO_INFO;
+
+    if (value !== undefined && !isAscii(value)) {
+        return false;
+    }
+
+    const noInfoFromEnvironment = value !== undefined && !["", "0", "false", "no"].includes(value.trim().toLowerCase());
+    const vetted = [...shape.flags.has("-c") ? [] : shape.words.slice(0, 1), ...shape.packages];
+
+    return shape.flags.has("--no-info") || noInfoFromEnvironment || !vetted.some((spec) => isRegistrySpec(spec));
+};
+
+// Whether `vis dlx` can pass the binary's native gate (`plan` in `dlx.rs`): only the runs where the first-run gate does
+// nothing, the shapes above, and an environment that leaves the installer and Node's output alone. The lean entry reads
+// no config and no workspace root, and prints nothing of its own, so a terminal and a missing `CI` make no difference.
+// The binary re-checks everything, including the lockfiles, `packageManager` pins and `aube` on `PATH`.
+const dlxMayRunNatively = (platform, environment, args) => {
+    if (
+        platform === "win32"
+        || nodeWarnsAboutColour(environment)
+        || ["DEBUG", "VIS_INSTALLER", "VIS_RUNTIME"].some((key) => environment[key] !== undefined)
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+    ) {
+        return false;
+    }
+
+    const shape = dlxShape(args.slice(1));
+
+    return shape !== undefined && dlxGateIsSwitchedOff(environment, shape);
+};
+
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
 // `--provider` values. The binary re-checks everything, including the config, the providers and the
@@ -710,8 +808,11 @@ const NATIVE_SHAPE_GATES = new Map([
     ],
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
+    ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // The registry view, typed `info` or `view`.
+    ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
     // A recorded run, a task of it, or the list of runs.
@@ -733,6 +834,7 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
         },
     ],
+    ["view", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
 ]);
 
 // The routing of a bare command group and of `complete`: `true` or `false` when they decide,
