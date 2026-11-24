@@ -45,6 +45,7 @@ fn left_to_node(args: &[String], subcommand: &str, cwd: &Path) -> bool {
     let config = crate::vis_config::read(cwd);
     let config_decides_installer = config != crate::vis_config::ConfigState::Absent
         && (crate::vis_config::requires_node(&config) || crate::vis_config::native_backend_pin(&config).is_some());
+
     DISPATCHED.contains(&subcommand)
         || !crate::advisories::native_root_is_cwd(cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
         || installer_selected_by_environment()
