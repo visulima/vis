@@ -56,6 +56,46 @@ struct Options {
     selection: Selection,
 }
 
+impl Selection {
+    /// Every lint, which is what no selector means.
+    const fn all() -> Self {
+        Self {
+            banned_deps: true,
+            custom_types: true,
+            dead_workspace_patterns: true,
+            empty_deps: true,
+            missing_package_json: true,
+            redefine_root: true,
+            root_deps: true,
+            root_package_manager: true,
+            root_private: true,
+            similar_deps: true,
+            types_in_deps: true,
+            workspace_protocol: true,
+            workspace_versions: true,
+        }
+    }
+
+    fn any(&self) -> bool {
+        [
+            self.banned_deps,
+            self.custom_types,
+            self.dead_workspace_patterns,
+            self.empty_deps,
+            self.missing_package_json,
+            self.redefine_root,
+            self.root_deps,
+            self.root_package_manager,
+            self.root_private,
+            self.similar_deps,
+            self.types_in_deps,
+            self.workspace_protocol,
+            self.workspace_versions,
+        ]
+        .contains(&true)
+    }
+}
+
 /// The lint selectors, by flag.
 fn selector<'a>(selection: &'a mut Selection, flag: &str) -> Option<&'a mut bool> {
     Some(match flag {
@@ -137,39 +177,8 @@ fn parse(args: &[String]) -> Option<Options> {
         return None;
     }
 
-    let any = [
-        selection.banned_deps,
-        selection.custom_types,
-        selection.dead_workspace_patterns,
-        selection.empty_deps,
-        selection.missing_package_json,
-        selection.redefine_root,
-        selection.root_deps,
-        selection.root_package_manager,
-        selection.root_private,
-        selection.similar_deps,
-        selection.types_in_deps,
-        selection.workspace_protocol,
-        selection.workspace_versions,
-    ]
-    .contains(&true);
-
-    if !any {
-        selection = Selection {
-            banned_deps: true,
-            custom_types: true,
-            dead_workspace_patterns: true,
-            empty_deps: true,
-            missing_package_json: true,
-            redefine_root: true,
-            root_deps: true,
-            root_package_manager: true,
-            root_private: true,
-            similar_deps: true,
-            types_in_deps: true,
-            workspace_protocol: true,
-            workspace_versions: true,
-        };
+    if !selection.any() {
+        selection = Selection::all();
     }
 
     Some(Options { format: format.unwrap_or(Format::Human), quiet, selection })
