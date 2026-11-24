@@ -44,3 +44,24 @@ pub fn compute_task_hash(details: NativeTaskHashDetails) -> String {
 pub fn hash_env_var(name: String, value: String) -> String {
     core::hash_env_var(&name, &value)
 }
+
+/// Computes the command hash of a task from the pieces its envelope carries: the JSON text of the command string,
+/// the canonical JSON text of the outputs list and the JSON text of the overrides with sorted keys.
+#[napi(catch_unwind)]
+pub fn hash_task_command(
+    project: String,
+    target: String,
+    configuration: Option<String>,
+    command_json: String,
+    outputs: String,
+    overrides_json: String,
+) -> String {
+    core::hash_task_command(&project, &target, configuration.as_deref(), &command_json, &outputs, &overrides_json)
+}
+
+/// Hashes the global input files `names` below `workspace_root` (a missing or unreadable file is skipped), then the
+/// `extra` parts. Returns nothing when there is no content to hash.
+#[napi(catch_unwind)]
+pub fn hash_global_inputs(workspace_root: String, names: Vec<String>, extra: Vec<String>) -> Option<String> {
+    core::hash_global_inputs(&workspace_root, &names, &extra).hash
+}

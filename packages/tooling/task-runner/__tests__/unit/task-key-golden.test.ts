@@ -16,6 +16,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { Cache } from "../../src/cache";
 import { EmptyLifeCycle } from "../../src/life-cycle";
+import { loadNativeBindings } from "../../src/native-binding";
 import { createTaskGraph } from "../../src/task-graph";
 import { computeTaskHash, InProcessTaskHasher } from "../../src/task-hasher";
 import { TaskOrchestrator } from "../../src/task-orchestrator";
@@ -107,7 +108,7 @@ const edges: Record<string, string[]> = { app: ["web", "core", "util"], core: []
 
 const projectGraph: ProjectGraph = {
     dependencies: Object.fromEntries(
-        Object.entries(edges).map(([name, targets]) => [name, targets.map((target) => ({ source: name, target, type: "static" as const }))]),
+        Object.entries(edges).map(([name, targets]) => [name, targets.map((target) => { return { source: name, target, type: "static" as const }; })]),
     ),
     nodes: Object.fromEntries(
         Object.entries(projects).map(([name, data]) => [name, { data, name, type: "library" as const }]),
@@ -122,7 +123,7 @@ const initialTask = (name: string, overrides: Record<string, unknown>, extra: Pa
         id: `${name}:build`,
         outputs: target?.outputs ?? [],
         overrides: { command: target?.command, visOptions: {}, ...overrides },
-        projectRoot: projects[name]?.root as string,
+        projectRoot: projects[name]?.root,
         target: { project: name, target: "build" },
         ...extra,
     };
@@ -131,8 +132,8 @@ const initialTask = (name: string, overrides: Record<string, unknown>, extra: Pa
 const run = async (root: string): Promise<Record<string, string>> => {
     const initialTasks = [
         initialTask("core", {}),
-        initialTask("util", { visForwardedArgs: ["--flag", "a b"], visTaskArgEnv: { Z: "1", A: "2" } }),
-        initialTask("web", { visOptions: { pool: { size: 2, kind: "x" } } }),
+        initialTask("util", { visForwardedArgs: ["--flag", "a b"], visTaskArgEnv: { A: "2", Z: "1" } }),
+        initialTask("web", { visOptions: { pool: { kind: "x", size: 2 } } }),
         initialTask("app", {}),
         initialTask("docs", {}),
         initialTask("lib", {}, { fingerprintEnv: ["GOLDEN_FP_*"] }),
@@ -178,6 +179,7 @@ const withEnvironment = async <T>(values: Record<string, string>, callback: () =
     } finally {
         for (const [name, value] of Object.entries(saved)) {
             if (value === undefined) {
+                // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- restores a variable that was unset
                 delete process.env[name];
             } else {
                 process.env[name] = value;
@@ -224,7 +226,48 @@ describe.skipIf(process.platform === "win32")("golden task keys", () => {
 
         put(root, "node_modules/leftpad/package.json", "{\"name\":\"leftpad\",\"version\":\"2.0.0\"}\n");
 
-        expect((await withEnvironment(environment, async () => run(root)))["lib:build"]).not.toBe(base["lib:build"]);
+        const upgraded = await withEnvironment(environment, async () => run(root));
+
+        expect(upgraded["lib:build"]).not.toBe(base["lib:build"]);
+    });
+
+    it("builds the command envelope the way `JSON.stringify` of its parts does", () => {
+        expect.hasAssertions();
+
+        const native = loadNativeBindings();
+        const commands = ["true", "echo \"q\" && echo 'x'\n\ttab \\ slash", "line\r\n\u0001\u001F", "é€😀\u2028", "lone \uD800 surrogate"];
+
+        for (const command of commands) {
+            for (const configuration of [undefined, "prod"]) {
+                const outputs = JSON.stringify(["build/**", "dist/**", { auto: true }]);
+                const overrides = { command, visOptions: { a: [1, { c: 2, d: 1 }], b: 1 }, z: undefined };
+                const composite = JSON.stringify({ command, outputs, overrides });
+
+                expect(
+                    native.hashTaskCommand("app", "build", configuration, JSON.stringify(command), outputs, JSON.stringify(overrides)),
+                    JSON.stringify(command),
+                ).toBe(native.hashCommand("app", "build", configuration, composite));
+            }
+        }
+    });
+
+    it("hashes global inputs as the name and the file hash of each existing file, then the extra parts", () => {
+        expect.hasAssertions();
+
+        const native = loadNativeBindings();
+        const root = createFixture();
+
+        put(root, "yarn.lock", "");
+
+        // Same bytes as hashing `name + fileHash` pieces one after the other, which is what a streaming hasher does.
+        const expected = native.hashString(
+            `pnpm-lock.yaml${native.hashFile(join(root, "pnpm-lock.yaml"))}yarn.lock${native.hashFile(join(root, "yarn.lock"))}tsconfig.json${native.hashFile(join(root, "tsconfig.json"))}.env${native.hashFile(join(root, ".env"))}globalEnv:X=1:y`,
+        );
+
+        expect(
+            native.hashGlobalInputs(root, ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json", ".env", "packages"], ["globalEnv:X=1:y"]),
+        ).toBe(expected);
+        expect(native.hashGlobalInputs(root, ["missing", "packages"], [])).toBeNull();
     });
 
     it("keeps the key of a task with a configuration", async () => {
