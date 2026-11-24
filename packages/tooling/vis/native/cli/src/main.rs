@@ -70,6 +70,8 @@ mod process;
 #[cfg(unix)]
 mod removal;
 mod replay;
+#[cfg(test)]
+mod route;
 mod run;
 mod sbom;
 mod secrets;
