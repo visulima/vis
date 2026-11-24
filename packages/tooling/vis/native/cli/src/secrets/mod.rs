@@ -43,8 +43,10 @@ use filter::{report_findings, shown};
 use report::{render_json, render_text};
 use sarif::{render_sarif, root_collation};
 
-/// Where the bundled ruleset lives inside the `@visulima/secret-scanner` package.
-const RULESET: [&str; 4] = ["node_modules", "@visulima", "secret-scanner", "data/ruleset.json"];
+/// Where the bundled ruleset lives inside the `@visulima/secret-scanner` package: the package
+/// directory under a `node_modules`, and the ruleset file in it.
+const PACKAGE_DIR: [&str; 3] = ["node_modules", "@visulima", "secret-scanner"];
+const RULESET_FILE: &str = "data/ruleset.json";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Format {
@@ -140,7 +142,7 @@ fn context(args: &[String]) -> Option<Context> {
         return None;
     }
 
-    if !quiet_context(&cwd, &cwd) || crate::vis_config::read(&cwd) != crate::vis_config::ConfigState::Absent {
+    if !quiet_context(&cwd, &cwd) {
         return None;
     }
 
@@ -173,9 +175,9 @@ fn secretlintignore_applies(root: &Path) -> bool {
 fn ruleset_path() -> Option<PathBuf> {
     let entry = fs::canonicalize(env::var_os("VIS_FALLBACK_ENTRY")?).ok()?;
 
-    entry.ancestors().skip(1).map(|directory| directory.join(RULESET[..3].iter().collect::<PathBuf>())).find_map(
+    entry.ancestors().skip(1).map(|directory| directory.join(PACKAGE_DIR.iter().collect::<PathBuf>())).find_map(
         |package| {
-            let ruleset = package.join(RULESET[3]);
+            let ruleset = package.join(RULESET_FILE);
 
             ruleset.is_file().then_some(ruleset)
         },
@@ -271,7 +273,7 @@ fn answer(plan: &Plan, context: &Context) -> Option<Output> {
                 return None;
             }
 
-            let rules = list_rules(&options).unwrap_or_default();
+            let rules = list_rules(&options).ok()?;
 
             render_sarif(&findings, &rules, &context.root)?
         }
@@ -409,5 +411,17 @@ mod tests {
         found.sort();
         assert_eq!(found, ["object", "one", "string"]);
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_ruleset_the_scanner_rejects_fails_the_scan_and_the_rule_listing_alike() {
+        let options =
+            ScanOptions { config: Some(serde_json::json!({ "rules": "not a list" })), ..ScanOptions::default() };
+
+        // `answer` lists the rules only after the scan succeeded, and both read the ruleset the same way,
+        // so a listing error never follows a good scan: it hands the run to Node instead of printing a
+        // rule table with no rules in it.
+        assert!(scan_dirs(vec![".".to_owned()], &options).is_err());
+        assert!(list_rules(&options).is_err());
     }
 }
