@@ -22,6 +22,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::js::{is_js_whitespace, parse_int};
+use crate::text::is_ascii_printable;
 
 /// Pins of other tools and managers that Node reads from files this module does not parse.
 const UNSUPPORTED_FILES: [&str; 5] = [".tool-versions", ".prototools", ".mise.toml", "mise.toml", ".config/mise.toml"];
@@ -77,11 +78,6 @@ fn falsy(value: &serde_json::Value) -> bool {
     }
 }
 
-/// Printable ASCII, so the string means the same to a regular expression and to a byte comparison.
-fn plain_ascii(text: &str) -> bool {
-    text.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ')
-}
-
 /// The pins of a workspace that this module can decide, one range per tool.
 pub struct Pins(BTreeMap<Tool, String>);
 
@@ -131,7 +127,7 @@ fn read_pins(root: &Path) -> Option<BTreeMap<Tool, String>> {
     if let Some(field) = manifest.get("packageManager").filter(|value| !falsy(value)) {
         let field = field.as_str()?;
 
-        if !plain_ascii(field) {
+        if !is_ascii_printable(field) {
             return None;
         }
 
