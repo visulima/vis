@@ -21,7 +21,8 @@ use vis_core::detect::detect_package_manager;
 use vis_core::resolve::resolve_pm_command;
 
 use crate::error::{self, WrapperError};
-use crate::pm_family::{corepack_applies, installer_selected_by_environment, uses_global_option};
+use crate::pm_detect::{corepack_applies, installer_selected_by_environment};
+use crate::pm_family::uses_global_option;
 
 const USAGE: &str = "No subcommand specified. Available: cache, publish, audit, list, view, config, whoami, login, logout, pack, owner, dist-tag, search, fund, ping, token, deprecate, rebuild, prune, plugin";
 

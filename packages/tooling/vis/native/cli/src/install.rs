@@ -251,7 +251,7 @@ pub(crate) fn setup(args: &[String], raw: &[OsString]) -> Option<Setup> {
         .any(|directory| crate::node_context::ROOT_MARKERS.iter().any(|name| directory.join(name).exists()))
         || ["lerna.json", "turbo.json"].iter().any(|name| cwd.join(name).exists())
         || crate::node_context::any_ancestor_has(&cwd, &crate::node_context::DENO_FILES)
-        || crate::pm_family::ancestor_pins_package_manager(&cwd)
+        || crate::pm_detect::ancestor_pins_package_manager(&cwd)
     {
         return None;
     }
@@ -440,7 +440,7 @@ fn context_allows_native() -> bool {
         || env::var_os("VIS_SECURITY_WARNINGS").is_some()
         || env::var_os("VIS_MONOREPO_ROOT").is_some();
 
-    !changes_node && !crate::pm_family::installer_selected_by_environment()
+    !changes_node && !crate::pm_detect::installer_selected_by_environment()
 }
 
 /// Where Node's root search lands for `cwd`, which holds the only root marker on the way up (the caller

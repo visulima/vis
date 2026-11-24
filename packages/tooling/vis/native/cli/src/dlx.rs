@@ -99,7 +99,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     if crate::term::node_warns_about_colour()
         || env::var_os("DEBUG").is_some()
         || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
-        || crate::pm_family::installer_selected_by_environment()
+        || crate::pm_detect::installer_selected_by_environment()
     {
         return None;
     }
@@ -107,7 +107,7 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<(ResolvedCommand, PathBuf)>
     let cwd = env::current_dir().ok()?;
 
     // Node runs the installer a `packageManager` pin names through Corepack, which it reads from any ancestor.
-    if crate::pm_family::ancestor_pins_package_manager(&cwd) {
+    if crate::pm_detect::ancestor_pins_package_manager(&cwd) {
         return None;
     }
 

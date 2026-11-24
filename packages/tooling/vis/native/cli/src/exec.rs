@@ -61,8 +61,8 @@ fn left_to_node(parsed: &Parsed, cwd: &Path) -> bool {
     (single_package && has_local_bin(&opts.command, cwd))
         || unknown_runtime
         || env::var_os("VIS_INSTALLER").is_some()
-        || crate::pm_family::binary_on_path("aube")
-        || crate::pm_family::corepack_applies(cwd)
+        || crate::pm_detect::binary_on_path("aube")
+        || crate::pm_detect::corepack_applies(cwd)
 }
 
 /// Runs the command and returns the exit status to adopt, or the failure to report.

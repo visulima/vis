@@ -62,6 +62,7 @@ mod optimize;
 mod output;
 mod pail;
 mod pm;
+mod pm_detect;
 mod pm_family;
 mod pm_shim;
 #[cfg(unix)]
