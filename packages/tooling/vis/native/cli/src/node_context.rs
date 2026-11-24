@@ -8,6 +8,8 @@ use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
+use vis_core::lockfiles::LOCKFILES;
+
 use crate::vis_config::has_vis_config;
 
 /// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads in a
@@ -94,7 +96,7 @@ pub(crate) fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
             return dir.join("pnpm-workspace.yaml").is_file().then(|| dir.to_path_buf());
         }
 
-        if OTHER_LOCKFILES.iter().any(|name| dir.join(name).exists()) {
+        if LOCKFILES.iter().any(|(name, manager)| *manager != "pnpm" && dir.join(name).exists()) {
             return None;
         }
 
@@ -111,8 +113,6 @@ pub(crate) fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
 
     None
 }
-
-const OTHER_LOCKFILES: [&str; 5] = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb"];
 
 /// Whether Node would reach the same answer without a workspace search or any config notice.
 ///

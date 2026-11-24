@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command, Stdio};
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
+use vis_core::lockfiles::LOCKFILES;
 use vis_core::resolve::{resolve_dlx, DlxOptions, ResolvedCommand};
 
 /// What the command line asked for.
@@ -154,12 +155,9 @@ fn installer(cwd: &Path) -> (String, String) {
 /// `detectFromLockfile` of `resolveRuntime`: the nearest directory with a lockfile of either runtime decides,
 /// and a bun lockfile there wins.
 fn nearest_lockfile_is_bun(cwd: &Path) -> bool {
-    const LOCKFILES: [&str; 6] =
-        ["bun.lock", "bun.lockb", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "npm-shrinkwrap.json"];
-
-    cwd.ancestors()
-        .find_map(|directory| LOCKFILES.iter().find(|name| directory.join(name).exists()))
-        .is_some_and(|name| name.starts_with("bun.lock"))
+    cwd.ancestors().find(|directory| LOCKFILES.iter().any(|(name, _)| directory.join(name).exists())).is_some_and(
+        |directory| LOCKFILES.iter().any(|(name, manager)| *manager == "bun" && directory.join(name).exists()),
+    )
 }
 
 /// `applyDlxOffline`: the manager's own offline flag right after the `dlx` word. A manager with no such flag
@@ -282,8 +280,39 @@ fn is_known_flag(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_offline, is_registry_spec, is_truthy, parse, Flags};
+    use super::{apply_offline, is_registry_spec, is_truthy, nearest_lockfile_is_bun, parse, Flags};
     use vis_core::resolve::ResolvedCommand;
+
+    fn lockfiles_at(label: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("vis-dlx-lock-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        for (directory, file) in files {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+            std::fs::write(root.join(directory).join(file), "").unwrap();
+        }
+
+        root
+    }
+
+    #[test]
+    fn a_bun_lockfile_in_the_nearest_directory_with_one_decides() {
+        let both = lockfiles_at("both", &[("", "pnpm-lock.yaml"), ("", "bun.lockb")]);
+
+        assert!(nearest_lockfile_is_bun(&both));
+
+        let nearer = lockfiles_at("nearer", &[("", "bun.lock"), ("app", "pnpm-lock.yaml")]);
+
+        assert!(!nearest_lockfile_is_bun(&nearer.join("app")));
+
+        let farther = lockfiles_at("farther", &[("", "pnpm-lock.yaml"), ("app", "bun.lock")]);
+
+        assert!(nearest_lockfile_is_bun(&farther.join("app")));
+
+        let none = lockfiles_at("none", &[("app", "yarn.lock")]);
+
+        assert!(!nearest_lockfile_is_bun(&none.join("app")));
+    }
 
     fn tokens(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| (*item).to_owned()).collect()

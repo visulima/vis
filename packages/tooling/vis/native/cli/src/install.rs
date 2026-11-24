@@ -32,6 +32,7 @@ use std::thread;
 use regex::bytes::{Regex, RegexBuilder};
 use serde_json::Value;
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
+use vis_core::lockfiles::LOCKFILES;
 use vis_core::resolve::{resolve_install, InstallOptions};
 
 use crate::pail::{Layout, Level};
@@ -46,16 +47,6 @@ const PEER_HINT: &str =
 /// How much of the package manager's output is kept to look for peer warnings
 /// (`MAX_CAPTURED_BYTES` in `src/util/spawn-tee.ts`).
 const MAX_CAPTURED_BYTES: usize = 256 * 1024;
-
-/// The lockfiles Node's package-manager lookup recognises (`lockfile-candidates`), with the manager each names.
-const LOCKFILES: [(&str, &str); 6] = [
-    ("pnpm-lock.yaml", "pnpm"),
-    ("package-lock.json", "npm"),
-    ("npm-shrinkwrap.json", "npm"),
-    ("yarn.lock", "yarn"),
-    ("bun.lock", "bun"),
-    ("bun.lockb", "bun"),
-];
 
 /// What the flags asked for.
 #[derive(Debug, Default, PartialEq, Eq)]

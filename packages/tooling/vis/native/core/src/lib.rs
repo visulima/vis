@@ -9,4 +9,5 @@ pub mod clean;
 pub mod date;
 pub mod detect;
 pub mod editorconfig;
+pub mod lockfiles;
 pub mod resolve;
