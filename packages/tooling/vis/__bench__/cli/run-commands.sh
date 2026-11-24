@@ -160,8 +160,23 @@ for manager in pnpm npm yarn bun; do
   chmod +x "$STUBS/$manager"
 done
 printf 'console.log("__VIS_BENCH_DELEGATED__");\nprocess.exitCode = 99;\n' > "$WORK/stubpkg/dist/bin.js"
-ln -s "$PKG_ROOT/dist/runtime" "$WORK/stubpkg/dist/runtime"
+# `-n` keeps an existing link a link: without it `ln -s` on a reused VIS_BENCH_DIR would create the link inside the
+# directory the old one points at, which is the real `dist/runtime` of the package.
+ln -sfn "$PKG_ROOT/dist/runtime" "$WORK/stubpkg/dist/runtime"
 STUB_ENTRY="$WORK/stubpkg/dist/bin.js"
+
+# The native `secrets` reads the bundled ruleset from the nearest `node_modules/@visulima/secret-scanner` above the Node
+# entry it is given. The stub entry sits outside the package tree, so link the package there: without it the binary
+# silently delegates `secrets` to Node and the case times Node, not the binary.
+SCANNER_DIR="$PKG_ROOT/node_modules/@visulima/secret-scanner"
+SCANNER_OK=0
+if [[ -f "$SCANNER_DIR/data/ruleset.json" ]]; then
+  mkdir -p "$WORK/stubpkg/node_modules/@visulima"
+  ln -sfn "$(cd "$SCANNER_DIR" && pwd -P)" "$WORK/stubpkg/node_modules/@visulima/secret-scanner"
+  SCANNER_OK=1
+else
+  echo "  NOTE: $SCANNER_DIR/data/ruleset.json is missing (build the secret-scanner package): the secrets scenarios are skipped."
+fi
 
 REAL_PATH="$PATH"
 TMP_FOR_ENV="${TMPDIR:-/tmp}"
@@ -518,6 +533,10 @@ while IFS=$'\t' read -r id family scales stubs handoff mode compare _ argtext fl
   order=$((order + 1))
   [[ -n "$ONLY" ]] && ! [[ "$id" =~ $ONLY ]] && continue
   [[ "$mode" == "-" ]] && mode=""
+  if [[ $SCANNER_OK -eq 0 && "$id" == secrets-* ]]; then
+    echo "  $id: skipped (the secret-scanner ruleset is not built, so the binary could not answer it)"
+    continue
+  fi
   if [[ "$scales" == 1 ]]; then
     IFS=, read -r -a size_list <<< "$SIZES"
   else
