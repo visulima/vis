@@ -16,15 +16,22 @@
 //! forwards to the real implementation and then best-effort `send(2)`s one
 //! datagram `[u8 mode][path bytes]` to the parent.
 //!
-//! ## Why fixed-arity hooks (not `c_variadic`)
+//! ## `open`/`openat` are variadic
 //!
-//! `open`/`openat` are variadic in C (`open(path, flags, ...)`). Defining a
-//! variadic Rust fn needs nightly (`feature(c_variadic)`). Instead each hook
-//! is declared with the **maximum fixed arity** (`open(path, flags, mode)`).
-//! On the macOS arm64/x86_64 SysV-style ABIs the first args arrive in
-//! registers, so reading a `mode` slot the caller didn't pass is harmless —
-//! we only ever *use* it when `O_CREAT` is set, and we forward all three to
-//! the real `open`, which itself ignores `mode` without `O_CREAT`.
+//! `open(path, flags, ...)` takes its optional `mode` as a C variadic argument.
+//! Defining a variadic Rust fn needs nightly (`feature(c_variadic)`), so each hook
+//! is written with the fixed arity `(path, flags, mode)` and reads `mode` from
+//! wherever the platform ABI puts it:
+//!
+//! - **x86_64** (SysV): variadic and fixed arguments share the argument
+//!   registers, so the fixed-arity hook receives `mode` in `rdx` as is.
+//! - **aarch64** (Apple): *every* variadic argument is passed on the stack, so a
+//!   fixed-arity hook would read a leftover register instead. A two-instruction
+//!   assembly trampoline (`fspy_open_variadic`, `fspy_openat_variadic`) loads the
+//!   stack slot into the register the hook expects and tail-calls it; the
+//!   interpose table points at the trampolines.
+//!
+//! The hook forwards `mode` to the real call only when `O_CREAT` is set.
 //!
 //! ## Why a dylib-local interpose call doesn't recurse
 //!
@@ -41,7 +48,7 @@ use core::ffi::{c_char, c_int, c_void};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use libc::{mode_t, size_t, ssize_t, DIR};
+use libc::{size_t, ssize_t, DIR};
 
 /// Wire opcodes — one byte prefix per datagram. Kept in sync with the parser
 /// in `native/src/macos.rs`.
@@ -184,8 +191,14 @@ fn open_mode(flags: c_int) -> u8 {
 // Each hook forwards to the real libc function (resolved within this image, so
 // not re-interposed) and reports on success. `extern "C"` + fixed arity.
 
-unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-    let fd = unsafe { libc::open(path, flags, mode as c_int) };
+/// `open(path, flags[, mode])`. `mode` is only meaningful (and only forwarded)
+/// with `O_CREAT`; see the module docs for how it reaches this fn on each arch.
+unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -> c_int {
+    let fd = if flags & libc::O_CREAT != 0 {
+        unsafe { libc::open(path, flags, mode) }
+    } else {
+        unsafe { libc::open(path, flags) }
+    };
 
     if fd >= 0 {
         unsafe { report(path, open_mode(flags)) };
@@ -194,8 +207,12 @@ unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: mode_t) 
     fd
 }
 
-unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-    let fd = unsafe { libc::openat(dirfd, path, flags, mode as c_int) };
+unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: c_int) -> c_int {
+    let fd = if flags & libc::O_CREAT != 0 {
+        unsafe { libc::openat(dirfd, path, flags, mode) }
+    } else {
+        unsafe { libc::openat(dirfd, path, flags) }
+    };
 
     if fd >= 0 {
         unsafe { report(path, open_mode(flags)) };
@@ -265,8 +282,8 @@ unsafe extern "C" fn hook_unlink(path: *const c_char) -> c_int {
     rc
 }
 
-/// `read`/`write` are NOT hooked — we classify at `open` time, which is enough
-/// for cache fingerprinting and keeps the hot path (every byte of I/O) clean.
+// `read`/`write` are NOT hooked — we classify at `open` time, which is enough
+// for cache fingerprinting and keeps the hot path (every byte of I/O) clean.
 
 // ---- child-process propagation ---------------------------------------------
 //
@@ -409,6 +426,41 @@ unsafe extern "C" fn hook_posix_spawnp(
     }
 }
 
+// Apple arm64 passes every variadic argument on the stack, so `open`'s `mode`
+// is at `[sp]` (`openat`'s too) while a fixed-arity hook would read it from a
+// register. These trampolines load the slot into the register the hook expects
+// and tail-call it (stack and link register untouched).
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text",
+    ".p2align 2",
+    ".globl _fspy_open_variadic",
+    "_fspy_open_variadic:",
+    "ldr w2, [sp]",
+    "b {open}",
+    ".globl _fspy_openat_variadic",
+    "_fspy_openat_variadic:",
+    "ldr w3, [sp]",
+    "b {openat}",
+    open = sym hook_open,
+    openat = sym hook_openat,
+);
+
+#[cfg(target_arch = "aarch64")]
+extern "C" {
+    fn fspy_open_variadic();
+    fn fspy_openat_variadic();
+}
+
+#[cfg(target_arch = "aarch64")]
+const OPEN_REPLACEMENT: unsafe extern "C" fn() = fspy_open_variadic;
+#[cfg(target_arch = "aarch64")]
+const OPENAT_REPLACEMENT: unsafe extern "C" fn() = fspy_openat_variadic;
+#[cfg(not(target_arch = "aarch64"))]
+const OPEN_REPLACEMENT: unsafe extern "C" fn(*const c_char, c_int, c_int) -> c_int = hook_open;
+#[cfg(not(target_arch = "aarch64"))]
+const OPENAT_REPLACEMENT: unsafe extern "C" fn(c_int, *const c_char, c_int, c_int) -> c_int = hook_openat;
+
 macro_rules! interpose {
     ($static_name:ident, $replacement:expr, $replacee:expr) => {
         #[used]
@@ -418,8 +470,8 @@ macro_rules! interpose {
     };
 }
 
-interpose!(I_OPEN, hook_open, libc::open);
-interpose!(I_OPENAT, hook_openat, libc::openat);
+interpose!(I_OPEN, OPEN_REPLACEMENT, libc::open);
+interpose!(I_OPENAT, OPENAT_REPLACEMENT, libc::openat);
 interpose!(I_STAT, hook_stat, libc::stat);
 interpose!(I_LSTAT, hook_lstat, libc::lstat);
 interpose!(I_ACCESS, hook_access, libc::access);
