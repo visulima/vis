@@ -114,22 +114,16 @@ pub fn hash_files_in_directory(dir: &str, workspace_root: &str) -> Result<Vec<Fi
 /// Computes xxh3-128 hashes for multiple files in parallel.
 /// Takes absolute file paths, returns relative_path + hash pairs.
 pub fn hash_files_batch(file_paths: &[String], workspace_root: &str) -> Vec<FileHash> {
-    let hash_one = |file_path: &String| FileHash {
-        path: make_relative(file_path, workspace_root),
-        hash: read_and_hash(Path::new(file_path)),
-    };
+    file_paths
+        .par_iter()
+        .map(|file_path| {
+            let rel = make_relative(file_path, workspace_root);
+            let hash = read_and_hash(Path::new(file_path));
 
-    // A handful of files is hashed faster in place than by handing each to the thread pool, which matters when
-    // a caller hashes many small projects, each on a pool thread of its own.
-    if file_paths.len() <= SMALL_BATCH {
-        return file_paths.iter().map(hash_one).collect();
-    }
-
-    file_paths.par_iter().map(hash_one).collect()
+            FileHash { path: rel, hash }
+        })
+        .collect()
 }
-
-/// Up to this many files are hashed on the calling thread.
-const SMALL_BATCH: usize = 8;
 
 /// Makes a path relative to the workspace root. Always emits forward slashes
 /// so JS-side consumers see consistent path keys across POSIX and Windows.
