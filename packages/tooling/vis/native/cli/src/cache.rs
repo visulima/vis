@@ -53,7 +53,7 @@ enum Format {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Scope {
+pub(crate) enum Scope {
     Shared,
     Worktree,
     All,
@@ -434,22 +434,53 @@ pub(crate) fn eviction_directories(base: &str, branch_scoped: bool) -> Option<Ve
     Some(directories)
 }
 
-/// `directoriesFor("read")` of `resolveCacheDirectoryFromContext`.
-fn read_directories(root: &Path, options: &Options, settings: &Settings) -> Option<Vec<String>> {
+/// The `(base, branch-scoped)` directory of each scope `scope` selects, as `resolveCacheDirectoryFromContext` pairs them.
+fn selected_directories(
+    root: &Path,
+    cache_dir: Option<&str>,
+    scope: Scope,
+    settings: &Settings,
+) -> Option<Vec<(String, String)>> {
     let config = settings.cache_directory.as_deref();
-    let option = options.cache_dir.as_deref();
 
-    let worktree_base = resolve_cache_directory(root, option, config, false)?;
-    let shared_base = resolve_cache_directory(root, option, config, settings.shared_worktree)?;
+    let worktree_base = resolve_cache_directory(root, cache_dir, config, false)?;
+    let shared_base = resolve_cache_directory(root, cache_dir, config, settings.shared_worktree)?;
     let worktree_scoped = apply_branch_scope(worktree_base.clone(), root, settings.branch_scoped);
     let shared_scoped = apply_branch_scope(shared_base.clone(), root, settings.branch_scoped);
 
-    let selected: Vec<(String, String)> = match options.scope {
+    Some(match scope {
         Scope::All if shared_scoped == worktree_scoped => vec![(shared_base, shared_scoped)],
         Scope::All => vec![(shared_base, shared_scoped), (worktree_base, worktree_scoped)],
         Scope::Worktree => vec![(worktree_base, worktree_scoped)],
         Scope::Shared => vec![(shared_base, shared_scoped)],
-    };
+    })
+}
+
+/// `directoriesFor("evict")`: retention sees every branch's entries, so each selected base is expanded to the
+/// base and its branch subtrees.
+#[cfg(unix)]
+pub(crate) fn evict_directories(
+    root: &Path,
+    cache_dir: Option<&str>,
+    scope: Scope,
+    settings: &Settings,
+) -> Option<Vec<String>> {
+    let mut directories: Vec<String> = Vec::new();
+
+    for (base, _) in selected_directories(root, cache_dir, scope, settings)? {
+        for directory in eviction_directories(&base, settings.branch_scoped)? {
+            if !directories.contains(&directory) {
+                directories.push(directory);
+            }
+        }
+    }
+
+    Some(directories)
+}
+
+/// `directoriesFor("read")` of `resolveCacheDirectoryFromContext`.
+fn read_directories(root: &Path, options: &Options, settings: &Settings) -> Option<Vec<String>> {
+    let selected = selected_directories(root, options.cache_dir.as_deref(), options.scope, settings)?;
 
     let mut directories: Vec<String> = Vec::new();
 
@@ -529,7 +560,7 @@ pub(crate) fn has_backslash(name: &OsStr) -> bool {
 /// `sumDirectorySize`: files counted by `stat`, symlinks skipped, and a failure ends that directory's
 /// loop while keeping what it already added. `None` when Node would not print the same number: a name
 /// with a backslash, or a size past what a JavaScript number holds exactly.
-fn sum_directory_size(directory: &Path) -> Option<u64> {
+pub(crate) fn sum_directory_size(directory: &Path) -> Option<u64> {
     let Some(entries) = sorted_entries(directory) else {
         return Some(0);
     };
@@ -766,7 +797,7 @@ fn json_string(text: &str) -> Option<String> {
     serde_json::to_string(text).ok()
 }
 
-fn now_ms() -> f64 {
+pub(crate) fn now_ms() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |elapsed| elapsed.as_millis() as f64)
 }
 

@@ -32,6 +32,8 @@ mod cache;
 #[cfg(unix)]
 mod cache_clean;
 mod cache_hash;
+#[cfg(unix)]
+mod cache_prune;
 mod cache_why;
 mod ci_workflow;
 mod clean;
@@ -171,6 +173,13 @@ fn main() {
         #[cfg(unix)]
         "cache" if args.get(1).map(String::as_str) == Some("clean") && !surface::asks_for_help(&args) => {
             cache_clean::run(&args, &raw_args)
+        }
+        // `vis cache prune` — retention by count, age and size in a CI context, with the same removals and message as
+        // the Node handler. Every other shape, and every directory or environment it cannot reproduce, is delegated
+        // inside `cache_prune::run`, before anything is printed or removed.
+        #[cfg(unix)]
+        "cache" if args.get(1).map(String::as_str) == Some("prune") && !surface::asks_for_help(&args) => {
+            cache_prune::run(&args, &raw_args)
         }
         // `vis run <target>` — answered natively only when every task is a local cache hit (a CI context,
         // started by the launcher). Everything else is handed to Node before anything is printed, inside

@@ -336,7 +336,7 @@ const selfUpdateMayRunNatively = (platform, environment, args, interactive) => {
     return true;
 };
 
-const CACHE_NATIVE_SUBCOMMANDS = new Set(["clean", "hash", "list", "size", "why"]);
+const CACHE_NATIVE_SUBCOMMANDS = new Set(["clean", "hash", "list", "prune", "size", "why"]);
 
 // Whether `vis cache clean` can pass the binary's native gate (`plan` in `cache_clean.rs`): `--cache-dir <dir>`, `--type <store>`,
 // `--dry-run` and `--force`, in a CI context off a terminal where pail's layout is decidable (every message is a pail block).
@@ -355,6 +355,23 @@ const cacheCleanMayRunNatively = (platform, environment, args, interactive) => {
     return flags.every((token, index) => CACHE_CLEAN_FLAG.test(token) || CACHE_CLEAN_VALUE_FLAG.test(token) || (!token.startsWith("-") && CACHE_CLEAN_VALUE_FLAG.test(flags[index - 1] ?? "")));
 };
 
+// Whether `vis cache prune` can pass the binary's native gate (`plan` in `cache_prune.rs`): `--cache-dir`, `--scope`, `--keep-last`,
+// `--max-age-days` and `--max-size`, each with a value, in a CI context off a terminal where pail's layout is decidable (every
+// message is a pail block). The binary re-checks everything, including the number and size shapes and the entries it would
+// remove, so this only skips the extra process for a call it would delegate anyway.
+const CACHE_PRUNE_VALUE_FLAG = /^--(?:cache-dir|scope|keep-last|max-age-days|max-size)$/;
+const CACHE_PRUNE_INLINE_FLAG = /^--(?:cache-dir|scope|keep-last|max-age-days|max-size)=.+$/;
+
+const cachePruneMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    const flags = args.slice(2);
+
+    return flags.every((token, index) => CACHE_PRUNE_INLINE_FLAG.test(token) || CACHE_PRUNE_VALUE_FLAG.test(token) || (!token.startsWith("-") && CACHE_PRUNE_VALUE_FLAG.test(flags[index - 1] ?? "")));
+};
+
 // Whether `vis cache list|size` can pass the binary's native gate (`answer` in `cache.rs`). The binary
 // re-checks everything, including the flags, the root and the config; this only skips the extra process
 // when it would delegate anyway: not on Windows, not in a terminal, and only in a CI context. `hash` and
@@ -366,6 +383,10 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
 
     if (subcommand === "clean") {
         return cacheCleanMayRunNatively(platform, environment, args, interactive);
+    }
+
+    if (subcommand === "prune") {
+        return cachePruneMayRunNatively(platform, environment, args, interactive);
     }
 
     return platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment);
@@ -1117,7 +1138,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
-    // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
+    // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache prune` (`cache_prune.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
         ({ args, environment, interactive, platform, subcommand }) => {
