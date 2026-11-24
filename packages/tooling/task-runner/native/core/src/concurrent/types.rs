@@ -58,20 +58,40 @@ impl FromStr for StdinMode {
 
 /// Signal sent to a command's process group when it is killed.
 ///
-/// Windows has no signals; there the choice is ignored and the tree is
-/// terminated.
+/// The POSIX signals that Linux and macOS both define, which is what Node's
+/// `process.kill` takes by name there. Windows has no signals; there the choice
+/// is ignored and the tree is terminated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KillSignal {
     Abrt,
     Alrm,
+    Bus,
+    Chld,
+    Cont,
+    Fpe,
     Hup,
+    Ill,
     Int,
     Kill,
+    Pipe,
+    Prof,
     Quit,
+    Segv,
+    Stop,
+    Sys,
     #[default]
     Term,
+    Trap,
+    Tstp,
+    Ttin,
+    Ttou,
+    Urg,
     Usr1,
     Usr2,
+    Vtalrm,
+    Winch,
+    Xcpu,
+    Xfsz,
 }
 
 impl FromStr for KillSignal {
@@ -84,17 +104,36 @@ impl FromStr for KillSignal {
         match upper.strip_prefix("SIG").unwrap_or(&upper) {
             "ABRT" => Ok(Self::Abrt),
             "ALRM" => Ok(Self::Alrm),
+            "BUS" => Ok(Self::Bus),
+            "CHLD" => Ok(Self::Chld),
+            "CONT" => Ok(Self::Cont),
+            "FPE" => Ok(Self::Fpe),
             "HUP" => Ok(Self::Hup),
+            "ILL" => Ok(Self::Ill),
             "INT" => Ok(Self::Int),
             "KILL" => Ok(Self::Kill),
+            "PIPE" => Ok(Self::Pipe),
+            "PROF" => Ok(Self::Prof),
             "QUIT" => Ok(Self::Quit),
+            "SEGV" => Ok(Self::Segv),
+            "STOP" => Ok(Self::Stop),
+            "SYS" => Ok(Self::Sys),
             "TERM" => Ok(Self::Term),
+            "TRAP" => Ok(Self::Trap),
+            "TSTP" => Ok(Self::Tstp),
+            "TTIN" => Ok(Self::Ttin),
+            "TTOU" => Ok(Self::Ttou),
+            "URG" => Ok(Self::Urg),
             "USR1" => Ok(Self::Usr1),
             "USR2" => Ok(Self::Usr2),
+            "VTALRM" => Ok(Self::Vtalrm),
+            "WINCH" => Ok(Self::Winch),
+            "XCPU" => Ok(Self::Xcpu),
+            "XFSZ" => Ok(Self::Xfsz),
             _ => Err(InvalidOption {
                 option: "killSignal",
                 value: value.to_string(),
-                expected: "one of SIGABRT, SIGALRM, SIGHUP, SIGINT, SIGKILL, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2",
+                expected: "a POSIX signal name such as SIGTERM, SIGKILL, SIGINT, SIGHUP, SIGUSR1 or SIGCONT",
             }),
         }
     }

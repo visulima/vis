@@ -185,6 +185,8 @@ mod tests {
         assert!(elapsed.as_secs() < 5, "kill-others should have killed the long-running process, took {:?}", elapsed);
     }
 
+    // `cmd.exe` keeps the space before `>&2` in the text it echoes.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stderr_output() {
         let commands = vec![make_config("echo error >&2", None)];
@@ -525,6 +527,8 @@ mod tests {
             ("SIGUSR2", KillSignal::Usr2),
             ("SIGABRT", KillSignal::Abrt),
             ("SIGALRM", KillSignal::Alrm),
+            ("SIGCONT", KillSignal::Cont),
+            ("sigwinch", KillSignal::Winch),
         ] {
             assert_eq!(input.parse::<KillSignal>().unwrap(), expected, "{input}");
         }
@@ -552,7 +556,7 @@ mod tests {
 
         // The child exits with 70 only if it receives SIGUSR1; SIGTERM would give 143.
         let commands = vec![
-            make_config("trap 'exit 70' USR1; sleep 0.3 & wait", Some("trapper")),
+            make_config("trap 'exit 70' USR1; sleep 30 & wait", Some("trapper")),
             make_config("sleep 0.1; exit 1", Some("fails")),
         ];
         let mut opts = default_options();
