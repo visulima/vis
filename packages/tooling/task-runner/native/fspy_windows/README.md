@@ -14,7 +14,8 @@ See [`../../rfc/design-fspy-windows-detours.md`](../../rfc/design-fspy-windows-d
 | `src/hooks.rs` | One install / uninstall fn per Windows API hook                 |
 | `src/pipe.rs`  | Named-pipe IPC (parent supervisor + DLL sender)                 |
 | `src/path.rs`  | `\\?\` / `\\.\` prefix stripping; supervisor-side normalization |
+| `src/pe.rs`    | Bounds-checked import-table reader over a mapped PE32+ image    |
 
 ## Why not Linux
 
-`cfg(windows)`-gated throughout — on non-Windows hosts `cargo check` produces an empty crate. Real development needs an MSVC toolchain + Windows CI loop.
+`hooks.rs`, `pipe.rs` and `DllMain` are `cfg(windows)`-gated; `path.rs` and `pe.rs` are pure logic and their unit tests (`cargo test`) run on any host. Everything that touches Win32 needs an MSVC toolchain + a Windows run.

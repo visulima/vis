@@ -12,11 +12,12 @@
 //! install the hooks before the host program's `main` runs.
 
 // Only the Win32 glue (hooks, pipe, `DllMain`) is Windows-specific. Pure logic
-// (`path`) builds on every host so `cargo test` covers it without a Windows
+// (`path`, `pe`) builds on every host so `cargo test` covers it without a Windows
 // runner.
 #[cfg(windows)]
 pub mod hooks;
 pub mod path;
+pub mod pe;
 #[cfg(windows)]
 pub mod pipe;
 
