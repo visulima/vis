@@ -16,39 +16,42 @@
  *
  * ## Accepted differences
  *
- * Where the runners differ on purpose, the second block of the file asserts BOTH values, so a
- * change on either side fails loudly. Each row is a behaviour the native runner has deliberately
- * changed (a fix, or something the JS spawner never did); the JS value is the one being retired.
+ * Where the runners differ, the second block of the file asserts BOTH values, so a change on
+ * either side fails loudly. Rows 1 to 8 are the differences plan 015 names: fixes, or things the
+ * JS spawner never did; the JS value is the one being retired. The rows after them are differences
+ * the plan does not name, and wait for the owner to classify them.
  *
  * | # | Scenario | JS spawner | Native runner |
  * | - | -------- | ---------- | ------------- |
- * | 1 | the command cannot be spawned (missing cwd or shell) | `started` without a pid, `error`, close code -2 | `error`, close code 1, no `started` |
- * | 2 | a UTF-8 character split across two reads | one U+FFFD per stray byte (each chunk decoded alone) | the character, once |
+ * | 1 | the command cannot be spawned (missing cwd or shell) | `error`, close code -2 (a negative libuv error; -2 on POSIX) | `error`, close code 1 |
+ * | 2 | a UTF-8 character split across two reads, within the 100 ms flush window | one U+FFFD per stray byte (each chunk decoded alone) | the character, once |
  * | 3 | `killTimeout` | never read: a command that ignores the kill signal runs on | SIGKILL after the timeout (137) |
  * | 4 | `killOthers` fires with commands still queued | the run never resolves | resolves; the queued commands have no close event |
  * | 5 | `successCondition: "command-MyApp"` for a command named `MyApp` | lowercases the condition, never matches | matches |
  * | 6 | an unknown `successCondition`, `killSignal` or `killOthers` value | silently the default | rejects, naming the value |
  * | 7 | a pty command killed by a signal | exit code 0, `killed` true (node-pty's `exitCode`) | `128 + signal`, `killed` true |
  * | 8 | a pty command that cannot start (missing cwd) | `started`, then close code 1, no `error` | `error`, close code 1, no `started` |
- * | 9 | a pty size with a zero dimension | accepted | rejects, naming the size |
- * | 10 | a run aborted by SIGINT | the `close` event keeps the raw exit code (143); only the result says 0 | the `close` event says 0, like the result |
  *
  * ## Needs the owner's classification
  *
- * | # | Scenario | JS spawner | Native runner |
- * | - | -------- | ---------- | ------------- |
- * | A | a pty command with `inheritEnv: false` | no `SHELL` | `SHELL` is set: `portable-pty` adds it to every command and gives no way to remove it |
+ * | # | Scenario | JS spawner | Native runner | Who can see it |
+ * | - | -------- | ---------- | ------------- | -------------- |
+ * | A | a pty command with `inheritEnv: false` | no `SHELL` | `SHELL` is set: `portable-pty` adds it to every command and gives no way to remove it | a task that reads `SHELL` under a clean environment |
+ * | B | a command that cannot be spawned | a `started` event (no pid) comes first | no `started` event, only `error` and `close` | a consumer that expects `started` before `close` |
+ * | C | a run aborted by SIGINT | the `close` event keeps the raw exit code (143); only the result says 0 | the `close` event says 0, like the result | the consumers that read `exitCode` off a close event: `executor.ts:280` and `:373`, `handler.ts:265`; they would record 0 instead of 143 for an interrupted task |
  *
  * ## Same on both (asserted equal in the scenarios, not differences)
  *
  * `killed` is true for a command ended by `killOthers`, an abort or its own `kill`; the result of
- * a SIGINT abort is exit code 0 and `success` (the event is row 10); a signalled shell reports `128 + signal`; neither runner listens for SIGHUP; both remove the listeners they
- * add for SIGINT, SIGTERM and exit when the run settles.
+ * a SIGINT abort is exit code 0 and `success` (the event is row C); a signalled shell reports
+ * `128 + signal`; neither runner listens for SIGHUP; both remove the listeners they add for
+ * SIGINT, SIGTERM and exit when the run settles.
  *
  * ## Not covered here
  *
- * Windows is unverified locally. The scenarios that need a POSIX shell, a pty or signals are
- * skipped there; the rest run through the probe script and `cmd.exe`.
+ * Only macOS ran locally. Linux and Windows are covered by CI only. The scenarios that need a
+ * POSIX shell, a pty or signals are skipped on Windows; the rest run through the probe script and
+ * `cmd.exe`.
  * A real SIGINT to a CLI process (rather than invoking the run's own listener) is step 3's Ctrl+C test.
  */
 
@@ -319,6 +322,13 @@ const scenarios: Scenario[] = [
         commands: () => [{ command: probeCommand("tty"), stdin: "pty" }],
         merged: true,
         name: "pty: the child sees a terminal",
+        posixOnly: true,
+    },
+    {
+        // `process.stdout.columns` is 0 on some terminals and callers pass it on as the size.
+        commands: () => [{ command: "stty size", ptySize: { cols: 0, rows: 0 }, stdin: "pty" }],
+        merged: true,
+        name: "pty: a size with a zero dimension gives the default terminal",
         posixOnly: true,
     },
     {
@@ -608,18 +618,37 @@ const both = async (
     return out;
 };
 
+/** Whether the process group led by `pid` is gone, allowing it a few seconds to be reaped. */
+const groupGone = async (pid: number): Promise<boolean> => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+        try {
+            process.kill(-pid, 0);
+        } catch {
+            return true;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => {
+            setTimeout(resolve, 100);
+        });
+    }
+
+    return false;
+};
+
 const closeOf = (outcome: { observation?: Observation }, index = 0) => outcome.observation!.result.closeEvents.find((event) => event.index === index)!;
 const kindsOf = (outcome: { observation?: Observation }, index = 0): string[] =>
     outcome.observation!.events.filter((event) => event.index === index).map((event) => event.kind);
 
 describe("accepted differences", () => {
-    it("1. a command that cannot be spawned: exit code and the missing `started`", async () => {
+    it("1. a command that cannot be spawned: the exit code (and B, the missing `started`)", async () => {
         expect.assertions(6);
 
         const { js, native } = await both(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory" }]);
 
         expect(kindsOf(js)).toStrictEqual(["started", "error", "close"]);
-        expect(closeOf(js).exitCode).toBe(-2);
+        // The libuv error code: -2 (ENOENT) on POSIX, another negative number on Windows.
+        expect(closeOf(js).exitCode).toBeLessThan(0);
         expect(js.observation!.events.find((event) => event.kind === "started")?.pid).toBeUndefined();
         expect(kindsOf(native)).toStrictEqual(["error", "close"]);
         expect(closeOf(native).exitCode).toBe(1);
@@ -641,7 +670,7 @@ describe("accepted differences", () => {
         expect.assertions(2);
 
         const euro = Buffer.from("€\n");
-        const { js, native } = await both(() => [{ command: probeCommand("chunks", "out", base64(euro.subarray(0, 1)), base64(euro.subarray(1))) }]);
+        const { js, native } = await both(() => [{ command: probeCommand("chunks-fast", "out", base64(euro.subarray(0, 1)), base64(euro.subarray(1))) }]);
         const stdout = (outcome: { observation?: Observation }) =>
             outcome.observation!.events.filter((event) => event.kind === "stdout").map((event) => event.text);
 
@@ -703,16 +732,19 @@ describe("accepted differences", () => {
         expect(native.observation).toBeUndefined();
     });
 
-    it.skipIf(!posix)("10. a run aborted by SIGINT: the close event says 0 natively, the raw 143 in the JS spawner", async () => {
-        expect.assertions(6);
+    it.skipIf(!posix)("row C (needs classification): a run aborted by SIGINT: the close event says 0 natively, the raw 143 in the JS spawner", async () => {
+        expect.assertions(8);
 
         const { js, native } = await both(() => [{ command: probeCommand("hang") }], {}, callSignalListener("hanging", "SIGINT"));
         const closeEvent = (outcome: { observation?: Observation }) => outcome.observation!.events.find((event) => event.kind === "close")!;
+        const pidOf = (outcome: { observation?: Observation }) => outcome.observation!.events.find((event) => event.kind === "started")!.pid!;
 
-        // The result is the same on both: an interrupt is a cancellation, not a failure.
+        // The result is the same on both: an interrupt is a cancellation, not a failure, and nothing is left running.
         for (const outcome of [js, native]) {
             expect(closeOf(outcome)).toMatchObject({ exitCode: 0, killed: true });
             expect(outcome.observation!.result.success).toBe(true);
+            // eslint-disable-next-line no-await-in-loop
+            await expect(groupGone(pidOf(outcome))).resolves.toBe(true);
         }
 
         expect(closeEvent(js)).toMatchObject({ exitCode: 143, killed: true });
@@ -756,17 +788,7 @@ describe("accepted differences", () => {
             expect(closeOf(native).exitCode).toBe(1);
         });
 
-        it("9. a size with a zero dimension: the native runner rejects it naming the size", async () => {
-            expect.assertions(3);
-
-            const { js, native } = await both(() => [{ command: "echo hi", ptySize: { cols: 0, rows: 0 }, stdin: "pty" }]);
-
-            expect(js.observation!.result.success).toBe(true);
-            expect(native.error).toContain("0x0");
-            expect(native.observation).toBeUndefined();
-        });
-
-        it("a. (needs classification) SHELL is set natively even with inheritEnv: false", async () => {
+        it("row A (needs classification): SHELL is set natively even with inheritEnv: false", async () => {
             expect.assertions(2);
 
             const commands = () => [

@@ -171,6 +171,20 @@ describe(runNativeConcurrent, () => {
         });
     });
 
+    it.skipIf(process.platform === "win32")("runs a pty command whose terminal reports a zero size at the default size", async () => {
+        expect.assertions(2);
+
+        // `process.stdout.columns` is 0 on some terminals, and callers pass it on as the pty size.
+        const { events, result } = await collect([{ command: "stty size", ptySize: { cols: 0, rows: 0 }, stdin: "pty" }]);
+        const output = events
+            .filter((event) => event.kind === "stdout")
+            .map((event) => event.text)
+            .join("");
+
+        expect(result.success).toBe(true);
+        expect(output).toContain("24 80");
+    });
+
     describe("a run that fails outside the commands", () => {
         it("rejects with the reason instead of waiting forever, after delivering what came before", async () => {
             expect.assertions(2);

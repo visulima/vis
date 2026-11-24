@@ -1292,8 +1292,9 @@ export interface ConcurrentCommandConfig {
     /**
      * Whether the child inherits the parent `process.env` under `env`.
      * Default `true`. `false` spawns the child with only `env` (plus the PATH
-     * enhancement), so the caller owns the whole environment. This forces the
-     * JS spawner, since the native addon always copies the parent environment.
+     * enhancement), so the caller owns the whole environment. Both runners
+     * support it; `runConcurrently` still routes a command that sets it to the
+     * JS spawner.
      */
     inheritEnv?: boolean;
     /** Human-readable name for this command (used in prefixes/logs). */

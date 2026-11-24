@@ -55,6 +55,21 @@ const resolveEnv = (config: ConcurrentCommandConfig): Record<string, string> => 
     return env;
 };
 
+/**
+ * A terminal dimension the addon accepts, or the default. Callers pass `process.stdout.columns`,
+ * which some terminals report as 0; node-pty took that as it came, and the addon refuses it, which
+ * would fail the whole run over a cosmetic size.
+ */
+const terminalSize = (size: { cols: number; rows: number } | undefined): { cols: number; rows: number } | undefined => {
+    if (!size) {
+        return undefined;
+    }
+
+    const valid = (value: number, fallback: number): number => (Number.isInteger(value) && value > 0 && value <= 65_535 ? value : fallback);
+
+    return { cols: valid(size.cols, 80), rows: valid(size.rows, 24) };
+};
+
 const toNativeCommand = (config: ConcurrentCommandConfig): NativeConcurrentCommandConfig => {
     return {
         command: config.command,
@@ -62,7 +77,7 @@ const toNativeCommand = (config: ConcurrentCommandConfig): NativeConcurrentComma
         env: resolveEnv(config),
         inheritEnv: config.inheritEnv,
         name: config.name,
-        ptySize: config.ptySize,
+        ptySize: terminalSize(config.ptySize),
         shell: config.shell,
         stdin: config.stdin,
     };

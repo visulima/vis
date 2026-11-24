@@ -298,7 +298,7 @@ jobs:
             - name: "Run the concurrent runner parity suite"
               shell: "bash"
               working-directory: "packages/tooling/task-runner"
-              run: "pnpm exec vitest run __tests__/parity __tests__/unit/concurrent-native.test.ts __tests__/unit/native-concurrent-run.test.ts"
+              run: "pnpm exec vitest run __tests__/parity"
 
     # Native criterion benches tracked on CodSpeed. Separate from the JS
     # benches in codspeed.yml (those run each package's bench script under the

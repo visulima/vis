@@ -4,6 +4,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const decode = (base64) => Buffer.from(base64, "base64");
 const stream = (name) => (name === "err" ? process.stderr : process.stdout);
 
+const chunked = (pause) => async ([which, ...pieces]) => {
+    for (const piece of pieces) {
+        stream(which).write(decode(piece));
+        await sleep(pause);
+    }
+};
+
 const modes = {
     // out/err <text>: one line on stdout or stderr.
     err: ([text]) => console.error(text),
@@ -26,13 +33,10 @@ const modes = {
     },
 
     // chunks <out|err> <base64>...: write each chunk, then pause, so a line (or a character) can
-    // arrive in pieces.
-    chunks: async ([which, ...pieces]) => {
-        for (const piece of pieces) {
-            stream(which).write(decode(piece));
-            await sleep(60);
-        }
-    },
+    // arrive in pieces. `chunks-fast` pauses for less than the 100 ms a partial line waits before
+    // it is flushed, so the pieces still belong to one line.
+    chunks: chunked(60),
+    "chunks-fast": chunked(10),
 
     // A partial line, a pause longer than the 100 ms flush, then the rest.
     partial: async () => {
