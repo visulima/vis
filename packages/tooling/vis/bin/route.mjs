@@ -994,6 +994,32 @@ const securityListMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && args.length === 3 && args[2] === "--json";
 };
 
+// Whether `vis task-why` can pass the binary's native gate (`parse` and `answer` in `task_why.rs`): one id of the shape
+// `<project>:<target>` with exactly one colon (the handler splits at the colon with a limit of two, which truncates a
+// longer id), in printable ASCII and not starting with `-`, for a pnpm workspace whose root is the working directory, in a
+// CI context off a terminal. The output is the same in every colour environment, but the Node runtime's own colour warning
+// is not. The binary re-checks everything, including the config, the project and its target (an error prints a stack
+// trace, which stays in Node); this only skips the extra process when it would delegate anyway. Windows stays in Node.
+const TASK_WHY_ID = /^[\u0021-\u007E]+$/;
+
+const taskWhyIdIsNative = (id) => {
+    if (id === undefined || id.startsWith("-") || !TASK_WHY_ID.test(id)) {
+        return false;
+    }
+
+    const parts = id.split(":");
+
+    return parts.length === 2 && parts.every((part) => part !== "");
+};
+
+const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && args.length === 2 && taskWhyIdIsNative(args[1]);
+};
+
 // Commands with a native gate answer help through the binary on every platform (it enables
 // virtual-terminal processing on a Windows console), and otherwise follow the gate.
 // `mayRunNatively` is only called when the help surface is not asked for.
@@ -1077,6 +1103,8 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => syncCiWorkflowMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
         },
     ],
+    // A task of a script-only workspace, answered when it exists; every error stays in Node.
+    ["task-why", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => taskWhyMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["view", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
 ]);
 

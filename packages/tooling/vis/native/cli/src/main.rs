@@ -65,6 +65,7 @@ mod table;
 // Not routed to any command yet; the command ports call it.
 #[cfg_attr(not(test), allow(dead_code))]
 mod targets;
+mod task_why;
 mod term;
 mod toolchain;
 mod typosquat;
@@ -161,6 +162,10 @@ fn main() {
         // `vis replay` — shows a recorded run (or lists the recorded runs); delegated inside `replay::run` for
         // every shape and context it cannot reproduce exactly.
         "replay" if !surface::asks_for_help(&args) => replay::run(&args, &raw_args),
+        // `vis task-why <project>:<target>` — the fixed answer for a task of a script-only JS workspace, in a CI
+        // context; every error, every other shape and every workspace it cannot read is delegated inside
+        // `task_why::run`, before anything is printed.
+        "task-why" if !surface::asks_for_help(&args) => task_why::run(&args, &raw_args),
         // `vis affected <target> --sparse-checkout` — the affected project roots. Every other shape
         // forwards to `vis run --affected` and is delegated inside `affected::run`.
         "affected" if !surface::asks_for_help(&args) => affected::run(&args, &raw_args),
