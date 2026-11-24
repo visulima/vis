@@ -20,6 +20,8 @@ pub(crate) enum HttpError {
     Decode(String),
     /// The body is larger than the cap.
     TooLarge { limit: u64 },
+    /// A redirect the client was told not to follow.
+    Redirect(u16),
     /// Anything else: a bad URL, too many redirects, a protocol error.
     Request(String),
 }
@@ -97,6 +99,7 @@ impl fmt::Display for HttpError {
             Self::Status { code, .. } => write!(f, "http status: {code}"),
             Self::Decode(detail) => write!(f, "decode: {detail}"),
             Self::TooLarge { limit } => write!(f, "response larger than {limit} bytes"),
+            Self::Redirect(status) => write!(f, "redirect: status {status} not followed"),
             Self::Request(detail) => write!(f, "request: {detail}"),
         }
     }

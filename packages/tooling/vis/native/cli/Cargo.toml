@@ -72,12 +72,22 @@ oxc_span = "=0.154.0"
 terminal_size = "0.4"
 # `src/http/`: the blocking HTTPS client (rustls + ring + the bundled Mozilla roots, gzip). Default features
 # are off so no second TLS stack or unused codec links; it is built lazily and never touched by `--version`.
-ureq = { version = "3.5", default-features = false, features = [ "rustls", "gzip" ] }
+ureq = { version = "3.5", default-features = false, features = [
+  "rustls",
+  "gzip"
+] }
 # Already in the tree through `ureq`; named here to read its errors apart (src/http/error.rs) and, in the tests, to
 # serve TLS. Same features as `ureq` turns on.
-rustls = { version = "0.23", default-features = false, features = [ "ring", "std" ] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std"
+] }
 
 [dev-dependencies]
 # A self-signed certificate generated at test time, and a TLS server to present it, so the extra-CA path
 # is proven without a network (src/http/tests.rs).
-rcgen = { version = "0.13", default-features = false, features = [ "crypto", "pem", "ring" ] }
+rcgen = { version = "0.13", default-features = false, features = [
+  "crypto",
+  "pem",
+  "ring"
+] }

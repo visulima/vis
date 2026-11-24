@@ -188,7 +188,7 @@ fn get_returns_status_and_body_and_sends_the_headers() {
 
     assert_eq!(seen.request_line, "GET /pkg?x=1 HTTP/1.1");
     assert_eq!(seen.header("accept"), Some("application/json"));
-    assert!(seen.header("user-agent").unwrap().starts_with("vis/"));
+    assert_eq!(seen.header("user-agent"), Some("vis"));
 }
 
 #[test]
@@ -270,6 +270,28 @@ fn a_redirect_from_https_to_http_is_refused() {
 }
 
 #[test]
+fn a_url_in_a_query_does_not_make_two_origins_one() {
+    let hop = next_hop("https://a.test/x", "https://sso.test/login?return=https://a.test/x", 302, false).unwrap();
+
+    assert!(!hop.keep_headers);
+    assert!(
+        !next_hop("https://a.test/x?back=https://sso.test/y", "https://sso.test/z", 302, false).unwrap().keep_headers
+    );
+    assert!(next_hop("https://a.test/x?back=https://sso.test/y", "https://a.test/z", 302, false).unwrap().keep_headers);
+}
+
+#[test]
+fn a_redirect_is_reported_when_following_is_off() {
+    let stub = spawn(|_| reply("302 Found", &[("location", "/elsewhere")], b""));
+    let strict = HttpClient::new(HttpConfig { follow_redirects: false, ..HttpConfig::default() });
+    let error = strict.get(&stub.url("/"), &[]).unwrap_err();
+
+    assert!(matches!(error, HttpError::Redirect(302)), "{error:?}");
+    assert_eq!(error.to_string(), "redirect: status 302 not followed");
+    assert_eq!(stub.requests().len(), 1);
+}
+
+#[test]
 fn a_location_is_resolved_against_the_url_it_came_from() {
     let base = "https://reg.test:8443/a/b/c?q=1#f";
 
@@ -278,6 +300,14 @@ fn a_location_is_resolved_against_the_url_it_came_from() {
     assert_eq!(resolve(base, "/root?x=http://y"), "https://reg.test:8443/root?x=http://y");
     assert_eq!(resolve(base, "d"), "https://reg.test:8443/a/b/d");
     assert_eq!(resolve("https://reg.test", "d"), "https://reg.test/d");
+    assert_eq!(resolve(base, "?page=2"), "https://reg.test:8443/a/b/c?page=2");
+    assert_eq!(resolve(base, "#frag"), "https://reg.test:8443/a/b/c?q=1");
+    assert_eq!(resolve(base, ""), "https://reg.test:8443/a/b/c?q=1");
+    assert_eq!(resolve(base, "../d"), "https://reg.test:8443/a/d");
+    assert_eq!(resolve(base, "../../../d?x=1#f"), "https://reg.test:8443/d?x=1");
+    assert_eq!(resolve(base, "./e/./f/.."), "https://reg.test:8443/a/b/e/");
+    assert_eq!(resolve(base, "/p/../q"), "https://reg.test:8443/q");
+    assert_eq!(resolve("https://reg.test/a/b?x=1", "c"), "https://reg.test/a/c");
 }
 
 #[test]
@@ -378,6 +408,18 @@ fn a_refused_connection_is_a_connect_error() {
 }
 
 #[test]
+fn the_resolver_failing_is_a_dns_error() {
+    // What `std` reports for a failed lookup: an uncategorised error with the platform's text after this prefix.
+    let lookup = std::io::Error::other("failed to lookup address information: Name or service not known");
+    let error = HttpError::from_ureq(ureq::Error::Io(lookup), "registry.example");
+
+    assert_eq!(error.to_string(), "dns: could not resolve registry.example");
+    assert!(matches!(HttpError::from_ureq(ureq::Error::Io(std::io::Error::other("boom")), "h"), HttpError::Request(_)));
+}
+
+/// Asks a real resolver, so it stays out of the default run.
+#[test]
+#[ignore = "sends one DNS query"]
 fn an_unresolvable_host_is_a_dns_error() {
     // `.invalid` never resolves (RFC 6761), so the lookup fails without anything being reachable.
     let error = client().get("http://nothing.invalid/", &[]).unwrap_err();
@@ -414,13 +456,16 @@ fn timeouts_come_from_one_variable_each() {
         let map: HashMap<String, OsString> =
             pairs.iter().map(|(key, value)| ((*key).to_owned(), OsString::from(value))).collect();
 
-        HttpConfig::from_lookup(&move |name| map.get(name).cloned(), Duration::from_secs(30))
+        HttpConfig::from_lookup(&move |name| map.get(name).cloned(), Duration::from_secs(30), Duration::from_secs(10))
     };
 
     let defaults = from(&[]);
-    let own_default = HttpConfig::from_lookup(&|_| None, Duration::from_secs(15));
+    let own_default = HttpConfig::from_lookup(&|_| None, Duration::from_secs(15), Duration::from_secs(12));
 
-    assert_eq!(own_default.global_timeout, Duration::from_secs(15));
+    assert_eq!(
+        (own_default.global_timeout, own_default.connect_timeout),
+        (Duration::from_secs(15), Duration::from_secs(12))
+    );
 
     assert_eq!((defaults.global_timeout, defaults.connect_timeout), (Duration::from_secs(30), Duration::from_secs(10)));
     assert_eq!(defaults.max_body, 64 * 1024 * 1024);
@@ -492,7 +537,8 @@ fn a_request_goes_through_the_proxy_and_no_proxy_bypasses_it() {
 #[test]
 fn proxy_env_child() {
     let Ok(url) = std::env::var("VIS_HTTP_TEST_URL") else { return };
-    let response = HttpClient::new(HttpConfig::from_env(Duration::from_secs(30))).get(&url, &[]).unwrap();
+    let response =
+        HttpClient::new(HttpConfig::from_env(Duration::from_secs(30), Duration::from_secs(10))).get(&url, &[]).unwrap();
 
     println!("BODY={}", response.text().unwrap());
 }

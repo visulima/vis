@@ -10,8 +10,8 @@
 //! | Variable | Effect |
 //! | --- | --- |
 //! | `VIS_HTTP_TIMEOUT` | Seconds a whole request may take, redirects and body included. Default 30 (a command may pick another default). |
-//! | `VIS_HTTP_CONNECT_TIMEOUT` | Seconds the connection (DNS, TCP, TLS) may take. Default 10. |
-//! | `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (and lower case) | Read by `ureq` as curl and Node's proxy agents do. |
+//! | `VIS_HTTP_CONNECT_TIMEOUT` | Seconds the connection (DNS, TCP, TLS) may take. Default 10 (a command may pick another default). |
+//! | `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (and lower case) | Read by `ureq`, which tunnels every request through the proxy with `CONNECT`. |
 //! | `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` | A PEM file added to the OS trust store (see `tls`). |
 //!
 //! A value that is not a positive whole number of seconds is ignored and the default applies.
@@ -44,6 +44,9 @@ pub(crate) struct HttpConfig {
     pub global_timeout: Duration,
     pub connect_timeout: Duration,
     pub max_body: u64,
+    /// `false` returns [`HttpError::Redirect`] for a redirect instead of following it, for a caller that has to
+    /// hand the run to something that follows redirects differently.
+    pub follow_redirects: bool,
     pub extra_ca_files: Vec<PathBuf>,
     /// `None` sends every request direct. [`HttpConfig::from_env`] fills it from the proxy variables.
     pub proxy: Option<Proxy>,
@@ -56,22 +59,34 @@ impl Default for HttpConfig {
             global_timeout: DEFAULT_GLOBAL_TIMEOUT,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             max_body: DEFAULT_MAX_BODY,
+            follow_redirects: true,
             extra_ca_files: Vec::new(),
             proxy: None,
-            user_agent: format!("vis/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: "vis".to_owned(),
         }
     }
 }
 
 impl HttpConfig {
-    /// The settings from the environment. `global_timeout` is the whole-request limit when `VIS_HTTP_TIMEOUT` is
-    /// not set, for a caller that has to match a limit of its own.
-    pub(crate) fn from_env(global_timeout: Duration) -> Self {
-        Self { proxy: Proxy::try_from_env(), ..Self::from_lookup(&|name| env::var_os(name), global_timeout) }
+    /// The settings from the environment. `global_timeout` and `connect_timeout` are the limits when
+    /// `VIS_HTTP_TIMEOUT` and `VIS_HTTP_CONNECT_TIMEOUT` are not set, for a caller that has to match limits of its
+    /// own.
+    pub(crate) fn from_env(global_timeout: Duration, connect_timeout: Duration) -> Self {
+        let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+
+        Self {
+            proxy: Proxy::try_from_env(),
+            user_agent: format!("vis/{version}"),
+            ..Self::from_lookup(&|name| env::var_os(name), global_timeout, connect_timeout)
+        }
     }
 
     /// The settings that come from named variables, read through `lookup` (the proxy is not one of them).
-    pub(crate) fn from_lookup(lookup: &dyn Fn(&str) -> Option<OsString>, global_timeout: Duration) -> Self {
+    pub(crate) fn from_lookup(
+        lookup: &dyn Fn(&str) -> Option<OsString>,
+        global_timeout: Duration,
+        connect_timeout: Duration,
+    ) -> Self {
         let seconds = |name: &str, default: Duration| {
             lookup(name)
                 .and_then(|value| value.to_str().and_then(|text| text.trim().parse::<u64>().ok()))
@@ -81,7 +96,7 @@ impl HttpConfig {
 
         Self {
             global_timeout: seconds("VIS_HTTP_TIMEOUT", global_timeout),
-            connect_timeout: seconds("VIS_HTTP_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT),
+            connect_timeout: seconds("VIS_HTTP_CONNECT_TIMEOUT", connect_timeout),
             extra_ca_files: tls::extra_ca_files(lookup),
             ..Self::default()
         }
@@ -162,6 +177,10 @@ impl HttpClient {
             let location = response.headers().get("location").and_then(|value| value.to_str().ok()).map(str::to_owned);
 
             if let (true, Some(location)) = (matches!(status, 301 | 302 | 303 | 307 | 308), location) {
+                if !self.config.follow_redirects {
+                    return Err(HttpError::Redirect(status));
+                }
+
                 let target = resolve(&url, &location);
                 let hop = next_hop(&url, &target, status, body.is_some())?;
 
@@ -231,12 +250,13 @@ struct Hop {
 
 /// How to follow a redirect from `from` to `to` with `status`. A hop to another origin (scheme, host or port)
 /// keeps no caller header but `accept`, so a credential never leaves its origin, and a body is not re-sent
-/// there; a hop from https to http is refused. As in curl, a 301, 302 or 303 turns a POST into a GET.
+/// there; a hop from https to http is refused. A 301, 302 or 303 turns a POST into a GET.
 fn next_hop(from: &str, to: &str, status: u16, has_body: bool) -> Result<Hop, HttpError> {
-    let same_origin = origin(from) == origin(to);
+    let (from_origin, to_origin) = (origin(from), origin(to));
+    let same_origin = from_origin == to_origin;
 
-    if origin(from).0 == "https" && origin(to).0 != "https" {
-        return Err(HttpError::Request(format!("redirect from https to {} refused", origin(to).0)));
+    if from_origin.0 == "https" && to_origin.0 != "https" {
+        return Err(HttpError::Request(format!("redirect from https to {} refused", to_origin.0)));
     }
 
     let keeps_method = matches!(status, 307 | 308);
@@ -248,14 +268,26 @@ fn next_hop(from: &str, to: &str, status: u16, has_body: bool) -> Result<Hop, Ht
     Ok(Hop { keep_headers: same_origin, keep_body: has_body && keeps_method })
 }
 
-/// The lower-cased scheme and `host[:port]` of `url`, without a user name or password.
-fn origin(url: &str) -> (String, String) {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
-
-    (scheme.to_ascii_lowercase(), host_of(rest).to_ascii_lowercase())
+/// The scheme of `url` and what follows `://` (the whole text, with an empty scheme, when there is none).
+fn split_scheme(url: &str) -> (&str, &str) {
+    url.split_once("://").unwrap_or(("", url))
 }
 
-/// `location` resolved against the URL `base` it came from. Dot segments are left for the server.
+/// The `host[:port]` of the authority at the start of `rest` (the text after `://`), without a user name or password.
+fn host_part(rest: &str) -> &str {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+
+    authority.rsplit_once('@').map_or(authority, |(_, host)| host)
+}
+
+/// The lower-cased scheme and `host[:port]` of `url`.
+fn origin(url: &str) -> (String, String) {
+    let (scheme, rest) = split_scheme(url);
+
+    (scheme.to_ascii_lowercase(), host_part(rest).to_ascii_lowercase())
+}
+
+/// `location` resolved against the URL `base` it came from (RFC 3986 section 5.2, without the fragment).
 fn resolve(base: &str, location: &str) -> String {
     let has_scheme = location
         .split_once(':')
@@ -265,35 +297,68 @@ fn resolve(base: &str, location: &str) -> String {
         return location.to_owned();
     }
 
-    let (scheme, rest) = base.split_once("://").unwrap_or(("http", base));
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let (authority, path) = rest.split_at(authority_end);
+    let (scheme, rest) = match split_scheme(base) {
+        ("", rest) => ("http", rest),
+        split => split,
+    };
+    let (authority, target) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let location = location.split('#').next().unwrap_or("");
 
     if let Some(network_path) = location.strip_prefix("//") {
         return format!("{scheme}://{network_path}");
     }
 
-    if location.starts_with('/') {
-        return format!("{scheme}://{authority}{location}");
+    let (base_path, base_query) = {
+        let target = target.split('#').next().unwrap_or("");
+
+        target.split_once('?').map_or((target, ""), |(path, query)| (path, query))
+    };
+    let base_path = if base_path.is_empty() { "/" } else { base_path };
+    let (path, query) = if location.is_empty() {
+        (base_path, if base_query.is_empty() { String::new() } else { format!("?{base_query}") })
+    } else if let Some((path, query)) = location.split_once('?') {
+        (path, format!("?{query}"))
+    } else {
+        (location, String::new())
+    };
+
+    let merged = if path.is_empty() {
+        base_path.to_owned()
+    } else if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("{}{path}", &base_path[..=base_path.rfind('/').unwrap_or(0)])
+    };
+
+    format!("{scheme}://{authority}{}{query}", remove_dot_segments(&merged))
+}
+
+/// RFC 3986 section 5.2.4 for a path that starts with `/`.
+fn remove_dot_segments(path: &str) -> String {
+    let segments: Vec<&str> = path.split('/').collect();
+    let mut kept: Vec<&str> = Vec::new();
+
+    for (index, segment) in segments.iter().enumerate().skip(1) {
+        let last = index == segments.len() - 1;
+
+        match *segment {
+            "." if last => kept.push(""),
+            "." => {}
+            ".." => {
+                kept.pop();
+
+                if last {
+                    kept.push("");
+                }
+            }
+            other => kept.push(other),
+        }
     }
 
-    let path = path.split(['?', '#']).next().unwrap_or("");
-    let directory = &path[..path.rfind('/').map_or(0, |index| index + 1)];
-
-    format!("{scheme}://{authority}{}{location}", if directory.is_empty() { "/" } else { directory })
+    format!("/{}", kept.join("/"))
 }
 
 /// The `host[:port]` of `url` for messages, without a user name or password.
 fn host_of(url: &str) -> &str {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-
-    authority.rsplit_once('@').map_or(authority, |(_, host)| host)
-}
-
-/// The process-wide client, configured from the environment on first use.
-pub(crate) fn shared() -> &'static HttpClient {
-    static CLIENT: OnceLock<HttpClient> = OnceLock::new();
-
-    CLIENT.get_or_init(|| HttpClient::new(HttpConfig::from_env(DEFAULT_GLOBAL_TIMEOUT)))
+    host_part(split_scheme(url).1)
 }
