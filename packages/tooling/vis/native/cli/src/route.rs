@@ -319,6 +319,9 @@ mod tests {
             .collect()
     }
 
+    // The snapshot was written for the Unix routes: `hook validate`, `implode`, `cache clean` and `cache prune` have no
+    // row on Windows, where they reach the surface instead, so the pinned entries and the row count only hold on Unix.
+    #[cfg(unix)]
     #[test]
     fn routes_match_the_snapshot() {
         let rendered = render();
@@ -337,6 +340,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_rows_are_the_paths_the_snapshot_covers() {
         let rows: Vec<&[&str]> = ROUTES.iter().map(|route| route.path).collect();
