@@ -620,7 +620,12 @@ fn package_manager_commands_answer_help_without_running_the_manager() {
                 .expect("run binary");
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            assert!(output.status.success(), "{args:?}: {:?} {}", output.status, String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{args:?}: {:?} {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
             // `outdated` is an alias of `check`, which the help names.
             let heading = if name == "outdated" { "check" } else { name };
 
