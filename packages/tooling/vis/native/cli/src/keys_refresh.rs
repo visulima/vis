@@ -12,7 +12,7 @@
 //! - the text form and every other argument;
 //! - an environment where Node's `fetch` and this client would not reach the same server the same way: a proxy
 //!   variable (Node ignores them unless `NODE_USE_ENV_PROXY` or `NODE_OPTIONS` ask for them), a CA file, or a
-//!   TLS or Node option (see [`network_environment_is_plain`]);
+//!   TLS or Node option (see [`node_fetch::network_environment_is_plain`]);
 //! - a redirect (`fetch` follows more hops than the client allows itself);
 //! - a `VIS_NPM_KEYS_URL` that is not a plain `http(s)` URL on a port `fetch` always allows, and a `HOME` that
 //!   is not a plain absolute path;
@@ -45,7 +45,7 @@ use serde_json::value::RawValue;
 use serde_json::Value;
 
 use crate::cache::dirs::vis_cache_dir;
-use crate::http::{HttpClient, HttpConfig, HttpError};
+use crate::http::{node_fetch, HttpClient, HttpConfig, HttpError};
 use crate::js::{json_number, json_string, pretty_document};
 use crate::node_context::context_decline;
 use crate::output::write_stdout;
@@ -55,28 +55,6 @@ const DEFAULT_KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// `DEFAULT_TTL_MS`: a day.
 const TTL_MS: u64 = 24 * 60 * 60 * 1000;
-/// `fetch` refuses a fixed list of ports, and the highest on it is 10080.
-const LOWEST_UNBLOCKED_PORT: u32 = 10081;
-
-/// Variables that change how Node's `fetch` reaches a server or whom it trusts, or that this client reads
-/// differently: the proxy variables (and Node's switch for reading them), the CA files, and the Node options.
-/// `NO_PROXY` alone changes nothing. The launcher keeps the same list in `networkEnvironmentIsPlain`
-/// (`bin/route.mjs`); the shared cases of `native/cli/tests/fixtures/routing.json` fail when the two differ.
-const NETWORK_VARIABLES: [&str; 12] = [
-    "ALL_PROXY",
-    "all_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-    "NODE_USE_ENV_PROXY",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_TLS_REJECT_UNAUTHORIZED",
-    "NODE_OPTIONS",
-];
-
 /// What a run prints and the status it ends with.
 struct Outcome {
     stdout: String,
@@ -131,10 +109,6 @@ fn parse(args: &[String]) -> Option<Flags> {
     }
 }
 
-fn network_environment_is_plain() -> bool {
-    NETWORK_VARIABLES.iter().all(|name| env::var_os(name).is_none())
-}
-
 /// The outcome of a run, or the reason it is Node's.
 fn answer(args: &[String]) -> Result<Outcome, String> {
     let flags = parse(args).ok_or("not `security keys-refresh --json [--clear]`")?;
@@ -143,7 +117,7 @@ fn answer(args: &[String]) -> Result<Outcome, String> {
         return Err(reason.to_owned());
     }
 
-    if !network_environment_is_plain() {
+    if !node_fetch::network_environment_is_plain() {
         return Err("a proxy, CA or Node option is set in the environment".to_owned());
     }
 
@@ -161,7 +135,7 @@ fn answer(args: &[String]) -> Result<Outcome, String> {
         Err(env::VarError::NotUnicode(_)) => return Err("VIS_NPM_KEYS_URL is not Unicode".to_owned()),
     };
 
-    if !url_is_plain(&url) {
+    if !node_fetch::url_is_plain(&url) {
         return Err(format!("VIS_NPM_KEYS_URL {url:?} is not a URL `fetch` and the client read alike"));
     }
 
@@ -189,7 +163,8 @@ fn clear(file: &Path) -> Result<Outcome, String> {
 
 fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
     let cached = read_cache(file)?;
-    let client = HttpClient::new(fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT)));
+    let client =
+        HttpClient::new(node_fetch::fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT), FETCH_TIMEOUT));
 
     // A failed request, a failed write and a refused status all end the way Node's `catch` and `!response.ok`
     // do: the old keys when there are some, the `fetch-failed` document otherwise.
@@ -235,14 +210,6 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
             status: 1,
         },
     })
-}
-
-/// `config` with the limits Node's `fetch` has (one fixed 15 seconds) whatever `VIS_HTTP_TIMEOUT` and
-/// `VIS_HTTP_CONNECT_TIMEOUT` say, and with redirects left to Node: `fetch` follows a different set of them than
-/// the client does (https to http, the ports and credentials of the target), so a run that meets one is handed
-/// over whole.
-fn fetch_config(config: HttpConfig) -> HttpConfig {
-    HttpConfig { follow_redirects: false, global_timeout: FETCH_TIMEOUT, connect_timeout: FETCH_TIMEOUT, ..config }
 }
 
 /// The cache entry on disk: `Ok(None)` when there is none, `Ok(Some(_))` for an object with a `keys` array,
@@ -449,24 +416,6 @@ fn store(file: &Path, keys: &Fetched) -> bool {
     file.parent().is_some_and(|directory| fs::create_dir_all(directory).is_ok()) && fs::write(file, entry).is_ok()
 }
 
-/// A URL `fetch` and this client read the same way: lower-case `http` or `https`, printable ASCII without
-/// backslashes, a fragment or an IPv6 literal, no user name or password, and no port from the list `fetch` refuses.
-fn url_is_plain(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else {
-        return false;
-    };
-
-    let authority = rest.split(['/', '?']).next().unwrap_or(rest);
-    let port_is_allowed = authority
-        .rsplit_once(':')
-        .is_none_or(|(_, port)| port.parse::<u32>().is_ok_and(|port| port >= LOWEST_UNBLOCKED_PORT));
-
-    !authority.is_empty()
-        && !authority.contains(['@', '['])
-        && port_is_allowed
-        && url.bytes().all(|byte| byte.is_ascii_graphic() && byte != b'\\' && byte != b'#')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,61 +503,11 @@ mod tests {
     }
 
     #[test]
-    fn the_request_keeps_node_s_fixed_limit_whatever_the_environment_says() {
-        let from_environment = HttpConfig::from_lookup(
-            &|name| match name {
-                "VIS_HTTP_TIMEOUT" => Some("90".into()),
-                "VIS_HTTP_CONNECT_TIMEOUT" => Some("3".into()),
-                _ => None,
-            },
-            FETCH_TIMEOUT,
-            FETCH_TIMEOUT,
-        );
-
-        assert_eq!(from_environment.global_timeout, Duration::from_secs(90));
-
-        let config = fetch_config(from_environment);
-
-        assert_eq!((config.global_timeout, config.connect_timeout), (FETCH_TIMEOUT, FETCH_TIMEOUT));
-        assert!(!config.follow_redirects);
-    }
-
-    #[test]
     fn the_documents_are_json_stringify_with_two_spaces() {
         assert_eq!(
             pretty_document(&[("cleared", "true".to_owned()), ("refetched", "false".to_owned())]),
             "{\n  \"cleared\": true,\n  \"refetched\": false\n}\n"
         );
-    }
-
-    #[test]
-    fn a_url_must_be_plain() {
-        for plain in [
-            "https://registry.npmjs.org/-/npm/v1/keys",
-            "http://127.0.0.1:49152/keys",
-            "http://localhost/keys?a=1",
-            "https://example.test:443/x",
-        ] {
-            assert!(url_is_plain(plain) == !plain.ends_with(":443/x"), "{plain}");
-        }
-
-        for odd in [
-            "",
-            "HTTP://a.test/",
-            "file:///etc/passwd",
-            "ftp://a.test/",
-            "https://user:pw@a.test/",
-            "http://a.test:6667/",
-            "http://a.test:80/",
-            "http://a.test/ x",
-            "http://a.test/#f",
-            "http://a.test\\x",
-            "http://[::1]:49152/",
-            "http://",
-            "/relative",
-        ] {
-            assert!(!url_is_plain(odd), "{odd}");
-        }
     }
 
     #[test]

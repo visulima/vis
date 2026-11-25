@@ -166,6 +166,15 @@ pub(crate) fn random_uuid() -> Option<String> {
     Some(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
 }
 
+/// `new Date().toISOString()`.
+pub(crate) fn iso_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    vis_core::date::iso_from_millis(
+        i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +291,13 @@ mod tests {
         assert!(PROTOTYPE_NAMES.iter().all(|name| RESERVED_NAMES.contains(name)));
         assert_eq!(RESERVED_NAMES.len(), PROTOTYPE_NAMES.len() + 1);
         assert!(RESERVED_NAMES.contains(&"prototype") && !PROTOTYPE_NAMES.contains(&"prototype"));
+    }
+
+    #[test]
+    fn the_timestamp_is_an_iso_string_with_milliseconds() {
+        let text = iso_now();
+
+        assert_eq!(text.len(), 24);
+        assert!(text.ends_with('Z') && text.as_bytes()[10] == b'T' && text.as_bytes()[19] == b'.');
     }
 }

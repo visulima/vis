@@ -14,27 +14,27 @@ use regex::bytes::Regex;
 use crate::js::PROTOTYPE_NAMES;
 
 /// `name -> specifiers`, in the order the lockfile gives them.
-pub(super) type DependencyMap = Vec<(String, Vec<String>)>;
+pub(crate) type DependencyMap = Vec<(String, Vec<String>)>;
 
 /// An integrity hash with a digest length CycloneDX accepts.
-pub(super) struct Hash {
-    pub(super) algorithm: &'static str,
-    pub(super) hex: String,
+pub(crate) struct Hash {
+    pub(crate) algorithm: &'static str,
+    pub(crate) hex: String,
 }
 
-pub(super) struct Entry {
-    pub(super) name: String,
-    pub(super) version: String,
-    pub(super) hash: Option<Hash>,
-    pub(super) dependencies: DependencyMap,
-    pub(super) peer_dependencies: DependencyMap,
-    pub(super) optional_dependencies: DependencyMap,
+pub(crate) struct Entry {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) hash: Option<Hash>,
+    pub(crate) dependencies: DependencyMap,
+    pub(crate) peer_dependencies: DependencyMap,
+    pub(crate) optional_dependencies: DependencyMap,
 }
 
 /// Whether the text is one the expressions give the same answer on as in JavaScript: valid UTF-8, no
 /// carriage return, line or paragraph separator, and no whitespace character beyond ASCII (JavaScript's `\s`
 /// includes `U+FEFF` and the Unicode spaces).
-pub(super) fn readable(bytes: &[u8]) -> bool {
+pub(crate) fn readable(bytes: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return false;
     };
@@ -72,7 +72,7 @@ impl Patterns {
 }
 
 /// `readFileSync(...).parsePnpmLockFile`: the entries, or `None` where this port cannot answer exactly.
-pub(super) fn parse(bytes: &[u8]) -> Option<Vec<Entry>> {
+pub(crate) fn parse(bytes: &[u8]) -> Option<Vec<Entry>> {
     if !readable(bytes) {
         return None;
     }

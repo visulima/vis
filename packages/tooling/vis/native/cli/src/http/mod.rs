@@ -17,6 +17,7 @@
 //! A value that is not a positive whole number of seconds is ignored and the default applies.
 
 mod error;
+pub(crate) mod node_fetch;
 mod tls;
 
 #[cfg(test)]
