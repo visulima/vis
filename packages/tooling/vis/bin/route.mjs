@@ -435,6 +435,27 @@ const statusMayRunNatively = (platform, environment, args, interactive) =>
 // and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
 // would delegate anyway.
 const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
+const GRAPH_DEPTH = /^\d+$/;
+const GRAPH_FLAGS = new Map([
+    ["--depth", "depth"],
+    ["--format", "format"],
+    ["-d", "depth"],
+    ["-f", "format"],
+]);
+
+// The `[kind, value, next index]` of the graph option at `args[index]`, with its value after a space or an `=` (the
+// short names take a space only), or `undefined` when it is no graph option.
+const graphOption = (args, index) => {
+    const argument = args[index];
+    const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
+    const kind = GRAPH_FLAGS.get(equals === -1 ? argument : argument.slice(0, equals));
+
+    if (kind === undefined) {
+        return undefined;
+    }
+
+    return equals === -1 ? [kind, args[index + 1], index + 2] : [kind, argument.slice(equals + 1), index + 1];
+};
 
 const graphMayRunNatively = (platform, environment, args, interactive) => {
     if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
@@ -442,24 +463,23 @@ const graphMayRunNatively = (platform, environment, args, interactive) => {
     }
 
     const seen = new Set();
+    let index = 1;
 
-    for (let index = 1; index < args.length; index += 1) {
-        const long = args[index].startsWith("--");
-        const equals = long ? args[index].indexOf("=") : -1;
-        const name = equals === -1 ? args[index] : args[index].slice(0, equals);
-        const kind = name === "--format" || name === "-f" ? "format" : name === "--depth" || name === "-d" ? "depth" : undefined;
+    while (index < args.length) {
+        const option = graphOption(args, index);
 
-        if (kind === undefined || seen.has(kind)) {
+        if (option === undefined) {
+            return false;
+        }
+
+        const [kind, value, next] = option;
+
+        if (seen.has(kind) || !(kind === "format" ? GRAPH_FORMATS.has(value) : GRAPH_DEPTH.test(value))) {
             return false;
         }
 
         seen.add(kind);
-
-        const value = equals === -1 ? args[(index += 1)] : args[index].slice(equals + 1);
-
-        if (value === undefined || (kind === "format" ? !GRAPH_FORMATS.has(value) : !/^\d+$/.test(value))) {
-            return false;
-        }
+        index = next;
     }
 
     return true;
@@ -1578,6 +1598,8 @@ const NATIVE_SHAPE_GATES = new Map([
     // The dependency-policy lints: the selectors, `--quiet` and `--format`.
     ["deps", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => depsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
+    // The ASCII, DOT and JSON graph; `html`, `--output` and the interactive viewer stay in Node.
+    ["graph", ({ args, environment, interactive, platform }) => helpOrNative(args, () => graphMayRunNatively(platform, environment, args, interactive))],
     // `hook list` and `hook validate` (which the binary answers only when it has nothing to report); `hook run` is native for every shape
     // (`alwaysNative`) and the other `hook` subcommands are Node's.
     [
@@ -1590,8 +1612,6 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => hookMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
         },
     ],
-    // The ASCII, DOT and JSON graph; `html`, `--output` and the interactive viewer stay in Node.
-    ["graph", ({ args, environment, interactive, platform }) => helpOrNative(args, () => graphMayRunNatively(platform, environment, args, interactive))],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The self-uninstall: `--yes`, or nothing to remove.
