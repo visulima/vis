@@ -1,46 +1,21 @@
-//! pail's log-line layout, shared by every command that prints pail blocks natively (`clean`, `secrets`, `install`,
-//! `sbom`, `optimize`, `ignore`, the `cache` subcommands, `replay`, `run`, `sort-package-json`, ...).
+//! pail's log-line layout, shared by the commands that print pail blocks natively (`clean`,
+//! `secrets`, `cache hash`, `install`).
 //!
 //! A block is a header with the local time and the level label, filled with dots to the line
 //! width, a blank line, then the message word-wrapped to the same width. When pail's colour
 //! detection (see [`crate::term::piped_colour_level`]) turns colour on, the clock and the dots
 //! are grey and the label has the colour of its level, each in its own escape pair; the message
 //! stays plain. Every level above zero uses the same sixteen-colour codes, so the output only
-//! depends on whether colour is on.
-//!
-//! The contract with the callers: the layout is only proven for ASCII text without a terminal. A caller builds
-//! a [`Layout`] with [`Layout::detect`], which answers `None` where Node's pail would lay a line out another
-//! way (a width, a terminal, a colour flag); gates every message on [`printable`] (or [`plain`] for a word such
-//! as a path or an id; [`Layout::block_fitting`] checks the two symbols the optimizer prints itself); and hands
-//! the run to Node when a check fails, before anything is printed. A message the gate lets through that this
-//! layout cannot wrap exactly (a character that is one column and several bytes) is the caller's to refuse.
+//! depends on whether colour is on. The callers only use it where Node's output is provably
+//! this layout: no terminal, ASCII text.
 
 use std::env;
-
-use crate::term::Style;
 
 /// pail's default line width when `COLUMNS` is unset (stdout is not a terminal).
 const DEFAULT_WIDTH: usize = 80;
 
 /// Below this width pail's header cannot hold its label, so Node stays in charge.
 const MIN_WIDTH: usize = 40;
-
-/// Whether pail prints `text` exactly as it is laid out here: printable ASCII, spaces included (the bytes
-/// `padEnd` and the wrap treat as one column each). The callers of [`Layout::block`] gate their messages on
-/// this or on [`plain`] and hand the run to Node when the gate fails.
-pub(crate) fn printable(text: &str) -> bool {
-    text.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
-}
-
-/// A string pail and `padEnd` handle exactly as a single word: printable ASCII, no space.
-pub(crate) fn plain(text: &str) -> bool {
-    text.bytes().all(|byte| byte.is_ascii_graphic())
-}
-
-/// [`plain`] for a path: ASCII, no spaces, no control characters.
-pub(crate) fn plain_path(path: &std::path::Path) -> bool {
-    path.to_str().is_some_and(plain)
-}
 
 /// The width of pail's longest level label (`EMERGENCY`): the label is padded with dots to it.
 const LABEL_FIELD: usize = 9;
@@ -178,10 +153,14 @@ impl Layout {
     }
 }
 
-/// `text` inside the SGR pair of a foreground colour, or nothing for an empty string (pail's colour functions
-/// return an empty string for one).
+/// `text` inside the SGR pair of a foreground colour, or nothing for an empty string (pail's
+/// colour functions return an empty string for one).
 fn paint(code: u8, text: &str) -> String {
-    Style { colour: true }.paint(code, 39, text)
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{code}m{text}\x1b[39m")
+    }
 }
 
 /// `TERM` values whose terminfo entry is 80 columns by 24 lines: the size pail's width lookup (`tput`) treats as "no
