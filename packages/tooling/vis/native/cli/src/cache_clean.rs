@@ -27,14 +27,20 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::cache::{
-    add_safe, collect_entries, eviction_directories, format_bytes, has_backslash, quiet_workspace_root, read_settings,
-    resolve, resolve_cache_directory, store_directories, store_stats, vis_cache_dir, Target,
+use crate::cache::dirs::{
+    eviction_directories, resolve, resolve_cache_directory, store_directories, vis_cache_dir, Target,
+    DEFAULT_CACHE_DIRECTORY,
 };
+use crate::cache::entries::{add_safe, collect_entries, has_backslash, store_stats};
+use crate::cache::flags;
+use crate::cache::format::format_bytes;
+use crate::cache::quiet_workspace_root;
+use crate::cache::settings::read_settings;
 use crate::node_context::output_settings_are_default;
 use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::removal::{removable_directory, removable_file};
+use crate::text::is_ascii_graphic;
 
 /// What the user asked for.
 struct Request {
@@ -124,10 +130,7 @@ fn parse(args: &[String]) -> Option<Request> {
     let mut tokens = args.iter().skip(2);
 
     while let Some(token) = tokens.next() {
-        let (name, inline) = match token.split_once('=') {
-            Some((name, value)) => (name, Some(value)),
-            None => (token.as_str(), None),
-        };
+        let (name, inline) = flags::split(token);
 
         let slot = match (name, inline) {
             ("--dry-run", None) if !dry_run => {
@@ -145,33 +148,10 @@ fn parse(args: &[String]) -> Option<Request> {
             _ => return None,
         };
 
-        let value = match inline {
-            Some(value) => value,
-            None => tokens.next()?.as_str(),
-        };
-
-        // An empty or dash-led value is cerebro's to interpret, and a repeated flag is an array there.
-        if slot.is_some() || value.is_empty() || value.starts_with('-') {
-            return None;
-        }
-
-        *slot = Some(value);
+        flags::take_value(slot, inline, &mut tokens)?;
     }
 
-    Some(Request {
-        cache_dir: cache_dir.map(str::to_owned),
-        target: match target {
-            None | Some("all") => Target::All,
-            Some("task") => Target::Task,
-            Some("ai") => Target::Ai,
-            Some("socket") => Target::Socket,
-            Some("deps-dev") => Target::DepsDev,
-            Some("snyk") => Target::Snyk,
-            Some(_) => return None,
-        },
-        dry_run,
-        force,
-    })
+    Some(Request { cache_dir: cache_dir.map(str::to_owned), target: Target::from_flag(target)?, dry_run, force })
 }
 
 /// The plan when the invocation is native, or `None` to delegate.
@@ -221,11 +201,6 @@ fn say(layout: Layout, output: &mut Output, level: Level, message: &str) {
     buffer.push_str(&layout.block(level, message));
 }
 
-/// A path pail can print exactly: ASCII, no spaces, no control characters.
-fn printable(path: &str) -> bool {
-    path.bytes().all(|byte| byte.is_ascii_graphic())
-}
-
 /// `isCacheDirectoryInsideWorkspace`: a proper descendant of the root, both normalised the way `@visulima/path` does.
 fn inside_workspace(directory: &str, root: &str) -> bool {
     let directory = resolve(directory, &[]);
@@ -242,7 +217,7 @@ fn holds_any(directory: &Path, places: &[&Path]) -> bool {
 
 /// A cache directory of the default shape, which is all this module deletes.
 fn default_location(directory: &str) -> bool {
-    resolve(directory, &[]).ends_with("/node_modules/.cache/vis")
+    resolve(directory, &[]).ends_with(&format!("/{DEFAULT_CACHE_DIRECTORY}"))
 }
 
 /// `runClean` for one directory of the task cache.
@@ -256,7 +231,7 @@ fn task_cache(
 ) -> Option<()> {
     let root_text = root.to_str()?;
 
-    if !printable(directory) || !printable(root_text) {
+    if !is_ascii_graphic(directory) || !is_ascii_graphic(root_text) {
         return None;
     }
 
