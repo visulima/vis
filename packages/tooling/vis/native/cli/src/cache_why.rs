@@ -26,8 +26,9 @@ use crate::cache_hash::{
     json_text, parse, summary_path, Details, FailureJson, Loaded, Output, Probe, ProbeId, Request, Summary, Task,
 };
 use crate::js::PROTOTYPE_NAMES;
-use crate::pail::{plain, printable, Layout, Level};
+use crate::pail::{Layout, Level};
 use crate::summary::{context, emit, find_task, load_summary, present, read_run_file, run_files, utf16_order, Ordered};
+use crate::text::{is_ascii_graphic, is_ascii_printable};
 
 /// The message of the "first run" block holds an em dash, which pail's wrap measures differently from the
 /// byte-counting wrap here (it fits one line at a width where this one would wrap), so it is only printed
@@ -78,7 +79,7 @@ impl Reason {
     }
 
     fn printable(&self) -> bool {
-        self.0 .0.iter().all(|(_, value)| printable(value))
+        self.0 .0.iter().all(|(_, value)| is_ascii_printable(value))
     }
 }
 
@@ -238,10 +239,10 @@ fn table(
     let mut out = Output::default();
     let previous_task = previous.summary.as_ref().and_then(|(_, task)| task.as_ref());
 
-    if !(plain(&request.task_id)
-        && plain(&summary.id)
-        && printable(&task.cache_status)
-        && task.hash.as_deref().is_none_or(printable))
+    if !(is_ascii_graphic(&request.task_id)
+        && is_ascii_graphic(&summary.id)
+        && is_ascii_printable(&task.cache_status)
+        && task.hash.as_deref().is_none_or(is_ascii_printable))
     {
         return None;
     }
@@ -261,7 +262,7 @@ fn table(
         Some(previous_task) => {
             let run = previous.summary.as_ref().map_or("?", |(summary, _)| summary.id.as_str());
 
-            if !(printable(run) && previous_task.hash.as_deref().is_none_or(printable)) {
+            if !(is_ascii_printable(run) && previous_task.hash.as_deref().is_none_or(is_ascii_printable)) {
                 return None;
             }
 
@@ -303,7 +304,7 @@ fn table(
     }
 
     if previous_task.is_none() {
-        if layout.width.saturating_sub(3) < FIRST_TIME.len() {
+        if !layout.fits_one_line(FIRST_TIME) {
             return None;
         }
 
@@ -333,7 +334,7 @@ fn table(
 
         for (sign, keys) in [("+", &bucket.added), ("~", &bucket.changed), ("-", &bucket.removed)] {
             for key in keys {
-                if !printable(key) {
+                if !is_ascii_printable(key) {
                     return None;
                 }
 
@@ -347,7 +348,7 @@ fn table(
     let last = summary_path(root, None);
     let last = last.to_str()?;
 
-    if !plain(last) {
+    if !is_ascii_graphic(last) {
         return None;
     }
 
@@ -382,7 +383,7 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
                 Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
             };
 
-            if !(plain(&request.task_id) && plain(data.to_str()?)) {
+            if !(is_ascii_graphic(&request.task_id) && is_ascii_graphic(data.to_str()?)) {
                 return None;
             }
 
@@ -410,12 +411,12 @@ fn answer(request: &Request, loaded: Loaded, root: &Path, layout: Layout) -> Opt
             let probe: Probe = serde_json::from_str(task.get()).ok()?;
 
             match probe.task_id {
-                Some(ProbeId::Text(id)) if plain(&id) => ids.push(id),
+                Some(ProbeId::Text(id)) if is_ascii_graphic(&id) => ids.push(id),
                 _ => return None,
             }
         }
 
-        if !(plain(&request.task_id) && plain(&summary.id)) {
+        if !(is_ascii_graphic(&request.task_id) && is_ascii_graphic(&summary.id)) {
             return None;
         }
 

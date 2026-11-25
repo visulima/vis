@@ -37,6 +37,7 @@ use rayon::prelude::*;
 use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer};
 use vis_core::date::iso_from_millis;
 
+use crate::cache::dirs::default_task_cache_directory;
 use crate::js::{is_js_whitespace, json_string, random_uuid};
 use crate::node_context::{in_ci, native_context};
 use crate::targets::{script_targets_below, Targets};
@@ -251,18 +252,6 @@ fn lockfile_is_fresh(root: &Path) -> bool {
 
     // One millisecond of margin towards Node, which compares floating point times.
     lockfile_ms <= freshest + MTIME_SKEW_MS - 1.0
-}
-
-/// The default task cache directory: `<main worktree root>/node_modules/.cache/vis`, which is what
-/// `vis run` resolves without a config, a flag or `VIS_CACHE_DIRECTORY` (gated above).
-fn cache_directory(root: &Path) -> Option<PathBuf> {
-    let anchor = match task_runner_core::get_main_worktree_root(root.to_str()?) {
-        Ok(Some(main)) => PathBuf::from(main),
-        Ok(None) => root.to_path_buf(),
-        Err(_) => return None,
-    };
-
-    Some(anchor.join("node_modules").join(".cache").join("vis"))
 }
 
 /// Whether Node's background sweep (`Cache.removeOldEntries`) would delete anything: a top-level entry
@@ -762,7 +751,7 @@ fn attempt(args: &[String]) -> Option<Answer> {
     // The pins Node's toolchain preflight reads; the ones this module cannot decide send the run to Node.
     let pins = Pins::read(&root)?;
 
-    let cache = cache_directory(&root)?;
+    let cache = default_task_cache_directory(&root)?;
 
     // No cache directory means no hit; Node creates it.
     if !cache.is_dir() {

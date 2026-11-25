@@ -86,6 +86,7 @@ mod table;
 mod targets;
 mod task_why;
 mod term;
+mod text;
 mod toolchain;
 mod typosquat;
 mod vis_config;

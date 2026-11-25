@@ -23,7 +23,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::cache::{is_plain, quiet_workspace_root, resolve};
+use crate::cache::dirs::{is_plain_posix_path, resolve};
+use crate::cache::quiet_workspace_root;
 use crate::error::WrapperError;
 use crate::node_context::{output_settings_are_default, quiet_context};
 use crate::output::{write_stdout, write_streams};
@@ -141,7 +142,7 @@ fn home_directory() -> Option<String> {
 
     (home.len() > 1
         && home.starts_with('/')
-        && is_plain(&home)
+        && is_plain_posix_path(&home)
         && !home.chars().any(char::is_control)
         && resolve(&home, &[]) == home)
         .then_some(home)

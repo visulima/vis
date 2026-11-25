@@ -32,7 +32,8 @@ use sort_package_json::{sort_package_json_with_options, SortOptions};
 
 use crate::node_context::{ci_root_context, quiet_context};
 use crate::output::write_streams;
-use crate::pail::{plain_path, Layout, Level};
+use crate::pail::{Layout, Level};
+use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::{expand_patterns, yaml_packages, WORKSPACE_YAML_NAMES};
 
@@ -99,7 +100,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::process::delegate(raw_args);
     };
 
-    if entries.iter().any(|entry| !plain_path(&entry.path)) {
+    if entries.iter().any(|entry| !is_ascii_graphic_path(&entry.path)) {
         crate::process::delegate(raw_args);
     }
 

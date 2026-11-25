@@ -34,10 +34,12 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
+use crate::cache::dirs::default_task_cache_directory;
 use crate::error::WrapperError;
 use crate::js::is_index_like;
 use crate::node_context::{in_ci, monorepo_root, quiet_context};
-use crate::pail::{pail_width, plain, printable, Layout, Level};
+use crate::pail::{pail_width, Layout, Level};
+use crate::text::{is_ascii_graphic, is_ascii_printable};
 
 /// A recorded hash is cut to this many characters in the table, then `…` follows.
 const HASH_DISPLAY_PREFIX: usize = 16;
@@ -587,7 +589,7 @@ fn render_bucket(out: &mut String, label: &str, entries: &[(String, String)]) ->
         return Some(());
     }
 
-    if entries.iter().any(|(key, value)| !printable(key) || !printable(value))
+    if entries.iter().any(|(key, value)| !is_ascii_printable(key) || !is_ascii_printable(value))
         || (entries.len() > 1 && !root_collation())
     {
         return None;
@@ -616,10 +618,10 @@ fn table(
 ) -> Option<Output> {
     let mut out = Output::default();
 
-    if !(plain(&request.task_id)
-        && plain(&summary.id)
-        && printable(&task.cache_status)
-        && task.hash.as_deref().is_none_or(printable))
+    if !(is_ascii_graphic(&request.task_id)
+        && is_ascii_graphic(&summary.id)
+        && is_ascii_printable(&task.cache_status)
+        && task.hash.as_deref().is_none_or(is_ascii_printable))
     {
         return None;
     }
@@ -639,7 +641,7 @@ fn table(
 
     match &task.details {
         Some(Details(details)) => {
-            if !printable(details.text("command")) {
+            if !is_ascii_printable(details.text("command")) {
                 return None;
             }
 
@@ -701,13 +703,7 @@ fn tracked_fingerprint(root: &Path, hash: &str) -> Option<Option<Fingerprint>> {
         return None;
     }
 
-    let anchor = match task_runner_core::get_main_worktree_root(root.to_str()?) {
-        Ok(Some(main)) => PathBuf::from(main),
-        Ok(None) => root.to_path_buf(),
-        Err(_) => return None,
-    };
-
-    let entry = anchor.join("node_modules").join(".cache").join("vis").join(hash);
+    let entry = default_task_cache_directory(root)?.join(hash);
 
     // An entry counts once `.commit` is there and `code` holds a number.
     if fs::read(entry.join(".commit")).is_err() {
@@ -755,7 +751,7 @@ fn answer(request: &Request, summary: Loaded, root: &Path, layout: Layout) -> Op
                 Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
             };
 
-            if !(plain(&request.task_id) && plain(data.to_str()?)) {
+            if !(is_ascii_graphic(&request.task_id) && is_ascii_graphic(data.to_str()?)) {
                 return None;
             }
 
@@ -774,7 +770,7 @@ fn answer(request: &Request, summary: Loaded, root: &Path, layout: Layout) -> Op
                     run_id: Some(&summary.id),
                     task_id: &request.task_id,
                 })?;
-            } else if plain(&request.task_id) && plain(&summary.id) {
+            } else if is_ascii_graphic(&request.task_id) && is_ascii_graphic(&summary.id) {
                 out.stderr = layout
                     .block(Level::Error, &format!("Task \"{}\" was not part of run {}.", request.task_id, summary.id));
             } else {
