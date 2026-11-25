@@ -131,6 +131,12 @@ fn setup(registry: Option<&Registry>) -> Setup {
 
     Setup {
         context: Context {
+            services: Services {
+                downloads: registry.map_or_else(
+                    || "http://127.0.0.1:1/downloads".to_owned(),
+                    |registry| format!("{}/downloads", registry.url()),
+                ),
+            },
             root,
             home: home.clone(),
             cache_dir,
@@ -642,4 +648,227 @@ fn a_packument_that_is_handed_over_is_not_cached() {
 
     assert!(plan(&flags(&["pkg", "--json"]), &all(), &setup.context, &client()).is_err());
     assert!(!setup.home.join(".vis/cache/packuments").exists());
+}
+
+mod downloads_marshall {
+    use super::*;
+
+    fn with_downloads(answer: Option<(u16, &str)>, name: &str) -> (Registry, Setup) {
+        let mut answers = answers(&calm());
+
+        if let Some((status, body)) = answer {
+            answers.insert(
+                format!("/downloads/{}", name.replace('@', "%40").replace('/', "%2F")),
+                (status, body.to_owned(), Vec::new()),
+            );
+        }
+
+        let registry = Registry::start(answers);
+        let setup = setup(Some(&registry));
+
+        (registry, setup)
+    }
+
+    fn only_downloads(setup: &Setup) -> Result<Plan, String> {
+        plan(&flags(&["pkg", "--json"]), &[Marshall::Downloads], &setup.context, &client())
+    }
+
+    fn writes(plan: &Plan) -> Vec<String> {
+        plan.cache
+            .iter()
+            .filter_map(|action| match action {
+                CacheAction::Write { file, text } if file.to_string_lossy().contains("/downloads/") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn entry(count: u64) -> String {
+        format!("{{\"createdAt\":{NOW},\"downloads\":{count},\"observedAt\":\"2024-06-15T12:00:00.000Z\",\"ttlMs\":86400000}}")
+    }
+
+    #[test]
+    fn a_low_count_is_an_error_a_modest_one_a_warning_and_a_large_one_nothing() {
+        for (count, severity, finds) in [
+            (0, "error", true),
+            (19, "error", true),
+            (20, "warning", true),
+            (9999, "warning", true),
+            (10_000, "", false),
+            (9_007_199_254_740_991_u64, "", false),
+        ] {
+            let (registry, setup) = with_downloads(Some((200, &format!("{{\"downloads\":{count}}}"))), "pkg");
+            let plan = only_downloads(&setup).unwrap();
+            let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+            assert_eq!(report["findings"].as_array().unwrap().len(), usize::from(finds), "{count}");
+
+            if finds {
+                let message = format!("Only {count} downloads in the past month.");
+
+                assert_eq!(report["findings"][0]["message"], message.as_str());
+                assert_eq!(report["findings"][0]["severity"], severity);
+                assert_eq!(report["findings"][0]["marshall"], "downloads");
+                assert_eq!(report["findings"][0]["packageName"], "pkg");
+            }
+
+            assert_eq!(plan.status, i32::from(severity == "error"), "{count}");
+            // Every answer with a count is cached, the bytes Node writes.
+            assert_eq!(writes(&plan), [entry(count)], "{count}");
+            // The packument is fetched once, the count once.
+            assert_eq!(registry.requests.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[test]
+    fn the_request_asks_the_api_for_the_encoded_name_and_adds_no_header_of_its_own() {
+        let (registry, setup) = with_downloads(Some((200, "{\"downloads\":5}")), "pkg");
+
+        only_downloads(&setup).unwrap();
+
+        let heads = registry.paths.lock().unwrap().clone();
+
+        assert!(heads[1].starts_with("GET /downloads/pkg HTTP/1.1"), "{}", heads[1]);
+        assert!(!heads[1].to_ascii_lowercase().contains("authorization"));
+    }
+
+    #[test]
+    fn an_answer_without_a_count_is_one_warning_and_nothing_is_cached() {
+        for (status, body) in [
+            (404, "{\"error\":\"package pkg not found\"}"),
+            (429, "{}"),
+            (500, "oops"),
+            (304, ""),
+            (200, "{}"),
+            (200, "{\"downloads\":\"5\"}"),
+            (200, "{\"downloads\":null}"),
+            (200, "null"),
+            (200, "[]"),
+            (200, "7"),
+        ] {
+            let (_registry, setup) = with_downloads(Some((status, body)), "pkg");
+            let plan = only_downloads(&setup).unwrap();
+            let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+            assert_eq!(
+                messages(&report, "warnings"),
+                ["[downloads] npm stats API returned no monthly download data."],
+                "{status} {body}"
+            );
+            assert_eq!((plan.status, report["summary"]["errorCount"].as_u64()), (0, Some(0)));
+            assert!(writes(&plan).is_empty());
+        }
+    }
+
+    #[test]
+    fn what_node_may_read_differently_is_handed_over() {
+        for (status, body) in [
+            (200, "<html></html>"),
+            (200, ""),
+            (200, "\u{feff}{\"downloads\":5}"),
+            (200, "{\"downloads\":5.5}"),
+            (200, "{\"downloads\":-1}"),
+            (200, "{\"downloads\":1e21}"),
+            (200, "{\"downloads\":9007199254740993}"),
+        ] {
+            let (_registry, setup) = with_downloads(Some((status, body)), "pkg");
+
+            assert!(only_downloads(&setup).is_err(), "{status} {body:?}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_and_a_failed_request_are_handed_over() {
+        let mut answers = answers(&calm());
+
+        answers.insert(
+            "/downloads/pkg".to_owned(),
+            (302, String::new(), vec![("location".to_owned(), "/elsewhere".to_owned())]),
+        );
+
+        let registry = Registry::start(answers);
+
+        assert!(only_downloads(&setup(Some(&registry))).is_err());
+
+        // Nothing listens at the downloads address.
+        let (_registry, mut setup) = with_downloads(None, "pkg");
+
+        setup.context.services.downloads = "http://127.0.0.1:1/downloads".to_owned();
+        assert!(only_downloads(&setup).is_err());
+
+        // An address `fetch` and the client may read differently.
+        setup.context.services.downloads = "http://127.0.0.1:80/downloads".to_owned();
+        assert!(only_downloads(&setup).unwrap_err().contains("not a URL"));
+    }
+
+    #[test]
+    fn a_fresh_entry_answers_without_a_request() {
+        let (registry, setup) = with_downloads(None, "pkg");
+        let file = setup.home.join(".vis/cache/downloads/pkg.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, entry(7).replace(&NOW.to_string(), &(NOW - 86_400_000).to_string())).unwrap();
+
+        let plan = only_downloads(&setup).unwrap();
+
+        assert!(plan.stdout.contains("Only 7 downloads in the past month."));
+        assert!(plan.cache.iter().all(|action| !matches!(action, CacheAction::Write { file, .. } if file.to_string_lossy().contains("/downloads/"))));
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_stale_entry_is_removed_and_asked_again() {
+        let (registry, setup) = with_downloads(Some((200, "{\"downloads\":50000}")), "pkg");
+        let file = setup.home.join(".vis/cache/downloads/pkg.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, entry(7).replace(&NOW.to_string(), &(NOW - 86_400_001).to_string())).unwrap();
+
+        let plan = only_downloads(&setup).unwrap();
+
+        assert!(plan.stdout.contains("\"findings\": []"));
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 2);
+        assert!(plan.cache.contains(&CacheAction::Remove(file.clone())));
+        assert_eq!(writes(&plan), [entry(50_000)]);
+
+        // When the API then has nothing, the stale file is still gone.
+        let (_registry, setup) = with_downloads(Some((404, "{}")), "pkg");
+        let file = setup.home.join(".vis/cache/downloads/pkg.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, entry(7).replace(&NOW.to_string(), "1")).unwrap();
+
+        let plan = only_downloads(&setup).unwrap();
+
+        assert!(plan.cache.contains(&CacheAction::Remove(file)) && writes(&plan).is_empty());
+    }
+
+    #[test]
+    fn an_entry_that_is_not_a_count_is_handed_over() {
+        for text in [
+            "{\"downloads\":\"7\",\"createdAt\":1,\"ttlMs\":9999999999999}",
+            "{\"createdAt\":1,\"ttlMs\":9999999999999}",
+            "garbage",
+        ] {
+            let (_registry, setup) = with_downloads(None, "pkg");
+            let file = setup.home.join(".vis/cache/downloads/pkg.json");
+
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, text).unwrap();
+            assert!(only_downloads(&setup).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_findings_follow_the_order_of_the_handler() {
+        let (_registry, setup) = with_downloads(Some((200, "{\"downloads\":5}")), "pkg");
+        let run = [Marshall::Author, Marshall::Downloads];
+        let plan = plan(&flags(&["pkg", "--json"]), &run, &setup.context, &client()).unwrap();
+        let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+        assert_eq!(messages(&report, "errors"), ["[downloads] Only 5 downloads in the past month."]);
+        assert_eq!(plan.status, 1);
+    }
 }
