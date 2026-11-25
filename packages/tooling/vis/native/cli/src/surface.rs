@@ -5,16 +5,17 @@
 //! Anything this module is not certain about is left to the Node CLI by
 //! returning `None`.
 
-use std::env;
 use std::io::{self, Write};
 
-use crate::help::{Help, Style};
+use crate::help::Help;
 use crate::manifest::{self, Manifest, Routed, Routes};
-use crate::term;
+use crate::node_contract;
+use crate::term::{self, Style};
 
 /// Global flags that take no value and may precede the command.
 fn is_valueless_global(argument: &str) -> bool {
-    matches!(argument, "--no-color" | "--color" | "-v" | "--verbose" | "--debug" | "-q" | "--quiet")
+    term::ColourFlag::is_global_option(argument)
+        || matches!(argument, "-v" | "--verbose" | "--debug" | "-q" | "--quiet")
 }
 
 fn is_help_flag(argument: &str) -> bool {
@@ -22,7 +23,7 @@ fn is_help_flag(argument: &str) -> bool {
 }
 
 /// `args` without the valueless global flags that lead it.
-pub fn without_leading_globals(args: &[String]) -> &[String] {
+fn without_leading_globals(args: &[String]) -> &[String] {
     let start = args.iter().take_while(|argument| is_valueless_global(argument)).count();
 
     &args[start..]
@@ -33,21 +34,49 @@ pub fn without_leading_globals(args: &[String]) -> &[String] {
 /// list has to match this one).
 const GROUP_LISTINGS: &[&str] = &["cache"];
 
+/// What the surface is asked to print, in the order the checks run: the first that applies wins.
+enum Intent {
+    /// Bare `vis`, or `--help` with no command.
+    RootHelp,
+    /// `vis help [<command path>…] [--group <name>]`.
+    HelpCommand,
+    /// A bare group (`vis cache`), or `vis cache --help`.
+    GroupListing,
+    /// `vis <command> --help`.
+    CommandHelp,
+}
+
 /// What an invocation asks for, once leading global flags are set aside.
-struct Request<'a> {
+pub(crate) struct Request<'a> {
     /// Leading non-flag words: the command path, then any positionals.
-    words: Vec<&'a str>,
+    pub(crate) words: Vec<&'a str>,
     /// Everything from the first flag on.
     flags: &'a [String],
 }
 
 impl<'a> Request<'a> {
-    fn parse(args: &'a [String]) -> Self {
+    pub(crate) fn parse(args: &'a [String]) -> Self {
         let rest = without_leading_globals(args);
         let words: Vec<&str> =
             rest.iter().take_while(|argument| !argument.starts_with('-')).map(String::as_str).collect();
 
         Self { flags: &rest[words.len()..], words }
+    }
+
+    /// What the surface prints for the invocation, or `None` when it is not the surface's to answer.
+    /// `bare` is an invocation with no argument at all.
+    fn intent(&self, bare: bool) -> Option<Intent> {
+        if self.words.is_empty() && self.flags_are_plain() && (bare || self.wants_help()) {
+            Some(Intent::RootHelp)
+        } else if self.words.first() == Some(&"help") {
+            Some(Intent::HelpCommand)
+        } else if self.is_group_listing() {
+            Some(Intent::GroupListing)
+        } else if self.wants_help() && !self.words.is_empty() {
+            Some(Intent::CommandHelp)
+        } else {
+            None
+        }
     }
 
     /// A listed group with nothing but help and valueless global flags after it.
@@ -97,59 +126,57 @@ pub fn answer(args: &[String]) -> Option<i32> {
     };
     let request = Request::parse(args);
 
-    let bare = args.is_empty();
-    let root_help = request.words.is_empty() && request.flags_are_plain() && (bare || request.wants_help());
-    let help_command = request.words.first() == Some(&"help");
-
-    let group_listing = request.is_group_listing();
-
-    if !root_help && !help_command && !group_listing && !(request.wants_help() && !request.words.is_empty()) {
-        return None;
-    }
+    let intent = request.intent(args.is_empty())?;
 
     let manifest = Manifest::load();
-    let version = env::var("VIS_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+    let version = node_contract::version();
     // The bare group's listing goes to stderr but takes its colour from stdout, as in the Node CLI. A colour or
     // width only Node can decide (a width asked of a terminal) hands the run to it before any output.
-    let destination = if group_listing && !request.wants_help() { term::Stream::Stderr } else { term::Stream::Stdout };
+    let destination = if matches!(intent, Intent::GroupListing) && !request.wants_help() {
+        term::Stream::Stderr
+    } else {
+        term::Stream::Stdout
+    };
     let help = Help {
         manifest: &manifest,
-        style: Style { color: term::help_colour(args, destination)? },
+        style: Style { colour: term::help_colour(args, destination)? },
         width: term::terminal_width()?,
         version: &version,
     };
 
-    if root_help {
-        emit(&help.root(None));
+    match intent {
+        Intent::RootHelp => {
+            emit(&help.root(None));
 
-        return Some(0);
-    }
-
-    if help_command {
-        return answer_help_command(&manifest, &help, &request);
-    }
-
-    if group_listing {
-        let listing = help_text(&manifest, &help, &request.words)?;
-
-        if request.wants_help() {
-            emit(&listing);
-
-            return Some(0);
+            Some(0)
         }
+        Intent::HelpCommand => answer_help_command(&manifest, &help, &request),
+        Intent::GroupListing => {
+            let listing = help_text(&manifest, &help, &request.words)?;
 
-        // The bare group is a usage error, like the other bare groups: nothing on stdout, exit 1.
-        emit_stderr(&listing);
+            if request.wants_help() {
+                emit(&listing);
 
-        return Some(1);
+                return Some(0);
+            }
+
+            // The bare group is a usage error, like the other bare groups: nothing on stdout, exit 1.
+            emit_stderr(&listing);
+
+            Some(1)
+        }
+        Intent::CommandHelp => {
+            let command = manifest::resolve(&manifest.commands, &request.words)?;
+
+            // The lean entry only serves `dlx`/`exec` when they are the first argument.
+            emit(&help.command(
+                command,
+                command.lean && invoked.first().map(String::as_str) == request.words.first().copied(),
+            ));
+
+            Some(0)
+        }
     }
-
-    let command = manifest::resolve(&manifest.commands, &request.words)?;
-
-    // The lean entry only serves `dlx`/`exec` when they are the first argument.
-    emit(&help.command(command, command.lean && invoked.first().map(String::as_str) == request.words.first().copied()));
-
-    Some(0)
 }
 
 /// Levenshtein distance between two short words.

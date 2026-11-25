@@ -5,49 +5,7 @@ use super::data::{Package, Workspace};
 use super::lint::Report;
 use super::Selection;
 use crate::sort_package_json::json::{stringify, Json};
-
-/// `colorize`'s styles. With colour off every style returns its text; with it on each wraps the text in its escape
-/// pair and, like `colorize`, re-opens the style after the pair of an inner style that closes with the same code.
-#[derive(Clone, Copy)]
-struct Style {
-    colour: bool,
-}
-
-impl Style {
-    fn paint(self, text: &str, open: u8, close: u8) -> String {
-        if !self.colour || text.is_empty() {
-            return text.to_owned();
-        }
-
-        let text = if text.contains('\x1b') {
-            text.replace(&format!("\x1b[{close}m"), &format!("\x1b[{open}m"))
-        } else {
-            text.to_owned()
-        };
-
-        format!("\x1b[{open}m{text}\x1b[{close}m")
-    }
-
-    fn bold(self, text: &str) -> String {
-        self.paint(text, 1, 22)
-    }
-
-    fn dim(self, text: &str) -> String {
-        self.paint(text, 2, 22)
-    }
-
-    fn red(self, text: &str) -> String {
-        self.paint(text, 31, 39)
-    }
-
-    fn green(self, text: &str) -> String {
-        self.paint(text, 32, 39)
-    }
-
-    fn yellow(self, text: &str) -> String {
-        self.paint(text, 33, 39)
-    }
-}
+use crate::term::Style;
 
 /// The plural `s` of `count` things.
 const fn s(count: usize) -> &'static str {

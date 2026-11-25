@@ -7,7 +7,7 @@
 use std::io::{self, Write};
 
 use crate::manifest::{self, Command, Manifest, Routed};
-use crate::surface::without_leading_globals;
+use crate::surface::Request;
 
 /// "Do not fall back to file completion."
 const NO_FILE_COMPLETION: u32 = 4;
@@ -76,8 +76,7 @@ fn word_candidates(manifest: &Manifest, typed: &[&str], prefix: &str) -> Vec<(St
 /// the (possibly empty) word being completed. Returns the protocol text.
 pub fn complete(manifest: &Manifest, words: &[String]) -> String {
     let (current, before) = words.split_last().map_or(("", &[][..]), |(current, before)| (current.as_str(), before));
-    let typed: Vec<&str> =
-        without_leading_globals(before).iter().map(String::as_str).take_while(|word| !word.starts_with('-')).collect();
+    let typed = Request::parse(before).words;
 
     let candidates = if current.starts_with('-') {
         let command = manifest::resolve(&manifest.commands, &typed);
