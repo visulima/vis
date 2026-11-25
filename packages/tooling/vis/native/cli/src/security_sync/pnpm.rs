@@ -83,7 +83,7 @@ fn distinct(names: impl IntoIterator<Item = String>) -> Vec<String> {
     seen
 }
 
-/// `pkg.pnpm.onlyBuiltDependencies` of the parsed `package.json`, with the entry that holds it.
+/// `pkg.pnpm.onlyBuiltDependencies` of the parsed `package.json`; `None` when `pnpm` or the list holds something this module does not merge.
 fn only_built(pkg: &[(String, Json)]) -> Option<Vec<String>> {
     match pkg.iter().find(|(name, _)| name == "pnpm").map(|(_, value)| value) {
         None => Some(Vec::new()),

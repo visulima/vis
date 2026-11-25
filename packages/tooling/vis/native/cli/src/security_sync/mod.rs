@@ -96,14 +96,12 @@ fn answer(args: &[String]) -> Result<Output, String> {
         messages.extend(plan.actions.iter().map(|action| (Level::Success, format!("  {action}"))));
     }
 
-    let files = plan.files;
-
     // Decided before the first write: a message that would wrap is Node's.
     if !messages.iter().all(|(_, message)| layout.fits_one_line(message)) {
         return Err("a message does not fit one line".to_owned());
     }
 
-    if let Err(failure) = stage::write_all(&files) {
+    if let Err(failure) = stage::write_all(&plan.files) {
         return match failure {
             stage::Failure::Staging(error) => Err(format!("cannot stage the files: {error}")),
             stage::Failure::Renaming { renamed: 0, error } => Err(format!("cannot replace the first file: {error}")),
