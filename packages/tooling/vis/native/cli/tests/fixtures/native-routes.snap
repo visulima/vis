@@ -110,6 +110,7 @@
 ["--color","security"] => surface
 ["--color","security","keys-refresh"] => surface
 ["--color","security","list"] => surface
+["--color","security","sync"] => surface
 ["--color","self"] => surface
 ["--color","self-update"] => surface
 ["--color","service"] => surface
@@ -271,6 +272,7 @@
 ["--no-color","security"] => surface
 ["--no-color","security","keys-refresh"] => surface
 ["--no-color","security","list"] => surface
+["--no-color","security","sync"] => surface
 ["--no-color","self"] => surface
 ["--no-color","self-update"] => surface
 ["--no-color","service"] => surface
@@ -424,6 +426,7 @@
 ["--quiet","security"] => surface
 ["--quiet","security","keys-refresh"] => surface
 ["--quiet","security","list"] => surface
+["--quiet","security","sync"] => surface
 ["--quiet","self"] => surface
 ["--quiet","self-update"] => surface
 ["--quiet","service"] => surface
@@ -2458,7 +2461,30 @@
 ["security","list","target","--help"] => surface
 ["security","list","target","other"] => security list
 ["security","status","--help"] => surface
-["security","sync"] => surface
+["security","sync"] => security sync
+["security","sync","--"] => security sync
+["security","sync","--","--help"] => security sync
+["security","sync","--cwd","."] => security sync
+["security","sync","--format","json"] => security sync
+["security","sync","--help"] => surface
+["security","sync","--no-color"] => security sync
+["security","sync","--no-color","-h"] => surface
+["security","sync","--no-skip-allow-builds"] => security sync
+["security","sync","--skip-allow-builds"] => security sync
+["security","sync","--skip-allow-builds","--skip-allow-builds"] => security sync
+["security","sync","--skip-allow-builds=true"] => security sync
+["security","sync","--skip-min-release-age","--skip-allow-builds"] => security sync
+["security","sync","--version"] => security sync
+["security","sync","--version","--help"] => surface
+["security","sync","-h"] => surface
+["security","sync","bloom","status"] => security sync
+["security","sync","bloom","status","--help"] => surface
+["security","sync","extra"] => security sync
+["security","sync","list"] => security sync
+["security","sync","status","--help"] => surface
+["security","sync","target"] => security sync
+["security","sync","target","--help"] => surface
+["security","sync","target","other"] => security sync
 ["security","target"] => surface
 ["security","target","--help"] => surface
 ["security","target","other"] => surface

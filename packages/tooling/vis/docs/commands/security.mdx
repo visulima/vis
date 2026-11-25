@@ -56,6 +56,8 @@ vis security sync --skip-allow-builds       # only sync minimumReleaseAge
 vis security sync --skip-min-release-age    # only sync allowBuilds
 ```
 
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace whose `vis.config` the binary can read as data, the Rust binary runs `vis security sync` (with either skip flag, each at most once) without starting Node. It rewrites `pnpm-workspace.yaml` and `package.json` the way the Node command does: each file goes to a temporary sibling that is renamed over the original, so the file is a new inode with the mode of a newly created file, whatever mode it had. The binary hands the run to Node before anything is printed or written for: any other argument, another package manager, an `allow` value that is truthy but not `true`, a name with a `$` or outside ASCII, a `pnpm-workspace.yaml` or `package.json` outside the supported subset (CRLF line ends, tabs when `allowBuilds` is read, nested maps, inline comments, a fraction in `package.json`), a locale other than the root collation, and a run whose log lines would wrap.
+
 ### run
 
 LavaMoat `allow-scripts run` parity — execute the lifecycle scripts for every package in `security.allowBuilds` **without reinstalling** the dependency tree. Use this after installing with `ignore-scripts=true` and triaging via `vis approve-builds`.

@@ -274,6 +274,52 @@ pub(super) fn snapshot(text: &str) -> Option<Snapshot> {
     Some(Snapshot { allow_builds, min_release_age, min_release_age_excludes })
 }
 
+/// What `syncAllowBuildsToNativeConfig` reads from `pnpm-workspace.yaml`: the `allowBuilds` entries and the
+/// `onlyBuiltDependencies` list, each in file order.
+#[derive(Default, Debug, PartialEq)]
+pub(crate) struct Workspace {
+    pub(crate) allow_builds: Vec<(String, bool)>,
+    pub(crate) only_built: Vec<String>,
+}
+
+/// The two settings `vis security sync` merges into, or `None` when the file is outside the grammar or holds a
+/// value this module does not reproduce: an `allowBuilds` that is not a map of booleans (keys that are empty,
+/// integer-like or `__proto__` included), or an `onlyBuiltDependencies` list with an item that is not a string.
+/// An `onlyBuiltDependencies` that is not a list counts as empty, as it does for `Array.isArray`.
+pub(crate) fn workspace(text: &str) -> Option<Workspace> {
+    let entries = parse_body(text)?;
+    let find = |name: &str| entries.iter().find(|(key, _)| key == name).map(|(_, body)| body);
+
+    let allow_builds = match find("allowBuilds") {
+        Some(Body::Map(items)) => {
+            let mut found = Vec::new();
+
+            for (key, value) in items {
+                let Scalar::Bool(value) = value else {
+                    return None;
+                };
+
+                if key.is_empty() || is_index_like(key) {
+                    return None;
+                }
+
+                found.push((key.clone(), *value));
+            }
+
+            found
+        }
+        Some(Body::Empty) | None => Vec::new(),
+        Some(_) => return None,
+    };
+
+    let only_built = match find("onlyBuiltDependencies") {
+        Some(Body::List(items)) => items.iter().map(text_of).collect::<Option<Vec<_>>>()?,
+        _ => Vec::new(),
+    };
+
+    Some(Workspace { allow_builds, only_built })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +390,30 @@ mod tests {
     fn a_missing_or_empty_file_has_nothing() {
         assert_eq!(read(""), Some(Snapshot::default()));
         assert_eq!(read("# only a comment\n"), Some(Snapshot::default()));
+    }
+
+    #[test]
+    fn the_workspace_view_keeps_false_entries_and_the_list_apart() {
+        let text = "allowBuilds:\n  b: false\n  a: true\nonlyBuiltDependencies:\n  - x\n  - x\n";
+
+        assert_eq!(
+            workspace(text),
+            Some(Workspace {
+                allow_builds: vec![("b".to_owned(), false), ("a".to_owned(), true)],
+                only_built: vec!["x".to_owned(), "x".to_owned()],
+            })
+        );
+        assert_eq!(workspace("packages:\n  - a\n"), Some(Workspace::default()));
+        assert_eq!(workspace("allowBuilds:\nonlyBuiltDependencies: 3\n"), Some(Workspace::default()));
+    }
+
+    #[test]
+    fn the_workspace_view_declines_what_it_cannot_read_exactly() {
+        assert!(workspace("allowBuilds:\n  - a\n").is_none());
+        assert!(workspace("allowBuilds: x\n").is_none());
+        assert!(workspace("allowBuilds:\n  a: yes\n").is_none());
+        assert!(workspace("allowBuilds:\n  1: true\n").is_none());
+        assert!(workspace("onlyBuiltDependencies:\n  - 1\n").is_none());
+        assert!(workspace("a:\n  b:\n    c: 1\n").is_none());
     }
 }

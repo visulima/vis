@@ -1053,6 +1053,28 @@ const securityListMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && args.length === 3 && args[2] === "--json";
 };
 
+// Whether `vis security sync` can pass the binary's native gate (`parse` and `answer` in `security_sync/mod.rs`): the two skip
+// flags, each at most once and in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
+// terminal with a pail layout the environment decides. The command rewrites `pnpm-workspace.yaml` and `package.json` and prints pail
+// lines. The binary re-checks everything, including the config, the files and whether each line fits one line of the layout (a run
+// it cannot reproduce goes to Node before anything is printed or written); this only skips the extra process when it would
+// delegate anyway. It stays in Node on Windows.
+const SECURITY_SYNC_FLAGS = new Set(["--skip-allow-builds", "--skip-min-release-age"]);
+
+const securitySyncArgsAreNative = (args) => {
+    const flags = args.slice(2);
+
+    return flags.every((flag) => SECURITY_SYNC_FLAGS.has(flag)) && new Set(flags).size === flags.length;
+};
+
+const securitySyncMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
+};
+
 // The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
 // differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
 // the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
@@ -1453,7 +1475,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
-    // `security list --json` and `security keys-refresh --json`; the other `security` subcommands write files or run scripts, and follow the help rule below.
+    // `security list --json`, `security keys-refresh --json` and `security sync`; the other `security` subcommands use the network or run scripts, and follow the help rule below.
     [
         "security",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
@@ -1463,6 +1485,10 @@ const NATIVE_SHAPE_GATES = new Map([
 
             if (subcommand === "keys-refresh") {
                 return helpOrNative(args, () => keysRefreshMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            }
+
+            if (subcommand === "sync") {
+                return helpOrNative(args, () => securitySyncMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
             }
 
             return undefined;
