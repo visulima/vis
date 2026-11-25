@@ -46,10 +46,20 @@ pub enum Resolved {
     NodeOnly,
 }
 
+/// How the emitter says it finished. Anything it adds later counts as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Status {
+    Ok,
+    NodeOnly,
+    #[serde(other)]
+    Failed,
+}
+
 #[derive(Debug, Deserialize)]
 struct Emitted {
     version: u32,
-    status: String,
+    status: Status,
     config: Option<Value>,
     files: Vec<EmittedFile>,
     env: Vec<String>,
@@ -77,10 +87,46 @@ struct Stored {
     schema: u32,
     vis_version: String,
     config_path: String,
-    node_only: bool,
-    config: Option<Value>,
+    #[serde(flatten)]
+    result: StoredResult,
     files: Vec<StoredFile>,
     env: Vec<StoredEnv>,
+}
+
+/// What a stored evaluation stands for. On disk it is the `node_only` and `config` fields of the entry, so the
+/// layout ([`SCHEMA`]) does not change; a `node_only: false` entry without a config is not an entry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "ResultFields", into = "ResultFields")]
+enum StoredResult {
+    NodeOnly,
+    Data(Value),
+}
+
+#[derive(Serialize, Deserialize)]
+struct ResultFields {
+    node_only: bool,
+    config: Option<Value>,
+}
+
+impl From<StoredResult> for ResultFields {
+    fn from(result: StoredResult) -> Self {
+        match result {
+            StoredResult::NodeOnly => Self { node_only: true, config: None },
+            StoredResult::Data(config) => Self { node_only: false, config: Some(config) },
+        }
+    }
+}
+
+impl TryFrom<ResultFields> for StoredResult {
+    type Error = &'static str;
+
+    fn try_from(fields: ResultFields) -> Result<Self, Self::Error> {
+        match (fields.node_only, fields.config) {
+            (true, _) => Ok(Self::NodeOnly),
+            (false, Some(config)) => Ok(Self::Data(config)),
+            (false, None) => Err("a stored configuration without data"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,12 +165,14 @@ pub fn resolve(config_path: &Path) -> Option<Resolved> {
     // The stored copy stands in for a later evaluation only when the evaluation was fully tracked and the
     // result is plain data. Anything else is remembered as "Node's to run" (the safe answer whatever changes),
     // so it is not evaluated again until one of the things it did track changes.
-    let data = match (emitted.status.as_str(), emitted.config.as_ref()) {
-        ("ok", Some(config)) if emitted.uncacheable.is_empty() && !holds_environment_value(config, &emitted.env) => {
+    let data = match (emitted.status, emitted.config.as_ref()) {
+        (Status::Ok, Some(config))
+            if emitted.uncacheable.is_empty() && !holds_environment_value(config, &emitted.env) =>
+        {
             Some(config)
         }
-        ("ok" | "node-only", _) => None,
-        _ => return None,
+        (Status::Ok | Status::NodeOnly, _) => None,
+        (Status::Failed, _) => return None,
     };
 
     // A tracked file changed while the emitter ran, so what it read may already be out of date: the
@@ -187,11 +235,10 @@ fn read_entry(entry: &Path, config_path: &Path, version: &str) -> Option<Resolve
         return None;
     }
 
-    match (stored.node_only, stored.config) {
-        (true, _) => Some(Resolved::NodeOnly),
-        (false, Some(config)) => Some(Resolved::Data(config)),
-        (false, None) => None,
-    }
+    Some(match stored.result {
+        StoredResult::NodeOnly => Resolved::NodeOnly,
+        StoredResult::Data(config) => Resolved::Data(config),
+    })
 }
 
 /// Run the Node emitter and parse what it wrote. Whatever the config printed is dropped: a config that
@@ -200,21 +247,10 @@ fn read_entry(entry: &Path, config_path: &Path, version: &str) -> Option<Resolve
 fn emit(config_path: &Path) -> Option<Emitted> {
     let entry = env::var_os("VIS_FALLBACK_ENTRY").filter(|value| !value.is_empty())?;
     let node = crate::process::node_program();
-    let out = env::temp_dir().join(format!(
-        "vis-config-{}-{}.json",
-        std::process::id(),
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0)
-    ));
+    let out = env::temp_dir().join(unique_temp_name("vis-config-", ".json"));
 
     // Claimed before Node writes to it, so a file or link another user left at that name is refused.
-    let mut claim = fs::OpenOptions::new();
-
-    claim.write(true).create_new(true);
-
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut claim, 0o600);
-
-    claim.open(&out).ok()?;
+    create_private(&out).ok()?;
 
     let output = Command::new(node)
         .arg(entry)
@@ -295,8 +331,7 @@ fn store(
         schema: SCHEMA,
         vis_version: version.to_owned(),
         config_path: config_path.to_string_lossy().into_owned(),
-        node_only: data.is_none(),
-        config: data.cloned(),
+        result: data.map_or(StoredResult::NodeOnly, |config| StoredResult::Data(config.clone())),
         files,
         env: emitted.env.iter().map(|name| StoredEnv { name: name.clone(), hash: hash_env(name) }).collect(),
     };
@@ -309,8 +344,7 @@ fn store(
     };
     // Created exclusively under a name no other process can predict, so a path planted in a shared cache
     // directory is refused instead of followed.
-    let nonce = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_nanos());
-    let temporary = directory.join(format!(".{}.{nonce}.tmp", std::process::id()));
+    let temporary = directory.join(unique_temp_name(".", ".tmp"));
 
     if fs::create_dir_all(directory).is_err()
         || write_private(&temporary, &bytes).is_err()
@@ -322,8 +356,15 @@ fn store(
     StoreOutcome::Done
 }
 
-/// The entry may hold values the config computed, so it is readable by its owner only.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// `prefix`, the process id and the clock to the nanosecond, then `suffix`: a name no other process can predict.
+fn unique_temp_name(prefix: &str, suffix: &str) -> String {
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_nanos());
+
+    format!("{prefix}{}-{nanos}{suffix}", std::process::id())
+}
+
+/// A new file that only its owner can read, created exclusively: an existing file or link is refused.
+fn create_private(path: &Path) -> std::io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
 
     options.write(true).create_new(true);
@@ -331,7 +372,12 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
 
-    std::io::Write::write_all(&mut options.open(path)?, bytes)
+    options.open(path)
+}
+
+/// The entry may hold values the config computed, so it is readable by its owner only.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut create_private(path)?, bytes)
 }
 
 fn modified_since(path: &Path, started: SystemTime) -> bool {
@@ -422,7 +468,7 @@ mod tests {
 
         let emitted = Emitted {
             version: EMIT_VERSION,
-            status: "ok".to_owned(),
+            status: Status::Ok,
             config: Some(serde_json::json!({ "install": { "backend": "npm" } })),
             files: vec![EmittedFile {
                 path: helper.to_string_lossy().into_owned(),
@@ -473,7 +519,7 @@ mod tests {
 
         let emitted = Emitted {
             version: EMIT_VERSION,
-            status: "ok".to_owned(),
+            status: Status::Ok,
             config: Some(serde_json::json!({})),
             files: vec![],
             env: vec![],
@@ -499,7 +545,7 @@ mod tests {
         let digest = sha256_path(&helper, Kind::File);
         let emitted = |digest: Option<String>| Emitted {
             version: EMIT_VERSION,
-            status: "ok".to_owned(),
+            status: Status::Ok,
             config: Some(serde_json::json!({})),
             files: vec![
                 EmittedFile {
@@ -602,7 +648,7 @@ mod tests {
 
         let emitted = Emitted {
             version: EMIT_VERSION,
-            status: "ok".to_owned(),
+            status: Status::Ok,
             config: Some(serde_json::json!({})),
             files: vec![],
             env: vec![],
@@ -620,5 +666,33 @@ mod tests {
         );
 
         assert_eq!(fs::metadata(&entry).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_stored_result_keeps_the_layout_of_the_entry_on_disk() {
+        let data = StoredResult::Data(serde_json::json!({"a": 1}));
+
+        assert_eq!(
+            serde_json::to_value(&data).expect("serialises"),
+            serde_json::json!({"node_only": false, "config": {"a": 1}})
+        );
+        assert_eq!(
+            serde_json::to_value(StoredResult::NodeOnly).expect("serialises"),
+            serde_json::json!({"node_only": true, "config": null})
+        );
+        assert!(matches!(
+            serde_json::from_value::<StoredResult>(serde_json::json!({"node_only": true, "config": {"x": 1}})),
+            Ok(StoredResult::NodeOnly)
+        ));
+        assert!(
+            serde_json::from_value::<StoredResult>(serde_json::json!({"node_only": false, "config": null})).is_err()
+        );
+    }
+
+    #[test]
+    fn an_emitter_status_it_does_not_know_is_a_failure() {
+        assert_eq!(serde_json::from_str::<Status>("\"ok\"").expect("ok"), Status::Ok);
+        assert_eq!(serde_json::from_str::<Status>("\"node-only\"").expect("node-only"), Status::NodeOnly);
+        assert_eq!(serde_json::from_str::<Status>("\"error\"").expect("other"), Status::Failed);
     }
 }

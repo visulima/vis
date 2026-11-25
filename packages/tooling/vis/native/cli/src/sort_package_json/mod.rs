@@ -21,7 +21,6 @@
 
 mod fields;
 mod gitignore;
-pub(crate) mod json;
 
 use std::env;
 use std::ffi::OsString;
@@ -38,8 +37,8 @@ use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::{expand_patterns, yaml_packages, WORKSPACE_YAML_NAMES};
 
+use crate::json::{self, Json};
 use fields::Format;
-use json::Json;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LineEnding {
@@ -516,7 +515,7 @@ fn report(layout: Layout, options: &Options, entries: Vec<Entry>, raw_args: &[Os
         for entry in &entries {
             if let Verdict::Rewrite(text) = &entry.verdict {
                 // Opened without truncating, so a refusal leaves the file as it was and Node can still take over.
-                let Ok(file) = crate::ignore::open_for_write(&entry.path) else {
+                let Ok(file) = crate::fs_write::open_for_write(&entry.path) else {
                     crate::process::delegate(raw_args);
                 };
 
@@ -540,7 +539,7 @@ fn report(layout: Layout, options: &Options, entries: Vec<Entry>, raw_args: &[Os
             Verdict::Rewrite(_) => {
                 let (mut file, text) = written.next().expect("one open file per rewrite");
 
-                match crate::ignore::overwrite(&mut file, text) {
+                match crate::fs_write::overwrite(&mut file, text) {
                     Ok(()) => {
                         unsorted += 1;
                         pail(layout, out, Level::Success, &format!("Sorted {path}"));

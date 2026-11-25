@@ -300,17 +300,17 @@ fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
     let detectors = Detectors::new(&triggers);
     let mut listed = Vec::new();
 
-    for (name, node) in &graph.nodes {
+    for (name, project) in &graph.projects {
         if !name.is_ascii() {
             return None;
         }
 
-        let directory = graph.directories.get(name)?;
+        let directory = &project.directory;
         let targets = project_scripts(root, directory, &detectors)?;
 
         listed.push(Listed {
             directory: directory.clone(),
-            kind: node.project_type.as_str(),
+            kind: project.project_type.as_str(),
             name: name.clone(),
             targets,
         });

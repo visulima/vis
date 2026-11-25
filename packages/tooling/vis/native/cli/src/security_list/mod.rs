@@ -30,9 +30,9 @@ use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
 use crate::js::{is_index_like, is_truthy};
+use crate::json::{stringify, Json};
 use crate::node_context::{any_ancestor_has, ci_root_context, DENO_FILES};
 use crate::output::write_stdout;
-use crate::sort_package_json::json::{stringify, Json};
 use crate::vis_config::{self, ConfigState};
 
 use scan::{status, Found, Status};

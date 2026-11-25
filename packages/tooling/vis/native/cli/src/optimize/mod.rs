@@ -29,10 +29,10 @@ use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
 use crate::js::is_js_whitespace;
+use crate::json::Json;
 use crate::node_context::{ci_root_context, quiet_context};
 use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
-use crate::sort_package_json::json::Json;
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::directories_with_package_json;
 
@@ -319,7 +319,7 @@ fn json_report(e18e: &[E18e], socket: &[Socket], total: usize, workspaces: usize
         ("workspaces".to_owned(), number(workspaces)),
     ]);
 
-    format!("{}\n", crate::sort_package_json::json::stringify(&report, "  "))
+    format!("{}\n", crate::json::stringify(&report, "  "))
 }
 
 /// `collectDepsFromPkgJson`: the dependency names of one manifest. A file that cannot be read gives none, as the

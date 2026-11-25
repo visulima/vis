@@ -11,9 +11,9 @@ use std::fs;
 use std::path::Path;
 
 use super::data::{DepType, Instance, Package, Workspace};
-use super::Selection;
-use crate::sort_package_json::json::Json;
-use crate::workspace::{child_directories, directories_for_patterns};
+use super::{Lint, Selection};
+use crate::json::Json;
+use crate::workspace::{child_directories, classify, directories_for_patterns, Shape};
 
 pub(super) struct WorkspaceProtocol {
     pub(super) dep_name: String,
@@ -118,8 +118,8 @@ const SIMILAR_FAMILIES: [Family; 13] = [
 
 /// Runs the selected lints; the others stay empty, as in the handler. `None` sends the command to Node.
 pub(super) fn run(workspace: &Workspace, selection: &Selection) -> Option<Report> {
-    if (selection.workspace_versions && has_version_drift(&workspace.instances))
-        || (selection.custom_types && has_custom_type_drift(&workspace.packages)?)
+    if (selection.has(Lint::WorkspaceVersions) && has_version_drift(&workspace.instances))
+        || (selection.has(Lint::CustomTypes) && has_custom_type_drift(&workspace.packages)?)
     {
         return None;
     }
@@ -128,43 +128,43 @@ pub(super) fn run(workspace: &Workspace, selection: &Selection) -> Option<Report
     let instances = &workspace.instances;
     let mut report = Report::default();
 
-    if selection.workspace_protocol {
+    if selection.has(Lint::WorkspaceProtocol) {
         report.workspace_protocol = workspace_protocol(instances);
     }
 
-    if selection.redefine_root {
+    if selection.has(Lint::RedefineRoot) {
         report.redefine_root = redefine_root(instances);
     }
 
-    if selection.empty_deps {
+    if selection.has(Lint::EmptyDeps) {
         report.empty_deps = empty_deps(packages);
     }
 
-    if selection.root_private {
+    if selection.has(Lint::RootPrivate) {
         report.root_private = root_private(packages);
     }
 
-    if selection.root_package_manager {
+    if selection.has(Lint::RootPackageManager) {
         report.root_package_manager = root_package_manager(packages)?;
     }
 
-    if selection.root_deps {
+    if selection.has(Lint::RootDeps) {
         report.root_deps = root_deps(packages);
     }
 
-    if selection.missing_package_json {
+    if selection.has(Lint::MissingPackageJson) {
         report.missing_package_json = missing_package_json(workspace)?;
     }
 
-    if selection.dead_workspace_patterns {
+    if selection.has(Lint::DeadWorkspacePatterns) {
         report.dead_patterns = dead_patterns(workspace)?;
     }
 
-    if selection.types_in_deps {
+    if selection.has(Lint::TypesInDeps) {
         report.types_in_deps = types_in_deps(workspace);
     }
 
-    if selection.similar_deps {
+    if selection.has(Lint::SimilarDeps) {
         report.similar_deps = similar_deps(instances);
     }
 
@@ -211,18 +211,24 @@ fn redefine_root(instances: &[Instance]) -> Vec<RedefineRoot> {
         .collect()
 }
 
+/// A dependency that names a version of an outside package: not a workspace package, in a block that holds versions,
+/// and not a `workspace:` or `catalog:` reference. `workspace-versions` and `similar-deps` both look at these only.
+fn is_versioned_external(instance: &Instance) -> bool {
+    !instance.is_internal
+        && VERSION_TYPES.contains(&instance.dep_type)
+        && !instance.specifier.starts_with("workspace:")
+        && !instance.specifier.starts_with("catalog:")
+}
+
 /// `lintWorkspaceVersions` with the default `highest` strategy: an external dependency that two packages declare with
 /// two different specifiers is a drift.
 fn has_version_drift(instances: &[Instance]) -> bool {
     let mut seen: HashMap<&str, &str> = HashMap::new();
 
     for instance in instances {
-        let eligible = !instance.is_internal
-            && VERSION_TYPES.contains(&instance.dep_type)
-            && !instance.specifier.starts_with("workspace:")
-            && !instance.specifier.starts_with("catalog:");
-
-        if eligible && *seen.entry(&instance.dep_name).or_insert(&instance.specifier) != instance.specifier {
+        if is_versioned_external(instance)
+            && *seen.entry(&instance.dep_name).or_insert(&instance.specifier) != instance.specifier
+        {
             return true;
         }
     }
@@ -386,12 +392,7 @@ fn similar_deps(instances: &[Instance]) -> Vec<SimilarDeps> {
     let mut buckets: Vec<(&Family, Vec<SimilarMember>)> = Vec::new();
 
     for instance in instances {
-        let eligible = !instance.is_internal
-            && VERSION_TYPES.contains(&instance.dep_type)
-            && !instance.specifier.starts_with("workspace:")
-            && !instance.specifier.starts_with("catalog:");
-
-        if !eligible {
+        if !is_versioned_external(instance) {
             continue;
         }
 
@@ -452,9 +453,10 @@ fn missing_package_json(workspace: &Workspace) -> Option<Vec<String>> {
     let mut missing = Vec::new();
 
     for pattern in &workspace.patterns {
-        let clean = pattern.trim_end_matches('/');
-        let matches: Vec<String> = match clean.strip_suffix("/*") {
-            Some(base) if !base.contains('*') && !base.is_empty() => {
+        // Every pattern has been through `classify` by now (`data::read` expands them all), so the shapes
+        // below are the only ones that get here.
+        let matches: Vec<String> = match classify(pattern)? {
+            Shape::Simple(base) => {
                 if !root.join(base).exists() {
                     continue;
                 }
@@ -465,14 +467,14 @@ fn missing_package_json(workspace: &Workspace) -> Option<Vec<String>> {
                     .map(|name| format!("{base}/{name}"))
                     .collect()
             }
-            _ if !clean.contains('*') && !clean.starts_with('!') && !clean.is_empty() => {
-                if root.join(clean).exists() {
-                    vec![clean.to_owned()]
+            Shape::Exact(path) => {
+                if root.join(path).exists() {
+                    vec![path.to_owned()]
                 } else {
                     Vec::new()
                 }
             }
-            _ => return None,
+            Shape::Double { .. } | Shape::Bare(_) => return None,
         };
 
         for directory in matches {

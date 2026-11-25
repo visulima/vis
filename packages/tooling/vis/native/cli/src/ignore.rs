@@ -11,12 +11,13 @@
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::error::WrapperError;
+use crate::fs_write::{open_for_write, overwrite};
 use crate::js::trim;
 use crate::node_context::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
 use crate::output::write_stdout;
@@ -238,22 +239,6 @@ fn write_target(path: &Path) -> Option<PathBuf> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Some(path.to_owned()),
         Err(_) => None,
     }
-}
-
-/// Opens `path` for the way Node's `fs.writeFile` writes it: an existing file is rewritten in place,
-/// so its inode, owner, hard links, ACLs and xattrs stay as they were, and a new file gets the default
-/// mode. It does not truncate, so a refused open (read-only file, a directory) leaves the file as it
-/// was and the caller can still hand the command to Node.
-pub(crate) fn open_for_write(path: &Path) -> io::Result<File> {
-    OpenOptions::new().write(true).create(true).truncate(false).open(path)
-}
-
-/// Replaces the contents of the file opened by `open_for_write`. Nothing is staged in a sibling, so
-/// no copy of the contents exists with a looser mode than the destination's. A failure here can
-/// leave the file truncated, as it can under Node.
-pub(crate) fn overwrite(file: &mut File, contents: &str) -> io::Result<()> {
-    file.set_len(0)?;
-    file.write_all(contents.as_bytes())
 }
 
 #[cfg(test)]

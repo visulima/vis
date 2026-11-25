@@ -22,25 +22,121 @@ mod print;
 use std::ffi::OsString;
 use std::process::exit;
 
+use lint::Report;
+
 use crate::node_context::context_is_native;
+
 use crate::output::write_stdout;
+
+/// One lint of `vis deps`. The variants are in the order the lints run and print.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Lint {
+    WorkspaceProtocol,
+    RedefineRoot,
+    WorkspaceVersions,
+    CustomTypes,
+    BannedDeps,
+    EmptyDeps,
+    RootPrivate,
+    RootPackageManager,
+    RootDeps,
+    MissingPackageJson,
+    DeadWorkspacePatterns,
+    TypesInDeps,
+    SimilarDeps,
+}
+
+impl Lint {
+    pub(crate) const ALL: [Self; 13] = [
+        Self::WorkspaceProtocol,
+        Self::RedefineRoot,
+        Self::WorkspaceVersions,
+        Self::CustomTypes,
+        Self::BannedDeps,
+        Self::EmptyDeps,
+        Self::RootPrivate,
+        Self::RootPackageManager,
+        Self::RootDeps,
+        Self::MissingPackageJson,
+        Self::DeadWorkspacePatterns,
+        Self::TypesInDeps,
+        Self::SimilarDeps,
+    ];
+
+    /// The flag that selects the lint.
+    const fn flag(self) -> &'static str {
+        match self {
+            Self::WorkspaceProtocol => "--workspace-protocol",
+            Self::RedefineRoot => "--redefine-root",
+            Self::WorkspaceVersions => "--workspace-versions",
+            Self::CustomTypes => "--custom-types",
+            Self::BannedDeps => "--banned-deps",
+            Self::EmptyDeps => "--empty-deps",
+            Self::RootPrivate => "--root-private",
+            Self::RootPackageManager => "--root-package-manager",
+            Self::RootDeps => "--root-deps",
+            Self::MissingPackageJson => "--missing-package-json",
+            Self::DeadWorkspacePatterns => "--dead-workspace-patterns",
+            Self::TypesInDeps => "--types-in-deps",
+            Self::SimilarDeps => "--similar-deps",
+        }
+    }
+
+    fn from_flag(flag: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|lint| lint.flag() == flag)
+    }
+
+    /// How many issues the lint found in `report`, for the exit status; `None` for the three lints that are not
+    /// counted: `workspace-versions` and `custom-types` only ever report a drift, which hands the run to Node
+    /// before anything is counted, and `banned-deps` has no policy to check natively (and delegates without
+    /// `--quiet`), so none of them can add an issue here.
+    fn issues(self, report: &Report) -> Option<usize> {
+        Some(match self {
+            Self::WorkspaceProtocol => report.workspace_protocol.len(),
+            Self::RedefineRoot => report.redefine_root.len(),
+            Self::EmptyDeps => report.empty_deps.len(),
+            Self::RootPrivate => usize::from(report.root_private.is_some()),
+            Self::RootPackageManager => usize::from(report.root_package_manager),
+            Self::RootDeps => usize::from(report.root_deps.is_some()),
+            Self::MissingPackageJson => report.missing_package_json.len(),
+            Self::DeadWorkspacePatterns => report.dead_patterns.len(),
+            Self::TypesInDeps => report.types_in_deps.len(),
+            Self::SimilarDeps => report.similar_deps.len(),
+            Self::WorkspaceVersions | Self::CustomTypes | Self::BannedDeps => return None,
+        })
+    }
+}
 
 /// Which lints run, from the flags.
 #[derive(Default)]
-pub(crate) struct Selection {
-    pub(crate) banned_deps: bool,
-    pub(crate) custom_types: bool,
-    pub(crate) dead_workspace_patterns: bool,
-    pub(crate) empty_deps: bool,
-    pub(crate) missing_package_json: bool,
-    pub(crate) redefine_root: bool,
-    pub(crate) root_deps: bool,
-    pub(crate) root_package_manager: bool,
-    pub(crate) root_private: bool,
-    pub(crate) similar_deps: bool,
-    pub(crate) types_in_deps: bool,
-    pub(crate) workspace_protocol: bool,
-    pub(crate) workspace_versions: bool,
+pub(crate) struct Selection([bool; 13]);
+
+impl Selection {
+    /// Every lint, which is what no selector means.
+    const fn all() -> Self {
+        Self([true; 13])
+    }
+
+    pub(crate) fn has(&self, lint: Lint) -> bool {
+        self.0[lint as usize]
+    }
+
+    fn any(&self) -> bool {
+        self.0.contains(&true)
+    }
+
+    /// Selects the lint a flag names; `None` when it is none, or when it was selected already.
+    fn select(&mut self, flag: &str) -> Option<()> {
+        let lint = Lint::from_flag(flag)?;
+
+        if self.has(lint) {
+            return None;
+        }
+
+        self.0[lint as usize] = true;
+
+        Some(())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,66 +150,6 @@ struct Options {
     format: Format,
     quiet: bool,
     selection: Selection,
-}
-
-impl Selection {
-    /// Every lint, which is what no selector means.
-    const fn all() -> Self {
-        Self {
-            banned_deps: true,
-            custom_types: true,
-            dead_workspace_patterns: true,
-            empty_deps: true,
-            missing_package_json: true,
-            redefine_root: true,
-            root_deps: true,
-            root_package_manager: true,
-            root_private: true,
-            similar_deps: true,
-            types_in_deps: true,
-            workspace_protocol: true,
-            workspace_versions: true,
-        }
-    }
-
-    fn any(&self) -> bool {
-        [
-            self.banned_deps,
-            self.custom_types,
-            self.dead_workspace_patterns,
-            self.empty_deps,
-            self.missing_package_json,
-            self.redefine_root,
-            self.root_deps,
-            self.root_package_manager,
-            self.root_private,
-            self.similar_deps,
-            self.types_in_deps,
-            self.workspace_protocol,
-            self.workspace_versions,
-        ]
-        .contains(&true)
-    }
-}
-
-/// The lint selectors, by flag.
-fn selector<'a>(selection: &'a mut Selection, flag: &str) -> Option<&'a mut bool> {
-    Some(match flag {
-        "--banned-deps" => &mut selection.banned_deps,
-        "--custom-types" => &mut selection.custom_types,
-        "--dead-workspace-patterns" => &mut selection.dead_workspace_patterns,
-        "--empty-deps" => &mut selection.empty_deps,
-        "--missing-package-json" => &mut selection.missing_package_json,
-        "--redefine-root" => &mut selection.redefine_root,
-        "--root-deps" => &mut selection.root_deps,
-        "--root-package-manager" => &mut selection.root_package_manager,
-        "--root-private" => &mut selection.root_private,
-        "--similar-deps" => &mut selection.similar_deps,
-        "--types-in-deps" => &mut selection.types_in_deps,
-        "--workspace-protocol" => &mut selection.workspace_protocol,
-        "--workspace-versions" => &mut selection.workspace_versions,
-        _ => return None,
-    })
 }
 
 fn parse_format(value: &str) -> Option<Format> {
@@ -161,13 +197,7 @@ fn parse(args: &[String]) -> Option<Options> {
 
             format = Some(parse_format(value)?);
         } else {
-            let selected = selector(&mut selection, flag)?;
-
-            if *selected {
-                return None;
-            }
-
-            *selected = true;
+            selection.select(flag)?;
             explicit_ban_check |= flag == "--banned-deps";
         }
     }
@@ -201,21 +231,8 @@ fn answer(args: &[String]) -> Option<(String, i32)> {
     let workspace = data::read(&std::env::current_dir().ok()?)?;
     let report = lint::run(&workspace, &options.selection)?;
     let selection = &options.selection;
-    let issues = [
-        selection.workspace_protocol.then_some(report.workspace_protocol.len()),
-        selection.redefine_root.then_some(report.redefine_root.len()),
-        selection.empty_deps.then_some(report.empty_deps.len()),
-        selection.root_private.then_some(usize::from(report.root_private.is_some())),
-        selection.root_package_manager.then_some(usize::from(report.root_package_manager)),
-        selection.root_deps.then_some(usize::from(report.root_deps.is_some())),
-        selection.missing_package_json.then_some(report.missing_package_json.len()),
-        selection.dead_workspace_patterns.then_some(report.dead_patterns.len()),
-        selection.types_in_deps.then_some(report.types_in_deps.len()),
-        selection.similar_deps.then_some(report.similar_deps.len()),
-    ]
-    .into_iter()
-    .flatten()
-    .sum::<usize>();
+    let issues: usize =
+        Lint::ALL.into_iter().filter(|lint| selection.has(*lint)).filter_map(|lint| lint.issues(&report)).sum();
     let status = i32::from(issues > 0);
 
     if options.quiet {
@@ -249,12 +266,20 @@ mod tests {
     }
 
     #[test]
+    fn the_lints_are_numbered_in_the_order_they_run_and_each_has_its_flag() {
+        for (index, lint) in Lint::ALL.into_iter().enumerate() {
+            assert_eq!(lint as usize, index);
+            assert_eq!(Lint::from_flag(lint.flag()), Some(lint));
+        }
+
+        assert_eq!(Lint::from_flag("--quiet"), None);
+    }
+
+    #[test]
     fn no_selector_runs_every_lint() {
         let options = parse(&argv(&["deps"])).expect("the plain command");
 
-        assert!(
-            options.selection.banned_deps && options.selection.similar_deps && options.selection.workspace_versions
-        );
+        assert!(Lint::ALL.iter().all(|lint| options.selection.has(*lint)));
         assert!(options.format == Format::Human && !options.quiet);
     }
 
@@ -262,7 +287,7 @@ mod tests {
     fn a_selector_runs_only_that_lint() {
         let options = parse(&argv(&["deps", "--root-private", "--format=json", "--quiet"])).expect("a selector");
 
-        assert!(options.selection.root_private && !options.selection.root_deps);
+        assert!(options.selection.has(Lint::RootPrivate) && !options.selection.has(Lint::RootDeps));
         assert!(options.format == Format::Json && options.quiet);
     }
 
