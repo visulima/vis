@@ -7,6 +7,7 @@
 # .github/workflows/build-native.yml.
 macos:
     - "packages/tooling/task-runner/native/fspy_macos/**"
+    - "packages/tooling/task-runner/native/fspy_wire/**"
     - "packages/tooling/task-runner/native/src/macos.rs"
     - "packages/tooling/task-runner/__tests__/unit/file-access-tracker-interpose.test.ts"
     # vis CLI sources that carry `cfg(target_os = "macos")` branches.
