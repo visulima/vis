@@ -26,8 +26,11 @@ import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
  * side. The environment the manager sees is compared in full, except for the variables the native launcher
  * contract adds on its own (`LAUNCHER_VARIABLES`): they are named, not hidden.
  *
- * The first-run gate of `dlx` (package metadata over the network, a prompt) is never exercised: every native
- * case switches it off, and every case that would run it only has to be handed to Node.
+ * The first-run gate of `dlx` skips itself, with no network work, in CI, off a terminal and with `--yes`, and
+ * these runs have neither a terminal nor a registry: the cases cover that fast path, with and without `--no-info`.
+ * The gate's panel and prompt (a terminal, an unapproved version) are Node's, and the lookup that tells an approved
+ * version from a new one runs only on a terminal; it is covered by the unit tests in `dlx.rs`, against a registry stub.
+ * `--info` and a value of `VIS_DLX_YES` or `VIS_DLX_NO_INFO` that is not ASCII are handed to Node.
  *
  * Needs the native `vis` binary, the built CLI (`dist/bin.js`) and the NAPI addon; skipped otherwise.
  */
@@ -449,6 +452,15 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
     }
 
     const DLX_SHAPES: DlxShape[] = [
+        // The gate skips itself: no terminal, and `--yes`.
+        { args: ["dlx", "cowsay"] },
+        { args: ["dlx", "cowsay", "hi"] },
+        { args: ["dlx", "@scope/pkg@1", "a"] },
+        { args: ["dlx", "--yes", "cowsay"] },
+        { args: ["dlx", "-y", "cowsay"] },
+        { args: ["dlx", "--silent", "cowsay"] },
+        { args: ["dlx", "-p", "lolcatjs", "-s", "cowsay"] },
+        { args: ["dlx", "./local.js", "-p", "cowsay", "-s"] },
         { args: ["dlx", "--no-info", "cowsay"] },
         { args: ["dlx", "cowsay", "--no-info"] },
         { args: ["dlx", "--no-info", "cowsay", "hi", "there"] },
@@ -473,6 +485,10 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
         // Shell mode vets only the `-p` packages, so with none the gate is out without `--no-info`.
         { args: ["dlx", "-c", "echo hi"], needs: "shell" },
         { args: ["dlx", "--shell-mode", "echo hi && echo there", "--silent"], needs: "shell" },
+        { args: ["dlx", "-p", "lolcatjs", "-c", "echo hi"], needs: "shell" },
+        { args: ["dlx", "-c", "echo hi", "-p", "lolcatjs", "-s"], needs: "shell" },
+        { args: ["dlx", "-p", "lolcatjs", "-c", "./local.js"], needs: "shell" },
+        { args: ["dlx", "--offline", "cowsay"], needs: "offline" },
         // Paths, URLs and aliases are no registry specs.
         { args: ["dlx", "./local.js"] },
         { args: ["dlx", "../tools/run.js", "a", "b"] },
@@ -498,6 +514,10 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
         ...["1", "true", "TRUE", "yes", "on", "anything", " 1 ", "2"].map((value) => { return { args: ["dlx", "cowsay", "hi"], env: { VIS_DLX_NO_INFO: value }, fixture: "pnpm-single", label: `VIS_DLX_NO_INFO=${JSON.stringify(value)}` }; }),
         // With the gate out the other variable changes nothing.
         { args: ["dlx", "--no-info", "cowsay"], env: { VIS_DLX_YES: "1" }, fixture: "pnpm-single", label: "VIS_DLX_YES beside --no-info" },
+        // The gate skips itself whatever these say, because no stream is a terminal.
+        ...["0", "false", "", "no", " NO "].map((value) => { return { args: ["dlx", "cowsay"], env: { VIS_DLX_NO_INFO: value }, fixture: "pnpm-single", label: `VIS_DLX_NO_INFO=${JSON.stringify(value)} with a registry spec` }; }),
+        ...["1", "true", "yes", "on", " 1 ", "0", ""].map((value) => { return { args: ["dlx", "cowsay"], env: { VIS_DLX_YES: value }, fixture: "pnpm-single", label: `VIS_DLX_YES=${JSON.stringify(value)}` }; }),
+        { args: ["dlx", "cowsay"], ci: false, env: { VIS_NO_UPDATE_CHECK: UNSET }, fixture: "pnpm-single", label: "a registry spec outside CI, with the update check on" },
         // A falsy value leaves the gate on, which only a non-registry spec makes irrelevant.
         ...["", "0", "false", "no", " NO "].map((value) => { return { args: ["dlx", "./local.js"], env: { VIS_DLX_NO_INFO: value }, fixture: "pnpm-single", label: `a path with VIS_DLX_NO_INFO=${JSON.stringify(value)}` }; }),
         // The lean entry runs the manager in the working directory, with no workspace root and no config.
@@ -529,25 +549,14 @@ describe.skipIf(!ready)("vis info and vis dlx: native vs Node", () => {
     ];
 
     const DLX_DELEGATED_CASES: DelegatedCase[] = [
-    // The first-run gate may run (it skips itself in CI, without a terminal and with `--yes`, which the binary does not decide): Node's before any output.
+    // `--info` shows the panel on every run, and a value JavaScript and Rust could trim differently is Node's.
         ...[
-            ["dlx", "cowsay"],
-            ["dlx", "cowsay", "hi"],
-            ["dlx", "--yes", "cowsay"],
-            ["dlx", "-y", "cowsay"],
             ["dlx", "--info", "cowsay"],
-            ["dlx", "--offline", "cowsay"],
-            ["dlx", "--silent", "cowsay"],
-            ["dlx", "@scope/pkg@1", "a"],
-            ["dlx", "-p", "lolcatjs", "-c", "echo hi"],
-            ["dlx", "-c", "echo hi", "-p", "lolcatjs", "-s"],
-            ["dlx", "-p", "lolcatjs", "-c", "./local.js"],
-            ["dlx", "./local.js", "-p", "cowsay", "-s"],
+            ["dlx", "cowsay", "--info"],
         ].map((args) => { return { args, fixture: "pnpm-single", label: `vis ${args.join(" ")}` }; }),
-        ...[{ VIS_DLX_YES: "1" }, { VIS_DLX_NO_INFO: "0" }, { VIS_DLX_NO_INFO: "false" }, { VIS_DLX_NO_INFO: "" }, { VIS_DLX_NO_INFO: "no" }, { VIS_DLX_NO_INFO: " 1" }, { VIS_DLX_NO_INFO: "　" }].map((env) => {
+        ...[{ VIS_DLX_YES: "\u00A01" }, { VIS_DLX_YES: "　" }, { VIS_DLX_NO_INFO: "\u00A01" }, { VIS_DLX_NO_INFO: "　" }].map((env) => {
             return { args: ["dlx", "cowsay"], env, fixture: "pnpm-single", label: `environment ${JSON.stringify(env)}` };
         }),
-        { args: ["dlx", "cowsay"], ci: false, fixture: "pnpm-single", label: "outside CI" },
         // Shapes of the command line.
         ...[
             ["dlx"],

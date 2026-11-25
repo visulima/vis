@@ -46,16 +46,16 @@ fn ago(days: f64) -> String {
     iso(NOW - (days * DAY as f64) as u64)
 }
 
-type Answers = HashMap<String, (u16, String, Vec<(String, String)>)>;
+pub(crate) type Answers = HashMap<String, (u16, String, Vec<(String, String)>)>;
 
-struct Registry {
+pub(crate) struct Registry {
     port: u16,
-    requests: Arc<AtomicUsize>,
+    pub(crate) requests: Arc<AtomicUsize>,
     paths: Arc<Mutex<Vec<String>>>,
 }
 
 impl Registry {
-    fn start(answers: Answers) -> Self {
+    pub(crate) fn start(answers: Answers) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (requests, paths) = (Arc::new(AtomicUsize::new(0)), Arc::new(Mutex::new(Vec::new())));
@@ -101,11 +101,11 @@ fn serve(mut stream: TcpStream, answers: &Answers, count: &AtomicUsize, seen: &M
     drop(stream.write_all(reply.as_bytes()));
 }
 
-fn ok(body: &Value) -> (u16, String, Vec<(String, String)>) {
+pub(crate) fn ok(body: &Value) -> (u16, String, Vec<(String, String)>) {
     (200, body.to_string(), Vec::new())
 }
 
-struct Setup {
+pub(crate) struct Setup {
     context: Context,
     home: PathBuf,
 }
@@ -139,6 +139,13 @@ fn setup(registry: Option<&Registry>) -> Setup {
         },
         home,
     }
+}
+
+/// The packuments of a run against `registry`, with the home directory they cache under.
+pub(crate) fn packuments_for(registry: &Registry) -> (Packuments, PathBuf) {
+    let Setup { context, home } = setup(Some(registry));
+
+    (Packuments::at(context.root, home.clone(), context.cache_dir, NOW, client()), home)
 }
 
 fn client() -> HttpClient {
