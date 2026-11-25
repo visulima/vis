@@ -30,14 +30,19 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use crate::cache::{
-    add_safe, collect_entries, evict_directories, format_bytes, has_backslash, now_ms, quiet_workspace_root,
-    read_settings, sorted_entries, sum_directory_size, Scope,
+use crate::cache::dirs::{evict_directories, Scope};
+use crate::cache::entries::{
+    add_safe, collect_entries, has_backslash, mtime_ms, now_ms, sorted_entries, sum_directory_size,
 };
+use crate::cache::flags;
+use crate::cache::format::format_bytes;
+use crate::cache::quiet_workspace_root;
+use crate::cache::settings::read_settings;
 use crate::node_context::output_settings_are_default;
 use crate::output::write_streams;
 use crate::pail::{Layout, Level};
 use crate::removal::{removable_directory, removable_file};
+use crate::text::is_ascii_graphic;
 
 /// `DEFAULT_MAX_CACHE_AGE` of the task runner's cache: seven days.
 const DEFAULT_MAX_CACHE_AGE: f64 = 7.0 * 24.0 * 60.0 * 60.0 * 1000.0;
@@ -166,7 +171,7 @@ fn render(plan: &Plan, recount: bool) -> Option<String> {
 /// the em dash is one column and three bytes, and the line is printed only where both ways of counting fit it.
 fn summary_message(layout: Layout, removed: usize, reclaimed: u64) -> Option<String> {
     if removed == 0 {
-        if layout.width.saturating_sub(3) < NOTHING_TO_PRUNE.len() {
+        if !layout.fits_one_line(NOTHING_TO_PRUNE) {
             return None;
         }
 
@@ -225,10 +230,7 @@ fn parse(args: &[String]) -> Option<Request> {
     let mut tokens = args.iter().skip(2);
 
     while let Some(token) = tokens.next() {
-        let (name, inline) = match token.split_once('=') {
-            Some((name, value)) => (name, Some(value)),
-            None => (token.as_str(), None),
-        };
+        let (name, inline) = flags::split(token);
 
         let slot = match name {
             "--cache-dir" => &mut cache_dir,
@@ -239,27 +241,12 @@ fn parse(args: &[String]) -> Option<Request> {
             _ => return None,
         };
 
-        let value = match inline {
-            Some(value) => value,
-            None => tokens.next()?.as_str(),
-        };
-
-        // An empty or dash-led value is cerebro's to interpret, and a repeated flag is an array there.
-        if slot.is_some() || value.is_empty() || value.starts_with('-') {
-            return None;
-        }
-
-        *slot = Some(value);
+        flags::take_value(slot, inline, &mut tokens)?;
     }
 
     Some(Request {
         cache_dir: cache_dir.map(str::to_owned),
-        scope: match scope {
-            None | Some("shared") => Scope::Shared,
-            Some("worktree") => Scope::Worktree,
-            Some("all") => Scope::All,
-            Some(_) => return None,
-        },
+        scope: Scope::from_flag(scope)?,
         keep_last: match keep_last {
             None => None,
             Some(value) => Some(usize::try_from(whole(value)?).ok()?),
@@ -292,7 +279,7 @@ fn plan(args: &[String]) -> Option<Plan> {
     let mut plan = Plan { layout, parts: Vec::new(), removals: Vec::new(), gone_by_removal: false };
 
     for directory in &directories {
-        if !directory.bytes().all(|byte| byte.is_ascii_graphic()) {
+        if !is_ascii_graphic(directory) {
             return None;
         }
 
@@ -398,7 +385,7 @@ fn expire(request: &Request, base: &Path, dropped: &mut Vec<String>) -> Option<(
         let Ok(metadata) = fs::metadata(entry.path()) else {
             continue;
         };
-        let modified = crate::cache::mtime_ms(&metadata);
+        let modified = mtime_ms(&metadata);
 
         if now - modified > max_age {
             dropped.push(name);

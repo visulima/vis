@@ -44,7 +44,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use crate::cache::vis_cache_dir;
+use crate::cache::dirs::vis_cache_dir;
 use crate::http::{HttpClient, HttpConfig, HttpError};
 use crate::js::{json_number, json_string, pretty_document};
 use crate::node_context::context_decline;
