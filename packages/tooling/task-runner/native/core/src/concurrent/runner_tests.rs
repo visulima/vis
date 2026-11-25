@@ -383,6 +383,153 @@ mod tests {
         assert!(found, "expected 'direct-mode' in output");
     }
 
+    /// Run one command and return its stdout lines, its error messages and its exit code.
+    #[cfg(unix)]
+    async fn run_one(config: ConcurrentCommandConfig) -> (Vec<String>, Vec<String>, i32) {
+        let (event_tx, mut events) = mpsc::unbounded_channel::<ProcessEvent>();
+        let runner = ConcurrentRunner::new(vec![config], &default_options());
+        let result = runner.run(event_tx, no_control()).await;
+
+        let (mut lines, mut errors) = (Vec::new(), Vec::new());
+        while let Ok(event) = events.try_recv() {
+            match event {
+                ProcessEvent::Stdout { text, .. } => lines.push(text),
+                ProcessEvent::Error { message, .. } => errors.push(message),
+                _ => {}
+            }
+        }
+
+        (lines, errors, result.close_events[0].exit_code)
+    }
+
+    /// A directory of its own under the system temp directory.
+    #[cfg(unix)]
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("task-runner-{name}-{}", std::process::id()));
+
+        std::fs::create_dir_all(&dir).unwrap();
+
+        dir
+    }
+
+    #[cfg(unix)]
+    fn write_script(path: &std::path::Path, body: &str, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_command_leads_a_session_of_its_own() {
+        // No controlling terminal, and `kill(-pid)` reaches its whole group: the child is the
+        // leader of a session, so its session id is its own pid.
+        let config = make_config(
+            "sid=$(python3 -c 'import os; print(os.getsid(0))'); [ \"$sid\" = \"$$\" ] && echo leader || echo \"not a leader: $sid $$\"",
+            None,
+        );
+
+        assert_eq!(run_one(config).await, (vec!["leader".to_string()], vec![], 0));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_direct_command_is_found_on_the_path_the_command_runs_with() {
+        // `PATH` in the command's own environment decides where `shell: false` looks, not this process's.
+        let dir = scratch_dir("path-lookup");
+        write_script(&dir.join("runner-test-tool"), "#!/bin/sh\necho found-on-path\n", 0o755);
+
+        let mut config = make_config("runner-test-tool", None);
+        config.shell = Some(false);
+        config.env = Some([("PATH".to_string(), format!("{}:/usr/bin:/bin", dir.display()))].into());
+
+        assert_eq!(run_one(config).await, (vec!["found-on-path".to_string()], vec![], 0));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_direct_command_that_is_not_a_binary_and_has_no_shebang_runs_through_the_shell() {
+        let dir = scratch_dir("no-shebang");
+        let script = dir.join("plain.sh");
+        write_script(&script, "echo ran-by-sh\n", 0o755);
+
+        let mut config = make_config(&script.display().to_string(), None);
+        config.shell = Some(false);
+
+        assert_eq!(run_one(config).await, (vec!["ran-by-sh".to_string()], vec![], 0));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_direct_command_that_does_not_exist_fails_to_start() {
+        let mut config = make_config("runner-test-no-such-program --flag", None);
+        config.shell = Some(false);
+
+        let (lines, errors, exit_code) = run_one(config).await;
+
+        assert!(lines.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("Failed to spawn: "), "{errors:?}");
+        assert_eq!(exit_code, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_direct_command_without_execute_permission_fails_to_start() {
+        let dir = scratch_dir("not-executable");
+        let script = dir.join("locked");
+        write_script(&script, "#!/bin/sh\necho nope\n", 0o644);
+
+        let mut config = make_config(&script.display().to_string(), None);
+        config.shell = Some(false);
+
+        let (lines, errors, exit_code) = run_one(config).await;
+
+        assert!(lines.is_empty());
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(exit_code, 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_the_command_runs_in_its_cwd_and_a_missing_one_fails_to_start() {
+        let dir = scratch_dir("cwd").canonicalize().unwrap();
+
+        let mut config = make_config("pwd", None);
+        config.cwd = Some(dir.display().to_string());
+
+        assert_eq!(run_one(config).await, (vec![dir.display().to_string()], vec![], 0));
+
+        let mut missing = make_config("pwd", None);
+        missing.cwd = Some(dir.join("does-not-exist").display().to_string());
+
+        let (_, errors, exit_code) = run_one(missing).await;
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(exit_code, 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_the_command_does_not_inherit_a_blocked_sigpipe_or_signal_mask() {
+        // Whatever the host process blocked or ignored, a command starts with the defaults: a
+        // writer to a closed pipe is ended by SIGPIPE (141), as in a terminal.
+        let (lines, _, exit_code) =
+            run_one(make_config("exec 3>&1; { yes; echo \"[$?]\" >&3; } | head -n 1", None)).await;
+
+        assert_eq!(lines, vec!["y".to_string(), "[141]".to_string()]);
+        assert_eq!(exit_code, 0);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn test_shell_true_supports_pipes() {

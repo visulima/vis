@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{ChildStdin, Command};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -34,14 +34,7 @@ pub(crate) fn spawn_process(
         return super::pty::spawn_pty(index, config, sink, completion_tx, shell_path, giving_up);
     }
 
-    let mut cmd = build_command(config, shell_path);
-    // If the runtime is torn down mid-run (Node shutdown), its task tree is
-    // dropped: the completion-waiter task is aborted and the owned `Child` is
-    // dropped. With the default `kill_on_drop = false` that would leave the
-    // OS-level process running as an orphan re-parented to PID 1. Force-killing
-    // on drop ensures the JS side can never abandon spawned children.
-    cmd.kill_on_drop(true);
-    let mut child = cmd.spawn()?;
+    let (mut child, streams) = start(config, shell_path)?;
     let start_time = Instant::now();
 
     let pid = child.id();
@@ -59,15 +52,15 @@ pub(crate) fn spawn_process(
 
     // Spawn stdout reader -- returns JoinHandle so we can wait for it
     let mut stdout_handle: Option<JoinHandle<()>> =
-        child.stdout.take().map(|stdout| tokio::spawn(stream_output(stdout, output.clone(), index, false)));
+        streams.stdout.map(|stdout| tokio::spawn(stream_output(stdout, output.clone(), index, false)));
 
     // Spawn stderr reader -- returns JoinHandle so we can wait for it
     let mut stderr_handle: Option<JoinHandle<()>> =
-        child.stderr.take().map(|stderr| tokio::spawn(stream_output(stderr, output.clone(), index, true)));
+        streams.stderr.map(|stderr| tokio::spawn(stream_output(stderr, output.clone(), index, true)));
 
     // The child's stdin goes to a task of its own: `Child::wait` would drop it, which the child
     // sees as EOF, and a write to a child that is not reading must never block the runner.
-    let input = child.stdin.take().map(InputHandle::pipe);
+    let input = streams.stdin.map(InputHandle::pipe);
 
     // Shared flag the runner's force-kill timer checks before issuing
     // SIGKILL. Without it, a kill_timeout of 5s is plenty of room for
@@ -171,6 +164,75 @@ pub(crate) fn spawn_process(
     })
 }
 
+/// A started command, whichever way it was started.
+enum Running {
+    Tokio(tokio::process::Child),
+    #[cfg(target_os = "macos")]
+    Posix(super::posix_spawn::Child),
+}
+
+impl Running {
+    fn id(&self) -> Option<u32> {
+        match self {
+            Self::Tokio(child) => child.id(),
+            #[cfg(target_os = "macos")]
+            Self::Posix(child) => Some(child.id()),
+        }
+    }
+
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        match self {
+            Self::Tokio(child) => child.wait().await,
+            #[cfg(target_os = "macos")]
+            Self::Posix(child) => child.wait().await,
+        }
+    }
+}
+
+/// The parent's ends of a started command's pipes.
+struct Streams {
+    stdin: Option<Box<dyn AsyncWrite + Send + Unpin>>,
+    stdout: Option<Box<dyn AsyncRead + Send + Unpin>>,
+    stderr: Option<Box<dyn AsyncRead + Send + Unpin>>,
+}
+
+/// Start the process for `config` in a session of its own, with its output piped.
+///
+/// macOS starts it with `posix_spawn` (see `posix_spawn`): the `fork` that the standard library
+/// needs to run a `setsid` hook costs milliseconds per command there. Everywhere else, and where
+/// `posix_spawn` cannot be used, the standard library's own `Command` is used.
+fn start(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> Result<(Running, Streams), std::io::Error> {
+    #[cfg(target_os = "macos")]
+    if super::posix_spawn::available() {
+        let (program, args) = launch_parts(config, shell_path, false);
+        let args: Vec<String> = args.into_iter().map(ShellArg::into_string).collect();
+        let (child, pipes) = super::posix_spawn::spawn(&program, &args, config)?;
+        let streams = Streams {
+            stdin: pipes.stdin.map(|stdin| Box::new(stdin) as Box<dyn AsyncWrite + Send + Unpin>),
+            stdout: Some(Box::new(pipes.stdout)),
+            stderr: Some(Box::new(pipes.stderr)),
+        };
+
+        return Ok((Running::Posix(child), streams));
+    }
+
+    let mut cmd = build_command(config, shell_path);
+    // If the runtime is torn down mid-run (Node shutdown), its task tree is
+    // dropped: the completion-waiter task is aborted and the owned `Child` is
+    // dropped. With the default `kill_on_drop = false` that would leave the
+    // OS-level process running as an orphan re-parented to PID 1. Force-killing
+    // on drop ensures the JS side can never abandon spawned children.
+    cmd.kill_on_drop(true);
+    let mut child = cmd.spawn()?;
+    let streams = Streams {
+        stdin: child.stdin.take().map(|stdin| Box::new(stdin) as Box<dyn AsyncWrite + Send + Unpin>),
+        stdout: child.stdout.take().map(|stdout| Box::new(stdout) as Box<dyn AsyncRead + Send + Unpin>),
+        stderr: child.stderr.take().map(|stderr| Box::new(stderr) as Box<dyn AsyncRead + Send + Unpin>),
+    };
+
+    Ok((Running::Tokio(child), streams))
+}
+
 /// Wait for `drain` (the readers reaching EOF) for at most `STDIO_DRAIN_GRACE` of the time they
 /// spend waiting on the pipe. False when the grace ran out: something still holds the pipes open.
 ///
@@ -205,7 +267,7 @@ pub(crate) struct InputHandle {
 }
 
 impl InputHandle {
-    fn pipe(mut stdin: ChildStdin) -> Self {
+    fn pipe(mut stdin: Box<dyn AsyncWrite + Send + Unpin>) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let task = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
@@ -433,15 +495,7 @@ fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], completed: &mut Vec<St
 /// If `shell_path` is provided, it overrides the platform default shell.
 /// Commands are sourced from package.json scripts (trusted input).
 fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> Command {
-    let use_shell = config.shell.unwrap_or(true);
-
-    let (program, args) = if use_shell {
-        shell_invocation(&config.command, shell_path, cfg!(windows))
-    } else {
-        let (program, args) = direct_command(&config.command);
-
-        (program, args.into_iter().map(ShellArg::Plain).collect())
-    };
+    let (program, args) = launch_parts(config, shell_path, cfg!(windows));
 
     let mut cmd = Command::new(&program);
     for arg in args {
@@ -507,6 +561,18 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
     cmd
 }
 
+/// The program and arguments that run `config.command`: through a shell by default, or split
+/// on whitespace and run directly when `shell` is false.
+fn launch_parts(config: &ConcurrentCommandConfig, shell_path: Option<&str>, windows: bool) -> (String, Vec<ShellArg>) {
+    if config.shell.unwrap_or(true) {
+        shell_invocation(&config.command, shell_path, windows)
+    } else {
+        let (program, args) = direct_command(&config.command);
+
+        (program, args.into_iter().map(ShellArg::Plain).collect())
+    }
+}
+
 /// One argument of a shell invocation.
 #[derive(Debug, PartialEq, Eq)]
 enum ShellArg {
@@ -516,6 +582,15 @@ enum ShellArg {
     /// undo the `\"` escaping Rust applies to a normal argument, so a command
     /// containing quotes has to be quoted by hand.
     Raw(String),
+}
+
+impl ShellArg {
+    #[cfg(target_os = "macos")]
+    fn into_string(self) -> String {
+        match self {
+            Self::Plain(value) | Self::Raw(value) => value,
+        }
+    }
 }
 
 /// Whether `shell` names `cmd.exe`, with or without the extension and on either

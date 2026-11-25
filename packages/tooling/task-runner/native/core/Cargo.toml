@@ -29,6 +29,11 @@ tokio = { version = "1", features = [
   "macros"
 ] }
 
+# Process creation on macOS goes through `posix_spawn` (see `concurrent/posix_spawn.rs`), whose
+# pipes are tokio's unix pipe types.
+[target.'cfg(target_os = "macos")'.dependencies]
+tokio = { version = "1", features = [ "net" ] }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = [
   "signal",

@@ -400,6 +400,19 @@ const scenarios: Scenario[] = [
         react: callSignalListener("hanging", "SIGINT"),
     },
     {
+        // The child leads a session of its own, so it has no controlling terminal: a read from an
+        // inherited terminal or an open of `/dev/tty` fails instead of stopping the command, and
+        // `kill(-pid)` reaches its whole group. Both runners do this through `setsid`.
+        commands: () => [{ command: `sid=$(python3 -c 'import os; print(os.getsid(0))'); [ "$sid" = "$$" ] && echo session-leader || echo "not a session leader ($sid, $$)"` }],
+        check: ({ events }) => {
+            // The scenario's own test is running this check.
+            // eslint-disable-next-line vitest/no-standalone-expect
+            expect(events.flatMap((event) => (event.kind === "stdout" ? [event.text] : []))).toStrictEqual(["session-leader"]);
+        },
+        name: "the command leads a session of its own",
+        posixOnly: true,
+    },
+    {
         commands: () => [{ command: "echo one && echo two", shell: false, stdin: "pty" }],
         merged: true,
         name: "pty: always through the shell, whatever `shell` says",
