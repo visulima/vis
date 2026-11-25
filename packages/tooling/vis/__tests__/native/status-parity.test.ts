@@ -58,7 +58,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         native("a workspace with no history", base());
         native("an empty workspace", {});
         native("projects with the same targets", { ...project("a"), ...project("b"), ...project("c") });
-        native("a root with scripts and no pins", base(), {});
+        native("a root with scripts and no pins", base());
         native("a root manifest with other fields", { "package.json": json({ name: "root", private: true, version: "1.0.0", scripts: { x: "y" }, workspaces: ["packages/*"] }), ...base() });
 
         native("a recorded run with cache hits", {

@@ -139,11 +139,7 @@ fn flaky_count(history: &[Value]) -> Option<usize> {
             _ => continue,
         };
 
-        let Some(tasks) = summary.get("tasks") else {
-            continue;
-        };
-
-        let Value::Array(tasks) = tasks else {
+        let Some(Value::Array(tasks)) = summary.get("tasks") else {
             continue;
         };
 
