@@ -1,4 +1,4 @@
-use super::{push_flags, validate_pm, ResolvedCommand};
+use super::{push_flags, Manager, ResolvedCommand};
 
 /// Options for `resolve_dlx`.
 #[derive(Clone, Debug, Default)]
@@ -38,17 +38,17 @@ fn bin_of_spec(spec: &str) -> String {
 
 /// Resolve `vis dlx`.
 pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
-    let mut bin = pm.to_owned();
+    let mut bin = manager.bin();
     // With `-p` extras the positional is a command and only the named packages are installed, so
     // the main package must be named as well. In shell mode the positional is the command line.
     let name_main = !opts.shell_mode && !opts.additional_packages.is_empty();
     let command = if name_main { bin_of_spec(&opts.package) } else { opts.package.clone() };
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             args.push("dlx".into());
             for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                 args.push("--package".into());
@@ -58,7 +58,7 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
             args.push(command);
             args.extend(opts.args);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("exec".into());
             args.push("--yes".into());
             for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
@@ -83,37 +83,36 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
             }
             args.extend(opts.args);
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                warnings.push("yarn v1 does not support dlx. Falling back to npx.".into());
-                bin = "npx".into();
-                args.push("--yes".into());
-                for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
-                    args.push("--package".into());
-                    args.push(pkg.clone());
-                }
-                if opts.silent {
-                    args.push("--quiet".into());
-                }
-                args.push(command);
-                args.extend(opts.args);
-            } else {
-                args.push("dlx".into());
-                for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
-                    args.push("-p".into());
-                    args.push(pkg.clone());
-                }
-                if opts.shell_mode {
-                    warnings.push("yarn berry does not support shell mode for dlx.".into());
-                }
-                if opts.silent {
-                    args.push("--quiet".into());
-                }
-                args.push(command);
-                args.extend(opts.args);
+        Manager::YarnClassic => {
+            warnings.push("yarn v1 does not support dlx. Falling back to npx.".into());
+            bin = "npx";
+            args.push("--yes".into());
+            for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
+                args.push("--package".into());
+                args.push(pkg.clone());
             }
+            if opts.silent {
+                args.push("--quiet".into());
+            }
+            args.push(command);
+            args.extend(opts.args);
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            args.push("dlx".into());
+            for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
+                args.push("-p".into());
+                args.push(pkg.clone());
+            }
+            if opts.shell_mode {
+                warnings.push("yarn berry does not support shell mode for dlx.".into());
+            }
+            if opts.silent {
+                args.push("--quiet".into());
+            }
+            args.push(command);
+            args.extend(opts.args);
+        }
+        Manager::Bun => {
             args.push("x".into());
             for pkg in opts.additional_packages.iter().chain(name_main.then_some(&opts.package)) {
                 args.push("--package".into());
@@ -122,10 +121,9 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
             args.push(command);
             args.extend(opts.args);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { bin, args, warnings })
+    Ok(ResolvedCommand { bin: bin.to_owned(), args, warnings })
 }
 
 #[cfg(test)]

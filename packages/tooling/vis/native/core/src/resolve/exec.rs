@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, ResolvedCommand};
+use super::{push_each, push_flags, yarn_foreach_prefix, Manager, ResolvedCommand};
 
 /// Options for `resolve_exec`.
 #[derive(Clone, Debug, Default)]
@@ -15,7 +15,7 @@ pub struct ExecOptions {
 
 /// Refuse the selection flags of `vis exec` for a manager that runs one binary once in the current directory
 /// (`bunx`, the `npx` stand-in for yarn classic): each would be dropped and the command would still exit 0.
-fn refuse_exec_flags(pm: &str, runner: &str, opts: &ExecOptions, shell_mode: bool) -> Result<(), String> {
+fn refuse_exec_flags(who: &str, runner: &str, opts: &ExecOptions, shell_mode: bool) -> Result<(), String> {
     let flags: Vec<&str> = [
         (opts.recursive, "--recursive"),
         (!opts.filter.is_empty(), "--filter"),
@@ -33,15 +33,18 @@ fn refuse_exec_flags(pm: &str, runner: &str, opts: &ExecOptions, shell_mode: boo
     }
 
     Err(format!(
-        "{pm} cannot honour {} for `vis exec`: it runs {runner} once in the current directory.",
+        "{who} cannot honour {} for `vis exec`: it runs {runner} once in the current directory.",
         flags.join(", ")
     ))
 }
 
 /// `--reverse` only reorders a recursive run, and only pnpm (and aube) can; elsewhere it would be dropped.
-fn reject_reverse(pm: &str, opts: &ExecOptions) -> Result<(), String> {
+fn reject_reverse(manager: Manager, opts: &ExecOptions) -> Result<(), String> {
     if opts.reverse {
-        return Err(format!("{pm} has no --reverse for `vis exec`; only pnpm can run workspaces in reverse order."));
+        return Err(format!(
+            "{} has no --reverse for `vis exec`; only pnpm can run workspaces in reverse order.",
+            manager.bin()
+        ));
     }
 
     Ok(())
@@ -49,14 +52,13 @@ fn reject_reverse(pm: &str, opts: &ExecOptions) -> Result<(), String> {
 
 /// Resolve `vis exec <command>` to the PM-specific invocation.
 pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
-
+    let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
-    let mut bin = pm.to_owned();
+    let mut bin = manager.bin();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
 
             args.push("exec".into());
@@ -75,8 +77,8 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
             args.push(opts.command);
             args.extend(opts.args);
         }
-        "npm" => {
-            reject_reverse(pm, &opts)?;
+        Manager::Npm => {
+            reject_reverse(manager, &opts)?;
             args.push("exec".into());
 
             push_each(&mut args, "--workspace", &opts.filter);
@@ -101,45 +103,44 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
 
             args.extend(opts.args);
         }
-        "yarn" => {
-            reject_reverse(pm, &opts)?;
+        Manager::YarnClassic => {
+            reject_reverse(manager, &opts)?;
+            refuse_exec_flags("yarn v1", "`npx <command>`", &opts, false)?;
+            warnings.push("yarn v1 does not support exec. Falling back to npx.".into());
+            bin = "npx";
 
-            if version.starts_with("1.") {
-                refuse_exec_flags("yarn v1", "`npx <command>`", &opts, false)?;
-                warnings.push("yarn v1 does not support exec. Falling back to npx.".into());
-                bin = "npx".into();
-
-                if opts.shell_mode {
-                    args.push("-c".into());
-                }
-
-                args.push(opts.command);
-                args.extend(opts.args);
-            } else {
-                if opts.recursive || !opts.filter.is_empty() {
-                    yarn_foreach_prefix(&opts.filter, &mut args);
-
-                    if opts.parallel {
-                        args.push("--parallel".into());
-                    }
-                }
-
-                args.push("exec".into());
-                args.push(opts.command);
-                args.extend(opts.args);
+            if opts.shell_mode {
+                args.push("-c".into());
             }
-        }
-        "bun" => {
-            refuse_exec_flags("bun", "`bunx <command>`", &opts, true)?;
 
-            bin = "bunx".into();
             args.push(opts.command);
             args.extend(opts.args);
         }
-        _ => unreachable!(),
+        Manager::YarnBerry => {
+            reject_reverse(manager, &opts)?;
+
+            if opts.recursive || !opts.filter.is_empty() {
+                yarn_foreach_prefix(&opts.filter, &mut args);
+
+                if opts.parallel {
+                    args.push("--parallel".into());
+                }
+            }
+
+            args.push("exec".into());
+            args.push(opts.command);
+            args.extend(opts.args);
+        }
+        Manager::Bun => {
+            refuse_exec_flags("bun", "`bunx <command>`", &opts, true)?;
+
+            bin = "bunx";
+            args.push(opts.command);
+            args.extend(opts.args);
+        }
     }
 
-    Ok(ResolvedCommand { bin, args, warnings })
+    Ok(ResolvedCommand { bin: bin.to_owned(), args, warnings })
 }
 
 #[cfg(test)]

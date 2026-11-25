@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
+use super::{push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolvedCommand};
 
 /// Options for `resolve_add`.
 #[derive(Clone, Debug, Default)]
@@ -16,13 +16,13 @@ pub struct AddOptions {
 
 /// Resolve `vis add`.
 pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let warnings = Vec::new();
 
     // Global packages use npm exclusively (except bun, which ships a
     // native global-install path).
-    if opts.global && pm != "bun" {
+    if opts.global && manager != Manager::Bun {
         args.push("install".into());
         args.push("--global".into());
         push_flags(&mut args, &[(opts.save_dev, "--save-dev"), (opts.exact, "--save-exact")]);
@@ -30,8 +30,8 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
         return Ok(ResolvedCommand { bin: "npm".into(), args, warnings });
     }
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
             if opts.workspace_root {
                 args.push("-w".into());
@@ -49,7 +49,7 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             );
             args.extend(opts.packages);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("install".into());
             push_flags(
                 &mut args,
@@ -70,41 +70,40 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             }
             args.extend(opts.packages);
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                yarn_workspace_prefix(&opts.filter, &mut args)?;
-                args.push("add".into());
-                push_flags(
-                    &mut args,
-                    &[
-                        (opts.save_dev, "--dev"),
-                        (opts.exact, "--exact"),
-                        (opts.peer, "--peer"),
-                        (opts.optional, "--optional"),
-                        (opts.workspace_root, "-W"),
-                    ],
-                );
-                args.extend(opts.packages);
-            } else {
-                if opts.filter.len() > 1 {
-                    yarn_foreach_prefix(&opts.filter, &mut args);
-                } else {
-                    yarn_workspace_prefix(&opts.filter, &mut args)?;
-                }
-                args.push("add".into());
-                push_flags(
-                    &mut args,
-                    &[
-                        (opts.save_dev, "--dev"),
-                        (opts.exact, "--exact"),
-                        (opts.peer, "--peer"),
-                        (opts.optional, "--optional"),
-                    ],
-                );
-                args.extend(opts.packages);
-            }
+        Manager::YarnClassic => {
+            yarn_workspace_prefix(&opts.filter, &mut args)?;
+            args.push("add".into());
+            push_flags(
+                &mut args,
+                &[
+                    (opts.save_dev, "--dev"),
+                    (opts.exact, "--exact"),
+                    (opts.peer, "--peer"),
+                    (opts.optional, "--optional"),
+                    (opts.workspace_root, "-W"),
+                ],
+            );
+            args.extend(opts.packages);
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            if opts.filter.len() > 1 {
+                yarn_foreach_prefix(&opts.filter, &mut args);
+            } else {
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
+            }
+            args.push("add".into());
+            push_flags(
+                &mut args,
+                &[
+                    (opts.save_dev, "--dev"),
+                    (opts.exact, "--exact"),
+                    (opts.peer, "--peer"),
+                    (opts.optional, "--optional"),
+                ],
+            );
+            args.extend(opts.packages);
+        }
+        Manager::Bun => {
             args.push("add".into());
             push_flags(
                 &mut args,
@@ -118,10 +117,9 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             );
             args.extend(opts.packages);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { bin: pm.to_owned(), args, warnings })
+    Ok(ResolvedCommand { bin: manager.bin().to_owned(), args, warnings })
 }
 
 #[cfg(test)]

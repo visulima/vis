@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
+use super::{push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolvedCommand};
 
 /// Options for `resolve_remove`.
 #[derive(Clone, Debug, Default)]
@@ -13,20 +13,20 @@ pub struct RemoveOptions {
 
 /// Resolve `vis remove <packages>`.
 pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();
     let warnings = Vec::new();
 
-    if opts.global && pm != "bun" {
+    if opts.global && manager != Manager::Bun {
         let mut global = vec!["uninstall".to_owned(), "--global".to_owned()];
         global.extend(opts.packages);
 
         return Ok(ResolvedCommand { args: global, bin: "npm".into(), warnings });
     }
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
 
             if opts.workspace_root {
@@ -39,7 +39,7 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
             args.extend(opts.packages);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("uninstall".into());
 
             if opts.save_dev {
@@ -62,23 +62,22 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
             args.extend(opts.packages);
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                yarn_workspace_prefix(&opts.filter, &mut args)?;
-                args.push("remove".into());
-                args.extend(opts.packages);
-            } else {
-                if opts.recursive || opts.filter.len() > 1 {
-                    yarn_foreach_prefix(&opts.filter, &mut args);
-                } else {
-                    yarn_workspace_prefix(&opts.filter, &mut args)?;
-                }
-
-                args.push("remove".into());
-                args.extend(opts.packages);
-            }
+        Manager::YarnClassic => {
+            yarn_workspace_prefix(&opts.filter, &mut args)?;
+            args.push("remove".into());
+            args.extend(opts.packages);
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            if opts.recursive || opts.filter.len() > 1 {
+                yarn_foreach_prefix(&opts.filter, &mut args);
+            } else {
+                yarn_workspace_prefix(&opts.filter, &mut args)?;
+            }
+
+            args.push("remove".into());
+            args.extend(opts.packages);
+        }
+        Manager::Bun => {
             args.push("remove".into());
 
             if opts.global {
@@ -87,10 +86,9 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
             args.extend(opts.packages);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

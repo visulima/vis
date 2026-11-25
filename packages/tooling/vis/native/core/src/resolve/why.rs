@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, Manager, ResolvedCommand};
 
 /// Options for `resolve_why`.
 #[derive(Clone, Debug, Default)]
@@ -18,13 +18,13 @@ pub struct WhyOptions {
 
 /// Resolve `vis why <packages>`.
 pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
 
             args.push("why".into());
@@ -50,7 +50,7 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
 
             args.extend(opts.packages);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("explain".into());
 
             if opts.json {
@@ -65,30 +65,35 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
 
             args.extend(opts.packages);
         }
-        "yarn" => {
+        Manager::YarnClassic => {
             args.push("why".into());
 
-            if version.starts_with("1.") {
-                if opts.packages.len() > 1 {
-                    warnings.push("yarn v1 only supports querying one package at a time.".into());
-                }
+            if opts.packages.len() > 1 {
+                warnings.push("yarn v1 only supports querying one package at a time.".into());
+            }
 
-                if let Some(p) = opts.packages.first() {
-                    args.push(p.clone());
-                }
-            } else {
-                if opts.recursive {
-                    args.push("-R".into());
-                }
-
-                args.extend(opts.packages);
+            if let Some(p) = opts.packages.first() {
+                args.push(p.clone());
             }
 
             if opts.json {
                 args.push("--json".into());
             }
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            args.push("why".into());
+
+            if opts.recursive {
+                args.push("-R".into());
+            }
+
+            args.extend(opts.packages);
+
+            if opts.json {
+                args.push("--json".into());
+            }
+        }
+        Manager::Bun => {
             args.push("why".into());
 
             if let Some(d) = opts.depth {
@@ -98,10 +103,9 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
 
             args.extend(opts.packages);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

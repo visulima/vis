@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, Manager, ResolvedCommand};
 
 /// Options for `resolve_outdated`.
 #[derive(Clone, Debug, Default)]
@@ -18,13 +18,13 @@ pub struct OutdatedOptions {
 
 /// Resolve `vis outdated`.
 pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
 
             args.push("outdated".into());
@@ -56,7 +56,7 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
 
             args.extend(opts.packages);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("outdated".into());
 
             if opts.long {
@@ -75,26 +75,24 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
 
             args.extend(opts.packages);
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                args.push("outdated".into());
-                args.extend(opts.packages);
-            } else {
-                warnings.push("yarn berry uses 'yarn upgrade-interactive' instead of outdated.".into());
-                args.push("upgrade-interactive".into());
-            }
+        Manager::YarnClassic => {
+            args.push("outdated".into());
+            args.extend(opts.packages);
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            warnings.push("yarn berry uses 'yarn upgrade-interactive' instead of outdated.".into());
+            args.push("upgrade-interactive".into());
+        }
+        Manager::Bun => {
             args.push("outdated".into());
 
             push_each(&mut args, "--filter", &opts.filter);
 
             args.extend(opts.packages);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

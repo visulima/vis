@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{Manager, ResolvedCommand};
 
 /// Leading integer of a version string (`"11.0.0-rc.0"` -> `Some(11)`), or None
 /// when it doesn't start with a digit (`"latest"`).
@@ -30,12 +30,12 @@ fn is_path_like(target: &str) -> bool {
 
 /// Resolve `vis link [target]`.
 pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = vec!["link".to_owned()];
     let mut warnings = Vec::new();
 
-    if pm == "pnpm" {
+    if manager == Manager::Pnpm {
         match is_pnpm_v11_plus(version) {
             Some(true) => match &target {
                 None => warnings.push(
@@ -65,7 +65,7 @@ pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<R
         args.push(t);
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 /// Resolve `vis unlink <packages>`.
@@ -75,13 +75,13 @@ pub fn resolve_unlink(
     packages: Vec<String>,
     recursive: bool,
 ) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             args.push("unlink".into());
 
             if recursive {
@@ -90,7 +90,7 @@ pub fn resolve_unlink(
 
             args.extend(packages);
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("unlink".into());
 
             if recursive {
@@ -99,18 +99,25 @@ pub fn resolve_unlink(
 
             args.extend(packages);
         }
-        "yarn" => {
+        Manager::YarnClassic => {
             args.push("unlink".into());
 
-            if recursive && !version.starts_with("1.") {
-                args.push("--all".into());
-            } else if recursive {
+            if recursive {
                 warnings.push("yarn v1 does not support recursive unlink.".into());
             }
 
             args.extend(packages);
         }
-        "bun" => {
+        Manager::YarnBerry => {
+            args.push("unlink".into());
+
+            if recursive {
+                args.push("--all".into());
+            }
+
+            args.extend(packages);
+        }
+        Manager::Bun => {
             args.push("unlink".into());
 
             if recursive {
@@ -119,10 +126,9 @@ pub fn resolve_unlink(
 
             args.extend(packages);
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

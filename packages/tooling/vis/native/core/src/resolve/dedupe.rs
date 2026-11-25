@@ -1,49 +1,47 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{Manager, ResolvedCommand};
 
 /// Resolve `vis dedupe`.
 pub fn resolve_dedupe(pm: &str, version: &str, check: bool) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             args.push("dedupe".into());
 
             if check {
                 args.push("--check".into());
             }
         }
-        "npm" => {
+        Manager::Npm => {
             args.push("dedupe".into());
 
             if check {
                 args.push("--dry-run".into());
             }
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                warnings.push("yarn v1 does not support dedupe. Upgrade to yarn berry (v2+).".into());
+        Manager::YarnClassic => {
+            warnings.push("yarn v1 does not support dedupe. Upgrade to yarn berry (v2+).".into());
 
-                return Ok(ResolvedCommand { args: vec!["install".into()], bin: "yarn".into(), warnings });
-            }
-
+            return Ok(ResolvedCommand { args: vec!["install".into()], bin: "yarn".into(), warnings });
+        }
+        Manager::YarnBerry => {
             args.push("dedupe".into());
 
             if check {
                 args.push("--check".into());
             }
         }
-        "bun" => {
+        Manager::Bun => {
             warnings.push("bun does not support dedupe operations.".into());
 
             return Ok(ResolvedCommand { args: vec!["install".into()], bin: "bun".into(), warnings });
         }
-        _ => unreachable!(),
     }
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

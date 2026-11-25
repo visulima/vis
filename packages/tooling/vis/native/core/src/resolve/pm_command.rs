@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{Manager, ResolvedCommand};
 
 /// Resolve `vis pm <subcommand> [args]` to the PM-specific invocation (per-PM
 /// mapping for cache/list/pack/view + npm-only verbs, with a default pass-through).
@@ -8,8 +8,7 @@ pub fn resolve_pm_command(
     subcommand: &str,
     mut extra_args: Vec<String>,
 ) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
-
+    let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
@@ -17,8 +16,8 @@ pub fn resolve_pm_command(
     let npm_only = ["deprecate", "fund", "ping", "search", "token"];
 
     if npm_only.contains(&subcommand) {
-        if pm != "npm" {
-            warnings.push(format!("'{subcommand}' is not natively supported by {pm}. Delegating to npm."));
+        if manager != Manager::Npm {
+            warnings.push(format!("'{subcommand}' is not natively supported by {}. Delegating to npm.", manager.bin()));
         }
 
         args.push(subcommand.to_owned());
@@ -27,8 +26,8 @@ pub fn resolve_pm_command(
         return Ok(ResolvedCommand { args, bin: "npm".into(), warnings });
     }
 
-    match (subcommand, pm) {
-        ("cache", "pnpm") => {
+    match (subcommand, manager) {
+        ("cache", Manager::Pnpm) => {
             args.push("store".into());
 
             match extra_args.first().map(String::as_str) {
@@ -43,21 +42,24 @@ pub fn resolve_pm_command(
                 _ => {}
             }
         }
-        ("cache", "bun") => args.extend(["pm".into(), "cache".into()]),
-        ("list" | "ls", "bun") => args.extend(["pm".into(), "ls".into()]),
+        ("cache", Manager::Bun) => args.extend(["pm".into(), "cache".into()]),
+        ("list" | "ls", Manager::Bun) => args.extend(["pm".into(), "ls".into()]),
         ("list" | "ls", _) => args.push("list".into()),
-        ("pack", "bun") => args.extend(["pm".into(), "pack".into()]),
-        ("view" | "info", "yarn") if version.starts_with("1.") => args.push("info".into()),
-        ("view" | "info", "yarn") => args.extend(["npm".into(), "info".into()]),
-        ("view" | "info", "bun") => args.extend(["pm".into(), "view".into()]),
+        ("pack", Manager::Bun) => args.extend(["pm".into(), "pack".into()]),
+        ("view" | "info", Manager::YarnClassic) => args.push("info".into()),
+        ("view" | "info", Manager::YarnBerry) => args.extend(["npm".into(), "info".into()]),
+        ("view" | "info", Manager::Bun) => args.extend(["pm".into(), "view".into()]),
         ("view" | "info", _) => args.push("view".into()),
         _ => {
-            if subcommand == "prune" && (pm == "yarn" || pm == "bun") {
-                warnings.push(format!("{pm} does not support 'prune'. It prunes automatically on install."));
+            let lacks_prune_and_rebuild = matches!(manager, Manager::YarnClassic | Manager::YarnBerry | Manager::Bun);
+
+            if subcommand == "prune" && lacks_prune_and_rebuild {
+                warnings
+                    .push(format!("{} does not support 'prune'. It prunes automatically on install.", manager.bin()));
             }
 
-            if subcommand == "rebuild" && (pm == "yarn" || pm == "bun") {
-                warnings.push(format!("{pm} does not support 'rebuild'."));
+            if subcommand == "rebuild" && lacks_prune_and_rebuild {
+                warnings.push(format!("{} does not support 'rebuild'.", manager.bin()));
             }
 
             args.push(subcommand.to_owned());
@@ -66,7 +68,7 @@ pub fn resolve_pm_command(
 
     args.extend(extra_args);
 
-    Ok(ResolvedCommand { args, bin: pm.to_owned(), warnings })
+    Ok(ResolvedCommand { args, bin: manager.bin().to_owned(), warnings })
 }
 
 #[cfg(test)]

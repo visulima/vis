@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, Manager, ResolvedCommand};
 
 /// Options for `resolve_install`.
 #[derive(Clone, Debug, Default)]
@@ -19,12 +19,12 @@ pub struct InstallOptions {
 
 /// Resolve `vis install`.
 pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<ResolvedCommand, String> {
-    validate_pm(pm)?;
+    let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
 
-    match pm {
-        "pnpm" => {
+    match manager {
+        Manager::Pnpm => {
             push_each(&mut args, "--filter", &opts.filter);
             if opts.workspace_root {
                 args.push("-w".into());
@@ -45,7 +45,7 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
                 ],
             );
         }
-        "npm" => {
+        Manager::Npm => {
             if opts.frozen_lockfile && opts.lockfile_only {
                 warnings.push("npm ci and --package-lock-only are contradictory. Using ci.".into());
             }
@@ -72,42 +72,41 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
                 args.push("silent".into());
             }
         }
-        "yarn" => {
-            if version.starts_with("1.") {
-                args.push("install".into());
-                push_flags(
-                    &mut args,
-                    &[
-                        (opts.frozen_lockfile, "--frozen-lockfile"),
-                        (opts.prod, "--production"),
-                        (opts.ignore_scripts, "--ignore-scripts"),
-                        (opts.force, "--force"),
-                        (opts.offline, "--offline"),
-                        (opts.silent, "--silent"),
-                    ],
-                );
-            } else {
-                args.push("install".into());
-                if opts.frozen_lockfile {
-                    args.push("--immutable".into());
-                }
-                if opts.ignore_scripts {
-                    args.push("--mode".into());
-                    args.push("skip-build".into());
-                }
-                if opts.lockfile_only {
-                    args.push("--mode".into());
-                    args.push("update-lockfile".into());
-                }
-                if opts.prod {
-                    warnings.push("yarn berry --prod requires .yarnrc.yml configuration.".into());
-                }
-                if opts.offline {
-                    args.push("--cached".into());
-                }
+        Manager::YarnClassic => {
+            args.push("install".into());
+            push_flags(
+                &mut args,
+                &[
+                    (opts.frozen_lockfile, "--frozen-lockfile"),
+                    (opts.prod, "--production"),
+                    (opts.ignore_scripts, "--ignore-scripts"),
+                    (opts.force, "--force"),
+                    (opts.offline, "--offline"),
+                    (opts.silent, "--silent"),
+                ],
+            );
+        }
+        Manager::YarnBerry => {
+            args.push("install".into());
+            if opts.frozen_lockfile {
+                args.push("--immutable".into());
+            }
+            if opts.ignore_scripts {
+                args.push("--mode".into());
+                args.push("skip-build".into());
+            }
+            if opts.lockfile_only {
+                args.push("--mode".into());
+                args.push("update-lockfile".into());
+            }
+            if opts.prod {
+                warnings.push("yarn berry --prod requires .yarnrc.yml configuration.".into());
+            }
+            if opts.offline {
+                args.push("--cached".into());
             }
         }
-        "bun" => {
+        Manager::Bun => {
             args.push("install".into());
             push_flags(
                 &mut args,
@@ -120,10 +119,9 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
                 ],
             );
         }
-        _ => unreachable!(), // validate_pm already checked
     }
 
-    Ok(ResolvedCommand { bin: pm.to_owned(), args, warnings })
+    Ok(ResolvedCommand { bin: manager.bin().to_owned(), args, warnings })
 }
 
 #[cfg(test)]

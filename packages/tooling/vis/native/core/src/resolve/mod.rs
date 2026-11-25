@@ -36,11 +36,39 @@ pub struct ResolvedCommand {
     pub warnings: Vec<String>,
 }
 
-/// Validates that the PM name is one of the supported values.
-fn validate_pm(pm: &str) -> Result<(), String> {
-    match pm {
-        "pnpm" | "npm" | "yarn" | "bun" => Ok(()),
-        _ => Err(format!("Unsupported package manager: '{pm}'. Supported: pnpm, npm, yarn, bun")),
+/// A package manager as the resolvers tell them apart: yarn is split at the version, since classic (1.x) and
+/// berry (2+) share a name and little else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Manager {
+    Pnpm,
+    Npm,
+    YarnClassic,
+    YarnBerry,
+    Bun,
+}
+
+impl Manager {
+    /// The manager `pm` names, at `version`. A yarn whose version starts with `1.` is classic, and an unknown or
+    /// empty version reads as berry.
+    pub fn new(pm: &str, version: &str) -> Result<Self, String> {
+        match pm {
+            "pnpm" => Ok(Self::Pnpm),
+            "npm" => Ok(Self::Npm),
+            "yarn" if version.starts_with("1.") => Ok(Self::YarnClassic),
+            "yarn" => Ok(Self::YarnBerry),
+            "bun" => Ok(Self::Bun),
+            _ => Err(format!("Unsupported package manager: '{pm}'. Supported: pnpm, npm, yarn, bun")),
+        }
+    }
+
+    /// The executable that runs the manager's own commands.
+    pub fn bin(self) -> &'static str {
+        match self {
+            Self::Pnpm => "pnpm",
+            Self::Npm => "npm",
+            Self::YarnClassic | Self::YarnBerry => "yarn",
+            Self::Bun => "bun",
+        }
     }
 }
 
