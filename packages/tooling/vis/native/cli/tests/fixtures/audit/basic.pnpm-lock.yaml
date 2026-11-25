@@ -1,0 +1,29 @@
+lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+packages:
+
+  left-pad@1.3.0:
+    resolution: {integrity: sha512-AAAA}
+
+  is-odd@3.0.1:
+    resolution: {integrity: sha512-BBBB}
+
+  zod@3.22.0:
+    resolution: {integrity: sha512-CCCC}
+
+  zod@4.0.0:
+    resolution: {integrity: sha512-DDDD}
+
+  '@scope/b@1.0.0':
+    resolution: {integrity: sha512-EEEE}
+
+  '@scope/b@2.0.0':
+    resolution: {integrity: sha512-FFFF}
+
+snapshots:
+
+  left-pad@1.3.0: {}

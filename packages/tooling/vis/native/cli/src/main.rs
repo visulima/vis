@@ -28,6 +28,7 @@ use std::process::exit;
 mod add;
 mod advisories;
 mod affected;
+mod audit;
 mod cache;
 #[cfg(unix)]
 mod cache_clean;

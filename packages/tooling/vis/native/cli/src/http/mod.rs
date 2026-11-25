@@ -159,7 +159,6 @@ impl HttpClient {
     }
 
     /// POSTs `body`, already serialised, with `content-type: application/json`.
-    #[allow(dead_code, reason = "the commands that POST are not native yet; the tests cover it")]
     pub(crate) fn post_json(&self, url: &str, headers: &[(&str, &str)], body: &str) -> Result<Response, HttpError> {
         self.send(url, headers, Some(body))
     }
