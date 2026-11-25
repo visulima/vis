@@ -43,16 +43,20 @@ const stubOsv = (): void => {
     );
 };
 
-const runAudit = async (options: Record<string, unknown> = {}): Promise<Report> => {
+const execAudit = async (options: Record<string, unknown>): Promise<void> => {
     const { default: execute } = await import("../../../src/commands/audit/handler");
 
     await execute({
         fs: fsPromises,
         logger: console,
-        options: { backend: "vis", format: "json", ...options },
+        options: { backend: "vis", ...options },
         visConfig: undefined,
         workspaceRoot,
     } as unknown as Parameters<typeof execute>[0]);
+};
+
+const runAudit = async (options: Record<string, unknown> = {}): Promise<Report> => {
+    await execAudit({ format: "json", ...options });
 
     return JSON.parse(stdoutChunks.join(""));
 };
@@ -125,15 +129,7 @@ describe("vis audit online findings", () => {
     it("exits non-zero with --exit-code in the default table format", async () => {
         expect.assertions(1);
 
-        const { default: execute } = await import("../../../src/commands/audit/handler");
-
-        await execute({
-            fs: fsPromises,
-            logger: console,
-            options: { backend: "vis", exitCode: true },
-            visConfig: undefined,
-            workspaceRoot,
-        } as unknown as Parameters<typeof execute>[0]);
+        await execAudit({ exitCode: true });
 
         expect(process.exitCode).toBe(1);
     });
