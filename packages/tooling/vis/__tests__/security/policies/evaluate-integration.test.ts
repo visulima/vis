@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { VisConfig } from "../../../src/config/types";
+import { advisoryKey } from "../../../src/security/advisories";
 import type { PackageManifest } from "../../../src/security/manifests";
 import { evaluatePolicies, parsePoliciesFlag } from "../../../src/security/policies";
 import type { SecurityVulnerability } from "../../../src/util/catalog";
@@ -117,7 +118,7 @@ describe(evaluatePolicies, () => {
         // policies do — so we assert the inverse: offline still produces
         // decisions for offline-supported modules.
         const findings = new Map<string, SecurityVulnerability[]>([
-            ["lodash", [{ cvssScore: undefined, fixedVersions: [], id: "CVE-2020-8203", severity: "HIGH" as const, summary: "x" }]],
+            [advisoryKey("lodash", "4.17.20"), [{ cvssScore: undefined, fixedVersions: [], id: "CVE-2020-8203", severity: "HIGH" as const, summary: "x" }]],
         ]);
         const config: VisConfig = { security: { policies: { vulnerability: { failOn: "high" } } } };
 
