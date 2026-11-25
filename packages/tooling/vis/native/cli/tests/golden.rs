@@ -219,10 +219,9 @@ fn cache_group_help_matches_the_help_cache_golden() {
     assert!(failures.is_empty(), "cache group help differs from the golden:\n{}", failures.join("\n"));
 }
 
-/// Commands whose `--help` is forwarded to the package manager or tool they run (the
-/// native front-end already did this before it rendered help), so only `help <name>`
-/// is comparable. `dedupe --help` in particular really runs `<pm> dedupe`.
-const TOOL_FLAG_COMMANDS: &[&str] = &["exec", "x", "pm", "remove", "dedupe", "link", "unlink", "outdated", "why"];
+/// Commands whose `--help` belongs to the tool they run (`x` takes it for a file name, as Node does), so only
+/// `help <name>` is comparable.
+const TOOL_FLAG_COMMANDS: &[&str] = &["x"];
 
 /// Every command in the generated manifest: its `--help` (or `help <name>` for the
 /// commands whose `--help` belongs to the tool they run).

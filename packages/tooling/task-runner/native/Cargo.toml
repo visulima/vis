@@ -8,10 +8,11 @@ license = "MIT"
 # crate (no napi). `default-members` keeps plain `cargo test` / `cargo clippy` /
 # `cargo bench` in this directory covering both. The fspy_* crates are separate
 # packages (own lockfile; the injected dylib/DLL must never be linked into the addon),
-# so they are excluded from the workspace.
+# so they are excluded from the workspace. `fspy_wire` (the wire format they share
+# with this crate) has no dependencies and is a member, so plain `cargo test` runs its tests.
 [workspace]
-members = ["core"]
-default-members = [".", "core"]
+members = ["core", "fspy_wire"]
+default-members = [".", "core", "fspy_wire"]
 exclude = ["fspy_macos", "fspy_seccomp", "fspy_windows"]
 
 [lib]
@@ -37,6 +38,10 @@ fspy-seccomp = { path = "./fspy_seccomp" }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2.178"
 
+# Wire format shared with the injected dylib/DLL (opcodes, message framing, names).
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+fspy-wire = { path = "./fspy_wire" }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
@@ -52,6 +57,9 @@ windows-sys = { version = "0.61", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_IO",
 ] }
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
 
 [build-dependencies]
 napi-build = "2"

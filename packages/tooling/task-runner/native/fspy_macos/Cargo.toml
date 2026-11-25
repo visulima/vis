@@ -21,12 +21,18 @@ crate-type = [ "cdylib" ]
 # inherited reporting socket. Both are tiny, stable-Rust, no-nightly deps.
 libc = "0.2.178"
 ctor = "1"
+# Wire opcodes and datagram framing shared with the parent (`native/src/macos.rs`).
+# Dependency-free, so it adds nothing to the injected dylib at runtime.
+fspy-wire = { path = "../fspy_wire" }
 
 # Keep the injected dylib small and dependency-free at runtime: no tokio, no
 # serialization crate. The wire format is a single datagram per access
-# (`[u8 mode][path bytes]`) written with a raw `send(2)`, so there is nothing
+# (`[u8 mode][path bytes]`, see `fspy_wire`) written with a raw `send(2)`, so there is nothing
 # to frame or buffer inside an arbitrary tracked process.
 
 # `[profile.release]` is intentionally omitted — Cargo only honours
 # `[profile.*]` from the workspace root (native/Cargo.toml), which already sets
 # lto + strip for every artifact built under it, this dylib included.
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"

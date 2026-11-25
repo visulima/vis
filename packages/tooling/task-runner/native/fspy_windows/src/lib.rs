@@ -33,14 +33,9 @@ use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 
-/// Wire opcodes — one byte prefix per pipe message. Kept in sync with the
-/// parser in `native/src/windows.rs`.
-pub mod mode {
-    pub const READ: u8 = 0;
-    pub const WRITE: u8 = 1;
-    pub const STAT: u8 = 2;
-    pub const READDIR: u8 = 3;
-}
+/// Wire opcodes — one byte prefix per pipe message. Shared with the parser in
+/// `native/src/windows.rs` through `fspy_wire`.
+pub use fspy_wire::op as mode;
 
 /// `DllMain` — entrypoint the loader calls when the DLL attaches. On
 /// `DLL_PROCESS_ATTACH` we drop thread-attach callbacks (we don't need them),
@@ -53,6 +48,8 @@ pub mod mode {
 #[no_mangle]
 pub extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _reserved: *mut c_void) -> i32 {
     if reason == DLL_PROCESS_ATTACH {
+        // SAFETY: `hinst` is the module handle the loader passed to `DllMain`; the calls below only hand it, or this process's
+        //     own id, back to the OS, and run before the host's `main` on the loader thread.
         unsafe {
             DisableThreadLibraryCalls(hinst);
             // Record our own base so install_all skips our module (never hook

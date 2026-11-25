@@ -111,8 +111,8 @@ fn run(
     extra_env: HashMap<String, String>,
     pid_tx: mpsc::SyncSender<u32>,
 ) -> std::io::Result<InterposeTrackingResult> {
-    // SAFETY: socketpair into a 2-element array; checked for error.
     let mut fds = [0 as RawFd; 2];
+    // SAFETY: `socketpair` fills the two-element array; the result is checked below.
     let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) };
 
     if rc != 0 {
@@ -129,6 +129,7 @@ fn run(
     // Grow the receive buffer so a burst of accesses from a fast child isn't
     // silently dropped before the reader thread drains it.
     let bufsize: libc::c_int = 4 * 1024 * 1024;
+    // SAFETY: `setsockopt` on the socket this function just created, with a pointer to a live `c_int` and its size.
     unsafe {
         libc::setsockopt(
             parent_fd,
@@ -145,7 +146,7 @@ fn run(
     // Injected last: a stale value inherited from an outer tracker (or passed by
     // the caller) must not replace this run's dylib or report socket.
     command.env("DYLD_INSERT_LIBRARIES", dylib_path);
-    command.env("FSPY_MACOS_FD", child_fd.to_string());
+    command.env(fspy_wire::ENV_MACOS_FD, child_fd.to_string());
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -157,6 +158,7 @@ fn run(
     // The fd is inherited by number; nothing else to do in pre_exec but it
     // documents intent and guarantees the fd isn't accidentally closed.
     let keep = child_fd;
+    // SAFETY: the closure only calls `fcntl`, which is async-signal-safe, on an fd the parent keeps open for the child.
     unsafe {
         command.pre_exec(move || {
             // Re-clear CLOEXEC defensively in the forked child.
@@ -187,6 +189,7 @@ fn run(
     // stdout/stderr pipes, so without this any of the three would block on
     // EOF forever once the main target exits. See voidzero-dev/vite-task#396.
     let mut cancel_fds = [0 as RawFd; 2];
+    // SAFETY: `pipe` fills the two-element array; the result is checked here.
     if unsafe { libc::pipe(cancel_fds.as_mut_ptr()) } != 0 {
         close(parent_fd);
         return Err(std::io::Error::last_os_error());
@@ -241,16 +244,21 @@ fn run(
     })
 }
 
+/// `poll(2)` timeout meaning "wait until an fd is ready".
+const POLL_FOREVER: libc::c_int = -1;
+
 /// Receive `[mode][path]` datagrams until EOF (all write ends closed) or until
 /// `cancel_fd` becomes readable — the caller signals cancel once the main
 /// target has exited and a grace window lapsed, so a lingering descendant
 /// holding the inherited socket can't block here forever (vite-task#396).
 fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAccess> {
     // Take ownership so the fd is closed when the reader returns.
+    // SAFETY: `parent_fd` is the open socket this function owns; `File` takes ownership and closes it on drop, and nothing else closes it.
     let socket = unsafe { std::fs::File::from_raw_fd(parent_fd) };
     let raw = socket.as_raw_fd_compat();
 
     // Non-blocking so recv returns EAGAIN instead of parking; we block in poll.
+    // SAFETY: plain `fcntl` calls on `raw`, which the `File` above keeps open.
     unsafe {
         let flags = libc::fcntl(raw, libc::F_GETFL);
         if flags >= 0 {
@@ -260,7 +268,7 @@ fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAcc
 
     let mut seen = std::collections::HashSet::<(String, u8)>::new();
     let mut out = Vec::new();
-    let mut buf = [0u8; 1 + 1024];
+    let mut buf = [0u8; fspy_wire::DATAGRAM_MAX];
 
     loop {
         let mut fds = [
@@ -268,7 +276,8 @@ fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAcc
             libc::pollfd { fd: cancel_fd, events: libc::POLLIN, revents: 0 },
         ];
 
-        let prc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        // SAFETY: `fds` is a live array of two `pollfd` and the count passed is its length.
+        let prc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, POLL_FOREVER) };
 
         if prc < 0 {
             if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
@@ -290,6 +299,7 @@ fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAcc
         // Drain every datagram currently buffered before polling again.
         loop {
             // SOCK_DGRAM: one recv == one whole datagram.
+            // SAFETY: `buf` is a live, writable buffer of `buf.len()` bytes; `raw` is the open socket.
             let n = unsafe { libc::recv(raw, buf.as_mut_ptr().cast(), buf.len(), 0) };
 
             if n == 0 {
@@ -306,18 +316,14 @@ fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAcc
                 return out;
             }
 
-            let n = n as usize;
-            let mode = buf[0];
-            let path_bytes = &buf[1..n];
-
-            if path_bytes.is_empty() {
+            let Some(frame) = fspy_wire::decode(&buf[..n as usize]) else {
                 continue;
-            }
+            };
 
-            let path = normalize(path_bytes, cwd);
+            let path = normalize(frame.path, cwd);
 
-            if seen.insert((path.clone(), mode)) {
-                out.push(InterposeFileAccess { path, kind: kind_str(mode).to_string() });
+            if seen.insert((path.clone(), frame.op)) {
+                out.push(InterposeFileAccess { path, kind: fspy_wire::kind_name(frame.op).to_string() });
             }
         }
     }
@@ -331,6 +337,7 @@ fn drain(parent_fd: RawFd, cwd: &Path, cancel_fd: RawFd) -> Vec<InterposeFileAcc
 fn read_bounded<R: Read + AsRawFd>(mut reader: R, cancel_fd: RawFd) -> Vec<u8> {
     let raw = reader.as_raw_fd();
 
+    // SAFETY: plain `fcntl` calls on `raw`, which the reader above keeps open.
     unsafe {
         let flags = libc::fcntl(raw, libc::F_GETFL);
         if flags >= 0 {
@@ -347,7 +354,8 @@ fn read_bounded<R: Read + AsRawFd>(mut reader: R, cancel_fd: RawFd) -> Vec<u8> {
             libc::pollfd { fd: cancel_fd, events: libc::POLLIN, revents: 0 },
         ];
 
-        let prc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        // SAFETY: `fds` is a live array of two `pollfd` and the count passed is its length.
+        let prc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, POLL_FOREVER) };
 
         if prc < 0 {
             if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
@@ -394,6 +402,7 @@ fn read_bounded<R: Read + AsRawFd>(mut reader: R, cancel_fd: RawFd) -> Vec<u8> {
 
 /// Best-effort one-byte write to wake every poll watching the cancel pipe.
 fn signal_cancel(cancel_write: RawFd) {
+    // SAFETY: writes one byte from a live buffer to the cancel pipe's write end, which stays open until the drains are done.
     unsafe {
         libc::write(cancel_write, [1u8].as_ptr().cast(), 1);
     }
@@ -415,17 +424,8 @@ fn normalize(bytes: &[u8], cwd: &Path) -> String {
     }
 }
 
-fn kind_str(mode: u8) -> &'static str {
-    match mode {
-        1 => "write",
-        2 => "stat",
-        3 => "readdir",
-        4 => "missing",
-        _ => "read",
-    }
-}
-
 fn set_cloexec(fd: RawFd, on: bool) {
+    // SAFETY: plain `fcntl` calls on a descriptor the caller owns; failures are ignored.
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFD);
         if flags >= 0 {
@@ -436,6 +436,7 @@ fn set_cloexec(fd: RawFd, on: bool) {
 }
 
 fn close(fd: RawFd) {
+    // SAFETY: the caller owns `fd` and does not use it afterwards.
     unsafe {
         libc::close(fd);
     }

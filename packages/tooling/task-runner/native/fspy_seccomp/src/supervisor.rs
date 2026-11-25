@@ -27,31 +27,15 @@ use std::mem;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
-use libc::{seccomp_notif, seccomp_notif_resp, Ioctl, SECCOMP_USER_NOTIF_FLAG_CONTINUE};
+use libc::{
+    seccomp_notif, seccomp_notif_resp, SECCOMP_IOCTL_NOTIF_RECV, SECCOMP_IOCTL_NOTIF_SEND,
+    SECCOMP_USER_NOTIF_FLAG_CONTINUE,
+};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 
 use crate::filter::{is_native_call, NATIVE_ABI};
 use crate::syscalls::{self, Classified};
 use crate::FileAccess;
-
-// Linux ioctl numbers — computed from `<linux/seccomp.h>`'s
-// `_IOWR(SECCOMP_IOC_MAGIC, N, T)` macros where
-// `SECCOMP_IOC_MAGIC = '!'` (0x21, easy to misread as 'S'). Layout
-// is `(dir<<30) | (size<<16) | (type<<8) | nr`; `dir` is RW (3),
-// `size` is the struct's byte size. Stable across all Linux arches.
-//
-// `libc::Ioctl` is `c_ulong` on glibc (u64) and `c_int` on musl
-// (i32). Computing as `u32` then `as`-casting to Ioctl preserves
-// the bit pattern on both — the kernel reads the raw bytes.
-
-const fn ioc(dir: u32, ty: u32, nr: u32, size: u32) -> Ioctl {
-    (((dir) << 30) | ((size) << 16) | ((ty) << 8) | (nr)) as Ioctl
-}
-
-/// `_IOWR('!', 0, struct seccomp_notif)` — 80-byte struct.
-const SECCOMP_IOCTL_NOTIF_RECV: Ioctl = ioc(3, 0x21, 0, 80);
-/// `_IOWR('!', 1, struct seccomp_notif_resp)` — 24-byte struct.
-const SECCOMP_IOCTL_NOTIF_SEND: Ioctl = ioc(3, 0x21, 1, 24);
 
 /// What a [`Source::wait`] found.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -304,6 +288,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::filter::AUDIT_ARCH_I386;
     use crate::AccessKind;
 
     fn errno(code: i32) -> io::Error {
@@ -511,9 +496,10 @@ mod tests {
     fn unknown_abi_calls_are_not_decoded_and_flag_the_trace() {
         // A foreign-arch request reaches the supervisor (the filter notifies instead of
         // killing the thread); it is answered, never decoded with the wrong table.
+        // SAFETY: `seccomp_notif` is a plain-old-data C struct; all-zero is valid.
         let mut foreign: seccomp_notif = unsafe { mem::zeroed() };
 
-        foreign.data.arch = 0x4000_0003; // AUDIT_ARCH_I386
+        foreign.data.arch = AUDIT_ARCH_I386;
         foreign.data.nr = 5;
 
         let got = classify_notification(&foreign);
@@ -521,6 +507,21 @@ mod tests {
         assert!(got.accesses.is_empty());
         assert!(got.incomplete);
     }
+
+    /// `_IOWR('!', nr, T)` from <linux/seccomp.h>: dir (read|write = 3) << 30 | size << 16 |
+    /// type << 8 | nr, with `SECCOMP_IOC_MAGIC = '!'`. These are the values this module
+    /// used to compute by hand. Checked at compile time, so a `cargo check --tests` for a
+    /// Linux target covers them.
+    const fn iowr(nr: u32, size: usize) -> libc::Ioctl {
+        ((3_u32 << 30) | ((size as u32) << 16) | ((b'!' as u32) << 8) | nr) as libc::Ioctl
+    }
+
+    const _: () = {
+        assert!(mem::size_of::<seccomp_notif>() == 80);
+        assert!(mem::size_of::<seccomp_notif_resp>() == 24);
+        assert!(SECCOMP_IOCTL_NOTIF_RECV == iowr(0, 80));
+        assert!(SECCOMP_IOCTL_NOTIF_SEND == iowr(1, 24));
+    };
 
     #[test]
     fn revents_are_interpreted_like_the_poll_flags_say() {

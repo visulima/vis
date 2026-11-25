@@ -9,13 +9,12 @@
 //!
 //! Native: `vis sbom` with `--format json`, `--output <path>|-`, `--focus <a,b>` and `--include-dev`, each at
 //! most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
-//! `pnpm-lock.yaml` and `package.json` files are read exactly (see `lock.rs`, `meta.rs`, `semver.rs`).
+//! `pnpm-lock.yaml` and `package.json` files are read exactly (see `pnpm_lock.rs`, `meta.rs`, `semver.rs`).
 //! Node: `--format xml`, every other flag, any other lockfile manager, a `vis.config.*`, a project with a
 //! `project.json`, another ecosystem's lock file at the root, a terminal, and everything the readers refuse.
 
 mod bom;
 mod json;
-mod lock;
 mod meta;
 mod semver;
 
@@ -25,7 +24,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::collation::root_collation;
 use crate::graph::{project_graph, GraphResult};
@@ -35,7 +33,6 @@ use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
 use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
-use vis_core::date::iso_from_millis;
 
 /// Lock and manifest files of the other ecosystems `vis sbom` reads from the root, which Node adds to the BOM
 /// or reports on stderr as found-but-not-included.
@@ -151,13 +148,6 @@ fn context(cwd: &Path) -> bool {
         && !OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists())
 }
 
-/// `new Date().toISOString()`.
-fn timestamp() -> String {
-    iso_from_millis(
-        i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0),
-    )
-}
-
 /// Whether the file can be written where Node writes it. `ensureDirSync` looks at the directory with `lstat`: one
 /// that exists must be a real directory (a symlink to one is an error in Node), and one that is missing is made
 /// with its parents, which must lead to a directory. The target itself must be a file or not exist.
@@ -177,29 +167,6 @@ fn writable(target: &Path) -> bool {
         }
         Err(_) => false,
     }
-}
-
-/// The largest document Node reliably delivers to a pipe or socket. Its stdout is asynchronous there and the process
-/// exits right after writing, so what the reader has not yet taken from the pipe's buffer (64 KiB) is lost: a
-/// larger document arrives cut short, at a length that depends on how fast the reader is.
-const STREAM_LIMIT: usize = 64 * 1024;
-
-/// Whether stdout is a pipe or a socket.
-#[cfg(unix)]
-fn stdout_is_stream() -> bool {
-    // SAFETY: `fstat` only writes the `stat` it is given.
-    let mut status: libc::stat = unsafe { std::mem::zeroed() };
-
-    if unsafe { libc::fstat(libc::STDOUT_FILENO, &mut status) } != 0 {
-        return true;
-    }
-
-    matches!(status.st_mode & libc::S_IFMT, libc::S_IFIFO | libc::S_IFSOCK)
-}
-
-#[cfg(not(unix))]
-fn stdout_is_stream() -> bool {
-    true
 }
 
 /// Answer `vis sbom` natively, or delegate to Node. Never returns.
@@ -228,11 +195,11 @@ fn answer(args: &[String]) -> Option<i32> {
 
     let options = bom::Options { focus: &plan.focus, include_dev: plan.include_dev };
     let bom = bom::build(&cwd, &graph, &options).ok()?;
-    let text = bom.to_json(&timestamp(), &format!("urn:uuid:{}", js::random_uuid()?));
+    let text = bom.to_json(&js::iso_now(), &format!("urn:uuid:{}", js::random_uuid()?));
 
     let Some(layout) = layout else {
         // A document that Node would cut short on a pipe is Node's to cut short.
-        if text.len() > STREAM_LIMIT && stdout_is_stream() {
+        if crate::output::node_may_cut_short(text.len()) {
             return None;
         }
 
@@ -264,7 +231,7 @@ fn answer(args: &[String]) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, plain_output, timestamp};
+    use super::{parse, plain_output};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -315,13 +282,5 @@ mod tests {
                 && !plain_output("a\\b")
                 && !plain_output("//tmp/x")
         );
-    }
-
-    #[test]
-    fn the_timestamp_is_an_iso_string_with_milliseconds() {
-        let text = timestamp();
-
-        assert_eq!(text.len(), 24);
-        assert!(text.ends_with('Z') && text.as_bytes()[10] == b'T' && text.as_bytes()[19] == b'.');
     }
 }

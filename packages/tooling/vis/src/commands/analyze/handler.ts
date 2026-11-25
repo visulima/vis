@@ -2,6 +2,7 @@ import type { CommandExecute, Toolbox } from "@visulima/cerebro";
 import { findPackageManagerSync } from "@visulima/package";
 
 import { formatAiAnalysis, runAiAnalysis, validateAnalysisType } from "../../ai/ai-analysis";
+import { advisoryKey } from "../../security/advisories";
 import { buildEnabledProviders, fetchAllReports } from "../../security/registry";
 import type { OutdatedEntry } from "../../util/catalog";
 import { extractPrefix, fetchPackageVersions, fetchVulnerabilities, getUpdateType, parseVersion, readCatalogs } from "../../util/catalog";
@@ -94,7 +95,7 @@ const execute = async ({ argument, logger, options, visConfig, workspaceRoot: ws
 
         const version = currentRange.replace(VERSION_PREFIX_REGEX, "");
         const vulnMap = await fetchVulnerabilities([{ name: packageName, version }]);
-        const vulns = vulnMap.get(packageName);
+        const vulns = vulnMap.get(advisoryKey(packageName, version));
 
         if (vulns && vulns.length > 0) {
             entry.vulnerabilities = vulns;

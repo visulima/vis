@@ -33,7 +33,7 @@ required-features = []
 # the libseccomp-sys dep removes the system-library link requirement
 # so the crate builds for every Linux target (gnu, musl, aarch64,
 # riscv64) with no C deps.
-libc = "0.2.178"
+libc = "0.2.187"
 # `socket` + `uio` swap our hand-rolled libc calls (socket, bind,
 # listen, accept, sendmsg/recvmsg with SCM_RIGHTS, process_vm_readv)
 # for safe nix wrappers — ~150 lines of `unsafe` → ~60 of safe code,
@@ -53,3 +53,6 @@ nix = { version = "0.31", features = [
 # `[profile.*]` from the workspace root. The native/ root Cargo.toml's
 # release profile (lto = true, codegen-units = 1, strip = "symbols")
 # governs both task-runner-native and the helper binary built here.
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
