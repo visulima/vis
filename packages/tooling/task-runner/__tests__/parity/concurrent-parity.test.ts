@@ -52,6 +52,7 @@
  * A real SIGINT to a CLI process (rather than invoking the run's own listener) is step 3's Ctrl+C test.
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -67,6 +68,8 @@ type RunnerName = "js" | "native";
 const runners: Record<RunnerName, typeof runConcurrentFallback> = { js: runConcurrentFallback, native: runNativeConcurrent };
 
 const posix = process.platform !== "win32";
+/** The session probe reads `getsid` through Python. */
+const hasPython = posix && spawnSync("python3", ["--version"], { stdio: "ignore" }).status === 0;
 const probe = fileURLToPath(new URL("fixtures/probe.cjs", import.meta.url));
 const scratch = realpathSync(tmpdir());
 
@@ -210,6 +213,8 @@ interface Scenario {
     /** The commands' output is a terminal's: compare it as one string. */
     merged?: boolean;
     name: string;
+    /** Needs `python3` on the machine (skipped without it). */
+    needsPython?: boolean;
     options?: ConcurrentRunnerOptions;
     /** Needs a POSIX shell, signals or a pty. */
     posixOnly?: boolean;
@@ -400,6 +405,20 @@ const scenarios: Scenario[] = [
         react: callSignalListener("hanging", "SIGINT"),
     },
     {
+        check: ({ events }) => {
+            // The scenario's own test is running this check.
+
+            expect(events.flatMap((event) => (event.kind === "stdout" ? [event.text] : []))).toStrictEqual(["session-leader"]);
+        },
+        // The child leads a session of its own, so it has no controlling terminal: a read from an
+        // inherited terminal or an open of `/dev/tty` fails instead of stopping the command, and
+        // `kill(-pid)` reaches its whole group. Both runners do this through `setsid`.
+        commands: () => [{ command: `sid=$(python3 -c 'import os; print(os.getsid(0))'); [ "$sid" = "$$" ] && echo session-leader || echo "not a session leader ($sid, $$)"` }],
+        name: "the command leads a session of its own",
+        needsPython: true,
+        posixOnly: true,
+    },
+    {
         commands: () => [{ command: "echo one && echo two", shell: false, stdin: "pty" }],
         merged: true,
         name: "pty: always through the shell, whatever `shell` says",
@@ -430,7 +449,7 @@ describe("both runners, the same scenarios", () => {
     // A loop, not `it.each`: each scenario decides for itself whether the platform can run it.
     // eslint-disable-next-line vitest/prefer-each
     for (const scenario of scenarios) {
-        it.skipIf(scenario.posixOnly && !posix)(
+        it.skipIf((scenario.posixOnly && !posix) || (scenario.needsPython && !hasPython))(
             scenario.name,
             async () => {
                 expect.hasAssertions();
