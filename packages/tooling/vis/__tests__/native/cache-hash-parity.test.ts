@@ -98,6 +98,9 @@ const cases: Case[] = [
     // `--run` reads `.vis/runs/<id>.json`.
     { args: [RECORDED, "--run", "older-run"], workspace: "recorded" },
     { args: [RECORDED, "--run=older-run", "--format", "json"], workspace: "recorded" },
+    // An empty key is an ordinary key in JavaScript: it is sorted and printed with the others.
+    { args: [RECORDED, "--run", "empty-key"], workspace: "recorded" },
+    { args: [RECORDED, "--run", "empty-key", "--format", "json"], workspace: "recorded" },
     // Error paths: the task is not in the run, the run does not exist, there is no summary at all.
     { args: ["app:missing"], workspace: "recorded" },
     { args: ["app:missing", "--format", "json"], workspace: "recorded" },

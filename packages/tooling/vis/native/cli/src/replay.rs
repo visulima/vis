@@ -19,9 +19,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::format::iso;
-use crate::cache_hash::{json_text, summary_path, Output, Probe, ProbeId};
+use crate::output::Output;
 use crate::pail::{Layout, Level};
-use crate::summary::{context, emit, format_duration, is_object, load_summary, present, run_files, JsInt, Ordered};
+use crate::run_summary::{summary_path, Probe, ProbeId};
+use crate::summary::{
+    context, format_duration, is_object, json_text, load_summary, missing_summary, present, run_files, task_not_in_run,
+    valid_run_id, JsInt, Ordered,
+};
 use crate::text::{is_ascii_graphic, is_ascii_printable};
 
 /// What the user asked for.
@@ -95,12 +99,7 @@ fn parse(args: &[String]) -> Option<Request> {
         Some(_) => return None,
     };
 
-    // A run id names a file under `.vis/runs/`; anything that could leave the directory is Node's.
-    if request
-        .run
-        .as_deref()
-        .is_some_and(|id| !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')))
-    {
+    if request.run.as_deref().is_some_and(|id| !valid_run_id(id)) {
         return None;
     }
 
@@ -193,15 +192,6 @@ struct RunJson<'a> {
     start_time: &'a str,
     stats: &'a Ordered<JsInt>,
     tasks: &'a [Task],
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FailureJson<'a> {
-    error: &'a str,
-    run_id: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    task_id: Option<&'a str>,
 }
 
 fn pad(value: &str, width: usize) -> String {
@@ -353,55 +343,19 @@ fn filter_tasks(summary: &RunSummary, request: &Request) -> Option<Vec<Task>> {
 
 /// The output for a run, or `None` to delegate.
 fn answer(request: &Request, summary: Option<RunSummary>, root: &Path, layout: Layout) -> Option<Output> {
-    let mut out = Output { exit_code: 1, ..Output::default() };
-
     let Some(summary) = summary else {
-        if request.json {
-            out.stdout =
-                json_text(&FailureJson { error: "no-summary", run_id: request.run.as_deref(), task_id: None })?;
-
-            return Some(out);
-        }
-
-        let data = root.join(".vis");
-
-        let message = match &request.run {
-            None => format!(
-                "No previous run summary found. Run a task first to populate `{}`.",
-                data.join("last-summary.json").to_str()?
-            ),
-            Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
-        };
-
-        if !is_ascii_graphic(data.to_str()?) {
-            return None;
-        }
-
-        out.stderr = layout.block(Level::Error, &message);
-
-        return Some(out);
+        return missing_summary(root, request.run.as_deref(), None, request.json, layout);
     };
 
     let tasks = filter_tasks(&summary, request)?;
 
     if let Some(filter) = &request.task {
         if tasks.is_empty() {
-            if request.json {
-                out.stdout = json_text(&FailureJson {
-                    error: "task-not-in-summary",
-                    run_id: Some(&summary.id),
-                    task_id: Some(filter),
-                })?;
-            } else if is_ascii_graphic(filter) && is_ascii_graphic(&summary.id) {
-                out.stderr =
-                    layout.block(Level::Error, &format!("Task \"{filter}\" was not part of run {}.", summary.id));
-            } else {
-                return None;
-            }
-
-            return Some(out);
+            return task_not_in_run(filter, &summary.id, request.json, layout);
         }
     }
+
+    let mut out = Output { exit_code: 1, ..Output::default() };
 
     // The totals and the environment are read by name; Node prints `undefined` or throws for a missing one.
     if !summary.complete() {
@@ -517,7 +471,7 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
         crate::process::delegate(raw_args);
     };
 
-    emit("replay", &out)
+    out.emit("replay")
 }
 
 #[cfg(test)]

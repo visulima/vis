@@ -1,0 +1,53 @@
+{
+  "duration": 1234,
+  "endTime": "2026-01-01T00:00:02.000Z",
+  "environment": {
+    "arch": "arm64",
+    "": "empty",
+    "nodeVersion": "v22.0.0",
+    "platform": "darwin"
+  },
+  "id": "2026-01-03T00-00-00-000Z_3333",
+  "startTime": "2026-01-01T00:00:00.000Z",
+  "stats": {
+    "cached": 0,
+    "": 7,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 1,
+    "total": 1
+  },
+  "taskGraph": {
+    "dependencies": {
+      "app:ok": []
+    },
+    "roots": [
+      "app:ok"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "MISS",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-01-01T00:00:01.000Z",
+      "exitCode": 0,
+      "outputs": [],
+      "startTime": "2026-01-01T00:00:00.000Z",
+      "target": {
+        "project": "app",
+        "target": "ok"
+      },
+      "taskId": "app:ok",
+      "hash": "444bcb3a3fcf8389296c49467f27e1d6",
+      "hashDetails": {
+        "command": "4a8a08f09d37b73795649038408b5f33",
+        "nodes": {
+          "": "c4ca4238a0b923820dcc509a6f75849b",
+          "a": "c81e728d9d4c2f636f067f89cc14862c"
+        }
+      }
+    }
+  ]
+}

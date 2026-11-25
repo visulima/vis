@@ -256,6 +256,11 @@ const cases: Case[] = [
     // Summaries the native path reads strictly: `null` and floats are not the same as absent, and an unknown key is kept.
     replay(["--run", "extra-env"], { workspace: "odd" }),
     replay(["--run", "extra-env", "--format", "json"], { workspace: "odd" }),
+    // An empty key is an ordinary key in JavaScript: it keeps its place in the environment, the stats and the hash inputs.
+    replay(["--run", "empty-key"], { workspace: "odd" }),
+    replay(["--run", "empty-key", "--format", "json"], { workspace: "odd" }),
+    why(["app:ok", "--run", "empty-key"], { workspace: "odd" }),
+    why(["app:ok", "--run", "empty-key", "--format", "json"], { workspace: "odd" }),
     replay(["--run", "task-no-deps", "--format", "json"], { delegates: true, workspace: "odd" }),
     replay(["--run", "null-duration"], { delegates: true, workspace: "odd" }),
     replay(["--run", "null-duration", "--format", "json"], { delegates: true, workspace: "odd" }),

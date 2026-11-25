@@ -15,7 +15,7 @@ use super::json::Json;
 use super::lock::{self, Entry};
 use super::meta::{decorate, read_manifest, Decoration, Deps, Installed, License, Manifest, Unsupported};
 use super::semver;
-use crate::cache_hash::collate;
+use crate::collation::collate;
 use crate::graph::{ProjectGraph, ProjectType};
 
 const SCHEMA: &str = "http://cyclonedx.org/schema/bom-1.7.schema.json";

@@ -2,8 +2,34 @@
 //! write error.
 
 use std::io::{self, Write};
+use std::process::exit;
 
 use crate::error::WrapperError;
+use crate::pail::{Layout, Level};
+
+/// What one run prints, split the way pail splits it (the error levels go to stderr), and its exit status.
+#[derive(Default)]
+pub(crate) struct Output {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) exit_code: i32,
+}
+
+impl Output {
+    /// Adds one pail block on the stream pail prints its level on.
+    pub(crate) fn say(&mut self, layout: Layout, level: Level, message: &str) {
+        let buffer = if level.to_stderr() { &mut self.stderr } else { &mut self.stdout };
+
+        buffer.push_str(&layout.block(level, message));
+    }
+
+    /// Writes both streams as [`write_streams`] does and exits with the status.
+    pub(crate) fn emit(&self, command: &str) -> ! {
+        write_streams(command, &self.stdout, &self.stderr);
+
+        exit(self.exit_code)
+    }
+}
 
 /// Writes `text` to stdout and flushes, ignoring a closed pipe; any other failure ends the run with the
 /// wrapper's write error for `command`.

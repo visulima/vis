@@ -1,17 +1,16 @@
-//! What the commands that only read a recorded run summary (`cache why`, `replay`) share: the
-//! native context gate, strict value types for the summary fields they print, the run directory
-//! listing and the output writer. `cache hash` (see [`crate::cache_hash`]) is the exemplar they
-//! follow; the rules are the same: answer only what Node's output can be reproduced for byte for
-//! byte, and hand every other input to Node.
+//! What the commands that read a recorded run summary (`cache hash`, `cache why`, `replay`) share: the native
+//! context gate, the file loader and task lookup, the failure outputs for a missing summary or task, the strict value
+//! types for the summary fields they print, and the run directory listing. The schema of the summary is in
+//! [`crate::run_summary`]. The rules are the same everywhere: answer only what Node's output can be reproduced for
+//! byte for byte, and hand every other input to Node.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process::exit;
 
 use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 use serde::ser::SerializeMap;
@@ -19,11 +18,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
 use crate::cache::entries::{mtime_ms, sorted_entries};
-use crate::cache_hash::{Output, Probe, ProbeId, Summary};
-use crate::error::WrapperError;
 use crate::js::{is_index_like, MAX_SAFE_INTEGER};
 use crate::node_context::{in_ci, monorepo_root, quiet_context};
-use crate::pail::{pail_width, Layout};
+use crate::output::Output;
+use crate::pail::{pail_width, Layout, Level};
+use crate::run_summary::{Probe, ProbeId, Summary};
+use crate::text::is_ascii_graphic;
 
 /// The workspace root and pail layout of a run the native path may answer, or `None` when Node has
 /// to: Windows (pail's clock is unix-only there and its paths come from `@visulima/path`), a
@@ -51,22 +51,79 @@ pub(crate) fn context(args: &[String], json: bool) -> Option<(PathBuf, Layout)> 
     Some((root, layout))
 }
 
-/// Writes what a run printed and exits with its code. A closed pipe is not worth reporting.
-pub(crate) fn emit(command: &str, out: &Output) -> ! {
-    let results = [
-        (io::stdout().lock().write_all(out.stdout.as_bytes()).and_then(|()| io::stdout().flush())),
-        (io::stderr().lock().write_all(out.stderr.as_bytes()).and_then(|()| io::stderr().flush())),
-    ];
+/// `JSON.stringify(value, undefined, 2)` plus the newline the handlers write.
+pub(crate) fn json_text(value: &impl Serialize) -> Option<String> {
+    serde_json::to_string_pretty(value).ok().map(|text| text + "\n")
+}
 
-    for result in results {
-        match result {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-            Err(error) => WrapperError::write(command, "the output", error).exit(),
-        }
+/// A run id names a file under `.vis/runs/`: anything that could leave the directory, or that the path join of the
+/// Node side would treat specially, is Node's.
+pub(crate) fn valid_run_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+}
+
+/// The JSON a command prints when it finds no summary or no task.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FailureJson<'a> {
+    pub(crate) error: &'a str,
+    pub(crate) run_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) task_id: Option<&'a str>,
+}
+
+/// What a command prints, with status 1, when the summary file it reads is absent: `no-summary` as JSON, else the
+/// error block naming the file. `task_id` is the one the command was asked about, if it prints one. `None` when the
+/// text is one this cannot reproduce.
+pub(crate) fn missing_summary(
+    root: &Path,
+    run: Option<&str>,
+    task_id: Option<&str>,
+    json: bool,
+    layout: Layout,
+) -> Option<Output> {
+    let mut out = Output { exit_code: 1, ..Output::default() };
+
+    if json {
+        out.stdout = json_text(&FailureJson { error: "no-summary", run_id: run, task_id })?;
+
+        return Some(out);
     }
 
-    exit(out.exit_code)
+    let data = root.join(".vis");
+
+    let message = match run {
+        None => format!(
+            "No previous run summary found. Run a task first to populate `{}`.",
+            data.join("last-summary.json").to_str()?
+        ),
+        Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
+    };
+
+    if !(task_id.is_none_or(is_ascii_graphic) && is_ascii_graphic(data.to_str()?)) {
+        return None;
+    }
+
+    out.say(layout, Level::Error, &message);
+
+    Some(out)
+}
+
+/// What a command prints, with status 1, when the run holds no task `task_id`: `task-not-in-summary` as JSON, else
+/// the error block. `None` when the text is one this cannot reproduce.
+pub(crate) fn task_not_in_run(task_id: &str, run_id: &str, json: bool, layout: Layout) -> Option<Output> {
+    let mut out = Output { exit_code: 1, ..Output::default() };
+
+    if json {
+        out.stdout =
+            json_text(&FailureJson { error: "task-not-in-summary", run_id: Some(run_id), task_id: Some(task_id) })?;
+    } else if is_ascii_graphic(task_id) && is_ascii_graphic(run_id) {
+        out.say(layout, Level::Error, &format!("Task \"{task_id}\" was not part of run {run_id}."));
+    } else {
+        return None;
+    }
+
+    Some(out)
 }
 
 /// An integer a JavaScript number holds exactly, so `String(n)` and `JSON.stringify(n)` print its
@@ -124,7 +181,7 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Ordered<V> {
                 let mut seen = HashSet::new();
 
                 while let Some((key, value)) = map.next_entry::<String, V>()? {
-                    if key.is_empty() || is_index_like(&key) || !seen.insert(key.clone()) {
+                    if is_index_like(&key) || !seen.insert(key.clone()) {
                         return Err(de::Error::custom("key left to Node"));
                     }
 
@@ -281,16 +338,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_ordered_map_declines_the_keys_javascript_reorders_and_the_empty_key() {
+    fn an_ordered_map_declines_the_keys_javascript_reorders_but_keeps_the_empty_key() {
         let parses = |json: &str| serde_json::from_str::<Ordered<String>>(json).is_ok();
 
-        assert!(parses(r#"{"b":"1","a":"2","007":"3"}"#));
+        assert!(parses(r#"{"b":"1","a":"2","":"3","007":"4"}"#));
 
-        for key in ["", "7", "0", "__proto__"] {
+        for key in ["7", "0", "__proto__"] {
             assert!(!parses(&format!(r#"{{"{key}":"x"}}"#)), "{key:?}");
         }
 
         assert!(!parses(r#"{"a":"1","a":"2"}"#));
+    }
+
+    #[test]
+    fn a_summary_file_that_is_not_an_object_is_left_to_node() {
+        let directory = std::env::temp_dir().join(format!("vis-summary-load-{}", std::process::id()));
+
+        fs::create_dir_all(&directory).unwrap();
+
+        // serde reads a sequence into a struct, JavaScript does not.
+        fs::write(directory.join("array.json"), r#"["r",[]]"#).unwrap();
+        fs::write(directory.join("object.json"), r#"{"id":"r","tasks":[]}"#).unwrap();
+
+        assert!(load_summary::<Summary>(&directory.join("array.json")).is_none());
+        assert!(load_summary::<Summary>(&directory.join("object.json")).is_some_and(|summary| summary.is_some()));
+        assert!(load_summary::<Summary>(&directory.join("absent.json")).is_some_and(|summary| summary.is_none()));
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_task_entry_that_is_not_an_object_is_left_to_node() {
+        let summary: Summary = serde_json::from_str(r#"{"id":"r","tasks":[[],{"taskId":"a"}]}"#).unwrap();
+
+        assert!(find_task(&summary.tasks, "a").is_none());
+    }
+
+    #[test]
+    fn run_ids_stay_inside_the_runs_directory() {
+        for id in ["r-1.2_x", "2026-11-22T07-37-56-589Z_x"] {
+            assert!(valid_run_id(id), "{id}");
+        }
+
+        for id in ["", "../x", "a/b", "a b", "a\\b"] {
+            assert!(!valid_run_id(id), "{id:?}");
+        }
     }
 
     #[test]
