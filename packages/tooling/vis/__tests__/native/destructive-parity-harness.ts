@@ -1,6 +1,6 @@
 /* eslint-disable vitest/no-standalone-expect -- the helpers are called from the tests that import them */
 import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
 import { expect } from "vitest";
 
@@ -33,30 +33,45 @@ export interface Fixture {
     workspace?: Files;
 }
 
+/** A name as text; one that is not valid UTF-8 shows its lossy text and its bytes, so two trees still compare byte for byte. */
+const nameKey = (name: Buffer): string => {
+    const text = name.toString("utf8");
+
+    return Buffer.from(text, "utf8").equals(name) ? text : `${text}{hex:${name.toString("hex")}}`;
+};
+
 /** Every path under `root` with its type, mode and content, so a changed mode or a leftover directory shows. */
 export const tree = (root: string): Record<string, string> => {
     const out: Record<string, string> = {};
 
-    for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
-        const path = join(entry.parentPath, entry.name);
+    // Names are walked as bytes: Node decodes one that is not UTF-8 to U+FFFD, a path that names no entry.
+    const walk = (directory: Buffer, keys: string[]): void => {
+        for (const name of readdirSync(directory, { encoding: "buffer" })) {
+            const path = Buffer.concat([directory, Buffer.from("/"), name]);
+            const entryKeys = [...keys, nameKey(name)];
 
-        // Repository metadata holds clocks, hashes and absolute paths that differ between the two sides.
-        if (relative(root, path).split("/").includes(".git")) {
-            continue;
+            // Repository metadata holds clocks, hashes and absolute paths that differ between the two sides.
+            if (entryKeys.includes(".git")) {
+                continue;
+            }
+
+            const stats = lstatSync(path);
+            // eslint-disable-next-line no-bitwise -- the permission bits of the mode
+            const mode = (stats.mode & 0o7777).toString(8);
+            const key = entryKeys.join("/");
+
+            if (stats.isSymbolicLink()) {
+                out[key] = `link ${readlinkSync(path)}`;
+            } else if (stats.isDirectory()) {
+                out[key] = `dir ${mode}`;
+                walk(path, entryKeys);
+            } else {
+                out[key] = `file ${mode} ${readFileSync(path).toString("hex")}`;
+            }
         }
+    };
 
-        const stats = lstatSync(path);
-        // eslint-disable-next-line no-bitwise -- the permission bits of the mode
-        const mode = (stats.mode & 0o7777).toString(8);
-
-        if (stats.isSymbolicLink()) {
-            out[relative(root, path)] = `link ${readlinkSync(path)}`;
-        } else if (stats.isDirectory()) {
-            out[relative(root, path)] = `dir ${mode}`;
-        } else {
-            out[relative(root, path)] = `file ${mode} ${readFileSync(path).toString("hex")}`;
-        }
-    }
+    walk(Buffer.from(root), []);
 
     return out;
 };
