@@ -1,11 +1,31 @@
 use super::{push_each, push_flags, Manager, ResolveError, ResolvedCommand};
 
+/// How `vis outdated` prints its report. Only `json` and `list` reach the package manager; any other value
+/// (`table`, or one this version does not know) leaves the manager's own format alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutdatedFormat {
+    #[default]
+    Table,
+    Json,
+    List,
+}
+
+impl OutdatedFormat {
+    pub fn parse(format: &str) -> Self {
+        match format {
+            "json" => Self::Json,
+            "list" => Self::List,
+            _ => Self::Table,
+        }
+    }
+}
+
 /// Options for `resolve_outdated`.
 #[derive(Clone, Debug, Default)]
 pub struct OutdatedOptions {
     pub packages: Vec<String>,
     pub long: bool,
-    pub format: String,
+    pub format: OutdatedFormat,
     pub recursive: bool,
     pub filter: Vec<String>,
     pub workspace_root: bool,
@@ -42,16 +62,10 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
                 ],
             );
 
-            match opts.format.as_str() {
-                "json" => {
-                    args.push("--format".into());
-                    args.push("json".into());
-                }
-                "list" => {
-                    args.push("--format".into());
-                    args.push("list".into());
-                }
-                _ => {}
+            match opts.format {
+                OutdatedFormat::Json => args.extend(["--format".into(), "json".into()]),
+                OutdatedFormat::List => args.extend(["--format".into(), "list".into()]),
+                OutdatedFormat::Table => {}
             }
 
             args.extend(opts.packages);
@@ -63,10 +77,10 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
                 args.push("--long".into());
             }
 
-            match opts.format.as_str() {
-                "json" => args.push("--json".into()),
-                "list" => args.push("--parseable".into()),
-                _ => {}
+            match opts.format {
+                OutdatedFormat::Json => args.push("--json".into()),
+                OutdatedFormat::List => args.push("--parseable".into()),
+                OutdatedFormat::Table => {}
             }
 
             push_each(&mut args, "--workspace", &opts.filter);
@@ -102,7 +116,7 @@ mod tests {
     #[test]
     fn outdated_format_and_filter() {
         let opts =
-            OutdatedOptions { filter: vec!["@scope/a".to_owned()], format: "json".to_owned(), ..Default::default() };
+            OutdatedOptions { filter: vec!["@scope/a".to_owned()], format: OutdatedFormat::Json, ..Default::default() };
         let resolved = resolve_outdated("pnpm", "9.0.0", opts).unwrap();
 
         assert_eq!(resolved.args, ["--filter", "@scope/a", "outdated", "--format", "json"]);

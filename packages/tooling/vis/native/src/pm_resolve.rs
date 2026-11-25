@@ -194,7 +194,7 @@ impl From<OutdatedOptions> for core::OutdatedOptions {
         Self {
             packages: options.packages,
             long: options.long,
-            format: options.format,
+            format: core::OutdatedFormat::parse(&options.format),
             recursive: options.recursive,
             filter: options.filter,
             workspace_root: options.workspace_root,

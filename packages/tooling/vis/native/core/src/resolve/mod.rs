@@ -25,7 +25,7 @@ pub use dlx::{resolve_dlx, DlxOptions};
 pub use exec::{resolve_exec, ExecOptions};
 pub use install::{resolve_install, InstallOptions};
 pub use link::{resolve_link, resolve_unlink};
-pub use outdated::{resolve_outdated, OutdatedOptions};
+pub use outdated::{resolve_outdated, OutdatedFormat, OutdatedOptions};
 pub use pm_command::resolve_pm_command;
 pub use remove::{resolve_remove, RemoveOptions};
 pub use why::{resolve_why, WhyOptions};

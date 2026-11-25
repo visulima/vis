@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
 use vis_core::resolve::{
-    resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedOptions,
-    RemoveOptions, WhyOptions,
+    resolve_dedupe, resolve_link, resolve_outdated, resolve_remove, resolve_unlink, resolve_why, OutdatedFormat,
+    OutdatedOptions, RemoveOptions, WhyOptions,
 };
 
 use crate::error::{self, WrapperError};
@@ -240,7 +240,8 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
                     compatible: has(&parsed, "compatible"),
                     dev: has(&parsed, "dev"),
                     filter: collect(&parsed, "filter"),
-                    format: first(&parsed, "format").unwrap_or_else(|| "table".to_owned()),
+                    format: first(&parsed, "format")
+                        .map_or_else(OutdatedFormat::default, |format| OutdatedFormat::parse(&format)),
                     global: has(&parsed, "global"),
                     long: has(&parsed, "long"),
                     no_optional: has(&parsed, "no-optional"),
