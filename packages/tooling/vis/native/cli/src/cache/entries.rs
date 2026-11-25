@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::js::MAX_SAFE_INTEGER;
 
@@ -15,6 +15,17 @@ pub(crate) struct Entry {
     pub(crate) hash: String,
     pub(crate) mtime_ms: f64,
     pub(crate) size: u64,
+}
+
+/// `DEFAULT_MAX_CACHE_AGE` of the task runner's cache: an entry older than this is swept by `removeOldEntries`.
+pub(crate) const DEFAULT_MAX_CACHE_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// `V2_ROOT`: the content-addressed subtree, which `removeOldEntries` leaves alone.
+const V2_ROOT: &str = "v2";
+
+/// Whether `removeOldEntries` looks at the top-level entry `name`: dot files and the `v2` store are not its.
+pub(crate) fn is_sweep_candidate(name: &OsStr) -> bool {
+    !name.as_encoded_bytes().starts_with(b".") && name != V2_ROOT
 }
 
 /// `Stats.mtimeMs`: seconds and nanoseconds combined in floating point.
@@ -214,6 +225,17 @@ pub(crate) fn now_ms() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sweep_leaves_dot_files_and_the_v2_store_alone() {
+        for name in [".commit", ".tmp", "v2"] {
+            assert!(!is_sweep_candidate(OsStr::new(name)), "{name}");
+        }
+
+        for name in ["0123abcd", "v1", "v22", "branches"] {
+            assert!(is_sweep_candidate(OsStr::new(name)), "{name}");
+        }
+    }
 
     #[test]
     fn sizes_past_a_javascript_number_are_left_to_node() {
