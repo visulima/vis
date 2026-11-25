@@ -463,8 +463,7 @@ fn the_new_bin_marshall_reports_a_bin_the_release_before_lacked() {
 
     assert_eq!(
         messages(&report_of(&packument, &["pkg@1.1.0", "--json"]), "warnings"),
-        ["[newBin] 1.1.0 adds new bin script: h.js, o.js (prior: 1.0.0).".to_owned()]
-            .map(|text| text.replace("script:", "scripts:"))
+        ["[newBin] 1.1.0 adds new bin scripts: h.js, o.js (prior: 1.0.0).".to_owned()]
     );
     // A string bin is named after the package.
     assert!(messages(&report_of(&packument, &["pkg@1.2.0", "--json"]), "warnings").is_empty());
@@ -589,7 +588,7 @@ fn the_exit_status_follows_errors_and_strict() {
 }
 
 #[test]
-fn only_and_the_environment_pick_the_marshalls() {
+fn only_the_selected_marshalls_run() {
     let body = packument_for(&json!({ "1.0.0": { "_npmUser": user("amy") } }));
     let registry = Registry::start(answers(&body));
     let setup = setup(Some(&registry));
@@ -636,12 +635,11 @@ fn a_registry_with_a_credential_is_never_asked() {
 }
 
 #[test]
-fn the_registry_is_not_asked_when_a_check_declines_first() {
+fn a_packument_that_is_handed_over_is_not_cached() {
     let body = packument_for(&json!({ "constructor": {} }));
     let registry = Registry::start(answers(&body));
     let setup = setup(Some(&registry));
 
     assert!(plan(&flags(&["pkg", "--json"]), &all(), &setup.context, &client()).is_err());
-    // The answer was needed to find that out, but nothing was written.
     assert!(!setup.home.join(".vis/cache/packuments").exists());
 }
