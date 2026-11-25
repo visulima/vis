@@ -74,6 +74,12 @@ impl Layout {
         Some(Self { width: pail_width()?, colour })
     }
 
+    /// Whether `message` fits one line of this layout counted in bytes as well as in columns. A multi-byte character
+    /// such as an em dash is one column for pail and three bytes here, so a message is printed only where both agree.
+    pub(crate) fn fits_one_line(self, message: &str) -> bool {
+        self.width.saturating_sub(3) >= message.len()
+    }
+
     /// One pail block as pail prints it: the header, a blank line, then the wrapped message, each
     /// line ending in a newline.
     pub(crate) fn block(self, level: Level, message: &str) -> String {
@@ -452,5 +458,15 @@ mod tests {
         assert!(layout.block_fitting(Level::Info, "caf\u{e9}").is_none());
         assert!(layout.block_fitting(Level::Info, "tab\there").is_none());
         assert!(layout.block_fitting(Level::Info, "line\nbreak").is_some());
+    }
+
+    #[test]
+    fn a_message_fits_one_line_up_to_the_width_less_the_header_gutter() {
+        let layout = Layout { width: 20, colour: false };
+
+        assert!(layout.fits_one_line(&"a".repeat(17)));
+        assert!(!layout.fits_one_line(&"a".repeat(18)));
+        // Counted in bytes: the em dash is three of them.
+        assert!(!layout.fits_one_line(&format!("{}\u{2014}", "a".repeat(15))));
     }
 }

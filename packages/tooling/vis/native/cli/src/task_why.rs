@@ -25,6 +25,7 @@ use crate::js::PROTOTYPE_NAMES;
 use crate::node_context::context_is_native;
 use crate::output::write_stdout;
 use crate::targets::{script_targets, Targets};
+use crate::text::is_ascii_graphic;
 
 /// What the handler prints for a task nothing depends on and that depends on nothing: a blank line, the title, a blank
 /// line, the root notice, a blank line.
@@ -36,7 +37,7 @@ fn text(id: &str) -> String {
 fn parse(args: &[String]) -> Option<(&str, &str, &str)> {
     let [command, id] = args else { return None };
 
-    if command != "task-why" || id.starts_with('-') || !id.bytes().all(|byte| byte.is_ascii_graphic()) {
+    if command != "task-why" || id.starts_with('-') || !is_ascii_graphic(id) {
         return None;
     }
 
