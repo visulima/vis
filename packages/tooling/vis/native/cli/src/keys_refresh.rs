@@ -52,7 +52,7 @@ use crate::output::write_stdout;
 
 const DEFAULT_KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
 /// `DEFAULT_FETCH_TIMEOUT_MS` of the Node module.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// `DEFAULT_TTL_MS`: a day.
 const TTL_MS: u64 = 24 * 60 * 60 * 1000;
 /// `fetch` refuses a fixed list of ports, and the highest on it is 10080.
@@ -131,7 +131,7 @@ fn parse(args: &[String]) -> Option<Flags> {
     }
 }
 
-fn network_environment_is_plain() -> bool {
+pub(crate) fn network_environment_is_plain() -> bool {
     NETWORK_VARIABLES.iter().all(|name| env::var_os(name).is_none())
 }
 
@@ -241,7 +241,7 @@ fn refresh(file: &Path, url: &str) -> Result<Outcome, String> {
 /// `VIS_HTTP_CONNECT_TIMEOUT` say, and with redirects left to Node: `fetch` follows a different set of them than
 /// the client does (https to http, the ports and credentials of the target), so a run that meets one is handed
 /// over whole.
-fn fetch_config(config: HttpConfig) -> HttpConfig {
+pub(crate) fn fetch_config(config: HttpConfig) -> HttpConfig {
     HttpConfig { follow_redirects: false, global_timeout: FETCH_TIMEOUT, connect_timeout: FETCH_TIMEOUT, ..config }
 }
 
@@ -278,7 +278,7 @@ struct Fetched {
 
 /// A parsed JSON value that keeps what JavaScript's `JSON.parse` and `JSON.stringify` keep: the order of an
 /// object's keys (before JavaScript's own reordering) and every number as a double.
-enum Js {
+pub(crate) enum Js {
     Null,
     Bool(bool),
     Number(f64),
@@ -356,7 +356,7 @@ impl<'de> Deserialize<'de> for Js {
 }
 
 /// Whether JavaScript orders `key` among the integer indices of an object: a canonical decimal below 2^32 - 1.
-fn array_index(key: &str) -> Option<u32> {
+pub(crate) fn array_index(key: &str) -> Option<u32> {
     let canonical =
         key == "0" || (!key.starts_with('0') && !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()));
 
@@ -365,7 +365,7 @@ fn array_index(key: &str) -> Option<u32> {
 
 impl Js {
     /// `JSON.stringify(value)` with no indentation.
-    fn stringify(&self, out: &mut String) -> Option<()> {
+    pub(crate) fn stringify(&self, out: &mut String) -> Option<()> {
         match self {
             Self::Null => out.push_str("null"),
             Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
@@ -451,7 +451,7 @@ fn store(file: &Path, keys: &Fetched) -> bool {
 
 /// A URL `fetch` and this client read the same way: lower-case `http` or `https`, printable ASCII without
 /// backslashes, a fragment or an IPv6 literal, no user name or password, and no port from the list `fetch` refuses.
-fn url_is_plain(url: &str) -> bool {
+pub(crate) fn url_is_plain(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else {
         return false;
     };

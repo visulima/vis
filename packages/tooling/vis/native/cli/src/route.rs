@@ -91,6 +91,7 @@ static ROUTES: &[Route] = &[
     answers(&["i"], crate::install::run),
     answers(&["dlx"], crate::dlx::run),
     answers(&["info"], crate::info::run),
+    answers(&["inspect"], crate::inspect::run),
     answers(&["view"], crate::info::run),
     // The package-manager and runner commands: `--help` is theirs (see `Help::Entry`).
     takes_help(&["exec"], crate::exec::run),
@@ -184,6 +185,7 @@ mod tests {
         &["i"],
         &["dlx"],
         &["info"],
+        &["inspect"],
         &["view"],
         &["exec"],
         &["pm"],
