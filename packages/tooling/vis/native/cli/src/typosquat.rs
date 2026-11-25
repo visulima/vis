@@ -192,23 +192,35 @@ fn is_flagged(flagged: &HashSet<String>, package: &str) -> bool {
     flagged.contains(bare_name(package))
 }
 
-/// The alias target of a dependency value (`npm:reaact@^18` -> `reaact`), the regex
-/// `^(?:npm|pnpm|yarn):(.+?)(?:@.*)?$` of the TypeScript side. `None` when the value is no alias.
-/// A value with a line terminator cannot match (`.` stops at one), so it has no target here either;
-/// the caller sends such a value to Node.
-fn alias_target(value: &str) -> Option<&str> {
-    let rest = ["npm:", "pnpm:", "yarn:"].iter().find_map(|prefix| value.strip_prefix(prefix))?;
+/// How a dependency value reads as an alias: the regex `^(?:npm|pnpm|yarn):(.+?)(?:@.*)?$` of the TypeScript side.
+#[derive(Debug, PartialEq, Eq)]
+enum Alias<'a> {
+    /// Not an alias.
+    None,
+    /// `npm:reaact@^18` -> `reaact`.
+    Target(&'a str),
+    /// An alias with a line terminator, where `.` stops and the regex does not match at all. This cannot tell
+    /// that from an alias, so the caller sends the file to Node.
+    Unreadable,
+}
 
-    if rest.is_empty() || rest.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
-        return None;
+fn alias(value: &str) -> Alias<'_> {
+    let Some(rest) = ["npm:", "pnpm:", "yarn:"].iter().find_map(|prefix| value.strip_prefix(prefix)) else {
+        return Alias::None;
+    };
+
+    if rest.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
+        return Alias::Unreadable;
     }
 
     // `.+?` takes one character, then stops at the first `@`.
-    let first = rest.chars().next()?.len_utf8();
+    let Some(first) = rest.chars().next().map(char::len_utf8) else {
+        return Alias::None;
+    };
 
     match rest[first..].find('@') {
-        Some(at) => Some(&rest[..first + at]),
-        None => Some(rest),
+        Some(at) => Alias::Target(&rest[..first + at]),
+        None => Alias::Target(rest),
     }
 }
 
@@ -241,16 +253,10 @@ pub(crate) fn scan_manifest(manifest: &Value) -> Scan {
                 return Scan::Delegate;
             };
 
-            // A line terminator makes the TypeScript regex not match at all, which this cannot
-            // tell from an alias: leave the file to Node.
-            if ["npm:", "pnpm:", "yarn:"].iter().any(|prefix| spec.starts_with(prefix))
-                && spec.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
-            {
-                return Scan::Delegate;
-            }
-
-            if alias_target(spec).is_some_and(is_typosquat) {
-                return Scan::Delegate;
+            match alias(spec) {
+                Alias::Unreadable => return Scan::Delegate,
+                Alias::Target(target) if is_typosquat(target) => return Scan::Delegate,
+                Alias::Target(_) | Alias::None => {}
             }
         }
     }
@@ -265,7 +271,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        alias_target, bare_name, flagged_set, generate_variants, is_flagged, is_typosquat, scan_manifest, Scan,
+        alias, bare_name, flagged_set, generate_variants, is_flagged, is_typosquat, scan_manifest, Alias, Scan,
     };
 
     #[test]
@@ -296,13 +302,15 @@ mod tests {
 
     #[test]
     fn alias_targets_follow_the_typescript_regex() {
-        assert_eq!(alias_target("npm:reaact@^18"), Some("reaact"));
-        assert_eq!(alias_target("npm:@scope/pkg@1.0.0"), Some("@scope/pkg"));
-        assert_eq!(alias_target("pnpm:lodash"), Some("lodash"));
-        assert_eq!(alias_target("yarn:a@b@c"), Some("a"));
-        assert_eq!(alias_target("npm:"), None);
-        assert_eq!(alias_target("^1.0.0"), None);
-        assert_eq!(alias_target("npmx:lodash"), None);
+        assert_eq!(alias("npm:reaact@^18"), Alias::Target("reaact"));
+        assert_eq!(alias("npm:@scope/pkg@1.0.0"), Alias::Target("@scope/pkg"));
+        assert_eq!(alias("pnpm:lodash"), Alias::Target("lodash"));
+        assert_eq!(alias("yarn:a@b@c"), Alias::Target("a"));
+        assert_eq!(alias("npm:"), Alias::None);
+        assert_eq!(alias("^1.0.0"), Alias::None);
+        assert_eq!(alias("npmx:lodash"), Alias::None);
+        assert_eq!(alias("npm:a\nb"), Alias::Unreadable);
+        assert_eq!(alias("1.0\n"), Alias::None);
     }
 
     #[test]
