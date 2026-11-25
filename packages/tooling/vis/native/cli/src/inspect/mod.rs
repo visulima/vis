@@ -44,8 +44,9 @@ use marshalls::{Finding, Target};
 use packument::{Answer, Cached, View};
 
 use crate::cache::dirs::vis_cache_dir;
+use crate::http::node_fetch::{fetch_config, network_environment_is_plain, url_is_plain};
 use crate::http::{HttpClient, HttpConfig};
-use crate::keys_refresh::{fetch_config, network_environment_is_plain, url_is_plain, Js, FETCH_TIMEOUT};
+use crate::keys_refresh::{Js, FETCH_TIMEOUT};
 use crate::node_context::context_decline;
 use crate::output::write_streams;
 use crate::pail::{Layout, Level};
@@ -135,7 +136,7 @@ fn answer(args: &[String]) -> Result<Plan, String> {
     let root = std::env::current_dir().map_err(|error| format!("the working directory is unknown: {error}"))?;
     let context =
         Context { root, home: PathBuf::from(home), cache_dir, now_ms: now_ms()?, layout: Layout::detect(args) };
-    let client = HttpClient::new(fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT)));
+    let client = HttpClient::new(fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT), FETCH_TIMEOUT));
     let plan = plan(&flags, &run, &context, &client)?;
 
     commit(&plan.cache)?;

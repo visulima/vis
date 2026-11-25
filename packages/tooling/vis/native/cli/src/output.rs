@@ -31,6 +31,35 @@ impl Output {
     }
 }
 
+/// The largest document Node reliably delivers to a pipe or socket. Its stdout is asynchronous there and the process
+/// exits right after writing, so what the reader has not yet taken from the pipe's buffer (64 KiB) is lost: a
+/// larger document arrives cut short, at a length that depends on how fast the reader is.
+const STREAM_LIMIT: usize = 64 * 1024;
+
+/// Whether stdout is a pipe or a socket.
+#[cfg(unix)]
+fn stdout_is_stream() -> bool {
+    // SAFETY: `fstat` only writes the `stat` it is given.
+    let mut status: libc::stat = unsafe { std::mem::zeroed() };
+
+    if unsafe { libc::fstat(libc::STDOUT_FILENO, &mut status) } != 0 {
+        return true;
+    }
+
+    matches!(status.st_mode & libc::S_IFMT, libc::S_IFIFO | libc::S_IFSOCK)
+}
+
+#[cfg(not(unix))]
+fn stdout_is_stream() -> bool {
+    true
+}
+
+/// Whether Node would deliver a document of `len` bytes cut short on this stdout (see [`STREAM_LIMIT`]): a command
+/// that would print one leaves the run to Node, which then cuts it short itself.
+pub(crate) fn node_may_cut_short(len: usize) -> bool {
+    len > STREAM_LIMIT && stdout_is_stream()
+}
+
 /// Writes `text` to stdout and flushes, ignoring a closed pipe; any other failure ends the run with the
 /// wrapper's write error for `command`.
 pub(crate) fn write_stdout(command: &str, what: &str, text: impl AsRef<[u8]>) {

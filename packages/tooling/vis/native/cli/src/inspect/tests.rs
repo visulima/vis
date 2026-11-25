@@ -142,7 +142,7 @@ fn setup(registry: Option<&Registry>) -> Setup {
 }
 
 fn client() -> HttpClient {
-    HttpClient::new(fetch_config(HttpConfig::default()))
+    HttpClient::new(fetch_config(HttpConfig::default(), FETCH_TIMEOUT))
 }
 
 fn flags(words: &[&str]) -> Flags {

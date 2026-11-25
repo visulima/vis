@@ -1051,7 +1051,7 @@ const securityListMayRunNatively = (platform, environment, args, cwd, interactiv
 
 // The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
 // differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
-// the same list in `NETWORK_VARIABLES` (`keys_refresh.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
+// the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
 // both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
 const NETWORK_VARIABLES = [
     "ALL_PROXY",
@@ -1157,6 +1157,65 @@ const inspectMayRunNatively = (platform, environment, args, cwd, interactive, ho
     }
 
     return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && inspectArgsAreNative(args, environment);
+};
+
+// The flags `vis audit` takes natively (`parse` in `native/cli/src/audit/mod.rs`): `--format json` and `--policies none` (the
+// default config runs the `publisherChange` policy, which asks the registry) and, at most once each, `--severity` and
+// `--fail-on` with one of the four levels, and `--exit-code`; with no finding they change nothing.
+const AUDIT_LEVELS = new Set(["critical", "high", "low", "medium"]);
+
+const AUDIT_VALUES = new Map([
+    ["--fail-on", (value) => AUDIT_LEVELS.has(value)],
+    ["--format", (value) => value === "json"],
+    ["--policies", (value) => value === "none"],
+    ["--severity", (value) => AUDIT_LEVELS.has(value)],
+]);
+
+// The flag at `flags[index]` as its name and the index after it (and its value), or `undefined` when the binary does not take it.
+const auditFlagAt = (flags, index) => {
+    const argument = flags[index];
+    const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
+    const name = equals === -1 ? argument : argument.slice(0, equals);
+
+    if (name === "--exit-code") {
+        return equals === -1 ? { name, next: index + 1 } : undefined;
+    }
+
+    const value = equals === -1 ? flags[index + 1] : argument.slice(equals + 1);
+    const accepted = AUDIT_VALUES.get(name)?.(value) ?? false;
+
+    return accepted ? { name, next: index + (equals === -1 ? 2 : 1) } : undefined;
+};
+
+const auditArgsAreNative = (flags) => {
+    const seen = new Set();
+    let index = 0;
+
+    while (index < flags.length) {
+        const flag = auditFlagAt(flags, index);
+
+        if (flag === undefined || seen.has(flag.name)) {
+            return false;
+        }
+
+        seen.add(flag.name);
+        index = flag.next;
+    }
+
+    return seen.has("--format") && seen.has("--policies");
+};
+
+// Whether `vis audit` can pass the binary's native gate (`parse` and `answer` in `audit/mod.rs`): `--format json --policies none` for a pnpm
+// workspace whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node option in the
+// environment. The binary answers only a scan that finds nothing and hands everything else to Node before it prints (the
+// OSV answer, the lockfile, the config and `pnpm-workspace.yaml` are its to check). The Node runtime's own colour warning
+// is Node's.
+const auditMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && auditArgsAreNative(args.slice(1));
 };
 
 // Whether `vis task-why` can pass the binary's native gate (`parse` and `answer` in `task_why.rs`): one id of the shape
@@ -1340,6 +1399,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
+    // `audit --format json`, answered only when the scan finds nothing.
+    ["audit", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => auditMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache prune` (`cache_prune.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
