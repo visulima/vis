@@ -801,8 +801,8 @@ const executeAudit = async (
             continue;
         }
 
-        // Offline results are keyed per version; the online catalog is still keyed by name.
-        const vulns = (isOffline ? vulnMap.get(advisoryKey(pkg.name, pkg.version)) : vulnMap.get(pkg.name)) ?? [];
+        // Online and offline results are both keyed per installed version.
+        const vulns = vulnMap.get(advisoryKey(pkg.name, pkg.version)) ?? [];
         const report = socketReports.get(`${pkg.name}@${pkg.version}`);
         const accepted = findAcceptedRisk(pkg.name, pkg.version, acceptedRisks);
 

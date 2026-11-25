@@ -69,7 +69,7 @@ export interface PolicyInput {
     manifestData?: Map<string, PackageManifest>;
     /** `true` when the caller passed `--offline`. */
     offline: boolean;
-    /** OSV findings keyed by package name (not name@version — OSV reports per name). */
+    /** OSV findings keyed by `advisoryKey(name, version)`, i.e. `name@version`. */
     osvFindings?: Map<string, SecurityVulnerability[]>;
     /** Active package manager. */
     packageManager: string;
