@@ -1,0 +1,1 @@
+{"name": "z-app", "bin": "x.js", "dependencies": {"z-tool": "1", "zed-upper": "1"}}

@@ -52,9 +52,9 @@ const nativeArguments = (args: string[]): boolean => {
 };
 
 /** Fixtures the native path answers, for the CI context. Everything else must delegate. */
-const nativeFixtures = new Set(["basic", "empty", "libs-only"]);
+const nativeFixtures = new Set(["basic", "empty", "libs-only", "multi-pattern"]);
 
-const fixtures = ["basic", "empty", "libs-only", "delegate-index-name", "delegate-unicode-name", "delegate-vis-config", "delegate-project-json"];
+const fixtures = ["basic", "empty", "libs-only", "multi-pattern", "delegate-complex-patterns", "delegate-index-name", "delegate-unicode-name", "delegate-vis-config", "delegate-project-json"];
 
 const argumentSets: string[][] = [
     [],
@@ -172,6 +172,22 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const node = runNode(directory, ["--format=json"], false);
         const native = runNative(directory, ["--format=json"], false, nodeEntry, directory);
 
+        expect(native.stdout).toBe(node.stdout);
+        expect(native.stderr).toBe(node.stderr);
+        expect(native.status).toBe(node.status);
+    });
+
+    // Node's root search starts at the working directory and does not read `VIS_MONOREPO_ROOT`, so a run from inside a
+    // project, with an inherited root naming another workspace, finds the same graph.
+    it.each(["basic", "multi-pattern"])("%s from a project directory matches Node", (fixture) => {
+        expect.assertions(4);
+
+        const root = join(paths.fixtures, fixture);
+        const directory = join(root, fixture === "basic" ? "packages/a-dir" : "packages/m-pkg");
+        const node = runNode(directory, ["--format=json"], true);
+        const native = runNative(directory, ["--format=json"], true, paths.stub, join(paths.fixtures, "libs-only"));
+
+        expect(native.stdout).not.toContain(marker);
         expect(native.stdout).toBe(node.stdout);
         expect(native.stderr).toBe(node.stderr);
         expect(native.status).toBe(node.status);
