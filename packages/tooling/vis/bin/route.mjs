@@ -1516,6 +1516,8 @@ const NATIVE_SHAPE_GATES = new Map([
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
     ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
+    // The overview and its `--json`; a root pinning a Node version, or run summaries of an unexpected shape, stay in Node.
+    ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],
     [
         "sync",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
@@ -1527,8 +1529,6 @@ const NATIVE_SHAPE_GATES = new Map([
         },
     ],
     // A task of a script-only workspace, answered when it exists; every error stays in Node.
-    // The overview and its `--json`; a root pinning a Node version, or run summaries of an unexpected shape, stay in Node.
-    ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],
     ["task-why", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => taskWhyMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["view", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
 ]);

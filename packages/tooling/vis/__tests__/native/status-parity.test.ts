@@ -1,4 +1,4 @@
-/* eslint-disable perfectionist/sort-objects, @stylistic/quote-props -- the key order of the fixtures is what the tests are about */
+/* eslint-disable perfectionist/sort-objects, vitest/expect-expect -- the key order of the fixtures is what the tests are about, and the harness asserts */
 import { existsSync } from "node:fs";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,14 +20,14 @@ const project = (name: string, extra: Record<string, unknown> = {}): Files => {
     return { [`packages/${name}/package.json`]: json({ name, scripts: { build: "tsc", test: "vitest" }, ...extra }) };
 };
 
+const BOM = String.fromCodePoint(0xfe_ff);
+
 /** Two projects: `build` and `test` on one, `build` and `lint` on the other. */
 const base = (): Files => {
     return { ...project("a"), ...project("b", { scripts: { build: "tsc", lint: "eslint ." }, dependencies: { a: "workspace:*" } }) };
 };
 
-const runs = (files: Record<string, unknown>): Files => {
-    return Object.fromEntries(Object.entries(files).map(([name, content]) => [`.vis/runs/${name}`, typeof content === "string" ? content : json(content)]));
-};
+const runs = (files: Record<string, unknown>): Files => Object.fromEntries(Object.entries(files).map(([name, content]) => [`.vis/runs/${name}`, typeof content === "string" ? content : json(content)]));
 
 const task = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => {
     return { taskId: id, cacheStatus: "MISS", target: { project: id.split(":")[0], target: id.split(":")[1] }, ...extra };
@@ -113,7 +113,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("a project.json", { ...base(), "packages/a/project.json": json({ name: "a" }) });
         delegated("a non-ASCII project name", { ...base(), ...project("ünï") });
         delegated("a corrupt run summary", { ...base(), ...runs({ "1.json": "{not json", "2.json": { stats: { cached: 1, total: 2 } } }) });
-        delegated("a run summary with a BOM", { ...base(), ...runs({ "1.json": `﻿${json({ stats: { cached: 1, total: 2 } })}` }) });
+        delegated("a run summary with a BOM", { ...base(), ...runs({ "1.json": `${BOM}${json({ stats: { cached: 1, total: 2 } })}` }) });
         delegated("a stats count that is a string", { ...base(), ...runs({ "1.json": { stats: { cached: "1", total: 2 } } }) });
         delegated("stats that is a number", { ...base(), ...runs({ "1.json": { stats: 5 } }) });
         delegated("a retry count that is a string", { ...base(), ...runs({ "1.json": { tasks: [task("a:build", { retryAttempts: "2" }), task("a:build")] } }) });
