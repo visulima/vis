@@ -13,7 +13,8 @@
 //! - another package manager (the other branches of `native-config-sync.ts` and `min-release-age.ts` are not ported);
 //! - a config Node must evaluate or reads differently, an `allow` value that is truthy but not `true`, and a name
 //!   or file the text edits do not reproduce (see [`pnpm`]);
-//! - a staging failure: no target is renamed before all temporary files exist, so the files are still untouched.
+//! - a failure to stage the files, or to replace the first one: no target is renamed before all temporary files exist,
+//!   so the files are still untouched.
 
 mod pnpm;
 mod stage;
@@ -105,7 +106,10 @@ fn answer(args: &[String]) -> Result<Output, String> {
     if let Err(failure) = stage::write_all(&files) {
         return match failure {
             stage::Failure::Staging(error) => Err(format!("cannot stage the files: {error}")),
-            stage::Failure::Renaming(error) => crate::error::WrapperError::write("security", "the files", error).exit(),
+            stage::Failure::Renaming { renamed: 0, error } => Err(format!("cannot replace the first file: {error}")),
+            stage::Failure::Renaming { error, .. } => {
+                crate::error::WrapperError::write("security", "the files", error).exit()
+            }
         };
     }
 

@@ -83,7 +83,6 @@ static ROUTES: &[Route] = &[
     answers(&["sync", "ci-workflow"], crate::ci_workflow::run),
     answers(&["security", "list"], crate::security_list::run),
     answers(&["security", "keys-refresh"], crate::keys_refresh::run),
-    #[cfg(unix)]
     answers(&["security", "sync"], crate::security_sync::run),
     answers(&["shim", "status"], crate::shim_status::run),
     answers(&["deps"], crate::deps::run),

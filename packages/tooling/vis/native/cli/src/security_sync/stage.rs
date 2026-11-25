@@ -21,8 +21,8 @@ pub(super) struct File {
 pub(super) enum Failure {
     /// Nothing was renamed: the targets are as they were.
     Staging(io::Error),
-    /// A rename failed after others went through.
-    Renaming(io::Error),
+    /// A rename failed after `renamed` others went through (none: the targets are still as they were).
+    Renaming { renamed: usize, error: io::Error },
 }
 
 fn temporary(target: &Path) -> PathBuf {
@@ -72,7 +72,7 @@ pub(super) fn write_all(files: &[File]) -> Result<(), Failure> {
                 let _ = fs::remove_file(temp);
             }
 
-            return Err(Failure::Renaming(error));
+            return Err(Failure::Renaming { renamed: index, error });
         }
     }
 
@@ -92,6 +92,7 @@ mod tests {
         path
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_existing_file_gets_the_default_mode_and_leaves_no_temporary_behind() {
         let dir = directory("mode");
