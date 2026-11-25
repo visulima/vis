@@ -79,6 +79,8 @@ mod run_summary;
 mod sbom;
 mod secrets;
 mod security_list;
+#[cfg(unix)]
+mod security_sync;
 mod self_update;
 mod shim_status;
 mod sort_package_json;

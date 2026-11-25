@@ -7,8 +7,9 @@
 //! either no `vis.config.*` or one that is a plain literal in that directory. The `security` block is read as
 //! data (see [`config`]); everything it cannot read exactly goes to Node before anything is printed:
 //!
-//! - the text form, every other flag, `--cwd` and `--config`, and every other `security` subcommand (`sync`,
-//!   `run` and `tripwire` write files, the rest use the network);
+//! - the text form, every other flag, `--cwd` and `--config`, and every other `security` subcommand (`sync` is
+//!   answered by [`crate::security_sync`], which reads the same `security` block through [`sync_input`]; `run` and
+//!   `tripwire` write files, the rest use the network);
 //! - a config Node must evaluate, one that sets a key only Node handles (`extends`, `runtime`, ...), and an
 //!   `allow` or `allowBins` map whose shape or key order JavaScript would treat differently;
 //! - a `package.json` under `node_modules` that is not strict JSON, a tree too deep to walk, and a `localeCompare`
@@ -16,7 +17,7 @@
 //! - a `pnpm-workspace.yaml` outside the grammar of [`yaml`], when the config makes the drift check read it.
 
 mod scan;
-mod yaml;
+pub(crate) mod yaml;
 
 use std::collections::HashSet;
 use std::env;
@@ -38,7 +39,6 @@ use crate::vis_config::{self, ConfigState};
 use scan::{status, Allow, Found, Status};
 
 /// What the report reads from `vis.config`: the `security` settings `list.ts` and the drift check use.
-#[derive(Default)]
 struct Config {
     /// The truthy `installScripts.allow` keys, in the order `Object.entries` lists them.
     allow: Vec<Allow>,
@@ -46,6 +46,20 @@ struct Config {
     allow_bins: HashSet<String>,
     pin_versions: bool,
     drift: DriftInput,
+    /// Whether every truthy `installScripts.allow` value is exactly `true`, which `sync` writes as `true`.
+    allow_all_true: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            allow: Vec::new(),
+            allow_bins: HashSet::new(),
+            pin_versions: false,
+            drift: DriftInput::default(),
+            allow_all_true: true,
+        }
+    }
 }
 
 /// The settings `checkPmNativeConfigDrift` compares with the package manager's.
@@ -200,10 +214,36 @@ fn config(cwd: &Path) -> Option<Config> {
 
     let allowed = allowed_keys(&file, allow)?;
 
+    config.allow_all_true = allow.values().all(|value| !is_truthy(value) || *value == Value::Bool(true));
     config.allow = allowed.iter().map(|key| Allow::parse(key)).collect();
     config.drift.allow = Some(allowed);
 
     Some(config)
+}
+
+/// What `vis security sync` reads from `vis.config`: `security.policies.installScripts.allow` and
+/// `security.policies.firstSeen`.
+pub(crate) struct SyncInput {
+    /// The truthy `installScripts.allow` keys, in the order `Object.entries` lists them.
+    pub(crate) allow: Vec<String>,
+    /// Every truthy `allow` value is exactly `true`; otherwise `sync` would write another spelling.
+    pub(crate) allow_all_true: bool,
+    pub(crate) minutes: Option<i64>,
+    /// `firstSeen.exclude`, empty when it is unset.
+    pub(crate) exclude: Vec<String>,
+}
+
+/// The `security` settings `vis security sync` pushes to the package manager, from the config that applies to
+/// `cwd`, or `None` when the config is one only Node reads exactly (the same cases `security list` hands over).
+pub(crate) fn sync_input(cwd: &Path) -> Option<SyncInput> {
+    let config = config(cwd)?;
+
+    Some(SyncInput {
+        allow: config.drift.allow.unwrap_or_default(),
+        allow_all_true: config.allow_all_true,
+        minutes: config.drift.minutes,
+        exclude: config.drift.exclude.unwrap_or_default(),
+    })
 }
 
 /// The `allowBins` keys whose value is `true`: `allowBins[bin] === true`. A string, number, boolean or `null`
