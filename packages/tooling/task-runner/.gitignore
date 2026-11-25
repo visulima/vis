@@ -1,3 +1,6 @@
 # Native addon build artifacts (napi v3 outputs to package root)
 *.node
 native/**/target/
+
+# Scratch bundle the cold-process runner bench builds (deleted when the run ends)
+__bench__/.cold/
