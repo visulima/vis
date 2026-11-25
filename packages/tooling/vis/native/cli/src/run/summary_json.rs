@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vis_core::date::iso_from_millis;
 
 use crate::js::random_uuid;
-use crate::sort_package_json::json::{stringify, Json};
+use crate::json::{stringify, Json};
 
 use super::{Answer, Hit};
 

@@ -12,11 +12,11 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::json::Json;
-use super::lock::{self, Entry};
 use super::meta::{decorate, read_manifest, Decoration, Deps, Installed, License, Manifest, Unsupported};
 use super::semver;
 use crate::collation::collate;
 use crate::graph::{ProjectGraph, ProjectType};
+use crate::pnpm_lock::{self as lock, Entry};
 
 const SCHEMA: &str = "http://cyclonedx.org/schema/bom-1.7.schema.json";
 
