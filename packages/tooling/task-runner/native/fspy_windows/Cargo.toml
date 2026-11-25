@@ -14,6 +14,15 @@ crate-type = [
   "rlib"
 ]
 
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+# Wire opcodes, pipe name and message framing shared with the parent
+# (`native/src/windows.rs`). Dependency-free; builds on every host, so the
+# platform-independent `path`/`pe` tests keep running without a Windows runner.
+[dependencies]
+fspy-wire = { path = "../fspy_wire" }
+
 [target.'cfg(windows)'.dependencies]
 # Pure-Rust Windows bindings. We hand-roll IAT hooking (PE import-table
 # pointer swaps — arch-independent, covers x64 + arm64, no instruction

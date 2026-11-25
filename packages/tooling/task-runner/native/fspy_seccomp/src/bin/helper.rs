@@ -35,9 +35,16 @@ use nix::sys::socket::{
     connect, sendmsg, socket, AddressFamily, ControlMessage, MsgFlags, SockFlag, SockType, UnixAddr,
 };
 
-use fspy_seccomp::{filter, syscalls};
+use fspy_seccomp::{filter, syscalls, ENV_SOCK};
 
-const ENV_SOCK: &str = "FSPY_SOCK";
+// Exit codes follow the sh(1) / sysexits convention, so the parent can tell a
+// helper failure from the target's own non-zero exit.
+/// `EX_USAGE`: bad argv or missing environment.
+const EXIT_USAGE: u8 = 64;
+/// The shell's "found but could not execute": setup failed before the target ran.
+const EXIT_SETUP_FAILED: u8 = 126;
+/// The shell's "command not found / not executable".
+const EXIT_NOT_FOUND: u8 = 127;
 
 fn main() -> ExitCode {
     // Exit codes follow the sh(1) convention for "couldn't execute"
@@ -54,7 +61,7 @@ fn run() -> Result<(), ExitCode> {
     let mut argv: Vec<String> = env::args().collect();
     if argv.len() < 2 {
         eprintln!("fspy-seccomp-helper: usage: helper <target_cmd> [args...]");
-        return Err(ExitCode::from(64)); // EX_USAGE
+        return Err(ExitCode::from(EXIT_USAGE));
     }
     // Drop our own argv[0]; what remains is target argv.
     argv.remove(0);
@@ -63,53 +70,62 @@ fn run() -> Result<(), ExitCode> {
         Some(p) => p,
         None => {
             eprintln!("fspy-seccomp-helper: missing {ENV_SOCK} env var");
-            return Err(ExitCode::from(64));
+            return Err(ExitCode::from(EXIT_USAGE));
         }
     };
 
     // PR_SET_NO_NEW_PRIVS is required for non-root seccomp_load.
+    //
+    // SAFETY: `prctl` with `PR_SET_NO_NEW_PRIVS` takes only integer arguments and
+    // touches no memory.
     let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if rc != 0 {
         eprintln!("fspy-seccomp-helper: prctl(PR_SET_NO_NEW_PRIVS) failed: {}", io::Error::last_os_error(),);
-        return Err(ExitCode::from(126));
+        return Err(ExitCode::from(EXIT_SETUP_FAILED));
     }
 
-    // SAFETY: We are the only thread in this process (posix_spawn
-    // gave us a fresh image). libseccomp's allocations / global
-    // state are safe to use here.
+    // SAFETY: We are the only thread in this process (posix_spawn gave us a
+    // fresh image), and `PR_SET_NO_NEW_PRIVS` was set above on this thread, which
+    // is what `filter::install` requires of its caller.
     let notify_fd = match unsafe { filter::install(syscalls::tracked()) } {
         Ok(fd) => fd,
         Err(e) => {
             eprintln!("fspy-seccomp-helper: filter install failed: {e}");
-            return Err(ExitCode::from(126));
+            return Err(ExitCode::from(EXIT_SETUP_FAILED));
         }
     };
 
     if let Err(e) = send_notify_fd(Path::new(&sock_path), notify_fd) {
         eprintln!("fspy-seccomp-helper: send notify fd failed: {e}");
-        return Err(ExitCode::from(126));
+        return Err(ExitCode::from(EXIT_SETUP_FAILED));
     }
 
     // Our copy of the listener fd is no longer needed; the parent
     // received a SCM_RIGHTS dup of it. Closing here keeps the child
     // fd table minimal across exec.
+    // SAFETY: `notify_fd` is the listener fd `filter::install` returned; this
+    // process owns it and does not use it after this call.
     unsafe { libc::close(notify_fd) };
 
     // execve replaces the process image. From this point seccomp
     // notifications fire whenever the target runs a tracked syscall.
-    let target = CString::new(argv[0].as_bytes()).map_err(|_| ExitCode::from(64))?;
-    let arg_cstrs: Vec<CString> =
-        argv.iter().map(|s| CString::new(s.as_bytes()).map_err(|_| ExitCode::from(64))).collect::<Result<_, _>>()?;
+    let target = CString::new(argv[0].as_bytes()).map_err(|_| ExitCode::from(EXIT_USAGE))?;
+    let arg_cstrs: Vec<CString> = argv
+        .iter()
+        .map(|s| CString::new(s.as_bytes()).map_err(|_| ExitCode::from(EXIT_USAGE)))
+        .collect::<Result<_, _>>()?;
     let mut arg_ptrs: Vec<*const libc::c_char> = arg_cstrs.iter().map(|c| c.as_ptr()).collect();
     arg_ptrs.push(std::ptr::null());
 
+    // SAFETY: `target` is a NUL-terminated `CString`; `arg_ptrs` is a
+    // NULL-terminated array of pointers into `arg_cstrs`, which outlives the call.
     unsafe {
         libc::execvp(target.as_ptr(), arg_ptrs.as_ptr());
     }
 
     // execvp only returns on failure (no such file, permission denied, etc).
     eprintln!("fspy-seccomp-helper: execvp({}) failed: {}", argv[0], io::Error::last_os_error(),);
-    Err(ExitCode::from(127)) // command not found / not executable
+    Err(ExitCode::from(EXIT_NOT_FOUND))
 }
 
 /// Connect to the parent's listener at `sock_path` and hand it the

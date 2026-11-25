@@ -29,7 +29,8 @@ compile_error!("fspy_windows: only 64-bit Windows targets are supported (the IAT
 use core::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use windows_sys::Win32::Foundation::{HANDLE, HMODULE};
+use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE, HMODULE};
+use windows_sys::Win32::Storage::FileSystem::{FILE_APPEND_DATA, FILE_WRITE_DATA};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE};
 use windows_sys::Win32::System::ProcessStatus::EnumProcessModules;
@@ -71,10 +72,8 @@ type FindFirstFileWFn = unsafe extern "system" fn(*const u16, *mut c_void) -> HA
 type FindFirstFileExWFn = unsafe extern "system" fn(*const u16, i32, *mut c_void, i32, *const c_void, u32) -> HANDLE;
 type MoveFileExWFn = unsafe extern "system" fn(*const u16, *const u16, u32) -> i32;
 
-// Win32 access flags implying write intent.
-const GENERIC_WRITE: u32 = 0x4000_0000;
-const FILE_WRITE_DATA: u32 = 0x0002;
-const FILE_APPEND_DATA: u32 = 0x0004;
+// Win32 access flags implying write intent (`GENERIC_WRITE`, `FILE_WRITE_DATA`,
+// `FILE_APPEND_DATA` from `windows-sys`).
 
 fn classify(access: u32) -> u8 {
     if access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA) != 0 {
@@ -101,11 +100,14 @@ fn report_w(path: *const u16, kind: u8) {
     guarded(|| {
         // Read the NUL-terminated UTF-16 string.
         let mut len = 0usize;
+        // SAFETY: `path` is non-null and NUL-terminated (the caller's contract for a Win32 wide-string argument); the scan stops
+        //     at the terminator, so every `add(len)` read is inside the string.
         unsafe {
             while *path.add(len) != 0 {
                 len += 1;
             }
         }
+        // SAFETY: `len` elements before the NUL were just read from `path`, so the slice is in bounds; it is copied before returning.
         let slice = unsafe { std::slice::from_raw_parts(path, len) };
         let s = String::from_utf16_lossy(slice);
 
@@ -120,11 +122,14 @@ fn report_a(path: *const u8, kind: u8) {
 
     guarded(|| {
         let mut len = 0usize;
+        // SAFETY: `path` is non-null and NUL-terminated (the caller's contract for a Win32 string argument); the scan stops at
+        //     the terminator, so every `add(len)` read is inside the string.
         unsafe {
             while *path.add(len) != 0 {
                 len += 1;
             }
         }
+        // SAFETY: `len` bytes before the NUL were just read from `path`, so the slice is in bounds; it is copied before returning.
         let slice = unsafe { std::slice::from_raw_parts(path, len) };
         let s = String::from_utf8_lossy(slice).into_owned();
 
@@ -258,7 +263,9 @@ fn table() -> [HookEntry; 8] {
 /// older systems. Returns the entries that resolved — an entry without an
 /// original is left unpatched rather than hooked with nothing to forward to.
 fn resolve_originals(entries: &[HookEntry]) -> Vec<&HookEntry> {
+    // SAFETY: the argument is a NUL-terminated C string literal; a missing module yields null, which is handled below.
     let kernelbase = unsafe { GetModuleHandleA(c"kernelbase.dll".as_ptr().cast()) };
+    // SAFETY: the argument is a NUL-terminated C string literal; a missing module yields null, which is handled below.
     let kernel32 = unsafe { GetModuleHandleA(c"kernel32.dll".as_ptr().cast()) };
 
     entries
@@ -271,6 +278,7 @@ fn resolve_originals(entries: &[HookEntry]) -> Vec<&HookEntry> {
             let resolved = [kernelbase, kernel32]
                 .into_iter()
                 .filter(|module| !module.is_null())
+                // SAFETY: `module` is non-null (filtered above) and `name` is a NUL-terminated `CString`.
                 .find_map(|module| unsafe { GetProcAddress(module, name.as_ptr().cast()) });
 
             match resolved {
@@ -328,6 +336,8 @@ fn install_in_module(base: *const u8, entries: &[&HookEntry]) -> usize {
 fn patch_slot(cell: *mut c_void, hook: *const c_void) -> bool {
     let mut old: PAGE_PROTECTION_FLAGS = 0;
 
+    // SAFETY: `cell` is an IAT slot inside a loaded module (`install_in_module`); `VirtualProtect` makes its
+    //     pointer-sized extent writable for the write, then restores the old protection.
     unsafe {
         if VirtualProtect(cell, std::mem::size_of::<usize>(), PAGE_READWRITE, &mut old) == 0 {
             return false;
@@ -352,6 +362,7 @@ const HEADER_PROBE: usize = 0x1000;
 fn system_modules() -> Vec<usize> {
     [c"kernel32.dll", c"kernelbase.dll", c"ntdll.dll"]
         .iter()
+        // SAFETY: the argument is a NUL-terminated C string literal; a missing module yields null, which is filtered out.
         .map(|name| unsafe { GetModuleHandleA(name.as_ptr().cast()) } as usize)
         .filter(|&handle| handle != 0)
         .collect()
@@ -360,6 +371,8 @@ fn system_modules() -> Vec<usize> {
 /// Every module currently loaded in the process, falling back to just the main
 /// executable if enumeration fails.
 fn loaded_modules() -> Vec<HMODULE> {
+    // SAFETY: every call is a plain Win32 query; the buffers are sized by the first call and `modules` outlives the second, and
+    //     the handles are only passed back to the OS.
     unsafe {
         let process = GetCurrentProcess();
 

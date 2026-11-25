@@ -17,8 +17,13 @@ name = "fspy-macos"
 version = "0.0.0"
 dependencies = [
  "ctor",
+ "fspy-wire",
  "libc",
 ]
+
+[[package]]
+name = "fspy-wire"
+version = "0.0.0"
 
 [[package]]
 name = "libc"

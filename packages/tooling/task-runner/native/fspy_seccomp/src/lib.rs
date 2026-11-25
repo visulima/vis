@@ -155,7 +155,7 @@ pub fn track_command(
     let mut command = Command::new(helper_path);
     command.arg(&cmd[0]);
     command.args(&cmd[1..]);
-    command.env("FSPY_SOCK", &sock_path);
+    command.env(ENV_SOCK, &sock_path);
     if let Some(cwd) = &opts.cwd {
         command.current_dir(cwd);
     }
@@ -196,6 +196,13 @@ pub fn track_command(
 
     collect_run(&mut guard, notify_fd, &cancel)
 }
+
+/// Environment variable that carries the parent's listener socket path to the
+/// helper (`bin/helper.rs`), which sends the notify fd back over it.
+pub const ENV_SOCK: &str = "FSPY_SOCK";
+
+/// `poll(2)` timeout meaning "wait until an fd is ready".
+const POLL_FOREVER: libc::c_int = -1;
 
 /// How long after the main target exits the supervisor may keep collecting
 /// accesses from descendants that exit promptly.
@@ -370,6 +377,8 @@ fn drain_bounded<R: Read + AsRawFd>(mut reader: R, cancel: &OwnedFd) -> Vec<u8> 
 
     // Non-blocking so `read` returns WouldBlock rather than parking if poll
     // raced us or reports POLLHUP without pending data.
+    //
+    // SAFETY: plain `fcntl` calls on `raw`, which `reader` keeps open.
     unsafe {
         let flags = libc::fcntl(raw, libc::F_GETFL);
         if flags >= 0 {
@@ -386,7 +395,8 @@ fn drain_bounded<R: Read + AsRawFd>(mut reader: R, cancel: &OwnedFd) -> Vec<u8> 
             libc::pollfd { fd: cancel_fd, events: libc::POLLIN, revents: 0 },
         ];
 
-        let prc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        // SAFETY: `fds` is a live array of two `pollfd` and the count passed is its length.
+        let prc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, POLL_FOREVER) };
 
         if prc < 0 {
             if io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {

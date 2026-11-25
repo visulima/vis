@@ -51,19 +51,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use libc::{size_t, ssize_t, DIR};
 
-/// Wire opcodes — one byte prefix per datagram. Kept in sync with the parser
-/// in `native/src/macos.rs`.
-mod mode {
-    pub const READ: u8 = 0;
-    pub const WRITE: u8 = 1;
-    pub const STAT: u8 = 2;
-    pub const READDIR: u8 = 3;
-    /// A lookup that failed with `ENOENT`: the path did not exist when probed.
-    pub const MISSING: u8 = 4;
-}
+use fspy_wire::op as mode;
 
 /// Env var carrying the inherited reporting socket fd. Set by the parent.
-const FD_ENV: &[u8] = b"FSPY_MACOS_FD\0";
+const FD_ENV: &[u8] = fspy_wire::ENV_MACOS_FD_C;
 
 /// The reporting socket, adopted in [`init`]. `-1` means "not tracking" — every
 /// hook then degrades to a plain forward with no reporting.
@@ -101,6 +92,7 @@ fn init() {
         return;
     }
 
+    // SAFETY: `raw` is non-null (checked above) and points at the NUL-terminated value `getenv` returned; it is only read here.
     let fd = unsafe { std::ffi::CStr::from_ptr(raw) }.to_str().ok().and_then(|s| s.parse::<c_int>().ok());
 
     let Some(fd) = fd else {
@@ -172,6 +164,7 @@ fn is_report_socket(fd: c_int) -> bool {
 unsafe fn absolute_path(path: *const c_char, dirfd: c_int, buf: &mut [u8]) -> usize {
     // SAFETY: `path` is a valid NUL-terminated C string from the caller.
     let path_len = unsafe { libc::strlen(path) };
+    // SAFETY: `path` is a valid NUL-terminated string, and `path_len > 0` makes its first byte readable.
     let relative = path_len > 0 && unsafe { *path } as u8 != b'/';
     let mut len = 0;
 
@@ -243,19 +236,18 @@ unsafe fn report(path: *const c_char, dirfd: c_int, mode: u8) {
     // that call's `errno`, not whatever `getcwd`/`send` left behind.
     let saved_errno = last_errno();
 
-    // PATH_MAX (1024 on macOS) + 1 opcode byte. A path longer than this is
+    // PATH_MAX (1024 on macOS) + the opcode byte. A path longer than this is
     // truncated for the wire; the parent treats it as a best-effort hint.
-    const CAP: usize = 1 + 1024;
-    let mut buf = [0u8; CAP];
+    let mut buf = [0u8; fspy_wire::DATAGRAM_MAX];
 
-    buf[0] = mode;
+    let room = fspy_wire::begin(&mut buf, mode);
 
-    // SAFETY: `path` is non-null and NUL-terminated; the buffer is PATH_MAX bytes.
-    let len = unsafe { absolute_path(path, dirfd, &mut buf[1..]) };
+    // SAFETY: `path` is non-null and NUL-terminated; `room` is PATH_MAX bytes.
+    let len = unsafe { absolute_path(path, dirfd, room) };
 
     // SAFETY: send on the datagram socket; MSG_DONTWAIT keeps it non-blocking.
     unsafe {
-        libc::send(fd, buf.as_ptr().cast::<c_void>(), len + 1, libc::MSG_DONTWAIT);
+        libc::send(fd, buf.as_ptr().cast::<c_void>(), fspy_wire::HEADER_LEN + len, libc::MSG_DONTWAIT);
     }
 
     IN_HOOK.with(|flag| flag.set(false));
@@ -275,6 +267,8 @@ fn last_errno() -> c_int {
 /// that probed it. Other failures (`EACCES`, `ENOTDIR`, …) are not reported.
 unsafe fn report_if_missing(path: *const c_char, dirfd: c_int) {
     if last_errno() == libc::ENOENT {
+        // SAFETY: the failed call set `ENOENT`, so the kernel read `path`: it is a valid C string, or null, which
+        //     `report` skips.
         unsafe { report(path, dirfd, mode::MISSING) };
     }
 }
@@ -299,16 +293,21 @@ fn open_mode(flags: c_int) -> u8 {
 /// with `O_CREAT`; see the module docs for how it reaches this fn on each arch.
 unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -> c_int {
     let fd = if flags & libc::O_CREAT != 0 {
+        // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
         unsafe { libc::open(path, flags, mode) }
     } else {
+        // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
         unsafe { libc::open(path, flags) }
     };
 
     if fd >= 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, open_mode(flags)) };
     } else if flags & libc::O_CREAT == 0 {
         // A failed create says nothing about the path's prior state (the parent
         // directory may be what is missing).
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
@@ -317,14 +316,19 @@ unsafe extern "C" fn hook_open(path: *const c_char, flags: c_int, mode: c_int) -
 
 unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: c_int) -> c_int {
     let fd = if flags & libc::O_CREAT != 0 {
+        // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
         unsafe { libc::openat(dirfd, path, flags, mode) }
     } else {
+        // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
         unsafe { libc::openat(dirfd, path, flags) }
     };
 
     if fd >= 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, dirfd, open_mode(flags)) };
     } else if flags & libc::O_CREAT == 0 {
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, dirfd) };
     }
 
@@ -332,11 +336,15 @@ unsafe extern "C" fn hook_openat(dirfd: c_int, path: *const c_char, flags: c_int
 }
 
 unsafe extern "C" fn hook_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::stat(path, buf) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     } else {
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
@@ -344,11 +352,15 @@ unsafe extern "C" fn hook_stat(path: *const c_char, buf: *mut libc::stat) -> c_i
 }
 
 unsafe extern "C" fn hook_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::lstat(path, buf) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     } else {
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
@@ -356,11 +368,15 @@ unsafe extern "C" fn hook_lstat(path: *const c_char, buf: *mut libc::stat) -> c_
 }
 
 unsafe extern "C" fn hook_access(path: *const c_char, amode: c_int) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::access(path, amode) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::STAT) };
     } else {
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
@@ -368,11 +384,15 @@ unsafe extern "C" fn hook_access(path: *const c_char, amode: c_int) -> c_int {
 }
 
 unsafe extern "C" fn hook_opendir(path: *const c_char) -> *mut DIR {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let dir = unsafe { libc::opendir(path) };
 
     if !dir.is_null() {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::READDIR) };
     } else {
+        // SAFETY: `report_if_missing` reads `path` only when the failed call set `ENOENT`, which means the kernel
+        //     already read the string, so it is valid.
         unsafe { report_if_missing(path, libc::AT_FDCWD) };
     }
 
@@ -380,10 +400,13 @@ unsafe extern "C" fn hook_opendir(path: *const c_char) -> *mut DIR {
 }
 
 unsafe extern "C" fn hook_rename(old: *const c_char, new: *const c_char) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::rename(old, new) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(old, libc::AT_FDCWD, mode::WRITE) };
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(new, libc::AT_FDCWD, mode::WRITE) };
     }
 
@@ -391,9 +414,11 @@ unsafe extern "C" fn hook_rename(old: *const c_char, new: *const c_char) -> c_in
 }
 
 unsafe extern "C" fn hook_mkdir(path: *const c_char, mode: libc::mode_t) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::mkdir(path, mode) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
@@ -401,9 +426,11 @@ unsafe extern "C" fn hook_mkdir(path: *const c_char, mode: libc::mode_t) -> c_in
 }
 
 unsafe extern "C" fn hook_unlink(path: *const c_char) -> c_int {
+    // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
     let rc = unsafe { libc::unlink(path) };
 
     if rc == 0 {
+        // SAFETY: the real call succeeded, so the kernel read `path`: it is a valid C string, or null, which `report` skips.
         unsafe { report(path, libc::AT_FDCWD, mode::WRITE) };
     }
 
@@ -460,12 +487,15 @@ unsafe fn rebuild_envp(envp: *const *const c_char) -> Option<EnvCopy> {
     // Copy the caller's entries verbatim, noting whether our keys are present.
     let mut i = 0isize;
     loop {
+        // SAFETY: `envp` is the caller's NULL-terminated environment array and the loop stops at the terminator.
         let entry = unsafe { *envp.offset(i) };
         if entry.is_null() {
             break;
         }
+        // SAFETY: `entry` is a non-null NUL-terminated string from `envp`.
         if unsafe { env_key_matches(entry, b"DYLD_INSERT_LIBRARIES=") } {
             have_dyld = true;
+        // SAFETY: `entry` is a non-null NUL-terminated string from `envp`.
         } else if unsafe { env_key_matches(entry, b"FSPY_MACOS_FD=") } {
             have_fd = true;
         }
@@ -478,13 +508,15 @@ unsafe fn rebuild_envp(envp: *const *const c_char) -> Option<EnvCopy> {
     }
 
     if !have_dyld {
+        // SAFETY: `DYLD_KEY` is a NUL-terminated constant.
         if let Some(entry) = unsafe { our_env_entry(DYLD_KEY, "DYLD_INSERT_LIBRARIES") } {
             ptrs.push(entry.as_ptr() as *mut c_char);
             owned.push(entry);
         }
     }
     if !have_fd {
-        if let Some(entry) = unsafe { our_env_entry(FD_ENV, "FSPY_MACOS_FD") } {
+        // SAFETY: `FD_ENV` is a NUL-terminated constant.
+        if let Some(entry) = unsafe { our_env_entry(FD_ENV, fspy_wire::ENV_MACOS_FD) } {
             ptrs.push(entry.as_ptr() as *mut c_char);
             owned.push(entry);
         }
@@ -499,6 +531,8 @@ unsafe fn rebuild_envp(envp: *const *const c_char) -> Option<EnvCopy> {
 unsafe fn env_key_matches(entry: *const c_char, prefix: &[u8]) -> bool {
     let bytes = entry.cast::<u8>();
     for (i, &p) in prefix.iter().enumerate() {
+        // SAFETY: `entry` is NUL-terminated and `prefix` has no NUL byte, so the loop stops at the first mismatch at the latest,
+        //     which is the terminator: it never reads past the string.
         if unsafe { *bytes.add(i) } != p {
             return false;
         }
@@ -508,18 +542,23 @@ unsafe fn env_key_matches(entry: *const c_char, prefix: &[u8]) -> bool {
 
 /// `"KEY=<our value>"` as a `CString`, or `None` when we don't carry the var.
 unsafe fn our_env_entry(key_nul: &[u8], key: &str) -> Option<std::ffi::CString> {
+    // SAFETY: `key_nul` is NUL-terminated (this fn's contract).
     let raw = unsafe { libc::getenv(key_nul.as_ptr().cast::<c_char>()) };
     if raw.is_null() {
         return None;
     }
+    // SAFETY: `raw` is non-null and NUL-terminated, as `getenv` returns it; the value is copied before this returns.
     let value = unsafe { std::ffi::CStr::from_ptr(raw) }.to_str().ok()?;
     std::ffi::CString::new(format!("{key}={value}")).ok()
 }
 
 unsafe extern "C" fn hook_execve(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> c_int {
+    // SAFETY: `envp` is the caller's environment array: null, or NULL-terminated with valid C strings.
     match unsafe { rebuild_envp(envp) } {
         // execve wants `*const *const c_char`; our storage is `*const *mut`.
+        // SAFETY: forwards the caller's `path`/`argv`; `copy` holds a NULL-terminated array of valid strings and outlives the call.
         Some(copy) => unsafe { libc::execve(path, argv, copy.as_ptr() as *const *const c_char) },
+        // SAFETY: forwards the caller's own arguments, unchanged, to the function this hook interposes, so the caller's obligations for the real call carry over.
         None => unsafe { libc::execve(path, argv, envp) },
     }
 }
@@ -583,9 +622,12 @@ unsafe extern "C" fn hook_posix_spawn(
 ) -> c_int {
     // The kernel copies `envp` during the call, so dropping the rebuilt storage
     // when this returns is safe.
+    // SAFETY: `envp` is the caller's environment array: null, or NULL-terminated with valid C strings.
     let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
     let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
 
+    // SAFETY: forwards the caller's arguments to the real spawn; `envp` is either the caller's own array or `rebuilt`,
+    //     which stays alive until this returns.
     unsafe {
         with_inherited_report_fd(file_actions, |actions| libc::posix_spawn(pid, path, actions, attrp, argv, envp))
     }
@@ -599,9 +641,12 @@ unsafe extern "C" fn hook_posix_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
+    // SAFETY: `envp` is the caller's environment array: null, or NULL-terminated with valid C strings.
     let rebuilt = unsafe { rebuild_envp(envp as *const *const c_char) };
     let envp = rebuilt.as_ref().map_or(envp, EnvCopy::as_ptr);
 
+    // SAFETY: forwards the caller's arguments to the real spawn; `envp` is either the caller's own array or `rebuilt`,
+    //     which stays alive until this returns.
     unsafe {
         with_inherited_report_fd(file_actions, |actions| libc::posix_spawnp(pid, path, actions, attrp, argv, envp))
     }

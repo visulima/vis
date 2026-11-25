@@ -189,7 +189,7 @@ jobs:
                   path: |
                       packages/tooling/task-runner/*.node
                       packages/tooling/task-runner/npm/linux-*/fspy-seccomp-helper
-                  key: "native-task-runner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/task-runner/native/Cargo.toml', 'packages/tooling/task-runner/native/Cargo.lock', 'packages/tooling/task-runner/native/build.rs', 'packages/tooling/task-runner/native/src/**', 'packages/tooling/task-runner/native/core/**', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.toml', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.lock', 'packages/tooling/task-runner/native/fspy_seccomp/src/**') }}"
+                  key: "native-task-runner-${{ matrix.settings.target }}-zig0.14.1-${{ hashFiles('rust-toolchain.toml', 'packages/tooling/task-runner/native/Cargo.toml', 'packages/tooling/task-runner/native/Cargo.lock', 'packages/tooling/task-runner/native/build.rs', 'packages/tooling/task-runner/native/src/**', 'packages/tooling/task-runner/native/core/**', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.toml', 'packages/tooling/task-runner/native/fspy_seccomp/Cargo.lock', 'packages/tooling/task-runner/native/fspy_seccomp/src/**', 'packages/tooling/task-runner/native/fspy_wire/**') }}"
 
             - name: "Restore tui native build cache"
               id: "cache-tui"

@@ -1,14 +1,10 @@
 //! Syscall metadata + per-call decoders. Each handler maps one
 //! seccomp notification to zero or more `FileAccess` entries.
 //!
-//! Per-arch syscall numbers baked in here (we used to delegate to
-//! libseccomp's name resolver, but dropping the libseccomp-sys dep
-//! to support musl/aarch64 cross-compile means we carry the table
-//! ourselves now). Each `TrackedSyscall` records its name plus the
-//! nr on each supported arch; `nr()` picks the one that matches the
-//! current build target. Syscalls that don't exist on a given arch
-//! (e.g. legacy `open`/`stat`/`unlink` on aarch64) are `None` there
-//! and skipped at filter-install time.
+//! The syscall numbers come from `libc::SYS_*`, so the table holds the numbers
+//! of the build target only. Syscalls that don't exist on a given arch (e.g.
+//! legacy `open`/`stat`/`unlink` on aarch64) are left out there. The unit tests
+//! pin every number to the kernel's table.
 
 use libc::seccomp_notif;
 
@@ -20,78 +16,84 @@ use crate::{AccessKind, FileAccess};
 #[derive(Debug, Clone, Copy)]
 pub struct TrackedSyscall {
     pub name: &'static str,
-    /// x86_64 syscall number (from `<asm/unistd_64.h>`).
-    /// `None` means this syscall doesn't exist on x86_64.
-    /// `dead_code` because only the field matching the build
-    /// target's arch is read by `nr()`.
-    #[allow(dead_code)]
-    x86_64: Option<i32>,
-    /// aarch64 syscall number (from `<asm/unistd.h>`).
-    /// `None` means this syscall doesn't exist on aarch64.
-    /// aarch64 dropped many legacy calls (open, stat, unlink, ...);
-    /// their userspace shims call the *at variants instead.
-    #[allow(dead_code)]
-    aarch64: Option<i32>,
+    /// The syscall number on the build target.
+    nr: i32,
 }
 
 impl TrackedSyscall {
-    /// Resolve the syscall number for the current build target.
-    /// Returns `None` when the syscall isn't available on this arch.
+    /// The syscall number for the current build target. Always `Some`: a
+    /// syscall the arch lacks has no row at all.
     pub fn nr(&self) -> Option<i32> {
-        #[cfg(target_arch = "x86_64")]
-        return self.x86_64;
-        #[cfg(target_arch = "aarch64")]
-        return self.aarch64;
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        return None;
+        Some(self.nr)
     }
 }
 
-/// Convenience for declaring a row with a single shared name and
-/// per-arch numbers.
-const fn s(name: &'static str, x86_64: Option<i32>, aarch64: Option<i32>) -> TrackedSyscall {
-    TrackedSyscall { name, x86_64, aarch64 }
+/// Declare a row from libc's constant for the build target.
+const fn s(name: &'static str, nr: libc::c_long) -> TrackedSyscall {
+    TrackedSyscall { name, nr: nr as i32 }
 }
 
-/// Per-arch numbers verified against:
-/// - x86_64: `arch/x86/entry/syscalls/syscall_64.tbl`
-/// - aarch64: `include/uapi/asm-generic/unistd.h`
+/// aarch64's `renameat` (see `include/uapi/asm-generic/unistd.h`). libc exports it
+/// for musl but not for glibc, so the number is local here.
+#[cfg(target_arch = "aarch64")]
+const SYS_RENAMEAT: libc::c_long = 38;
+#[cfg(target_arch = "x86_64")]
+const SYS_RENAMEAT: libc::c_long = libc::SYS_renameat;
+
+// Only x86_64 and aarch64 have a table (see `filter.rs`, which refuses to build
+// elsewhere), and x32 (an x86_64 target whose libc numbers carry
+// `__X32_SYSCALL_BIT`) is not supported.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 static TRACKED: &[TrackedSyscall] = &[
     // Open / read funnel
-    s("openat", Some(257), Some(56)),
-    s("openat2", Some(437), Some(437)),
-    s("open", Some(2), None), // legacy; aarch64 uses openat
+    s("openat", libc::SYS_openat),
+    s("openat2", libc::SYS_openat2),
+    #[cfg(target_arch = "x86_64")] // legacy; aarch64 uses openat
+    s("open", libc::SYS_open),
     // Stat family
-    s("stat", Some(4), None),
-    s("lstat", Some(6), None),
-    s("newfstatat", Some(262), Some(79)),
-    s("statx", Some(332), Some(291)),
-    s("access", Some(21), None),
-    s("faccessat", Some(269), Some(48)),
-    s("faccessat2", Some(439), Some(439)),
+    #[cfg(target_arch = "x86_64")]
+    s("stat", libc::SYS_stat),
+    #[cfg(target_arch = "x86_64")]
+    s("lstat", libc::SYS_lstat),
+    s("newfstatat", libc::SYS_newfstatat),
+    s("statx", libc::SYS_statx),
+    #[cfg(target_arch = "x86_64")]
+    s("access", libc::SYS_access),
+    s("faccessat", libc::SYS_faccessat),
+    s("faccessat2", libc::SYS_faccessat2),
     // Directory enumeration
-    s("getdents64", Some(217), Some(61)),
+    s("getdents64", libc::SYS_getdents64),
     // Symlinks
-    s("readlink", Some(89), None),
-    s("readlinkat", Some(267), Some(78)),
+    #[cfg(target_arch = "x86_64")]
+    s("readlink", libc::SYS_readlink),
+    s("readlinkat", libc::SYS_readlinkat),
     // Writes — create / delete / rename / link
-    s("unlink", Some(87), None),
-    s("unlinkat", Some(263), Some(35)),
-    s("rename", Some(82), None),
-    s("renameat", Some(264), Some(38)),
-    s("renameat2", Some(316), Some(276)),
-    s("mkdir", Some(83), None),
-    s("mkdirat", Some(258), Some(34)),
-    s("rmdir", Some(84), None),
-    s("symlink", Some(88), None),
-    s("symlinkat", Some(266), Some(36)),
-    s("link", Some(86), None),
-    s("linkat", Some(265), Some(37)),
+    #[cfg(target_arch = "x86_64")]
+    s("unlink", libc::SYS_unlink),
+    s("unlinkat", libc::SYS_unlinkat),
+    #[cfg(target_arch = "x86_64")]
+    s("rename", libc::SYS_rename),
+    s("renameat", SYS_RENAMEAT),
+    s("renameat2", libc::SYS_renameat2),
+    #[cfg(target_arch = "x86_64")]
+    s("mkdir", libc::SYS_mkdir),
+    s("mkdirat", libc::SYS_mkdirat),
+    #[cfg(target_arch = "x86_64")]
+    s("rmdir", libc::SYS_rmdir),
+    #[cfg(target_arch = "x86_64")]
+    s("symlink", libc::SYS_symlink),
+    s("symlinkat", libc::SYS_symlinkat),
+    #[cfg(target_arch = "x86_64")]
+    s("link", libc::SYS_link),
+    s("linkat", libc::SYS_linkat),
     // cwd shifts (no recorded access, but the supervisor needs
     // to see them so future arg resolution stays accurate)
-    s("chdir", Some(80), Some(49)),
-    s("fchdir", Some(81), Some(50)),
+    s("chdir", libc::SYS_chdir),
+    s("fchdir", libc::SYS_fchdir),
 ];
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+static TRACKED: &[TrackedSyscall] = &[];
 
 /// The full set we intercept.
 pub fn tracked() -> &'static [TrackedSyscall] {
@@ -276,11 +278,87 @@ mod tests {
             .find(|s| s.name == syscall)
             .and_then(TrackedSyscall::nr)
             .expect("syscall exists on this arch");
+        // SAFETY: `seccomp_notif` is a plain-old-data C struct; all-zero is valid.
         let mut notif: seccomp_notif = unsafe { std::mem::zeroed() };
 
         notif.data.nr = nr;
         notif.data.args = args;
         notif
+    }
+
+    /// Pin one row to the kernel's number: the `const` assertion fails the build if
+    /// libc's constant ever differs from the number in the kernel's syscall table
+    /// (`arch/x86/entry/syscalls/syscall_64.tbl`, `include/uapi/asm-generic/unistd.h`),
+    /// and the list feeds the test below.
+    macro_rules! pinned {
+        ($($name:literal => $sys:expr, $nr:literal;)*) => {
+            $(const _: () = assert!($sys as i64 == $nr);)*
+
+            const PINNED: &[(&str, i64)] = &[$(($name, $nr)),*];
+        };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pinned! {
+        "openat" => libc::SYS_openat, 257;
+        "openat2" => libc::SYS_openat2, 437;
+        "open" => libc::SYS_open, 2;
+        "stat" => libc::SYS_stat, 4;
+        "lstat" => libc::SYS_lstat, 6;
+        "newfstatat" => libc::SYS_newfstatat, 262;
+        "statx" => libc::SYS_statx, 332;
+        "access" => libc::SYS_access, 21;
+        "faccessat" => libc::SYS_faccessat, 269;
+        "faccessat2" => libc::SYS_faccessat2, 439;
+        "getdents64" => libc::SYS_getdents64, 217;
+        "readlink" => libc::SYS_readlink, 89;
+        "readlinkat" => libc::SYS_readlinkat, 267;
+        "unlink" => libc::SYS_unlink, 87;
+        "unlinkat" => libc::SYS_unlinkat, 263;
+        "rename" => libc::SYS_rename, 82;
+        "renameat" => libc::SYS_renameat, 264;
+        "renameat2" => libc::SYS_renameat2, 316;
+        "mkdir" => libc::SYS_mkdir, 83;
+        "mkdirat" => libc::SYS_mkdirat, 258;
+        "rmdir" => libc::SYS_rmdir, 84;
+        "symlink" => libc::SYS_symlink, 88;
+        "symlinkat" => libc::SYS_symlinkat, 266;
+        "link" => libc::SYS_link, 86;
+        "linkat" => libc::SYS_linkat, 265;
+        "chdir" => libc::SYS_chdir, 80;
+        "fchdir" => libc::SYS_fchdir, 81;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pinned! {
+        "openat" => libc::SYS_openat, 56;
+        "openat2" => libc::SYS_openat2, 437;
+        "newfstatat" => libc::SYS_newfstatat, 79;
+        "statx" => libc::SYS_statx, 291;
+        "faccessat" => libc::SYS_faccessat, 48;
+        "faccessat2" => libc::SYS_faccessat2, 439;
+        "getdents64" => libc::SYS_getdents64, 61;
+        "readlinkat" => libc::SYS_readlinkat, 78;
+        "unlinkat" => libc::SYS_unlinkat, 35;
+        "renameat" => super::SYS_RENAMEAT, 38;
+        "renameat2" => libc::SYS_renameat2, 276;
+        "mkdirat" => libc::SYS_mkdirat, 34;
+        "symlinkat" => libc::SYS_symlinkat, 36;
+        "linkat" => libc::SYS_linkat, 37;
+        "chdir" => libc::SYS_chdir, 49;
+        "fchdir" => libc::SYS_fchdir, 50;
+    }
+
+    #[test]
+    fn the_table_holds_exactly_the_kernels_numbers_for_this_arch() {
+        let mut table: Vec<(&str, i64)> =
+            tracked().iter().map(|row| (row.name, i64::from(row.nr().expect("every row has a number")))).collect();
+        let mut expected = PINNED.to_vec();
+
+        table.sort_unstable();
+        expected.sort_unstable();
+
+        assert_eq!(table, expected);
     }
 
     fn own_pid() -> i32 {
