@@ -579,17 +579,58 @@ fn help_group_filter_lists_only_that_group() {
     assert!(!stdout.contains("cache list"));
 }
 
+/// `vis <command> --help` is vis's own help for the package-manager commands, as in the Node CLI. The binary
+/// answers it from the manifest: it neither forwards the flag to the package manager nor runs the manager at
+/// all (`vis dedupe --help` used to run `pnpm dedupe`), and it needs no Node.
+#[cfg(unix)]
 #[test]
-fn tool_flag_commands_keep_their_help_flag_for_the_tool() {
-    // `exec --help` belongs to the tool being run, so it must not render vis help.
-    let output = binary()
-        .args(["exec", "--help"])
-        .env("VIS_NODE", "/nonexistent-node")
-        .env_remove("VIS_FALLBACK_ENTRY")
-        .output()
-        .expect("run binary");
+fn package_manager_commands_answer_help_without_running_the_manager() {
+    use std::os::unix::fs::PermissionsExt;
 
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("Command Positional Arguments"));
+    let base = std::env::temp_dir().join(format!("vis-pm-help-{}", std::process::id()));
+    let bindir = base.join("bin");
+    let marker = base.join("manager-ran");
+
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::fs::write(base.join("package.json"), "{\"name\":\"t\"}").unwrap();
+    std::fs::write(base.join("pnpm-lock.yaml"), "lockfileVersion: 9\n").unwrap();
+
+    for name in ["pnpm", "npm", "yarn", "bun"] {
+        let path = bindir.join(name);
+
+        std::fs::write(&path, format!("#!/bin/sh\necho PM-HELP\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    for name in ["exec", "pm", "remove", "dedupe", "link", "unlink", "outdated", "why"] {
+        let mut shapes = vec![vec![name, "--help"], vec![name, "-h"]];
+
+        if name != "dedupe" {
+            shapes.push(vec![name, "tool", "--help"]);
+        }
+
+        for args in shapes {
+            let output = binary()
+                .args(&args)
+                .current_dir(&base)
+                .env("PATH", &bindir)
+                .env("VIS_NODE", "/nonexistent-node")
+                .env_remove("VIS_FALLBACK_ENTRY")
+                .output()
+                .expect("run binary");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            assert!(output.status.success(), "{args:?}: {:?} {}", output.status, String::from_utf8_lossy(&output.stderr));
+            // `outdated` is an alias of `check`, which the help names.
+            let heading = if name == "outdated" { "check" } else { name };
+
+            assert!(stdout.contains(&format!("vis {heading} [")), "{args:?} did not print the vis help: {stdout}");
+            assert!(!stdout.contains("PM-HELP"), "{args:?} printed the package manager's help: {stdout}");
+            assert!(!marker.exists(), "{args:?} ran the package manager");
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
