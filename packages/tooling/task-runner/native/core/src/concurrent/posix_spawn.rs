@@ -90,8 +90,15 @@ impl Child {
                 -1 => {
                     let error = io::Error::last_os_error();
 
-                    if error.kind() != io::ErrorKind::Interrupted {
-                        return Err(error);
+                    match error.raw_os_error() {
+                        Some(libc::EINTR) => {}
+                        // Someone else collected it: it is not ours to signal or wait for any more.
+                        Some(libc::ECHILD) => {
+                            self.reaped = true;
+
+                            return Err(error);
+                        }
+                        _ => return Err(error),
                     }
                 }
                 _ => {
@@ -284,9 +291,21 @@ struct Program {
 
 /// Find the file to run for `program`. A name with a `/` is used as it is; any other is searched
 /// for on the command's own `PATH`, as `execvp` does after the command's environment is set up.
+///
+/// With a working directory, a relative result is made absolute against it. The command runs there,
+/// and a relative path would be looked up there; macOS can launch the program and still report
+/// ENOENT for a relative path combined with the directory action, so the path never stays relative.
 fn resolve_program(program: &str, cwd: Option<&str>, environment: &[(OsString, OsString)]) -> io::Result<Program> {
-    let path = if program.contains('/') {
-        cstring(program)?
+    // Where a path that is not absolute points, for a command that starts in `cwd`.
+    let in_cwd = |path: PathBuf| -> io::Result<PathBuf> {
+        match cwd {
+            Some(cwd) if path.is_relative() => std::path::absolute(Path::new(cwd).join(path)),
+            _ => Ok(path),
+        }
+    };
+
+    let executable = if program.contains('/') {
+        in_cwd(PathBuf::from(program))?
     } else {
         let search = environment
             .iter()
@@ -297,14 +316,9 @@ fn resolve_program(program: &str, cwd: Option<&str>, environment: &[(OsString, O
 
         for directory in std::env::split_paths(&search) {
             let directory = if directory.as_os_str().is_empty() { PathBuf::from(".") } else { directory };
-            let candidate = directory.join(program);
-            // A relative entry is relative to the command's directory, where `execvp` would run.
-            let on_disk = match cwd {
-                Some(cwd) if candidate.is_relative() => Path::new(cwd).join(&candidate),
-                _ => candidate.clone(),
-            };
+            let candidate = in_cwd(directory.join(program))?;
 
-            match std::fs::metadata(&on_disk) {
+            match std::fs::metadata(&candidate) {
                 Ok(metadata) if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 => {
                     found = Some(candidate);
 
@@ -315,12 +329,11 @@ fn resolve_program(program: &str, cwd: Option<&str>, environment: &[(OsString, O
             }
         }
 
-        let candidate =
-            found.ok_or_else(|| io::Error::from_raw_os_error(if denied { libc::EACCES } else { libc::ENOENT }))?;
-
-        CString::new(OsString::from(candidate).into_vec())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "nul byte found in provided data"))?
+        found.ok_or_else(|| io::Error::from_raw_os_error(if denied { libc::EACCES } else { libc::ENOENT }))?
     };
+
+    let path = CString::new(executable.into_os_string().into_vec())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "nul byte found in provided data"))?;
 
     Ok(Program { original: program.to_string(), path })
 }

@@ -412,7 +412,7 @@ mod tests {
         dir
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn write_script(path: &std::path::Path, body: &str, mode: u32) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -423,6 +423,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn test_a_command_leads_a_session_of_its_own() {
+        if std::process::Command::new("python3").arg("--version").output().is_err() {
+            return; // The probe needs `python3` for `getsid`.
+        }
+
         // No controlling terminal, and `kill(-pid)` reaches its whole group: the child is the
         // leader of a session, so its session id is its own pid.
         let config = make_config(
@@ -433,7 +437,8 @@ mod tests {
         assert_eq!(run_one(config).await, (vec!["leader".to_string()], vec![], 0));
     }
 
-    #[cfg(unix)]
+    // Written for the macOS spawner (`posix_spawn.rs`); Linux has not run it.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn test_a_direct_command_is_found_on_the_path_the_command_runs_with() {
         // `PATH` in the command's own environment decides where `shell: false` looks, not this process's.
@@ -449,7 +454,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[cfg(unix)]
+    // Written for the macOS spawner (`posix_spawn.rs`); Linux has not run it.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn test_a_direct_command_that_is_not_a_binary_and_has_no_shebang_runs_through_the_shell() {
         let dir = scratch_dir("no-shebang");
@@ -460,6 +466,32 @@ mod tests {
         config.shell = Some(false);
 
         assert_eq!(run_one(config).await, (vec!["ran-by-sh".to_string()], vec![], 0));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // Written for the macOS spawner (`posix_spawn.rs`); Linux has not run it.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn test_a_relative_program_is_looked_up_in_the_commands_cwd() {
+        // A program named with a `/` but not from the root, and one found through a relative
+        // `PATH` entry, both start where the command starts.
+        let dir = scratch_dir("relative-program").canonicalize().unwrap();
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        write_script(&dir.join("bin/tool"), "#!/bin/sh\necho relative-ok\n", 0o755);
+
+        let mut by_path = make_config("./bin/tool", None);
+        by_path.shell = Some(false);
+        by_path.cwd = Some(dir.display().to_string());
+
+        assert_eq!(run_one(by_path).await, (vec!["relative-ok".to_string()], vec![], 0));
+
+        let mut by_search = make_config("tool", None);
+        by_search.shell = Some(false);
+        by_search.cwd = Some(dir.display().to_string());
+        by_search.env = Some([("PATH".to_string(), "bin:/usr/bin:/bin".to_string())].into());
+
+        assert_eq!(run_one(by_search).await, (vec!["relative-ok".to_string()], vec![], 0));
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -478,7 +510,8 @@ mod tests {
         assert_eq!(exit_code, 1);
     }
 
-    #[cfg(unix)]
+    // Written for the macOS spawner (`posix_spawn.rs`); Linux has not run it.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn test_a_direct_command_without_execute_permission_fails_to_start() {
         let dir = scratch_dir("not-executable");
