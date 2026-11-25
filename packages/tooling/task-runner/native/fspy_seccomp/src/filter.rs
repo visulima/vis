@@ -43,12 +43,30 @@ use libc::{
 
 use crate::syscalls::TrackedSyscall;
 
-/// `AUDIT_ARCH_*` aren't in libc. Hard-coded per arch from
-/// `<linux/audit.h>`. Only arches that ALSO have a populated
-/// syscall-number table in `syscalls.rs` are listed — otherwise
-/// the filter would build a no-op tracker (every syscall resolves
-/// to `None`, so nothing is intercepted). A new arch needs BOTH a
-/// constant here and its numbers in `syscalls.rs`.
+/// `AUDIT_ARCH_*` values, from `<linux/audit.h>`: the ELF machine number
+/// (`EM_*`, which libc exports) OR-ed with the width and endianness flags.
+/// libc has no `AUDIT_ARCH_*` itself.
+const AUDIT_ARCH_64BIT: u32 = 0x8000_0000; // __AUDIT_ARCH_64BIT
+const AUDIT_ARCH_LE: u32 = 0x4000_0000; // __AUDIT_ARCH_LE
+
+pub(crate) const AUDIT_ARCH_X86_64: u32 = libc::EM_X86_64 as u32 | AUDIT_ARCH_64BIT | AUDIT_ARCH_LE;
+pub(crate) const AUDIT_ARCH_AARCH64: u32 = libc::EM_AARCH64 as u32 | AUDIT_ARCH_64BIT | AUDIT_ARCH_LE;
+/// Foreign ABIs a 64-bit kernel can still run: only the tests name them, to
+/// check they are not mistaken for the native one.
+#[cfg(test)]
+pub(crate) const AUDIT_ARCH_I386: u32 = libc::EM_386 as u32 | AUDIT_ARCH_LE;
+#[cfg(test)]
+pub(crate) const AUDIT_ARCH_ARM: u32 = libc::EM_ARM as u32 | AUDIT_ARCH_LE;
+
+/// `__X32_SYSCALL_BIT` from `<asm/unistd.h>`: set in `seccomp_data.nr` by an x32
+/// syscall, which shares the x86_64 audit arch. libc exports it only for the x32
+/// target.
+pub(crate) const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+
+/// Only arches that ALSO have a populated syscall-number table in
+/// `syscalls.rs` are listed — otherwise the filter would build a no-op tracker
+/// (every syscall resolves to `None`, so nothing is intercepted). A new arch
+/// needs BOTH a constant above and its numbers in `syscalls.rs`.
 /// The syscall ABI a filter is built for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Abi {
@@ -60,8 +78,8 @@ pub struct Abi {
 }
 
 impl Abi {
-    pub const X86_64: Self = Self { audit_arch: 0xc000_003e, alias_bit: Some(0x4000_0000) };
-    pub const AARCH64: Self = Self { audit_arch: 0xc000_00b7, alias_bit: None };
+    pub const X86_64: Self = Self { audit_arch: AUDIT_ARCH_X86_64, alias_bit: Some(X32_SYSCALL_BIT) };
+    pub const AARCH64: Self = Self { audit_arch: AUDIT_ARCH_AARCH64, alias_bit: None };
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -108,6 +126,10 @@ pub unsafe fn install(tracked: &[TrackedSyscall]) -> io::Result<RawFd> {
     // `seccomp(2)` with `SECCOMP_FILTER_FLAG_NEW_LISTENER` returns
     // the listener fd on success. Cast via `c_long`/`as i32` so
     // we preserve negative fds for error mapping.
+    //
+    // SAFETY: `fprog` points at `prog`, which is alive and unmoved until the
+    // call returns (the kernel copies the program), and `len` is its length.
+    // The caller guarantees `PR_SET_NO_NEW_PRIVS` (see this fn's contract).
     let rc = unsafe {
         syscall(
             SYS_seccomp,
@@ -139,17 +161,34 @@ fn insn(code: c_uint, jt: u8, jf: u8, k: u32) -> sock_filter {
 /// (`to` is executed after skipping `to - from - 1` instructions). The
 /// offset field is 8 bits, so a longer jump cannot be encoded.
 fn jump(from: usize, to: usize) -> io::Result<u8> {
-    u8::try_from(to - from - 1).map_err(|_| {
+    let skip = to
+        .checked_sub(from + 1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "BPF jumps only go forward"))?;
+
+    u8::try_from(skip).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("BPF jump of {} instructions exceeds 255: too many tracked syscalls", to - from - 1),
+            format!("BPF jump of {skip} instructions exceeds 255: too many tracked syscalls"),
         )
     })
 }
 
-/// Construct the BPF program for `abi` and the given syscall numbers:
-/// 3 fixed instructions (+1 for an alias ABI), one `jeq` per syscall and the
-/// two final returns (allow, notify). Fails when a jump cannot be encoded.
+/// Which branch of a conditional jump leaves for the notify return.
+#[derive(Clone, Copy)]
+enum Branch {
+    /// `jt`: the condition held.
+    Taken,
+    /// `jf`: the condition did not hold.
+    NotTaken,
+}
+
+/// Construct the BPF program for `abi` and the given syscall numbers: the arch
+/// check, the alias-ABI check (x32), one `jeq` per syscall and the two final
+/// returns (allow, notify). Fails when a jump cannot be encoded.
+///
+/// No offset is counted by hand: each jump to the notify return is recorded as
+/// it is pushed and patched once the notify return's position is known, and
+/// [`validate_program`] re-checks the result in debug builds.
 pub(crate) fn build_program(abi: Abi, syscall_numbers: &[i32]) -> io::Result<Vec<sock_filter>> {
     // Field offsets in `struct seccomp_data` — stable kernel ABI:
     //   nr        : offset 0  (i32)
@@ -163,34 +202,104 @@ pub(crate) fn build_program(abi: Abi, syscall_numbers: &[i32]) -> io::Result<Vec
     let jeq = BPF_JMP | BPF_JEQ | BPF_K;
     let ret = BPF_RET | BPF_K;
 
-    let alias = usize::from(abi.alias_bit.is_some());
-    let first_jeq = 3 + alias;
-    let allow_at = first_jeq + syscall_numbers.len();
-    let notify_at = allow_at + 1;
+    let mut prog: Vec<sock_filter> = Vec::with_capacity(syscall_numbers.len() + 6);
+    // Instructions whose `jt` or `jf` must end up at the notify return.
+    let mut to_notify: Vec<(usize, Branch)> = Vec::new();
 
-    let mut prog = Vec::with_capacity(notify_at + 1);
-
-    // 0. Load seccomp_data.arch
+    // Load seccomp_data.arch.
     prog.push(insn(load, 0, 0, arch_offset));
-    // 1. Native arch: go on to the syscall number; any other arch: notify,
-    //    so the supervisor can flag the trace as incomplete.
-    prog.push(insn(jeq, 0, jump(1, notify_at)?, abi.audit_arch));
-    // 2. Load seccomp_data.nr
+    // Native arch: go on to the syscall number; any other arch: notify, so the
+    // supervisor can flag the trace as incomplete.
+    to_notify.push((prog.len(), Branch::NotTaken));
+    prog.push(insn(jeq, 0, 0, abi.audit_arch));
+    // Load seccomp_data.nr.
     prog.push(insn(load, 0, 0, nr_offset));
-    // 3. The alias ABI (x32) shares the arch value: notify on its marker bit.
+    // The alias ABI (x32) shares the arch value: notify on its marker bit.
     if let Some(bit) = abi.alias_bit {
-        prog.push(insn(BPF_JMP | BPF_JSET | BPF_K, jump(3, notify_at)?, 0, bit));
+        to_notify.push((prog.len(), Branch::Taken));
+        prog.push(insn(BPF_JMP | BPF_JSET | BPF_K, 0, 0, bit));
     }
-    // 4. One jeq per tracked syscall, jumping to the notify return.
-    for (i, nr) in syscall_numbers.iter().enumerate() {
-        prog.push(insn(jeq, jump(first_jeq + i, notify_at)?, 0, *nr as u32));
+    // One jeq per tracked syscall, jumping to the notify return.
+    for nr in syscall_numbers {
+        to_notify.push((prog.len(), Branch::Taken));
+        prog.push(insn(jeq, 0, 0, *nr as u32));
     }
-    // 5. Default action: allow.
+    // Default action: allow.
     prog.push(insn(ret, 0, 0, SECCOMP_RET_ALLOW));
-    // 6. Notify target.
+    // Notify target.
+    let notify_at = prog.len();
     prog.push(insn(ret, 0, 0, SECCOMP_RET_USER_NOTIF));
 
+    for (at, branch) in to_notify {
+        let offset = jump(at, notify_at)?;
+
+        match branch {
+            Branch::Taken => prog[at].jt = offset,
+            Branch::NotTaken => prog[at].jf = offset,
+        }
+    }
+
+    debug_assert_eq!(validate_program(&prog), Ok(()), "the BPF program built by build_program is malformed");
+
     Ok(prog)
+}
+
+/// Check the structural invariants of a program [`build_program`] produces:
+///
+/// - it ends in `ret ALLOW` followed by `ret USER_NOTIF`, so no path runs off
+///   the end and the fall-through of the last test is the allow;
+/// - every instruction is one the program is allowed to use;
+/// - every jump that leaves the straight-line path (a non-zero offset) stays
+///   inside the program and lands on the final `ret USER_NOTIF`: a miscounted
+///   offset would otherwise land on another test, or on the allow return, and
+///   silently let a tracked syscall through.
+pub(crate) fn validate_program(prog: &[sock_filter]) -> Result<(), String> {
+    let n = prog.len();
+
+    let [.., allow, notify] = prog else {
+        return Err(format!("a program needs at least the two final returns, has {n} instructions"));
+    };
+
+    let ret = BPF_RET | BPF_K;
+
+    if u32::from(allow.code) != ret || allow.k != SECCOMP_RET_ALLOW {
+        return Err("the second-to-last instruction must be `ret ALLOW`".into());
+    }
+    if u32::from(notify.code) != ret || notify.k != SECCOMP_RET_USER_NOTIF {
+        return Err("the last instruction must be `ret USER_NOTIF`".into());
+    }
+
+    let notify_at = n - 1;
+
+    for (at, i) in prog.iter().enumerate() {
+        let code = u32::from(i.code);
+
+        if code == BPF_LD | BPF_W | BPF_ABS || code == ret {
+            continue;
+        }
+        if code != BPF_JMP | BPF_JEQ | BPF_K && code != BPF_JMP | BPF_JSET | BPF_K {
+            return Err(format!("instruction {at}: unexpected opcode {code:#x}"));
+        }
+
+        for (name, offset) in [("jt", i.jt), ("jf", i.jf)] {
+            if offset == 0 {
+                continue;
+            }
+
+            let target = at + 1 + usize::from(offset);
+
+            if target >= n {
+                return Err(format!("instruction {at}: {name} jumps to {target}, past the end ({n} instructions)"));
+            }
+            if target != notify_at {
+                return Err(format!(
+                    "instruction {at}: {name} lands on {target}, not on the notify return ({notify_at})"
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -198,9 +307,7 @@ mod tests {
     use super::*;
     use crate::syscalls;
 
-    const AUDIT_ARCH_I386: u32 = 0x4000_0003;
-    const AUDIT_ARCH_ARM: u32 = 0x4000_0028;
-    const X32_BIT: i32 = 0x4000_0000;
+    const X32_BIT: i32 = X32_SYSCALL_BIT as i32;
 
     /// Evaluates the subset of classic BPF the program uses (`ld abs`, `jeq`,
     /// `jset`, `ret`) against a `seccomp_data` with the given arch and nr, so
@@ -354,5 +461,112 @@ mod tests {
         for nr in &numbers {
             assert_eq!(evaluate(&prog, NATIVE_ABI.audit_arch, *nr), NOTIFY, "nr {nr}");
         }
+    }
+
+    #[test]
+    fn the_audit_arch_values_match_linux_audit_h() {
+        // <linux/audit.h>: EM_* | __AUDIT_ARCH_64BIT (0x80000000) | __AUDIT_ARCH_LE (0x40000000).
+        assert_eq!(AUDIT_ARCH_X86_64, 0xc000_003e);
+        assert_eq!(AUDIT_ARCH_AARCH64, 0xc000_00b7);
+        assert_eq!(AUDIT_ARCH_I386, 0x4000_0003);
+        assert_eq!(AUDIT_ARCH_ARM, 0x4000_0028);
+        assert_eq!(X32_SYSCALL_BIT, 0x4000_0000);
+    }
+
+    #[test]
+    fn built_programs_pass_the_structural_validation() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            for numbers in [vec![], vec![2], vec![2, 257, 437], (1..=max_syscalls(abi) as i32).collect()] {
+                let prog = build_program(abi, &numbers).unwrap();
+
+                assert_eq!(validate_program(&prog), Ok(()), "{abi:?} with {} syscalls", numbers.len());
+            }
+        }
+
+        let numbers: Vec<i32> = syscalls::tracked().iter().filter_map(TrackedSyscall::nr).collect();
+
+        assert_eq!(validate_program(&build_program(NATIVE_ABI, &numbers).unwrap()), Ok(()));
+    }
+
+    #[test]
+    fn every_jump_lands_on_the_notify_return_and_the_layout_is_as_documented() {
+        for abi in [Abi::X86_64, Abi::AARCH64] {
+            let numbers = [2, 257, 437];
+            let prog = build_program(abi, &numbers).unwrap();
+            let alias = usize::from(abi.alias_bit.is_some());
+            let notify_at = prog.len() - 1;
+
+            // arch load, arch jeq, nr load, [alias jset], one jeq per syscall, allow, notify.
+            assert_eq!(prog.len(), 3 + alias + numbers.len() + 2, "{abi:?}");
+            assert_eq!(prog[notify_at].k, SECCOMP_RET_USER_NOTIF);
+            assert_eq!(prog[notify_at - 1].k, SECCOMP_RET_ALLOW);
+
+            for (at, i) in prog.iter().enumerate() {
+                for offset in [i.jt, i.jf].into_iter().filter(|&o| o != 0) {
+                    assert_eq!(at + 1 + usize::from(offset), notify_at, "{abi:?} instruction {at}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn validation_rejects_a_jump_that_lands_on_the_wrong_instruction() {
+        let mut prog = build_program(Abi::X86_64, &[2, 257, 437]).unwrap();
+        let first_jeq = 4;
+
+        // One short: lands on the allow return, so syscall 2 would run unobserved.
+        prog[first_jeq].jt -= 1;
+
+        let err = validate_program(&prog).unwrap_err();
+
+        assert!(err.contains("not on the notify return"), "{err}");
+    }
+
+    #[test]
+    fn validation_rejects_a_jump_past_the_end() {
+        let mut prog = build_program(Abi::AARCH64, &[56]).unwrap();
+
+        prog[1].jf += 1;
+
+        let err = validate_program(&prog).unwrap_err();
+
+        assert!(err.contains("past the end"), "{err}");
+    }
+
+    #[test]
+    fn validation_rejects_a_program_that_does_not_end_in_allow_then_notify() {
+        let good = build_program(Abi::AARCH64, &[56]).unwrap();
+
+        assert!(validate_program(&[]).is_err());
+        assert!(validate_program(&good[..1]).is_err());
+
+        let mut swapped = good.clone();
+        let n = swapped.len();
+        swapped.swap(n - 2, n - 1);
+
+        assert!(validate_program(&swapped).unwrap_err().contains("ret ALLOW"));
+
+        let mut open_ended = good.clone();
+        open_ended.pop();
+
+        assert!(validate_program(&open_ended).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_an_opcode_the_program_never_uses() {
+        let mut prog = build_program(Abi::AARCH64, &[56]).unwrap();
+
+        prog[0].code = (BPF_JMP | BPF_JSET | BPF_K | 0x08) as u16;
+
+        assert!(validate_program(&prog).unwrap_err().contains("unexpected opcode"));
+    }
+
+    #[test]
+    fn a_backward_jump_cannot_be_encoded() {
+        assert!(jump(5, 5).is_err());
+        assert!(jump(5, 3).is_err());
+        assert_eq!(jump(5, 6).unwrap(), 0);
+        assert_eq!(jump(0, 256).unwrap(), 255);
+        assert!(jump(0, 257).is_err());
     }
 }
