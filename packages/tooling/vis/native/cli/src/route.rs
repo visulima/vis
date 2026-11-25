@@ -368,15 +368,6 @@ mod tests {
         }
     }
 
-    /// `x` is the exception: Node takes `--help` after `x` for a file name, so the entry keeps it.
-    #[test]
-    fn x_keeps_its_help_flag() {
-        let dispatch = |words: &[&str]| label(&route(&words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>()));
-
-        assert_eq!(dispatch(&["x", "--help"]), "x");
-        assert_eq!(dispatch(&["x", "-h"]), "x");
-    }
-
     #[test]
     fn the_longest_row_wins() {
         let dispatch = |words: &[&str]| label(&route(&words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>()));
@@ -386,6 +377,7 @@ mod tests {
         assert_eq!(dispatch(&["advisories", "bloom"]), "surface");
         assert_eq!(dispatch(&["pm", "--help"]), "surface");
         assert_eq!(dispatch(&["x", "--help"]), "x");
+        assert_eq!(dispatch(&["x", "-h"]), "x");
         assert_eq!(dispatch(&["list", "--help"]), "surface");
     }
 }
