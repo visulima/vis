@@ -59,6 +59,12 @@ const LOAD_TIMEOUT_MS: u32 = 10_000;
 /// exists or never will; the slack only covers scheduler lag.
 const CONNECT_TIMEOUT_MS: u32 = 3_000;
 
+/// One client per pipe: only the injected DLL of the one tracked process connects.
+const PIPE_MAX_INSTANCES: u32 = 1;
+
+/// In-buffer size of the pipe, in bytes. Outbound is 0 because the pipe is inbound only.
+const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
+
 #[napi(object)]
 pub struct WinFileAccess {
     pub path: String,
@@ -171,6 +177,7 @@ fn build_env_block(overrides: &HashMap<String, String>) -> Vec<u16> {
 
 fn close(handle: HANDLE) {
     if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+        // SAFETY: `handle` is a non-null, non-invalid handle this process owns and closes only here.
         unsafe { CloseHandle(handle) };
     }
 }
@@ -188,13 +195,17 @@ fn run(
     let cwd_wide = cwd.as_deref().map(wide);
     let mut env_block = env.as_ref().map(build_env_block);
 
+    // SAFETY: `STARTUPINFOW` is plain data for which all-zero is valid.
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
 
+    // SAFETY: `PROCESS_INFORMATION` is plain data for which all-zero is valid; `CreateProcessW` fills it.
     let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
 
     let creation_flags = CREATE_SUSPENDED | if env_block.is_some() { CREATE_UNICODE_ENVIRONMENT } else { 0 };
 
+    // SAFETY: every pointer is null or points at a NUL-terminated buffer that outlives the call (`cmd_wide` is the mutable
+    //     command line the API requires); `startup` and `info` are live and correctly sized.
     let ok = unsafe {
         CreateProcessW(
             std::ptr::null(),
@@ -211,6 +222,7 @@ fn run(
     };
 
     if ok == FALSE {
+        // SAFETY: reads the calling thread's last-error value; nothing intervened since the failed call.
         return Err(std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32));
     }
 
@@ -224,6 +236,7 @@ fn run(
     let pipe = match attach_tracker(info.hProcess, child_pid, &dll_path) {
         Ok(pipe) => pipe,
         Err(error) => {
+            // SAFETY: `info.hProcess` is the valid handle `CreateProcessW` just returned.
             unsafe { TerminateProcess(info.hProcess, 1) };
             close(info.hThread);
             close(info.hProcess);
@@ -235,10 +248,13 @@ fn run(
     let handle = pipe as isize;
     let reader = thread::spawn(move || drain_pipe(handle as HANDLE));
 
+    // SAFETY: `info.hThread` is the valid, suspended primary thread handle from `CreateProcessW`.
     unsafe { ResumeThread(info.hThread) };
+    // SAFETY: `info.hProcess` is the valid process handle from `CreateProcessW`.
     unsafe { WaitForSingleObject(info.hProcess, INFINITE) };
 
     let mut exit_code: u32 = 1;
+    // SAFETY: `info.hProcess` is a valid handle and `exit_code` a live out-parameter.
     unsafe { GetExitCodeProcess(info.hProcess, &mut exit_code) };
 
     let accesses = reader.join().unwrap_or_default();
@@ -255,6 +271,7 @@ fn run(
 }
 
 fn last_error(context: &str) -> std::io::Error {
+    // SAFETY: reads the calling thread's last-error value.
     let code = unsafe { GetLastError() };
     let os = std::io::Error::from_raw_os_error(code as i32);
 
@@ -274,15 +291,16 @@ fn failure(message: &str) -> std::io::Error {
 /// by a timeout and by the child exiting; a blocking `ConnectNamedPipe` hangs
 /// forever when the DLL fails to load or never connects.
 fn attach_tracker(process: HANDLE, child_pid: u32, dll_path: &str) -> std::io::Result<HANDLE> {
-    let pipe_name = wide(&format!(r"\\.\pipe\fspy-{child_pid}"));
+    let pipe_name = wide(&fspy_wire::pipe_name(child_pid));
+    // SAFETY: `pipe_name` is NUL-terminated and outlives the call; the security attributes are null (defaults).
     let pipe = unsafe {
         CreateNamedPipeW(
             pipe_name.as_ptr(),
             PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1,
+            PIPE_MAX_INSTANCES,
             0,
-            64 * 1024,
+            PIPE_BUFFER_BYTES,
             0,
             std::ptr::null(),
         )
@@ -302,11 +320,13 @@ fn attach_tracker(process: HANDLE, child_pid: u32, dll_path: &str) -> std::io::R
 }
 
 fn inject_and_connect(pipe: HANDLE, process: HANDLE, dll_path: &str) -> std::io::Result<()> {
+    // SAFETY: all arguments are null or constants; the returned handle is checked below.
     let event = unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) };
     if event.is_null() {
         return Err(last_error("CreateEventW failed"));
     }
 
+    // SAFETY: `OVERLAPPED` is plain data for which all-zero is valid.
     let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
     overlapped.hEvent = event;
 
@@ -336,10 +356,13 @@ fn inject_and_connect(pipe: HANDLE, process: HANDLE, dll_path: &str) -> std::io:
 fn begin_connect(pipe: HANDLE, overlapped: &mut OVERLAPPED) -> std::io::Result<bool> {
     // An overlapped connect normally returns FALSE and reports its state in the
     // last error; a TRUE return would mean it already completed.
+    // SAFETY: `pipe` is the open server handle and `overlapped` lives in the caller's frame until the I/O completes
+    //     (see `finish_connect`).
     if unsafe { ConnectNamedPipe(pipe, overlapped) } != FALSE {
         return Ok(false);
     }
 
+    // SAFETY: reads the calling thread's last-error value; nothing intervened since `ConnectNamedPipe`.
     match unsafe { GetLastError() } {
         ERROR_IO_PENDING => Ok(true),
         ERROR_PIPE_CONNECTED => Ok(false),
@@ -350,7 +373,8 @@ fn begin_connect(pipe: HANDLE, overlapped: &mut OVERLAPPED) -> std::io::Result<b
 /// Wait until the connect completes, the child exits, or the timeout passes.
 fn wait_connected(event: HANDLE, process: HANDLE) -> std::io::Result<()> {
     let handles = [event, process];
-    let waited = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), FALSE, CONNECT_TIMEOUT_MS) };
+    // SAFETY: `handles` is a live array of two valid handles and the count passed is its length.
+    let waited = unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), FALSE, CONNECT_TIMEOUT_MS) };
 
     match waited {
         WAIT_OBJECT_0 => Ok(()),
@@ -364,10 +388,13 @@ fn wait_connected(event: HANDLE, process: HANDLE) -> std::io::Result<()> {
 /// `cancel` aborts it first (the failure paths); otherwise it has completed.
 fn finish_connect(pipe: HANDLE, overlapped: &mut OVERLAPPED, cancel: bool) {
     if cancel {
+        // SAFETY: `pipe` is the open handle and `overlapped` the structure the pending I/O was started with.
         unsafe { CancelIoEx(pipe, overlapped) };
     }
 
     let mut transferred = 0u32;
+    // SAFETY: `pipe` is the open handle and `overlapped` the structure the pending I/O was started with; it blocks until
+    //     the (cancelled or finished) I/O completes, so the structure is no longer in use afterwards.
     unsafe { GetOverlappedResult(pipe, overlapped, &mut transferred, TRUE) };
 }
 
@@ -380,6 +407,10 @@ fn inject_dll(process: HANDLE, dll_path: &str) -> std::io::Result<()> {
     let path_wide = wide(dll_path);
     let bytes = path_wide.len() * std::mem::size_of::<u16>();
 
+    // SAFETY: `process` is a valid handle with the access `CreateProcess` grants its creator; the remote buffer is sized
+    //     for `path_wide`, written once, and only freed after the remote thread has finished or on an error path.
+    //     The `transmute` only changes the pointer-argument type of `LoadLibraryW`, which takes one pointer and returns a
+    //     value that fits the thread-start signature.
     unsafe {
         let remote = VirtualAllocEx(process, std::ptr::null(), bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if remote.is_null() {
@@ -450,19 +481,25 @@ fn drain_pipe(pipe: HANDLE) -> Vec<WinFileAccess> {
     let mut seen = std::collections::HashSet::<(String, u8)>::new();
     let mut out = Vec::new();
 
-    let mut buf = [0u8; 1 + 32 * 1024];
+    let mut buf = [0u8; fspy_wire::PIPE_MESSAGE_MAX];
 
     // The pipe is overlapped, so every read needs an OVERLAPPED; we block on it.
+    // SAFETY: all arguments are null or constants; a null event ends the loop below.
     let event = unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) };
 
     while !event.is_null() {
+        // SAFETY: `OVERLAPPED` is plain data for which all-zero is valid.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event;
 
         let mut read: u32 = 0;
+        // SAFETY: `pipe` is the open overlapped handle; `buf`, `read` and `overlapped` are live and outlive the I/O, which is
+        //     awaited below before the next iteration.
         let started = unsafe { ReadFile(pipe, buf.as_mut_ptr().cast(), buf.len() as u32, &mut read, &mut overlapped) };
 
+        // SAFETY: reads the calling thread's last-error value right after `ReadFile`.
         let finished = if started == FALSE && unsafe { GetLastError() } == ERROR_IO_PENDING {
+            // SAFETY: waits for the read started above on the same `pipe` and `overlapped`.
             unsafe { GetOverlappedResult(pipe, &overlapped, &mut read, TRUE) }
         } else {
             started
@@ -472,29 +509,18 @@ fn drain_pipe(pipe: HANDLE) -> Vec<WinFileAccess> {
             break; // pipe closed (child + DLL gone) or error.
         }
 
-        let n = read as usize;
-        if n < 2 {
+        let Some(frame) = fspy_wire::decode(&buf[..read as usize]) else {
             continue;
-        }
+        };
 
-        let mode = buf[0];
-        let path = String::from_utf8_lossy(&buf[1..n]).into_owned();
+        let path = String::from_utf8_lossy(frame.path).into_owned();
 
-        if !path.is_empty() && seen.insert((path.clone(), mode)) {
-            out.push(WinFileAccess { path, kind: kind_str(mode).to_string() });
+        if seen.insert((path.clone(), frame.op)) {
+            out.push(WinFileAccess { path, kind: fspy_wire::kind_name(frame.op).to_string() });
         }
     }
 
     close(event);
     close(pipe);
     out
-}
-
-fn kind_str(mode: u8) -> &'static str {
-    match mode {
-        1 => "write",
-        2 => "stat",
-        3 => "readdir",
-        _ => "read",
-    }
 }

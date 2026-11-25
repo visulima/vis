@@ -6,8 +6,13 @@ version = 4
 name = "fspy-windows"
 version = "0.0.0"
 dependencies = [
+ "fspy-wire",
  "windows-sys",
 ]
+
+[[package]]
+name = "fspy-wire"
+version = "0.0.0"
 
 [[package]]
 name = "windows-link"

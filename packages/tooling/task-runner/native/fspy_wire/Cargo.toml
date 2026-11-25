@@ -1,0 +1,14 @@
+[package]
+name = "fspy-wire"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Wire format shared by the injected file-access trackers (macOS dylib, Windows DLL) and the parent that drains them."
+
+# No dependencies on purpose: the injected libraries run inside arbitrary
+# processes, so everything here is allocation-free on the encode path and never
+# panics on any input.
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
