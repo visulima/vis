@@ -213,11 +213,11 @@ interface Scenario {
     /** The commands' output is a terminal's: compare it as one string. */
     merged?: boolean;
     name: string;
+    /** Needs `python3` on the machine (skipped without it). */
+    needsPython?: boolean;
     options?: ConcurrentRunnerOptions;
     /** Needs a POSIX shell, signals or a pty. */
     posixOnly?: boolean;
-    /** Needs `python3` on the machine (skipped without it). */
-    needsPython?: boolean;
     /** Builds the reaction anew for each runner, so state in it cannot leak from one run to the next. */
     react?: () => React;
 }
@@ -405,15 +405,15 @@ const scenarios: Scenario[] = [
         react: callSignalListener("hanging", "SIGINT"),
     },
     {
+        check: ({ events }) => {
+            // The scenario's own test is running this check.
+
+            expect(events.flatMap((event) => (event.kind === "stdout" ? [event.text] : []))).toStrictEqual(["session-leader"]);
+        },
         // The child leads a session of its own, so it has no controlling terminal: a read from an
         // inherited terminal or an open of `/dev/tty` fails instead of stopping the command, and
         // `kill(-pid)` reaches its whole group. Both runners do this through `setsid`.
         commands: () => [{ command: `sid=$(python3 -c 'import os; print(os.getsid(0))'); [ "$sid" = "$$" ] && echo session-leader || echo "not a session leader ($sid, $$)"` }],
-        check: ({ events }) => {
-            // The scenario's own test is running this check.
-            // eslint-disable-next-line vitest/no-standalone-expect
-            expect(events.flatMap((event) => (event.kind === "stdout" ? [event.text] : []))).toStrictEqual(["session-leader"]);
-        },
         name: "the command leads a session of its own",
         needsPython: true,
         posixOnly: true,
