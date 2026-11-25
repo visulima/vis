@@ -32,7 +32,8 @@ use crate::graph::{project_graph, GraphResult};
 use crate::js;
 use crate::node_context::{ci_root_context, quiet_context};
 use crate::output::write_stdout;
-use crate::pail::{plain_path, Layout, Level};
+use crate::pail::{Layout, Level};
+use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
 use vis_core::date::iso_from_millis;
 
@@ -243,7 +244,7 @@ fn answer(args: &[String]) -> Option<i32> {
     let target: PathBuf =
         if plan.output.starts_with('/') { PathBuf::from(&plan.output) } else { cwd.join(&plan.output) };
 
-    if !plain_path(&target) || !writable(&target) {
+    if !is_ascii_graphic_path(&target) || !writable(&target) {
         return None;
     }
 

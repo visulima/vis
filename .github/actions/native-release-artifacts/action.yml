@@ -69,6 +69,8 @@ runs:
 
         - name: "Distribute native artifacts to platform packages"
           shell: "bash"
+          env:
+              SKIP_PLATFORMS: "${{ inputs.skip-platforms }}"
           run: |
               set -euo pipefail
 
@@ -83,11 +85,24 @@ runs:
                   cp "artifacts/loader-${name}/index.d.ts" "packages/${pkg}/index.d.ts"
               done
 
-              # .node binaries -> npm/<platform>/ via napi artifacts.
+              # .node binaries -> npm/<platform>/. `napi artifacts` refuses to run when a configured
+              # target has no binary, so a run that skips platforms (see `skip-platforms`) places the
+              # files it has itself, under the name and in the directory `napi artifacts` would use
+              # (`<name>-native.<platform>.node` in `npm/<platform>/`).
               for pkg in tooling/task-runner terminal/tui tooling/vis tooling/secret-scanner; do
                   name="$(basename "$pkg")"
                   find artifacts -name "${name}-native.*.node" -exec mv {} "packages/${pkg}/" \;
-                  (cd "packages/${pkg}" && pnpm exec napi artifacts --output-dir . --npm-dir npm && rm -f ./*.node)
+                  if [ -n "$SKIP_PLATFORMS" ]; then
+                      for node in "packages/${pkg}/${name}-native."*.node; do
+                          [ -e "$node" ] || continue
+                          base="$(basename "$node" .node)"
+                          platform="${base#"${name}-native."}"
+                          mkdir -p "packages/${pkg}/npm/${platform}"
+                          mv "$node" "packages/${pkg}/npm/${platform}/${base}.node"
+                      done
+                  else
+                      (cd "packages/${pkg}" && pnpm exec napi artifacts --output-dir . --npm-dir npm && rm -f ./*.node)
+                  fi
               done
 
               # Sidecars napi artifacts doesn't handle (it only distributes .node files).

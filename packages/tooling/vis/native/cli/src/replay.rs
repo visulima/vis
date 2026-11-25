@@ -18,10 +18,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cache::iso;
+use crate::cache::format::iso;
 use crate::cache_hash::{json_text, summary_path, Output, Probe, ProbeId};
-use crate::pail::{plain, printable, Layout, Level};
+use crate::pail::{Layout, Level};
 use crate::summary::{context, emit, format_duration, is_object, load_summary, present, run_files, JsInt, Ordered};
+use crate::text::{is_ascii_graphic, is_ascii_printable};
 
 /// What the user asked for.
 #[derive(Debug, Default, PartialEq)]
@@ -157,12 +158,12 @@ impl Task {
 
     /// The strings the table prints for this task.
     fn printable(&self) -> bool {
-        printable(&self.cache_status)
-            && printable(&self.task_id)
-            && self.hash.as_deref().is_none_or(printable)
-            && self.start_time.as_deref().is_none_or(printable)
-            && self.end_time.as_deref().is_none_or(printable)
-            && self.dependencies.iter().all(|dependency| printable(dependency))
+        is_ascii_printable(&self.cache_status)
+            && is_ascii_printable(&self.task_id)
+            && self.hash.as_deref().is_none_or(is_ascii_printable)
+            && self.start_time.as_deref().is_none_or(is_ascii_printable)
+            && self.end_time.as_deref().is_none_or(is_ascii_printable)
+            && self.dependencies.iter().all(|dependency| is_ascii_printable(dependency))
     }
 }
 
@@ -211,7 +212,10 @@ fn pad(value: &str, width: usize) -> String {
 fn render_header(out: &mut String, summary: &RunSummary) -> Option<()> {
     let (arch, node, platform) = (summary.env("arch")?, summary.env("nodeVersion")?, summary.env("platform")?);
 
-    if ![summary.id.as_str(), &summary.start_time, &summary.end_time, arch, node, platform].into_iter().all(printable) {
+    if ![summary.id.as_str(), &summary.start_time, &summary.end_time, arch, node, platform]
+        .into_iter()
+        .all(is_ascii_printable)
+    {
         return None;
     }
 
@@ -300,7 +304,7 @@ fn render_detail(out: &mut String, summary: &RunSummary, task: &Task, layout: La
 
     out.push('\n');
 
-    if !(plain(&task.task_id) && plain(&summary.id)) {
+    if !(is_ascii_graphic(&task.task_id) && is_ascii_graphic(&summary.id)) {
         return None;
     }
 
@@ -369,7 +373,7 @@ fn answer(request: &Request, summary: Option<RunSummary>, root: &Path, layout: L
             Some(id) => format!("Run summary \"{id}\" not found in {}/.", data.join("runs").to_str()?),
         };
 
-        if !plain(data.to_str()?) {
+        if !is_ascii_graphic(data.to_str()?) {
             return None;
         }
 
@@ -388,7 +392,7 @@ fn answer(request: &Request, summary: Option<RunSummary>, root: &Path, layout: L
                     run_id: Some(&summary.id),
                     task_id: Some(filter),
                 })?;
-            } else if plain(filter) && plain(&summary.id) {
+            } else if is_ascii_graphic(filter) && is_ascii_graphic(&summary.id) {
                 out.stderr =
                     layout.block(Level::Error, &format!("Task \"{filter}\" was not part of run {}.", summary.id));
             } else {
@@ -465,7 +469,7 @@ fn list(request: &Request, root: &Path, layout: Layout) -> Option<Output> {
     if files.is_empty() {
         let shown = directory.to_str()?;
 
-        if !plain(shown) {
+        if !is_ascii_graphic(shown) {
             return None;
         }
 
@@ -477,7 +481,7 @@ fn list(request: &Request, root: &Path, layout: Layout) -> Option<Output> {
 
     let ids: Vec<&str> = files.iter().map(|file| file.name.strip_suffix(".json")).collect::<Option<_>>()?;
 
-    if !ids.iter().all(|id| printable(id)) {
+    if !ids.iter().all(|id| is_ascii_printable(id)) {
         return None;
     }
 

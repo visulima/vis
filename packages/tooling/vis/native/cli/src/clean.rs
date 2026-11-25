@@ -27,7 +27,8 @@ use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remo
 
 use crate::node_context::{any_ancestor_has, in_ci, DENO_FILES};
 use crate::output::write_streams;
-use crate::pail::{plain_path, Layout, Level};
+use crate::pail::{Layout, Level};
+use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{self, ConfigState};
 
 /// What one run prints, split the way pail splits it: error blocks go to stderr, the rest to
@@ -101,7 +102,7 @@ fn plan(args: &[String]) -> Option<Plan> {
     let directories = if dry_run { list_node_modules(&root) } else { removal_order(find_node_modules(&root), &root) };
     let lockfiles = if lockfile { find_lockfiles(&root) } else { Vec::new() };
 
-    let printable = directories.iter().chain(lockfiles.iter()).all(|path| plain_path(path));
+    let printable = directories.iter().chain(lockfiles.iter()).all(|path| is_ascii_graphic_path(path));
 
     if !printable {
         return None;
