@@ -430,6 +430,41 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
 const statusMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
+// Whether `vis graph` can pass the binary's native gate (`parse` in `graph_view.rs`): the ASCII, DOT and JSON
+// graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal. `html`, `--output`
+// and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
+// would delegate anyway.
+const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
+
+const graphMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    const seen = new Set();
+
+    for (let index = 1; index < args.length; index += 1) {
+        const long = args[index].startsWith("--");
+        const equals = long ? args[index].indexOf("=") : -1;
+        const name = equals === -1 ? args[index] : args[index].slice(0, equals);
+        const kind = name === "--format" || name === "-f" ? "format" : name === "--depth" || name === "-d" ? "depth" : undefined;
+
+        if (kind === undefined || seen.has(kind)) {
+            return false;
+        }
+
+        seen.add(kind);
+
+        const value = equals === -1 ? args[(index += 1)] : args[index].slice(equals + 1);
+
+        if (value === undefined || (kind === "format" ? !GRAPH_FORMATS.has(value) : !/^\d+$/.test(value))) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
 const optionValue = (args, index, name) => {
@@ -1555,6 +1590,8 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => hookMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
         },
     ],
+    // The ASCII, DOT and JSON graph; `html`, `--output` and the interactive viewer stay in Node.
+    ["graph", ({ args, environment, interactive, platform }) => helpOrNative(args, () => graphMayRunNatively(platform, environment, args, interactive))],
     ["i", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["ignore", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => ignoreMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The self-uninstall: `--yes`, or nothing to remove.

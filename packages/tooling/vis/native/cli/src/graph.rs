@@ -27,6 +27,8 @@ pub enum GraphResult {
 pub struct ProjectGraph {
     /// Keyed by project name, which is the `package.json` name.
     pub projects: BTreeMap<String, Project>,
+    /// The project names in discovery order, which is the order Node holds its graph in.
+    pub order: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -215,7 +217,9 @@ fn resolve(root: &Path) -> Option<GraphResult> {
         graph.insert(name.clone(), Project { directory: directory.clone(), project_type, edges });
     }
 
-    Some(GraphResult::Native(ProjectGraph { projects: graph }))
+    let order = projects.iter().map(|(name, _, _)| name.clone()).collect();
+
+    Some(GraphResult::Native(ProjectGraph { order, projects: graph }))
 }
 
 /// `None` when the file is missing, unreadable, or not a manifest this module reproduces.

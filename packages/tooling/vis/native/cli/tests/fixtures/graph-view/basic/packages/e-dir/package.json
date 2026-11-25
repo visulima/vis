@@ -1,0 +1,1 @@
+{"name": "alpha", "version": "1.0.0", "bin": {"alpha": "a.js"}, "dependencies": {"zeta": "workspace:*", "lib-c": "workspace:*"}}

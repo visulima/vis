@@ -48,6 +48,7 @@ mod error;
 mod exec;
 mod fs_write;
 mod graph;
+mod graph_view;
 mod help;
 mod hook;
 mod http;
