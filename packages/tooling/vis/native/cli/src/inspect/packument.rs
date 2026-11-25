@@ -37,7 +37,7 @@ pub(super) enum Cached {
 }
 
 /// `encodeURIComponent` for a name made of lower-case letters, digits, `.`, `_`, `-`, `@` and `/`.
-fn encode(name: &str) -> String {
+pub(super) fn encode(name: &str) -> String {
     name.replace('@', "%40").replace('/', "%2F")
 }
 

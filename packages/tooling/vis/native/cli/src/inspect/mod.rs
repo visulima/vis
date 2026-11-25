@@ -1,14 +1,15 @@
 //! `vis inspect <package>[@<spec>] --json [--strict] [--only <marshalls>]` — the native port of
-//! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument.
+//! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument, and of
+//! `downloads`, which asks the registry's download API (see [`downloads`]).
 //!
 //! Node fetches the packument (`getPackument`, cached half an hour in `~/.vis/cache/packuments`), resolves the spec to a
 //! version, runs each marshall in turn and prints `{errors, findings, summary, warnings}`; it exits 1 when there is an
 //! error (or any finding with `--strict`) and 2 when the package is missing or the spec names no version. This module
 //! reproduces that for a unix CI run off a terminal at the root of a pnpm workspace (see [`context_decline`]).
 //!
-//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin` and `metadata`. A run that has to execute another marshall
-//! goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks up DNS records and
-//! `archivedRepo`, `downloads` and `signatures` ask other services. `MARSHALL_DISABLE_*` or `--only` make a run native.
+//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata` and `downloads`. A run that has to execute
+//! another marshall goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks up DNS records
+//! and `archivedRepo` and `signatures` ask other services. `MARSHALL_DISABLE_*` or `--only` make a run native.
 //!
 //! Everything it cannot reproduce goes to Node before anything is printed or written:
 //!
@@ -21,11 +22,12 @@
 //! - a spec that is not a tag or an exact version (a range needs node-semver's `maxSatisfying`), versions that are not
 //!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names.
 //!
-//! The packument cache is read and written as Node does: a fresh entry is used, a fetched packument is written, in the
-//! bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
+//! The packument cache and the download counts are read and written as Node does: a fresh entry is used, a fetched answer
+//! is written, in the bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
 
 mod args;
 mod clean;
+mod downloads;
 mod js_format;
 mod js_value;
 mod marshalls;
@@ -33,6 +35,7 @@ mod npmrc;
 mod packument;
 mod report;
 mod semver_js;
+mod service_cache;
 
 use std::ffi::OsString;
 use std::fs;
@@ -73,8 +76,21 @@ struct Plan {
     cache: Vec<CacheAction>,
 }
 
-/// What the run reads from outside: the places and the time.
+/// The web services a run asks, as addresses so that a test can point them at a stub on this machine.
+struct Services {
+    /// `DOWNLOADS_API_BASE`.
+    downloads: String,
+}
+
+impl Services {
+    fn production() -> Self {
+        Self { downloads: downloads::API.to_owned() }
+    }
+}
+
+/// What the run reads from outside: the places, the services and the time.
 struct Context {
+    services: Services,
     root: PathBuf,
     home: PathBuf,
     cache_dir: String,
@@ -112,7 +128,12 @@ fn native_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
     match run.iter().find(|marshall| {
         !matches!(
             marshall,
-            Marshall::Author | Marshall::Provenance | Marshall::S1ngularity | Marshall::NewBin | Marshall::Metadata
+            Marshall::Author
+                | Marshall::Provenance
+                | Marshall::S1ngularity
+                | Marshall::NewBin
+                | Marshall::Metadata
+                | Marshall::Downloads
         )
     }) {
         Some(other) => {
@@ -144,6 +165,7 @@ fn answer(args: &[String]) -> Result<Plan, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not text".to_owned())?;
     let root = std::env::current_dir().map_err(|error| format!("the working directory is unknown: {error}"))?;
     let context = Context {
+        services: Services::production(),
         root,
         home: PathBuf::from(home),
         cache_dir,
@@ -202,7 +224,18 @@ impl Packuments {
 
     /// The packuments of a run from `root`, with the places, the clock and the client given.
     pub(crate) fn at(root: PathBuf, home: PathBuf, cache_dir: String, now_ms: u64, client: HttpClient) -> Self {
-        Self { context: Context { root, home, cache_dir, now_ms, layout: None, registry: None }, client }
+        Self {
+            context: Context {
+                services: Services::production(),
+                root,
+                home,
+                cache_dir,
+                now_ms,
+                layout: None,
+                registry: None,
+            },
+            client,
+        }
     }
 
     /// What `getPackument` finds for a package, read through `read` with the view of it (`None` for a package the
@@ -297,7 +330,7 @@ fn resolve<'a>(view: &View<'a>, spec: Option<&str>) -> Result<Option<&'a str>, S
 
 /// The whole run, up to what it prints: pure but for the cache read, the registry request and the clock in `context`.
 fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient) -> Result<Plan, String> {
-    let (found, cache) = packument_of(&flags.name, context, client)?;
+    let (found, mut cache) = packument_of(&flags.name, context, client)?;
     let missing = |message: String| -> Result<Plan, String> {
         let layout = context
             .layout
@@ -342,6 +375,21 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
             Marshall::S1ngularity => marshalls::s1ngularity(&view, &target)?,
             Marshall::NewBin => marshalls::new_bin(&view, &target)?,
             Marshall::Metadata => marshalls::metadata(&view, &target)?,
+            Marshall::Downloads => {
+                let base = &context.services.downloads;
+
+                if !url_is_plain(base) {
+                    return Err(format!(
+                        "the downloads address {base:?} is not a URL `fetch` and the client read alike"
+                    ));
+                }
+
+                let (found, changes) = downloads::run(client, base, &context.cache_dir, &flags.name, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
             other => return Err(format!("the {} marshall is not native", other.name())),
         });
     }

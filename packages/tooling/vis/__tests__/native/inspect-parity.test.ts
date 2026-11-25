@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,15 +11,18 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
 
 /**
  * `vis inspect &lt;package> --json` exists twice: the Node handler (`src/commands/inspect/handler.ts`) and the native path
- * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument alone (`author`, `provenance`,
- * `s1ngularity`, `newBin`, `metadata`). For every input the native path accepts it must print the same JSON on the same
+ * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument (`author`, `provenance`,
+ * `s1ngularity`, `newBin`, `metadata`) and `downloads`, which asks the registry's download API. For every input the native path accepts it must print the same JSON on the same
  * stream, end with the same exit status and leave the same packument cache as Node; every input it declines must be handed
  * to Node before anything is printed or written (see `workspace-parity-harness.ts` for how both are proved).
  *
  * The registry is a stub in a separate process (the runs block this one) that the `.npmrc` of the workspace points both
  * sides at, so nothing reaches the network. Each side gets its own `HOME`, because the cache lives in
  * `~/.vis/cache/packuments`; the `createdAt` of a fresh cache entry is masked. The marshalls that ask other services
- * (`expiredDomains`, `archivedRepo`, `downloads`) are switched off with `MARSHALL_DISABLE_*`, which both sides read.
+ * (`expiredDomains`, `archivedRepo`, `downloads`) are switched off with `MARSHALL_DISABLE_*`, which both sides read. A run that
+ * needs `downloads` answers from the cache file both sides read (the download API's address is a constant, so no run can
+ * point either side at a stub); what each side does with an answer of the API is proved by `downloads answers` below, with
+ * Node's `fetch` replaced and the binary's side by the unit tests in `native/cli/src/inspect/tests.rs`, which assert the same text.
  */
 
 const harness = new Harness(["inspect"]);
@@ -508,6 +511,123 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 
+    describe("the downloads marshall", () => {
+        const count = (downloads: number): Record<string, string> => {
+            return { ".vis/cache/downloads/calm.json": JSON.stringify({ createdAt: Date.now(), downloads, observedAt: new Date().toISOString(), ttlMs: 86_400_000 }) };
+        };
+
+        it.each([[0], [5], [19], [20], [9999], [10_000], [3_000_000]])("reports a cached count of %i the way Node does", (downloads) => {
+            expect.hasAssertions();
+
+            const result = report(run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: count(downloads), native: true }).stdout);
+
+            expect(result.summary.errorCount).toBe(downloads < 20 ? 1 : 0);
+            expect(result.summary.warningCount).toBe(downloads >= 20 && downloads < 10_000 ? 1 : 0);
+        });
+
+        it("runs after metadata and with the exit status Node gives", () => {
+            expect.hasAssertions();
+
+            const result = run({ args: ["young", "--json", "--only", "metadata,downloads,author"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/young.json": count(5)[".vis/cache/downloads/calm.json"] as string }, native: true });
+
+            expect(result.status).toBe(1);
+        });
+    });
+
+    describe("what the marshalls that ask other services print", () => {
+        const directory = (): string => realpathSync(mkdtempSync(join(scratch, "services-")));
+        const PRELOAD = String.raw`
+const original = globalThis.fetch;
+const answers = JSON.parse(process.env.SERVICE_ANSWERS);
+globalThis.fetch = async (url, options) => {
+    const text = String(url);
+    for (const [prefix, answer] of Object.entries(answers)) {
+        if (text.startsWith(prefix)) {
+            if (answer.fail) throw new TypeError("fetch failed");
+            return new Response(answer.body, { headers: answer.headers ?? {}, status: answer.status });
+        }
+    }
+    return original(url, options);
+};
+`;
+
+        /** Node on the stub registry with the web services answering `answers`; what it prints, and the cache entries it wrote with the clock masked. */
+        const nodeWith = (name: string, only: string, answers: Record<string, { body?: string; fail?: boolean; status?: number }>): { cache: Record<string, string>; status: number | null; stdout: string } => {
+            const preload = join(directory(), "preload.cjs");
+            const home = makeHome();
+            const [nodeRoot] = harness.pair(workspaceFiles({ ".npmrc": `registry=${base}/\n` }));
+
+            writeFileSync(preload, PRELOAD);
+
+            const result = spawnSync(process.execPath, ["--require", preload, nodeEntry, "inspect", name, "--json", "--only", only], {
+                cwd: nodeRoot,
+                encoding: "utf8",
+                env: Harness.environment({ HOME: home, MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", SERVICE_ANSWERS: JSON.stringify(answers) }),
+            });
+            const cache: Record<string, string> = {};
+
+            for (const [file, text] of Object.entries(homeState(home))) {
+                if (!file.includes("packuments")) {
+                    cache[file] = text.replace(/"observedAt":"[^"]+"/, '"observedAt":"NOW"');
+                }
+            }
+
+            return { cache, status: result.status, stdout: result.stdout };
+        };
+        const API = "https://api.npmjs.org/downloads/point/last-month/";
+        const written = (downloads: number): Record<string, string> => {
+            return { ".vis/cache/downloads/calm.json": `{"createdAt":"NOW","downloads":${downloads},"observedAt":"NOW","ttlMs":86400000}` };
+        };
+        const finding = (severity: string, message: string): string => `{\n      "marshall": "downloads",\n      "message": "${message}",\n      "packageName": "calm",\n      "severity": "${severity}"\n    }`;
+        const reportOf = (severity: string, message: string): string => {
+            const one = finding(severity, message);
+            const list = (key: string, own: boolean): string => `  "${key}": ${own ? `[\n    ${one}\n  ]` : "[]"}`;
+
+            return `{\n${list("errors", severity === "error")},\n${list("findings", true)},\n  "summary": {\n    "errorCount": ${severity === "error" ? 1 : 0},\n    "warningCount": ${severity === "warning" ? 1 : 0}\n  },\n${list("warnings", severity === "warning")}\n}\n`;
+        };
+
+        it.each([
+            [5, "error", "Only 5 downloads in the past month."],
+            [19, "error", "Only 19 downloads in the past month."],
+            [20, "warning", "Only 20 downloads in the past month."],
+            [9999, "warning", "Only 9999 downloads in the past month."],
+        ])("downloads answers a count of %i", (downloads, severity, message) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body: JSON.stringify({ downloads }), status: 200 } });
+
+            expect(result.stdout).toBe(reportOf(severity, message));
+            expect(result.cache).toStrictEqual(written(downloads));
+        });
+
+        it("downloads answers a large count with no finding and caches it", () => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body: '{"downloads":10000}', status: 200 } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual(written(10_000));
+        });
+
+        it.each([
+            [404, '{"error":"not found"}'],
+            [429, "{}"],
+            [500, "oops"],
+            [200, "{}"],
+            [200, '{"downloads":"5"}'],
+            [200, "null"],
+            [200, "[]"],
+            [200, "not json"],
+        ])("downloads answers a %i with %j as no data and caches nothing", (status, body) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body, status } });
+
+            expect(result.stdout).toBe(reportOf("warning", "npm stats API returned no monthly download data."));
+            expect(result.cache).toStrictEqual({});
+        });
+    });
+
     describe("what goes to Node", () => {
         it.each([
             ["the text report", ["calm"]],
@@ -531,21 +651,12 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         // Node answers these from the cache files of the services, so nothing reaches the network.
         it.each([
             ["every marshall", ["calm", "--json"]],
-            ["downloads", ["calm", "--json", "--only", "downloads"]],
             ["archivedRepo", ["calm", "--json", "--only", "archivedRepo,author"]],
             ["expiredDomains", ["calm", "--json", "--only", "expiredDomains"]],
         ])("hands over a run that needs a marshall that asks a service (%s)", (_label, args) => {
             expect.hasAssertions();
 
             run({ args, extra: { MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", MARSHALL_DISABLE_EXPIRED_DOMAINS: "0" }, files: serviceCaches(), native: false });
-        });
-
-        it("hands over a download count below the floor", () => {
-            expect.hasAssertions();
-
-            const files = { ".vis/cache/downloads/calm.json": JSON.stringify({ createdAt: Date.now(), downloads: 5, observedAt: new Date().toISOString(), ttlMs: 86_400_000 }) };
-
-            run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files, native: false });
         });
 
         it.each(["server-error", "not-json", "array", "bom", "redirect"])("hands over the answer of %s", (name) => {

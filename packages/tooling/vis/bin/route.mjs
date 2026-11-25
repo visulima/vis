@@ -1217,10 +1217,11 @@ const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive
 // in the plain shape of a registry name and spec, `--json`, and `--strict` and `--only <list>` at most once, for a pnpm workspace
 // whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node option in the environment.
 // The marshalls the run executes (those `--only` names, or all but `signatures`, less the ones `MARSHALL_DISABLE_*` turns off) must
-// be among the five that read the packument alone: `expiredDomains`, `archivedRepo`, `downloads` and `signatures` ask other services,
-// so a plain `vis inspect <package> --json` stays in Node. The binary re-checks everything, including the registry and the packument.
+// be among the six the binary has (`INSPECT_NATIVE_MARSHALLS`: the five that read the packument alone, and `downloads`, which asks the
+// registry's download API): `expiredDomains`, `archivedRepo` and `signatures` ask other services, so a plain
+// `vis inspect <package> --json` stays in Node. The binary re-checks everything, including the registry and the packument.
 const INSPECT_MARSHALLS = ["author", "provenance", "s1ngularity", "newBin", "metadata", "downloads", "expiredDomains", "signatures", "archivedRepo"];
-const INSPECT_NATIVE_MARSHALLS = new Set(["author", "metadata", "newBin", "provenance", "s1ngularity"]);
+const INSPECT_NATIVE_MARSHALLS = new Set(["author", "downloads", "metadata", "newBin", "provenance", "s1ngularity"]);
 const INSPECT_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const INSPECT_SPEC = /^[\w.+-]*$/;
 const INSPECT_ONLY = /^[\da-z,]+$/i;
