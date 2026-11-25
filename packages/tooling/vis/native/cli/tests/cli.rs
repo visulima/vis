@@ -21,6 +21,26 @@ fn binary() -> Command {
     command
 }
 
+/// `text` without its SGR colour sequences (`ESC [ ... m`).
+fn without_colour(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            for skipped in chars.by_ref() {
+                if skipped == 'm' {
+                    break;
+                }
+            }
+        } else {
+            plain.push(character);
+        }
+    }
+
+    plain
+}
+
 #[test]
 fn native_info_prints_diagnostics_and_injected_version() {
     let output = binary().arg("__native-info").env("VIS_VERSION", "9.9.9-test").output().expect("run binary");
@@ -618,7 +638,8 @@ fn package_manager_commands_answer_help_without_running_the_manager() {
                 .env_remove("VIS_FALLBACK_ENTRY")
                 .output()
                 .expect("run binary");
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            // A CI runner sets FORCE_COLOR, which colours the heading the assertion looks for.
+            let stdout = without_colour(&String::from_utf8_lossy(&output.stdout));
 
             assert!(
                 output.status.success(),
