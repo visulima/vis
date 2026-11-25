@@ -27,12 +27,9 @@ pub(crate) enum Help {
     Manifest,
     /// The entry gets the flag as one of its own arguments.
     ///
-    /// Only the package-manager and runner commands (`pm`, `x`, `exec`, `remove`, `dedupe`, `link`,
-    /// `unlink`, `outdated`, `why`) use this: the launcher always routes them to the binary
-    /// (`NATIVE_COMMANDS` in `bin/route.mjs`), and their entries have always seen `--help` as one
-    /// of their own arguments. For `x` that matches Node, which takes `--help` for a file name. For the
-    /// others the entry hands it to the package manager, so `vis exec --help` prints the package
-    /// manager's help where the Node CLI prints vis's own. That looks unintended and is kept as it was.
+    /// Only `x` uses this: Node takes `--help` after `x` for a file name, so the entry has always seen it
+    /// as one of its own arguments, and the launcher routes `x` to the binary
+    /// (`NATIVE_COMMANDS` in `bin/route.mjs`) whatever follows.
     Entry,
 }
 
@@ -93,16 +90,18 @@ static ROUTES: &[Route] = &[
     answers(&["dlx"], crate::dlx::run),
     answers(&["info"], crate::info::run),
     answers(&["view"], crate::info::run),
-    // The package-manager and runner commands: `--help` is theirs (see `Help::Entry`).
-    takes_help(&["exec"], crate::exec::run),
-    takes_help(&["pm"], crate::pm::run),
+    // The package-manager and runner commands. `--help` before a `--` is the manifest's, as in the Node CLI,
+    // so it never reaches the package manager (`vis dedupe --help` used to run `<pm> dedupe`); `x` is the
+    // exception (see `Help::Entry`).
+    answers(&["exec"], crate::exec::run),
+    answers(&["pm"], crate::pm::run),
     takes_help(&["x"], crate::x::run),
-    takes_help(&["remove"], crate::pm_family::run),
-    takes_help(&["dedupe"], crate::pm_family::run),
-    takes_help(&["link"], crate::pm_family::run),
-    takes_help(&["unlink"], crate::pm_family::run),
-    takes_help(&["outdated"], crate::pm_family::run),
-    takes_help(&["why"], crate::pm_family::run),
+    answers(&["remove"], crate::pm_family::run),
+    answers(&["dedupe"], crate::pm_family::run),
+    answers(&["link"], crate::pm_family::run),
+    answers(&["unlink"], crate::pm_family::run),
+    answers(&["outdated"], crate::pm_family::run),
+    answers(&["why"], crate::pm_family::run),
 ];
 
 /// Who takes an invocation.
@@ -352,6 +351,25 @@ mod tests {
         assert!(rows.iter().all(|path| covered.contains(path)));
     }
 
+    /// `--help` / `-h` before a `--` is the manifest's for the package-manager commands too, as it is in the Node
+    /// CLI: the entry never sees it, so the manager is neither asked for its own help nor run with no arguments.
+    /// After a `--` it is the tool's, so the row keeps it.
+    #[test]
+    fn package_manager_commands_leave_help_to_the_manifest() {
+        let dispatch = |words: &[&str]| label(&route(&words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>()));
+
+        for command in ["exec", "pm", "remove", "dedupe", "link", "unlink", "outdated", "why"] {
+            for shape in [&["--help"][..], &["-h"], &["tool", "--help"], &["--json", "-h"], &["--help", "--"]] {
+                let words: Vec<&str> = std::iter::once(command).chain(shape.iter().copied()).collect();
+
+                assert_eq!(dispatch(&words), "surface", "{words:?}");
+            }
+
+            assert_eq!(dispatch(&[command, "--", "--help"]), command);
+            assert_eq!(dispatch(&[command, "tool"]), command);
+        }
+    }
+
     #[test]
     fn the_longest_row_wins() {
         let dispatch = |words: &[&str]| label(&route(&words.iter().map(|word| (*word).to_owned()).collect::<Vec<_>>()));
@@ -359,7 +377,9 @@ mod tests {
         assert_eq!(dispatch(&["cache", "list", "x"]), "cache list");
         assert_eq!(dispatch(&["cache"]), "surface");
         assert_eq!(dispatch(&["advisories", "bloom"]), "surface");
-        assert_eq!(dispatch(&["pm", "--help"]), "pm");
+        assert_eq!(dispatch(&["pm", "--help"]), "surface");
+        assert_eq!(dispatch(&["x", "--help"]), "x");
+        assert_eq!(dispatch(&["x", "-h"]), "x");
         assert_eq!(dispatch(&["list", "--help"]), "surface");
     }
 }

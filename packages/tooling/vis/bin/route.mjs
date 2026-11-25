@@ -16,6 +16,10 @@ import { GROUP_LISTINGS } from "./group-listing.mjs";
 // `exec` parity was verified empirically against cerebro: tool flags after the
 // command are forwarded to the tool on both the native path and the Node handler
 // (src/commands/exec/handler.ts), which was fixed to stop dropping them.
+//
+// `--help` / `-h` before a `--` is vis's own help for these too (except `x`, whose entry keeps it for the file
+// name Node takes it for): the binary answers it from its manifest and never asks the package manager, so
+// the launcher needs no help rule for them. `Help` in `native/cli/src/route.rs` is the binary's half.
 const NATIVE_COMMANDS = new Set(["--version", "-V", "__native-info", "__pm-shim", "dedupe", "exec", "link", "outdated", "pm", "remove", "unlink", "why", "x"]);
 
 // `--help` / `-h` anywhere before a `--` separator.
