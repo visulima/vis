@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, ResolvedCommand};
 
 /// Options for `resolve_why`.
 #[derive(Clone, Debug, Default)]
@@ -25,44 +25,23 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
 
             args.push("why".into());
 
-            if opts.json {
-                args.push("--json".into());
-            }
-
-            if opts.long {
-                args.push("--long".into());
-            }
-
-            if opts.parseable {
-                args.push("--parseable".into());
-            }
-
-            if opts.recursive {
-                args.push("--recursive".into());
-            }
-
-            if opts.dev {
-                args.push("--dev".into());
-            }
-
-            if opts.prod {
-                args.push("--prod".into());
-            }
-
-            if opts.no_optional {
-                args.push("--no-optional".into());
-            }
-
-            if opts.global {
-                args.push("--global".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.json, "--json"),
+                    (opts.long, "--long"),
+                    (opts.parseable, "--parseable"),
+                    (opts.recursive, "--recursive"),
+                    (opts.dev, "--dev"),
+                    (opts.prod, "--prod"),
+                    (opts.no_optional, "--no-optional"),
+                    (opts.global, "--global"),
+                ],
+            );
 
             if let Some(d) = opts.depth {
                 args.push("--depth".into());
@@ -78,10 +57,7 @@ pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<Resolved
                 args.push("--json".into());
             }
 
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--workspace", &opts.filter);
 
             if opts.long {
                 warnings.push("npm does not support --long for explain.".into());

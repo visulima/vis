@@ -1,4 +1,4 @@
-use super::{validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
 
 /// Options for `resolve_add`.
 #[derive(Clone, Debug, Default)]
@@ -25,61 +25,42 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
     if opts.global && pm != "bun" {
         args.push("install".into());
         args.push("--global".into());
-        if opts.save_dev {
-            args.push("--save-dev".into());
-        }
-        if opts.exact {
-            args.push("--save-exact".into());
-        }
+        push_flags(&mut args, &[(opts.save_dev, "--save-dev"), (opts.exact, "--save-exact")]);
         args.extend(opts.packages);
         return Ok(ResolvedCommand { bin: "npm".into(), args, warnings });
     }
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
             if opts.workspace_root {
                 args.push("-w".into());
             }
             args.push("add".into());
-            if opts.save_dev {
-                args.push("-D".into());
-            }
-            if opts.exact {
-                args.push("-E".into());
-            }
-            if opts.peer {
-                args.push("--save-peer".into());
-            }
-            if opts.optional {
-                args.push("-O".into());
-            }
-            if opts.workspace {
-                args.push("--workspace".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.save_dev, "-D"),
+                    (opts.exact, "-E"),
+                    (opts.peer, "--save-peer"),
+                    (opts.optional, "-O"),
+                    (opts.workspace, "--workspace"),
+                ],
+            );
             args.extend(opts.packages);
         }
         "npm" => {
             args.push("install".into());
-            if opts.save_dev {
-                args.push("--save-dev".into());
-            }
-            if opts.exact {
-                args.push("--save-exact".into());
-            }
-            if opts.peer {
-                args.push("--save-peer".into());
-            }
-            if opts.optional {
-                args.push("--save-optional".into());
-            }
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.save_dev, "--save-dev"),
+                    (opts.exact, "--save-exact"),
+                    (opts.peer, "--save-peer"),
+                    (opts.optional, "--save-optional"),
+                ],
+            );
+            push_each(&mut args, "--workspace", &opts.filter);
             if opts.workspace_root {
                 // npm's `-w` is `--workspace` and consumes the next argument, so it
                 // cannot select the root. Pin the root explicitly instead.
@@ -93,21 +74,16 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
             if version.starts_with("1.") {
                 yarn_workspace_prefix(&opts.filter, &mut args)?;
                 args.push("add".into());
-                if opts.save_dev {
-                    args.push("--dev".into());
-                }
-                if opts.exact {
-                    args.push("--exact".into());
-                }
-                if opts.peer {
-                    args.push("--peer".into());
-                }
-                if opts.optional {
-                    args.push("--optional".into());
-                }
-                if opts.workspace_root {
-                    args.push("-W".into());
-                }
+                push_flags(
+                    &mut args,
+                    &[
+                        (opts.save_dev, "--dev"),
+                        (opts.exact, "--exact"),
+                        (opts.peer, "--peer"),
+                        (opts.optional, "--optional"),
+                        (opts.workspace_root, "-W"),
+                    ],
+                );
                 args.extend(opts.packages);
             } else {
                 if opts.filter.len() > 1 {
@@ -116,38 +92,30 @@ pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<Resolved
                     yarn_workspace_prefix(&opts.filter, &mut args)?;
                 }
                 args.push("add".into());
-                if opts.save_dev {
-                    args.push("--dev".into());
-                }
-                if opts.exact {
-                    args.push("--exact".into());
-                }
-                if opts.peer {
-                    args.push("--peer".into());
-                }
-                if opts.optional {
-                    args.push("--optional".into());
-                }
+                push_flags(
+                    &mut args,
+                    &[
+                        (opts.save_dev, "--dev"),
+                        (opts.exact, "--exact"),
+                        (opts.peer, "--peer"),
+                        (opts.optional, "--optional"),
+                    ],
+                );
                 args.extend(opts.packages);
             }
         }
         "bun" => {
             args.push("add".into());
-            if opts.save_dev {
-                args.push("--dev".into());
-            }
-            if opts.exact {
-                args.push("--exact".into());
-            }
-            if opts.peer {
-                args.push("--peer".into());
-            }
-            if opts.optional {
-                args.push("--optional".into());
-            }
-            if opts.global {
-                args.push("--global".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.save_dev, "--dev"),
+                    (opts.exact, "--exact"),
+                    (opts.peer, "--peer"),
+                    (opts.optional, "--optional"),
+                    (opts.global, "--global"),
+                ],
+            );
             args.extend(opts.packages);
         }
         _ => unreachable!(),

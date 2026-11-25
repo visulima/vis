@@ -44,6 +44,19 @@ fn validate_pm(pm: &str) -> Result<(), String> {
     }
 }
 
+/// Appends each flag whose option is set, in the order listed.
+fn push_flags(args: &mut Vec<String>, flags: &[(bool, &str)]) {
+    args.extend(flags.iter().filter(|(set, _)| *set).map(|(_, flag)| (*flag).to_owned()));
+}
+
+/// Appends `flag value` for each of the values, as repeated `--filter a --filter b`.
+fn push_each(args: &mut Vec<String>, flag: &str, values: &[String]) {
+    for value in values {
+        args.push(flag.to_owned());
+        args.push(value.clone());
+    }
+}
+
 /// Scope a Yarn command to one workspace: `yarn workspace <name> <cmd>`. `yarn
 /// workspace` targets a single workspace, so more than one filter is refused
 /// instead of silently running against only the first.

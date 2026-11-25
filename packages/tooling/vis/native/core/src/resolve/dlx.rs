@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{push_flags, validate_pm, ResolvedCommand};
 
 /// Options for `resolve_dlx`.
 #[derive(Clone, Debug, Default)]
@@ -54,12 +54,7 @@ pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<Resolved
                 args.push("--package".into());
                 args.push(pkg.clone());
             }
-            if opts.shell_mode {
-                args.push("-c".into());
-            }
-            if opts.silent {
-                args.push("--silent".into());
-            }
+            push_flags(&mut args, &[(opts.shell_mode, "-c"), (opts.silent, "--silent")]);
             args.push(command);
             args.extend(opts.args);
         }

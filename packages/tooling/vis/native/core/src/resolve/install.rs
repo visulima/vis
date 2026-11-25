@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, ResolvedCommand};
 
 /// Options for `resolve_install`.
 #[derive(Clone, Debug, Default)]
@@ -25,69 +25,42 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
             if opts.workspace_root {
                 args.push("-w".into());
             }
             args.push("install".into());
-            if opts.frozen_lockfile {
-                args.push("--frozen-lockfile".into());
-            }
-            if opts.prod {
-                args.push("--prod".into());
-            }
-            if opts.dev {
-                args.push("--dev".into());
-            }
-            if opts.no_optional {
-                args.push("--no-optional".into());
-            }
-            if opts.force {
-                args.push("--force".into());
-            }
-            if opts.ignore_scripts {
-                args.push("--ignore-scripts".into());
-            }
-            if opts.lockfile_only {
-                args.push("--lockfile-only".into());
-            }
-            if opts.offline {
-                args.push("--offline".into());
-            }
-            if opts.silent {
-                args.push("--silent".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.frozen_lockfile, "--frozen-lockfile"),
+                    (opts.prod, "--prod"),
+                    (opts.dev, "--dev"),
+                    (opts.no_optional, "--no-optional"),
+                    (opts.force, "--force"),
+                    (opts.ignore_scripts, "--ignore-scripts"),
+                    (opts.lockfile_only, "--lockfile-only"),
+                    (opts.offline, "--offline"),
+                    (opts.silent, "--silent"),
+                ],
+            );
         }
         "npm" => {
             if opts.frozen_lockfile && opts.lockfile_only {
                 warnings.push("npm ci and --package-lock-only are contradictory. Using ci.".into());
             }
             args.push(if opts.frozen_lockfile { "ci".into() } else { "install".into() });
-            if opts.prod {
-                args.push("--omit=dev".into());
-            }
-            if opts.no_optional {
-                args.push("--omit=optional".into());
-            }
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
-            if opts.recursive {
-                args.push("--workspaces".into());
-            }
-            if opts.workspace_root {
-                args.push("--include-workspace-root".into());
-            }
-            if opts.ignore_scripts {
-                args.push("--ignore-scripts".into());
-            }
-            if opts.force {
-                args.push("--force".into());
-            }
+            push_flags(&mut args, &[(opts.prod, "--omit=dev"), (opts.no_optional, "--omit=optional")]);
+            push_each(&mut args, "--workspace", &opts.filter);
+            push_flags(
+                &mut args,
+                &[
+                    (opts.recursive, "--workspaces"),
+                    (opts.workspace_root, "--include-workspace-root"),
+                    (opts.ignore_scripts, "--ignore-scripts"),
+                    (opts.force, "--force"),
+                ],
+            );
             if !opts.frozen_lockfile && opts.lockfile_only {
                 args.push("--package-lock-only".into());
             }
@@ -102,24 +75,17 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
         "yarn" => {
             if version.starts_with("1.") {
                 args.push("install".into());
-                if opts.frozen_lockfile {
-                    args.push("--frozen-lockfile".into());
-                }
-                if opts.prod {
-                    args.push("--production".into());
-                }
-                if opts.ignore_scripts {
-                    args.push("--ignore-scripts".into());
-                }
-                if opts.force {
-                    args.push("--force".into());
-                }
-                if opts.offline {
-                    args.push("--offline".into());
-                }
-                if opts.silent {
-                    args.push("--silent".into());
-                }
+                push_flags(
+                    &mut args,
+                    &[
+                        (opts.frozen_lockfile, "--frozen-lockfile"),
+                        (opts.prod, "--production"),
+                        (opts.ignore_scripts, "--ignore-scripts"),
+                        (opts.force, "--force"),
+                        (opts.offline, "--offline"),
+                        (opts.silent, "--silent"),
+                    ],
+                );
             } else {
                 args.push("install".into());
                 if opts.frozen_lockfile {
@@ -143,21 +109,16 @@ pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<
         }
         "bun" => {
             args.push("install".into());
-            if opts.frozen_lockfile {
-                args.push("--frozen-lockfile".into());
-            }
-            if opts.prod {
-                args.push("--production".into());
-            }
-            if opts.force {
-                args.push("--force".into());
-            }
-            if opts.ignore_scripts {
-                args.push("--ignore-scripts".into());
-            }
-            if opts.no_optional {
-                args.push("--no-optional".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.frozen_lockfile, "--frozen-lockfile"),
+                    (opts.prod, "--production"),
+                    (opts.force, "--force"),
+                    (opts.ignore_scripts, "--ignore-scripts"),
+                    (opts.no_optional, "--no-optional"),
+                ],
+            );
         }
         _ => unreachable!(), // validate_pm already checked
     }

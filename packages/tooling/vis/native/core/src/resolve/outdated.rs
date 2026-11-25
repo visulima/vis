@@ -1,4 +1,4 @@
-use super::{validate_pm, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, ResolvedCommand};
 
 /// Options for `resolve_outdated`.
 #[derive(Clone, Debug, Default)]
@@ -25,40 +25,22 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
 
             args.push("outdated".into());
 
-            if opts.long {
-                args.push("--long".into());
-            }
-
-            if opts.recursive {
-                args.push("--recursive".into());
-            }
-
-            if opts.workspace_root {
-                args.push("--include-workspace-root".into());
-            }
-
-            if opts.prod {
-                args.push("--prod".into());
-            }
-
-            if opts.dev {
-                args.push("--dev".into());
-            }
-
-            if opts.no_optional {
-                args.push("--no-optional".into());
-            }
-
-            if opts.compatible {
-                args.push("--compatible".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.long, "--long"),
+                    (opts.recursive, "--recursive"),
+                    (opts.workspace_root, "--include-workspace-root"),
+                    (opts.prod, "--prod"),
+                    (opts.dev, "--dev"),
+                    (opts.no_optional, "--no-optional"),
+                    (opts.compatible, "--compatible"),
+                ],
+            );
 
             match opts.format.as_str() {
                 "json" => {
@@ -87,18 +69,9 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
                 _ => {}
             }
 
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--workspace", &opts.filter);
 
-            if opts.recursive {
-                args.push("--all".into());
-            }
-
-            if opts.global {
-                args.push("--global".into());
-            }
+            push_flags(&mut args, &[(opts.recursive, "--all"), (opts.global, "--global")]);
 
             args.extend(opts.packages);
         }
@@ -114,10 +87,7 @@ pub fn resolve_outdated(pm: &str, version: &str, opts: OutdatedOptions) -> Resul
         "bun" => {
             args.push("outdated".into());
 
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
 
             args.extend(opts.packages);
         }

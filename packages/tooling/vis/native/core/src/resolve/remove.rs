@@ -1,4 +1,4 @@
-use super::{validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, yarn_workspace_prefix, ResolvedCommand};
 
 /// Options for `resolve_remove`.
 #[derive(Clone, Debug, Default)]
@@ -27,10 +27,7 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
 
             if opts.workspace_root {
                 args.push("-w".into());
@@ -38,13 +35,7 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
 
             args.push("remove".into());
 
-            if opts.save_dev {
-                args.push("-D".into());
-            }
-
-            if opts.recursive {
-                args.push("--recursive".into());
-            }
+            push_flags(&mut args, &[(opts.save_dev, "-D"), (opts.recursive, "--recursive")]);
 
             args.extend(opts.packages);
         }
@@ -55,10 +46,7 @@ pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<Re
                 args.push("--save-dev".into());
             }
 
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--workspace", &opts.filter);
 
             if opts.recursive {
                 args.push("--workspaces".into());

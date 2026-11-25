@@ -1,4 +1,4 @@
-use super::{validate_pm, yarn_foreach_prefix, ResolvedCommand};
+use super::{push_each, push_flags, validate_pm, yarn_foreach_prefix, ResolvedCommand};
 
 /// Options for `resolve_exec`.
 #[derive(Clone, Debug, Default)]
@@ -57,32 +57,20 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
 
     match pm {
         "pnpm" => {
-            for f in &opts.filter {
-                args.push("--filter".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--filter", &opts.filter);
 
             args.push("exec".into());
 
-            if opts.recursive {
-                args.push("--recursive".into());
-            }
-
-            if opts.workspace_root {
-                args.push("-w".into());
-            }
-
-            if opts.parallel {
-                args.push("--parallel".into());
-            }
-
-            if opts.reverse {
-                args.push("--reverse".into());
-            }
-
-            if opts.shell_mode {
-                args.push("-c".into());
-            }
+            push_flags(
+                &mut args,
+                &[
+                    (opts.recursive, "--recursive"),
+                    (opts.workspace_root, "-w"),
+                    (opts.parallel, "--parallel"),
+                    (opts.reverse, "--reverse"),
+                    (opts.shell_mode, "-c"),
+                ],
+            );
 
             args.push(opts.command);
             args.extend(opts.args);
@@ -91,18 +79,12 @@ pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<Resolv
             reject_reverse(pm, &opts)?;
             args.push("exec".into());
 
-            for f in &opts.filter {
-                args.push("--workspace".into());
-                args.push(f.clone());
-            }
+            push_each(&mut args, "--workspace", &opts.filter);
 
-            if opts.recursive {
-                args.push("--workspaces".into());
-            }
-
-            if opts.workspace_root {
-                args.push("--include-workspace-root".into());
-            }
+            push_flags(
+                &mut args,
+                &[(opts.recursive, "--workspaces"), (opts.workspace_root, "--include-workspace-root")],
+            );
 
             // npm's `-c` is `--call <String>` and takes the next token, so the command has to ride in
             // the same argument; `npm exec` refuses extra arguments next to `--call`, which stays loud.
