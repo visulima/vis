@@ -3,15 +3,11 @@
 //! Kept in a dedicated file (not folded into `advisories/`) so the pure-Rust
 //! module stays NAPI-free and unit-testable without spinning up a JS engine.
 
-use std::sync::{Arc, Mutex};
-
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
-use crate::advisories::{
-    self, ingest::IngestProgress, query::NativeVulnerability, AdvisoryHit, DbStatus, EcosystemStatus, QueryInput,
-};
+use crate::advisories::{self, query::NativeVulnerability, AdvisoryHit, DbStatus, EcosystemStatus, QueryInput};
 
 /// Progress callback called as `(current, total)`. `CalleeHandled = false` skips the error-first
 /// `(err, value)` convention, so the JS function receives exactly the two numbers it declares.
@@ -88,23 +84,10 @@ pub async fn advisories_ingest(
     let ecosystem = options.ecosystem;
     let etag = options.manifest_etag;
 
-    // Move the threadsafe fn into a small struct that implements the pure-Rust
-    // IngestProgress trait. Wrapping in Arc<Mutex<_>> lets the closure live for
-    // 'static while still being called from any thread.
-    struct Bridge {
-        cb: Arc<Mutex<Option<ProgressCallback>>>,
-    }
-    impl IngestProgress for Bridge {
-        fn emit(&mut self, current: usize, total: usize) {
-            if let Ok(guard) = self.cb.lock() {
-                if let Some(cb) = guard.as_ref() {
-                    cb.call((current as u32, total as u32).into(), ThreadsafeFunctionCallMode::NonBlocking);
-                }
-            }
-        }
-    }
-
-    let bridge = Bridge { cb: Arc::new(Mutex::new(Some(on_progress))) };
+    // `IngestProgress` is implemented for any `FnMut(usize, usize) + Send`, and a threadsafe function is `Send`.
+    let progress = move |current: usize, total: usize| {
+        on_progress.call((current as u32, total as u32).into(), ThreadsafeFunctionCallMode::NonBlocking);
+    };
 
     // The ingest pipeline (zip → JSON → INSERT) is blocking but we're already
     // on a napi async worker, not the JS thread. Call directly.
@@ -113,7 +96,7 @@ pub async fn advisories_ingest(
         std::path::PathBuf::from(&zip_path),
         &ecosystem,
         etag.as_deref(),
-        bridge,
+        progress,
     )
     .map_err(|e| Error::from_reason(e.to_string()))?;
 
