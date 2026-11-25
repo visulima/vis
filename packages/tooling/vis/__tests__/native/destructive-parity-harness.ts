@@ -33,11 +33,14 @@ export interface Fixture {
     workspace?: Files;
 }
 
-/** A name as text; one that is not valid UTF-8 shows its lossy text and its bytes, so two trees still compare byte for byte. */
+/**
+ * A name as text; one that is not valid UTF-8 shows its lossy text and its bytes, so two trees still compare byte for
+ * byte. The bytes follow a NUL, which no file name can hold, so no valid name can produce the same key.
+ */
 const nameKey = (name: Buffer): string => {
     const text = name.toString("utf8");
 
-    return Buffer.from(text, "utf8").equals(name) ? text : `${text}{hex:${name.toString("hex")}}`;
+    return Buffer.from(text, "utf8").equals(name) ? text : `${text}\u0000hex:${name.toString("hex")}`;
 };
 
 /** Every path under `root` with its type, mode and content, so a changed mode or a leftover directory shows. */
