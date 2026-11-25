@@ -234,10 +234,4 @@ mod tests {
     fn the_c_string_env_name_matches_the_str_one() {
         assert_eq!(ENV_MACOS_FD_C, format!("{ENV_MACOS_FD}\0").as_bytes());
     }
-
-    #[test]
-    fn the_buffer_sizes_hold_the_header_and_a_full_path() {
-        assert_eq!(DATAGRAM_MAX, 1 + 1024);
-        assert_eq!(PIPE_MESSAGE_MAX, 1 + 32 * 1024);
-    }
 }

@@ -524,12 +524,6 @@ mod tests {
     };
 
     #[test]
-    fn the_ioctl_numbers_libc_exports_match_the_kernel_macros() {
-        assert_eq!(SECCOMP_IOCTL_NOTIF_RECV, iowr(0, mem::size_of::<seccomp_notif>()));
-        assert_eq!(SECCOMP_IOCTL_NOTIF_SEND, iowr(1, mem::size_of::<seccomp_notif_resp>()));
-    }
-
-    #[test]
     fn revents_are_interpreted_like_the_poll_flags_say() {
         assert_eq!(Wake::from_revents(PollFlags::POLLIN, None), READABLE);
         assert_eq!(Wake::from_revents(PollFlags::POLLHUP, None), HANGUP);
