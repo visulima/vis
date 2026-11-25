@@ -50,9 +50,9 @@ pub struct DetectPackageManagerOptions {
 impl From<DetectPackageManagerOptions> for core::DetectPackageManagerOptions {
     fn from(options: DetectPackageManagerOptions) -> Self {
         Self {
-            ignore_package_json: options.ignore_package_json,
-            ignore_lock_file: options.ignore_lock_file,
-            ignore_argv: options.ignore_argv,
+            ignore_package_json: options.ignore_package_json.unwrap_or(false),
+            ignore_lock_file: options.ignore_lock_file.unwrap_or(false),
+            ignore_argv: options.ignore_argv.unwrap_or(false),
             backend: None,
         }
     }

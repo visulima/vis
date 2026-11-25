@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct DetectedPackageManager {
@@ -26,14 +26,12 @@ struct PmInfo {
     pkg_json: Option<serde_json::Value>,
 }
 
-/// Options controlling which detection sources to consult. All flags are
-/// `Option<bool>` so callers can omit them; `None` is treated as the default
-/// (use the source).
+/// Options controlling which detection sources to consult. The defaults use every source.
 #[derive(Clone, Debug, Default)]
 pub struct DetectPackageManagerOptions {
-    pub ignore_package_json: Option<bool>,
-    pub ignore_lock_file: Option<bool>,
-    pub ignore_argv: Option<bool>,
+    pub ignore_package_json: bool,
+    pub ignore_lock_file: bool,
+    pub ignore_argv: bool,
     /// Explicit package manager (`install.backend`) that wins over every other source. Names
     /// outside npm/pnpm/yarn/bun are ignored and detection runs as usual.
     pub backend: Option<String>,
@@ -50,93 +48,62 @@ fn pm_name(name: &str) -> Option<&'static str> {
     }
 }
 
-fn flag(opt: Option<bool>) -> bool {
-    opt.unwrap_or(false)
+/// The first directory from `start` up to the root where `detect` finds something, with what it found.
+fn walk_up<T>(start: &Path, detect: impl Fn(&Path) -> Option<T>) -> Option<(&Path, T)> {
+    start.ancestors().find_map(|directory| detect(directory).map(|found| (directory, found)))
+}
+
+/// What was found in `directory`. A package.json that was already parsed is reused for the workspace check.
+fn detected(info: PmInfo, directory: &Path) -> DetectedPackageManager {
+    let is_workspace = detect_workspace(directory, info.name, info.pkg_json.as_ref());
+
+    DetectedPackageManager {
+        name: info.name.to_string(),
+        version: info.version,
+        build_meta: info.build_meta,
+        is_workspace,
+    }
 }
 
 /// Detects the package manager for the project at the given path.
 pub fn detect_package_manager(cwd: &str, opts: Option<DetectPackageManagerOptions>) -> DetectedPackageManager {
-    let path = PathBuf::from(cwd);
+    let path = Path::new(cwd);
     let opts = opts.unwrap_or_default();
 
     if let Some(name) = opts.backend.as_deref().and_then(pm_name) {
-        let is_workspace = detect_workspace(&path, name, None);
+        let is_workspace = detect_workspace(path, name, None);
 
         return DetectedPackageManager { name: name.to_string(), version: None, build_meta: None, is_workspace };
     }
 
     // Priority 1: packageManager field in package.json
-    if !flag(opts.ignore_package_json) {
-        if let Some(info) = detect_from_package_json(&path) {
-            let is_workspace = detect_workspace(&path, info.name, info.pkg_json.as_ref());
-
-            return DetectedPackageManager {
-                name: info.name.to_string(),
-                version: info.version,
-                build_meta: info.build_meta,
-                is_workspace,
-            };
+    if !opts.ignore_package_json {
+        if let Some(info) = detect_from_package_json(path) {
+            return detected(info, path);
         }
     }
 
     // Priority 2: Walk up to find lockfiles
-    if !flag(opts.ignore_lock_file) {
-        let mut current = path.clone();
-
-        loop {
-            if let Some(info) = detect_from_lockfiles(&current) {
-                let is_workspace = detect_workspace(&current, info.name, None);
-
-                return DetectedPackageManager {
-                    name: info.name.to_string(),
-                    version: info.version,
-                    build_meta: None,
-                    is_workspace,
-                };
-            }
-
-            if !current.pop() {
-                break;
-            }
+    if !opts.ignore_lock_file {
+        if let Some((directory, info)) = walk_up(path, detect_from_lockfiles) {
+            return detected(info, directory);
         }
     }
 
     // Priority 3: Config files (walk up like lockfiles)
-    let mut current = path.clone();
-
-    loop {
-        if let Some(info) = detect_from_config_files(&current) {
-            let is_workspace = detect_workspace(&current, info.name, None);
-
-            return DetectedPackageManager {
-                name: info.name.to_string(),
-                version: None,
-                build_meta: None,
-                is_workspace,
-            };
-        }
-
-        if !current.pop() {
-            break;
-        }
+    if let Some((directory, info)) = walk_up(path, detect_from_config_files) {
+        return detected(info, directory);
     }
 
     // Priority 4: npm_config_user_agent env var
-    if !flag(opts.ignore_argv) {
+    if !opts.ignore_argv {
         if let Some(info) = detect_from_user_agent() {
-            let is_workspace = detect_workspace(&path, info.name, None);
-
-            return DetectedPackageManager {
-                name: info.name.to_string(),
-                version: info.version,
-                build_meta: None,
-                is_workspace,
-            };
+            return detected(info, path);
         }
     }
 
     // Default: pnpm
-    let is_workspace = detect_workspace(&path, "pnpm", None);
+    let is_workspace = detect_workspace(path, "pnpm", None);
 
     DetectedPackageManager { name: "pnpm".to_string(), version: None, build_meta: None, is_workspace }
 }
@@ -147,21 +114,10 @@ pub fn detect_package_manager(cwd: &str, opts: Option<DetectPackageManagerOption
 /// Shared with `pm_shim` so the guard and the rest of the CLI agree on the
 /// detection sources (parser + lockfile set).
 pub fn pinned_package_manager(cwd: &str) -> Option<String> {
-    let mut current = Some(PathBuf::from(cwd));
-
-    while let Some(directory) = current {
-        if let Some(info) = detect_from_package_json(&directory) {
-            return Some(info.name.to_string());
-        }
-
-        if let Some(info) = detect_from_lockfiles(&directory) {
-            return Some(info.name.to_string());
-        }
-
-        current = directory.parent().map(Path::to_path_buf).filter(|parent| parent != &directory);
-    }
-
-    None
+    walk_up(Path::new(cwd), |directory| {
+        detect_from_package_json(directory).or_else(|| detect_from_lockfiles(directory))
+    })
+    .map(|(_, info)| info.name.to_string())
 }
 
 fn detect_from_package_json(dir: &Path) -> Option<PmInfo> {
@@ -175,13 +131,7 @@ fn detect_from_package_json(dir: &Path) -> Option<PmInfo> {
         let mut ver_iter = parts[1].splitn(2, '+');
         let version = ver_iter.next().map(String::from);
         let build_meta = ver_iter.next().map(String::from);
-        let name: &'static str = match parts[0] {
-            "pnpm" => "pnpm",
-            "npm" => "npm",
-            "yarn" => "yarn",
-            "bun" => "bun",
-            _ => return None,
-        };
+        let name = pm_name(parts[0])?;
 
         Some(PmInfo { name, version, build_meta, pkg_json: Some(json) })
     } else {
@@ -249,13 +199,7 @@ fn detect_from_user_agent() -> Option<PmInfo> {
     let raw_name = parts.next()?;
     let raw_version = parts.next();
 
-    let name: &'static str = match raw_name {
-        "pnpm" => "pnpm",
-        "npm" => "npm",
-        "yarn" => "yarn",
-        "bun" => "bun",
-        _ => return None,
-    };
+    let name = pm_name(raw_name)?;
 
     Some(PmInfo { name, version: raw_version.map(String::from), build_meta: None, pkg_json: None })
 }
@@ -287,7 +231,20 @@ mod tests {
 
     fn ignore_env() -> Option<DetectPackageManagerOptions> {
         // Tests must not pick up the ambient npm_config_user_agent of the runner.
-        Some(DetectPackageManagerOptions { ignore_argv: Some(true), ..Default::default() })
+        Some(DetectPackageManagerOptions { ignore_argv: true, ..Default::default() })
+    }
+
+    #[test]
+    fn walk_up_reports_the_directory_of_the_hit_and_reaches_the_empty_relative_root() {
+        use super::walk_up;
+        use std::path::Path;
+
+        let hit = |wanted: &'static str| move |directory: &Path| (directory == Path::new(wanted)).then_some(wanted);
+
+        assert_eq!(walk_up(Path::new("a/b/c"), hit("a")), Some((Path::new("a"), "a")));
+        assert_eq!(walk_up(Path::new("a/b"), hit("")), Some((Path::new(""), "")));
+        assert_eq!(walk_up(Path::new("/a"), hit("/")), Some((Path::new("/"), "/")));
+        assert_eq!(walk_up(Path::new("a/b"), hit("elsewhere")), None);
     }
 
     #[test]

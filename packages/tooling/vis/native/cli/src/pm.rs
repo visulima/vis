@@ -73,7 +73,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let detected = detect_package_manager(&cwd, None);
 
     let resolved = resolve_pm_command(&detected.name, &detected.version.unwrap_or_default(), subcommand, extra)
-        .map_err(|message| WrapperError::usage("pm", message))?;
+        .map_err(|error| WrapperError::usage("pm", error.to_string()))?;
 
     run_resolved("pm", &resolved, Path::new(&cwd))
 }
