@@ -1,4 +1,6 @@
-use super::{push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolvedCommand};
+use super::{
+    push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolveError, ResolvedCommand,
+};
 
 /// Options for `resolve_remove`.
 #[derive(Clone, Debug, Default)]
@@ -12,7 +14,7 @@ pub struct RemoveOptions {
 }
 
 /// Resolve `vis remove <packages>`.
-pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_remove(pm: &str, version: &str, opts: RemoveOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();

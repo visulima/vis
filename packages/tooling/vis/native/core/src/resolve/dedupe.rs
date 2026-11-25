@@ -1,7 +1,7 @@
-use super::{Manager, ResolvedCommand};
+use super::{Manager, ResolveError, ResolvedCommand};
 
 /// Resolve `vis dedupe`.
-pub fn resolve_dedupe(pm: &str, version: &str, check: bool) -> Result<ResolvedCommand, String> {
+pub fn resolve_dedupe(pm: &str, version: &str, check: bool) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();

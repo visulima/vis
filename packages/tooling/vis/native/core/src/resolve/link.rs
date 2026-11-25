@@ -1,4 +1,4 @@
-use super::{Manager, ResolvedCommand};
+use super::{Manager, ResolveError, ResolvedCommand};
 
 /// Leading integer of a version string (`"11.0.0-rc.0"` -> `Some(11)`), or None
 /// when it doesn't start with a digit (`"latest"`).
@@ -29,7 +29,7 @@ fn is_path_like(target: &str) -> bool {
 }
 
 /// Resolve `vis link [target]`.
-pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<ResolvedCommand, String> {
+pub fn resolve_link(pm: &str, version: &str, target: Option<String>) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
 
     let mut args = vec!["link".to_owned()];
@@ -74,7 +74,7 @@ pub fn resolve_unlink(
     version: &str,
     packages: Vec<String>,
     recursive: bool,
-) -> Result<ResolvedCommand, String> {
+) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();

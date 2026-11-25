@@ -297,7 +297,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
                 code
             }
         }),
-        Err(message) => Err(WrapperError::usage(verb, message)),
+        Err(error) => Err(WrapperError::usage(verb, error.to_string())),
     };
 
     error::finish(outcome)

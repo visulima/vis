@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, Manager, ResolvedCommand};
+use super::{push_each, push_flags, Manager, ResolveError, ResolvedCommand};
 
 /// Options for `resolve_install`.
 #[derive(Clone, Debug, Default)]
@@ -18,7 +18,7 @@ pub struct InstallOptions {
 }
 
 /// Resolve `vis install`.
-pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_install(pm: &str, version: &str, opts: InstallOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
@@ -132,7 +132,7 @@ mod tests {
     fn install_rejects_an_unknown_package_manager() {
         let error = resolve_install("deno", "1.0.0", InstallOptions::default()).unwrap_err();
 
-        assert_eq!(error, "Unsupported package manager: 'deno'. Supported: pnpm, npm, yarn, bun");
+        assert_eq!(error.to_string(), "Unsupported package manager: 'deno'. Supported: pnpm, npm, yarn, bun");
     }
 
     #[test]

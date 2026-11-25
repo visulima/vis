@@ -1,4 +1,6 @@
-use super::{push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolvedCommand};
+use super::{
+    push_each, push_flags, yarn_foreach_prefix, yarn_workspace_prefix, Manager, ResolveError, ResolvedCommand,
+};
 
 /// Options for `resolve_add`.
 #[derive(Clone, Debug, Default)]
@@ -15,7 +17,7 @@ pub struct AddOptions {
 }
 
 /// Resolve `vis add`.
-pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_add(pm: &str, version: &str, opts: AddOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let warnings = Vec::new();

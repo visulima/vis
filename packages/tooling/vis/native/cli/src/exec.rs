@@ -67,7 +67,7 @@ fn left_to_node(parsed: &Parsed, cwd: &Path) -> bool {
 
 /// Runs the command and returns the exit status to adopt, or the failure to report.
 fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> {
-    let parsed = parse(&args[1..]).map_err(|message| WrapperError::usage("exec", message))?;
+    let parsed = parse(&args[1..]).map_err(|error| WrapperError::usage("exec", error.to_string()))?;
     let opts = &parsed.opts;
 
     if opts.command.is_empty() {
@@ -84,7 +84,7 @@ fn try_run(args: &[String], raw_args: &[OsString]) -> Result<i32, WrapperError> 
     let cwd = directory.to_string_lossy().into_owned();
     let (pm, version) = resolve_pm(runtime.as_deref(), &cwd);
 
-    let resolved = resolve_exec(&pm, &version, opts).map_err(|message| WrapperError::usage("exec", message))?;
+    let resolved = resolve_exec(&pm, &version, opts).map_err(|error| WrapperError::usage("exec", error.to_string()))?;
 
     run_resolved("exec", &resolved, Path::new(&cwd))
 }

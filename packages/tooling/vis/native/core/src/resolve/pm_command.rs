@@ -1,4 +1,4 @@
-use super::{Manager, ResolvedCommand};
+use super::{Manager, ResolveError, ResolvedCommand};
 
 /// Resolve `vis pm <subcommand> [args]` to the PM-specific invocation (per-PM
 /// mapping for cache/list/pack/view + npm-only verbs, with a default pass-through).
@@ -7,7 +7,7 @@ pub fn resolve_pm_command(
     version: &str,
     subcommand: &str,
     mut extra_args: Vec<String>,
-) -> Result<ResolvedCommand, String> {
+) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();

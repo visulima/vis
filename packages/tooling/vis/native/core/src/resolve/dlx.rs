@@ -1,4 +1,4 @@
-use super::{push_flags, Manager, ResolvedCommand};
+use super::{push_flags, Manager, ResolveError, ResolvedCommand};
 
 /// Options for `resolve_dlx`.
 #[derive(Clone, Debug, Default)]
@@ -37,7 +37,7 @@ fn bin_of_spec(spec: &str) -> String {
 }
 
 /// Resolve `vis dlx`.
-pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_dlx(pm: &str, version: &str, opts: DlxOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();

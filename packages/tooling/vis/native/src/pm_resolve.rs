@@ -3,7 +3,7 @@
 //! The resolution logic lives in `vis_core::resolve` (plain Rust, shared with the
 //! standalone `vis` CLI binary). This module only declares the JS-visible
 //! option/result objects, converts them to the core types, and maps the core
-//! error string onto an `InvalidArg` napi error.
+//! `ResolveError` onto an `InvalidArg` napi error.
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -22,9 +22,10 @@ impl From<core::ResolvedCommand> for ResolvedCommand {
     }
 }
 
-/// Core errors are all "unsupported package manager" validation failures.
-fn invalid_arg(message: String) -> Error {
-    Error::new(Status::InvalidArg, message)
+/// A core error is a refused request (an unsupported manager, or a flag the manager cannot honour), so JS sees
+/// its message as an invalid argument.
+fn invalid_arg(error: core::ResolveError) -> Error {
+    Error::new(Status::InvalidArg, error.to_string())
 }
 
 #[napi(object)]

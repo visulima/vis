@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, yarn_foreach_prefix, Manager, ResolvedCommand};
+use super::{push_each, push_flags, yarn_foreach_prefix, Manager, ResolveError, ResolvedCommand};
 
 /// Options for `resolve_exec`.
 #[derive(Clone, Debug, Default)]
@@ -15,8 +15,13 @@ pub struct ExecOptions {
 
 /// Refuse the selection flags of `vis exec` for a manager that runs one binary once in the current directory
 /// (`bunx`, the `npx` stand-in for yarn classic): each would be dropped and the command would still exit 0.
-fn refuse_exec_flags(who: &str, runner: &str, opts: &ExecOptions, shell_mode: bool) -> Result<(), String> {
-    let flags: Vec<&str> = [
+fn refuse_exec_flags(
+    who: &'static str,
+    runner: &'static str,
+    opts: &ExecOptions,
+    shell_mode: bool,
+) -> Result<(), ResolveError> {
+    let flags: Vec<&'static str> = [
         (opts.recursive, "--recursive"),
         (!opts.filter.is_empty(), "--filter"),
         (opts.workspace_root, "--workspace-root"),
@@ -32,26 +37,20 @@ fn refuse_exec_flags(who: &str, runner: &str, opts: &ExecOptions, shell_mode: bo
         return Ok(());
     }
 
-    Err(format!(
-        "{who} cannot honour {} for `vis exec`: it runs {runner} once in the current directory.",
-        flags.join(", ")
-    ))
+    Err(ResolveError::ExecFlagsDropped { who, runner, flags })
 }
 
 /// `--reverse` only reorders a recursive run, and only pnpm (and aube) can; elsewhere it would be dropped.
-fn reject_reverse(manager: Manager, opts: &ExecOptions) -> Result<(), String> {
+fn reject_reverse(manager: Manager, opts: &ExecOptions) -> Result<(), ResolveError> {
     if opts.reverse {
-        return Err(format!(
-            "{} has no --reverse for `vis exec`; only pnpm can run workspaces in reverse order.",
-            manager.bin()
-        ));
+        return Err(ResolveError::ReverseUnsupported(manager));
     }
 
     Ok(())
 }
 
 /// Resolve `vis exec <command>` to the PM-specific invocation.
-pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_exec(pm: &str, version: &str, opts: ExecOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
     let mut args = Vec::new();
     let mut warnings = Vec::new();
@@ -232,7 +231,7 @@ mod tests {
         );
 
         for (pm, version) in [("npm", "10.0.0"), ("yarn", "4.5.0"), ("yarn", "1.22.0")] {
-            let error = resolve_exec(pm, version, opts()).unwrap_err();
+            let error = resolve_exec(pm, version, opts()).unwrap_err().to_string();
 
             assert!(error.contains("--reverse"), "{pm} {version}: {error}");
         }
@@ -248,10 +247,10 @@ mod tests {
             resolve_exec("yarn", "1.22.0", opts)
         };
 
-        assert!(flagged(|opts| opts.recursive = true).unwrap_err().contains("--recursive"));
-        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().contains("--filter"));
-        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().contains("--workspace-root"));
-        assert!(flagged(|opts| opts.parallel = true).unwrap_err().contains("--parallel"));
+        assert!(flagged(|opts| opts.recursive = true).unwrap_err().to_string().contains("--recursive"));
+        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().to_string().contains("--filter"));
+        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().to_string().contains("--workspace-root"));
+        assert!(flagged(|opts| opts.parallel = true).unwrap_err().to_string().contains("--parallel"));
         assert_eq!(flagged(|opts| opts.shell_mode = true).unwrap().args, ["-c", "eslint"]);
     }
 
@@ -265,12 +264,12 @@ mod tests {
             resolve_exec("bun", "1.1.0", opts)
         };
 
-        assert!(flagged(|opts| opts.recursive = true).unwrap_err().contains("--recursive"));
-        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().contains("--filter"));
-        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().contains("--workspace-root"));
-        assert!(flagged(|opts| opts.parallel = true).unwrap_err().contains("--parallel"));
-        assert!(flagged(|opts| opts.reverse = true).unwrap_err().contains("--reverse"));
-        assert!(flagged(|opts| opts.shell_mode = true).unwrap_err().contains("--shell-mode"));
+        assert!(flagged(|opts| opts.recursive = true).unwrap_err().to_string().contains("--recursive"));
+        assert!(flagged(|opts| opts.filter = argv(&["app"])).unwrap_err().to_string().contains("--filter"));
+        assert!(flagged(|opts| opts.workspace_root = true).unwrap_err().to_string().contains("--workspace-root"));
+        assert!(flagged(|opts| opts.parallel = true).unwrap_err().to_string().contains("--parallel"));
+        assert!(flagged(|opts| opts.reverse = true).unwrap_err().to_string().contains("--reverse"));
+        assert!(flagged(|opts| opts.shell_mode = true).unwrap_err().to_string().contains("--shell-mode"));
         assert!(flagged(|_| {}).is_ok());
     }
 }

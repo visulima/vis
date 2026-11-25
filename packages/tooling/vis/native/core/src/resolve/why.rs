@@ -1,4 +1,4 @@
-use super::{push_each, push_flags, Manager, ResolvedCommand};
+use super::{push_each, push_flags, Manager, ResolveError, ResolvedCommand};
 
 /// Options for `resolve_why`.
 #[derive(Clone, Debug, Default)]
@@ -17,7 +17,7 @@ pub struct WhyOptions {
 }
 
 /// Resolve `vis why <packages>`.
-pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<ResolvedCommand, String> {
+pub fn resolve_why(pm: &str, version: &str, opts: WhyOptions) -> Result<ResolvedCommand, ResolveError> {
     let manager = Manager::new(pm, version)?;
 
     let mut args = Vec::new();

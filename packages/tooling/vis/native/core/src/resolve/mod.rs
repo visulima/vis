@@ -6,6 +6,8 @@
 //! into these types), so a fix to a flag mapping, warning, or PM version branch
 //! lands in one place.
 
+use std::fmt;
+
 mod add;
 mod dedupe;
 mod dlx;
@@ -36,6 +38,43 @@ pub struct ResolvedCommand {
     pub warnings: Vec<String>,
 }
 
+/// Why a command cannot be resolved. `Display` is the message the CLI prints and the addon raises as an
+/// `InvalidArg` error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolveError {
+    /// The package manager is not pnpm, npm, yarn or bun.
+    UnsupportedPackageManager(String),
+    /// `yarn workspace` runs in one workspace, and more than one `--filter` was given.
+    YarnSingleWorkspace,
+    /// `vis exec` flags that a manager running one binary once in the current directory would drop.
+    ExecFlagsDropped { who: &'static str, runner: &'static str, flags: Vec<&'static str> },
+    /// `vis exec --reverse` for a manager that cannot run workspaces in reverse order.
+    ReverseUnsupported(Manager),
+}
+
+impl fmt::Display for ResolveError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedPackageManager(pm) => {
+                write!(formatter, "Unsupported package manager: '{pm}'. Supported: pnpm, npm, yarn, bun")
+            }
+            Self::YarnSingleWorkspace => formatter.write_str("yarn `workspace` supports a single --filter workspace"),
+            Self::ExecFlagsDropped { who, runner, flags } => write!(
+                formatter,
+                "{who} cannot honour {} for `vis exec`: it runs {runner} once in the current directory.",
+                flags.join(", ")
+            ),
+            Self::ReverseUnsupported(manager) => write!(
+                formatter,
+                "{} has no --reverse for `vis exec`; only pnpm can run workspaces in reverse order.",
+                manager.bin()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
 /// A package manager as the resolvers tell them apart: yarn is split at the version, since classic (1.x) and
 /// berry (2+) share a name and little else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,14 +89,14 @@ pub enum Manager {
 impl Manager {
     /// The manager `pm` names, at `version`. A yarn whose version starts with `1.` is classic, and an unknown or
     /// empty version reads as berry.
-    pub fn new(pm: &str, version: &str) -> Result<Self, String> {
+    pub fn new(pm: &str, version: &str) -> Result<Self, ResolveError> {
         match pm {
             "pnpm" => Ok(Self::Pnpm),
             "npm" => Ok(Self::Npm),
             "yarn" if version.starts_with("1.") => Ok(Self::YarnClassic),
             "yarn" => Ok(Self::YarnBerry),
             "bun" => Ok(Self::Bun),
-            _ => Err(format!("Unsupported package manager: '{pm}'. Supported: pnpm, npm, yarn, bun")),
+            _ => Err(ResolveError::UnsupportedPackageManager(pm.to_owned())),
         }
     }
 
@@ -88,14 +127,14 @@ fn push_each(args: &mut Vec<String>, flag: &str, values: &[String]) {
 /// Scope a Yarn command to one workspace: `yarn workspace <name> <cmd>`. `yarn
 /// workspace` targets a single workspace, so more than one filter is refused
 /// instead of silently running against only the first.
-fn yarn_workspace_prefix(filter: &[String], args: &mut Vec<String>) -> Result<(), String> {
+fn yarn_workspace_prefix(filter: &[String], args: &mut Vec<String>) -> Result<(), ResolveError> {
     match filter {
         [] => {}
         [workspace] => {
             args.push("workspace".into());
             args.push(workspace.clone());
         }
-        _ => return Err("yarn `workspace` supports a single --filter workspace".into()),
+        _ => return Err(ResolveError::YarnSingleWorkspace),
     }
 
     Ok(())
