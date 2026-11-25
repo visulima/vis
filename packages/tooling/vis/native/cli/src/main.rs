@@ -86,6 +86,7 @@ mod security_sync;
 mod self_update;
 mod shim_status;
 mod sort_package_json;
+mod status;
 mod summary;
 mod surface;
 mod table;

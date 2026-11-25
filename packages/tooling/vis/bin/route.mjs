@@ -403,6 +403,12 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
 const affectedMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && args.includes("--sparse-checkout");
 
+// Whether `vis status` can pass the binary's native gate (`parse` and `answer` in `status.rs`): the plain overview or
+// `--json`, in a CI context off a terminal. The binary re-checks everything, including the root files that make the
+// runtime findings Node's, so this only skips the extra process when it would delegate anyway.
+const statusMayRunNatively = (platform, environment, args, interactive) =>
+    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
+
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
 const optionValue = (args, index, name) => {
@@ -1521,6 +1527,8 @@ const NATIVE_SHAPE_GATES = new Map([
         },
     ],
     // A task of a script-only workspace, answered when it exists; every error stays in Node.
+    // The overview and its `--json`; a root pinning a Node version, or run summaries of an unexpected shape, stay in Node.
+    ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],
     ["task-why", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => taskWhyMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["view", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
 ]);
