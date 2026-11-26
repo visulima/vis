@@ -90,7 +90,7 @@ export class Harness {
             .replaceAll(root, "<ROOT>")
             .replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS")
             .replaceAll(/\(node:\d+\)/g, "(node:PID)")
-            .replaceAll(/\n(?:\u001B\[2m)?tip: [^\n]*\n/g, "");
+            .replaceAll(/\n[^\n]{0,6}tip: [^\n]*\n/g, "");
     }
 
     public static outcome(result: Result, root: string): Outcome {
