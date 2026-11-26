@@ -111,10 +111,6 @@ impl Services {
         }
     }
 
-    fn write(&self, file: PathBuf, text: String) -> CacheAction {
-        CacheAction::Write { file, text }
-    }
-
     /// `runDownloadsMarshall` for one package.
     pub(super) fn downloads(&mut self, name: &str) -> Result<Vec<CacheAction>, String> {
         if !self.packages.insert(name.to_owned()) {
@@ -147,15 +143,15 @@ impl Services {
             return Err(format!("{name} has {downloads} downloads a month, a finding"));
         }
 
-        actions.push(self.write(
+        actions.push(CacheAction::Write {
             file,
-            format!(
+            text: format!(
                 "{{\"createdAt\":{},\"downloads\":{},\"observedAt\":{},\"ttlMs\":{TTL_MS}}}",
                 self.now_ms,
                 json_number(downloads),
                 json_string(&iso_now())
             ),
-        ));
+        });
 
         Ok(actions)
     }
@@ -208,14 +204,14 @@ impl Services {
         let archived_at =
             body.get("archived_at").and_then(Value::as_str).map(|at| format!(",\"archivedAt\":{}", json_string(at)));
 
-        actions.push(self.write(
+        actions.push(CacheAction::Write {
             file,
-            format!(
+            text: format!(
                 "{{\"createdAt\":{},\"ttlMs\":{TTL_MS},\"archived\":false{}}}",
                 self.now_ms,
                 archived_at.unwrap_or_default()
             ),
-        ));
+        });
 
         Ok(actions)
     }
@@ -244,8 +240,10 @@ impl Services {
             return Err(format!("the domain {domain} has no name servers, or none answered"));
         }
 
-        actions
-            .push(self.write(file, format!("{{\"createdAt\":{},\"outcome\":\"ok\",\"ttlMs\":{TTL_MS}}}", self.now_ms)));
+        actions.push(CacheAction::Write {
+            file,
+            text: format!("{{\"createdAt\":{},\"outcome\":\"ok\",\"ttlMs\":{TTL_MS}}}", self.now_ms),
+        });
 
         Ok(actions)
     }

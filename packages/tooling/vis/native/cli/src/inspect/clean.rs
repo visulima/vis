@@ -133,9 +133,8 @@ pub(crate) fn first_finding(
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{ago, NOW};
     use super::*;
-
-    const NOW: u64 = 1_718_452_800_000;
 
     fn parse(text: &str) -> Js {
         serde_json::from_str(text).unwrap()
@@ -190,22 +189,6 @@ mod tests {
     #[test]
     fn a_new_package_or_one_that_has_been_idle_for_a_year_is_a_finding() {
         let check = only(|checks| checks.package_age = true);
-        let ago = |days: f64| {
-            let ms = NOW as f64 - days * MS_PER_DAY;
-            let seconds = (ms / 1000.0) as i64;
-            let (year_day, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-            let shifted = year_day + 719_468;
-            let era = shifted.div_euclid(146_097);
-            let day_of_era = shifted - era * 146_097;
-            let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-            let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-            let month_index = (5 * day_of_year + 2) / 153;
-            let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-            let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-            let year = year_of_era + era * 400 + i64::from(month <= 2);
-
-            format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.000Z", rest / 3600, rest / 60 % 60, rest % 60)
-        };
         let found = |time: &str| {
             let js = parse(&format!(r#"{{"name":"p","versions":{{"1.0.0":{{}}}},"time":{time}}}"#));
 
