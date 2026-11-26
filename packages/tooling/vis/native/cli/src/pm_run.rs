@@ -41,12 +41,18 @@ pub(crate) struct Setup {
 /// directory that is no root or the only root, a config the native path can read, and a manager Node would
 /// pick the same way. `None` delegates.
 pub(crate) fn setup(args: &[String], raw: &[OsString]) -> Option<Setup> {
+    setup_allowing(args, raw, &[])
+}
+
+/// [`setup`], with the `MARSHALL_*` variables named in `allowed` left to the command to read (they change nothing
+/// the gates decide).
+pub(crate) fn setup_allowing(args: &[String], raw: &[OsString], allowed: &[String]) -> Option<Setup> {
     // Windows keeps the Node path: it runs the package manager through a shell there.
     if !cfg!(unix) || raw.iter().any(|argument| argument.to_str().is_none()) {
         return None;
     }
 
-    if !context_allows_native() {
+    if !context_allows_native(allowed) {
         return None;
     }
 
@@ -91,7 +97,7 @@ pub(crate) fn filter_value(value: &str) -> Option<String> {
 }
 
 /// Whether the environment leaves Node's output and installer choice to what the native path knows.
-fn context_allows_native() -> bool {
+fn context_allows_native(allowed: &[String]) -> bool {
     // The peer hint is pail output, coloured by `Layout::detect`. The package manager itself gets a
     // forced colour on a terminal, which the native path does not reproduce.
     if !crate::node_context::in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
@@ -104,8 +110,11 @@ fn context_allows_native() -> bool {
 
     // `MARSHALL_*` switches off the typosquat scan and the security notice, `VIS_SECURITY_WARNINGS` turns
     // on a summary line in CI, and an inherited `VIS_MONOREPO_ROOT` replaces Node's own root search.
-    let changes_node = env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("MARSHALL_"))
-        || env::var_os("VIS_SECURITY_WARNINGS").is_some()
+    let changes_node = env::vars_os().any(|(name, _)| {
+        let name = name.to_string_lossy();
+
+        name.starts_with("MARSHALL_") && !allowed.iter().any(|known| *known == name)
+    }) || env::var_os("VIS_SECURITY_WARNINGS").is_some()
         || env::var_os("VIS_MONOREPO_ROOT").is_some();
 
     !changes_node && !crate::pm_detect::installer_selected_by_environment()

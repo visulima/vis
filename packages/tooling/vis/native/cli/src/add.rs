@@ -1,22 +1,25 @@
-//! `vis add <packages...> --no-marshall-check` — the native fast path.
+//! `vis add <packages...>` — the native fast path.
 //!
 //! The Node handler (`src/commands/add/handler.ts`) checks the package names for typosquats, runs the
 //! marshall pipeline (a registry lookup per package) and the Socket.dev check, maps the flags to the
 //! package manager's command line, blocks lifecycle scripts unless `--run-scripts`, and runs the manager
-//! with the terminal's own stdio. The marshall pipeline has no counterpart here, so the default form is
-//! Node's. This module answers the form that skips it, in the contexts it can prove, and hands everything
-//! else to Node:
+//! with the terminal's own stdio. This module answers the run in which the checks find nothing, in the contexts it can
+//! prove, and hands everything else to Node before the manager starts:
 //!
-//! - flags: the exact tokens below, each at most once, with `--no-marshall-check` among them; `--filter`
-//!   only after the packages (Node reads every word after it as another filter);
+//! - flags: the exact tokens below, each at most once; `--filter` only after the packages (Node reads every word after
+//!   it as another filter);
 //! - packages: plain `name[@spec]` or `@scope/name[@spec]`, none of them a typosquat of the blocklist;
-//! - context, workspace root and config: the gates of `vis install` (`install::setup`), plus a config
-//!   without a `security` or `install` key, which `requires_node` already covers;
-//! - no environment variable starting with `MARSHALL_`: they switch the typosquat check and the
-//!   security notice, and Node resolves package versions from the registry before it looks at them.
+//! - context, workspace root and config: the gates of `vis install` (`install::setup`), plus a config without a
+//!   `security` or `install` key, which `requires_node` already covers (the marshalls, the Socket.dev check and every
+//!   other provider are configured there, so none is on);
+//! - the marshall check, unless `--no-marshall-check` skips it: see [`crate::marshall_check`]. A run in which a marshall
+//!   finds something (Node then prints a table and may prompt), or this binary cannot tell, is Node's. Of the
+//!   `MARSHALL_*` variables only the `MARSHALL_DISABLE_*` of the marshalls the check runs are read; any other one
+//!   switches off the typosquat scan or the security notice, which Node decides.
 //!
 //! Every reason to delegate is decided before the package manager starts, because a delegation after it
-//! ran would add twice. A manager that is not on `PATH` is Node's to report, so it is looked up before
+//! ran would add twice; the check, which asks the network, comes last, and the cache it fills is written only
+//! once the run is sure to answer. A manager that is not on `PATH` is Node's to report, so it is looked up before
 //! anything is printed.
 
 use std::env;
@@ -24,7 +27,8 @@ use std::ffi::OsString;
 
 use vis_core::resolve::{resolve_add, AddOptions};
 
-use crate::pm_run::{filter_value, on_path, security_notices, setup, ManagerRun, Root};
+use crate::inspect::commit;
+use crate::pm_run::{filter_value, on_path, security_notices, setup_allowing, ManagerRun, Root};
 use crate::typosquat;
 
 /// What the flags asked for.
@@ -52,19 +56,37 @@ pub fn run(args: &[String], raw: &[OsString]) -> ! {
         crate::process::delegate(raw);
     };
 
-    plan.run_inherited(raw, |code| code)
+    // The marshall check asked the registry, so it comes after every reason to delegate that needs no request, and
+    // what it cached is written only once the run is sure to answer.
+    if let Some(packages) = &plan.check {
+        match crate::marshall_check::check(packages, &plan.run.cwd, plan.outside_root) {
+            Ok(cache) => {
+                if let Err(reason) = commit(&cache) {
+                    crate::process::delegate_because(&reason, raw);
+                }
+            }
+            Err(reason) => crate::process::delegate_because(&reason, raw),
+        }
+    }
+
+    plan.run.run_inherited(raw, |code| code)
+}
+
+/// The manager to run, and the packages the marshall check looks up first (none with `--no-marshall-check`).
+struct Plan {
+    run: ManagerRun,
+    check: Option<Vec<String>>,
+    /// Node finds no workspace root, so its packument lookups ignore `.npmrc`.
+    outside_root: bool,
 }
 
 /// The plan for this invocation, or `None` to delegate.
-fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
+fn plan(args: &[String], raw: &[OsString]) -> Option<Plan> {
     let flags = parse(args)?;
 
-    // Without `--no-marshall-check` Node fetches package data from the registry first.
-    if !flags.no_marshall_check {
-        return None;
-    }
-
-    let setup = setup(args, raw)?;
+    // The `MARSHALL_DISABLE_*` variables of the marshalls the check runs are its own to read; any other `MARSHALL_*`
+    // variable changes what Node does before it installs.
+    let setup = setup_allowing(args, raw, &crate::marshall_check::disable_variables())?;
 
     // Its output has only been compared with Node's where no colour is on and `TERM` leaves the terminal unknown.
     let plain_term = env::var("TERM").map_or(true, |term| {
@@ -119,12 +141,16 @@ fn plan(args: &[String], raw: &[OsString]) -> Option<ManagerRun> {
 
     notices.extend(resolved.warnings.iter().map(|warning| format!("warning: {warning}")));
 
-    Some(ManagerRun {
-        args,
-        bin: resolved.bin,
-        cwd: setup.cwd.clone(),
-        notices,
-        root: (setup.root == Root::Here).then_some(setup.cwd),
+    Some(Plan {
+        run: ManagerRun {
+            args,
+            bin: resolved.bin,
+            cwd: setup.cwd.clone(),
+            notices,
+            root: (setup.root == Root::Here).then_some(setup.cwd),
+        },
+        check: (!flags.no_marshall_check).then(|| flags.packages.clone()),
+        outside_root: setup.root == Root::None,
     })
 }
 
@@ -229,7 +255,7 @@ fn parse(args: &[String]) -> Option<Flags> {
 
 /// `parsePackageArgument`: the name of `name[@spec]` or `@scope/name[@spec]`, and its spec. `None` for
 /// anything outside the plain shape, so the caller leaves it to Node.
-fn parse_package_argument(argument: &str) -> Option<(&str, Option<&str>)> {
+pub(crate) fn parse_package_argument(argument: &str) -> Option<(&str, Option<&str>)> {
     let name_end = if let Some(scoped) = argument.strip_prefix('@') {
         let slash = scoped.find('/')?;
 

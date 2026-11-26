@@ -36,9 +36,9 @@ pub(super) struct Finding {
 }
 
 /// The package and version the run inspects.
-pub(super) struct Target<'a> {
-    pub name: &'a str,
-    pub version: &'a str,
+pub(crate) struct Target<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) version: &'a str,
 }
 
 impl Target<'_> {

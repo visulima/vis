@@ -25,6 +25,7 @@
 //! bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
 
 mod args;
+mod clean;
 mod js_format;
 mod js_value;
 mod marshalls;
@@ -41,6 +42,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) use args::parse_package;
 use args::{Flags, Marshall};
+pub(crate) use clean::{any_finding, entry_or_latest, Checks};
 pub(crate) use js_format::parse_date;
 pub(crate) use marshalls::{has_provenance, prior_with_provenance};
 use marshalls::{Finding, Target};
@@ -78,6 +80,9 @@ struct Context {
     cache_dir: String,
     now_ms: u64,
     layout: Option<Layout>,
+    /// The registry every package comes from, when `.npmrc` is not read (the packument lookup of a command that runs
+    /// outside a workspace root, where Node asks the default registry).
+    registry: Option<String>,
 }
 
 /// Answers `vis inspect …` natively or hands the whole invocation to Node. A hand-off names its reason on stderr when
@@ -138,8 +143,14 @@ fn answer(args: &[String]) -> Result<Plan, String> {
     let cache_dir = vis_cache_dir().ok_or("no cache directory (HOME is not a plain absolute path)")?;
     let home = std::env::var("HOME").map_err(|_| "HOME is not text".to_owned())?;
     let root = std::env::current_dir().map_err(|error| format!("the working directory is unknown: {error}"))?;
-    let context =
-        Context { root, home: PathBuf::from(home), cache_dir, now_ms: now_ms()?, layout: Layout::detect(args) };
+    let context = Context {
+        root,
+        home: PathBuf::from(home),
+        cache_dir,
+        now_ms: now_ms()?,
+        layout: Layout::detect(args),
+        registry: None,
+    };
     let client = HttpClient::new(fetch_config(HttpConfig::from_env(FETCH_TIMEOUT, FETCH_TIMEOUT), FETCH_TIMEOUT));
     let plan = plan(&flags, &run, &context, &client)?;
 
@@ -147,6 +158,9 @@ fn answer(args: &[String]) -> Result<Plan, String> {
 
     Ok(plan)
 }
+
+/// The registry `getPackument` asks when it has no workspace root to read an `.npmrc` from.
+const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org";
 
 /// The packuments as `getPackument` reaches them from a working directory, for the commands outside `inspect` that read
 /// a packument: the places, the clock and the client, built once.
@@ -176,9 +190,19 @@ impl Packuments {
         ))
     }
 
+    /// [`Packuments::new`] for a run outside a workspace root: Node does not read `.npmrc` there and asks
+    /// `https://registry.npmjs.org`, with no credential.
+    pub(crate) fn new_default_registry(root: PathBuf, limit: Duration) -> Result<Self, String> {
+        let mut packuments = Self::new(root, limit)?;
+
+        packuments.context.registry = Some(DEFAULT_REGISTRY.to_owned());
+
+        Ok(packuments)
+    }
+
     /// The packuments of a run from `root`, with the places, the clock and the client given.
     pub(crate) fn at(root: PathBuf, home: PathBuf, cache_dir: String, now_ms: u64, client: HttpClient) -> Self {
-        Self { context: Context { root, home, cache_dir, now_ms, layout: None }, client }
+        Self { context: Context { root, home, cache_dir, now_ms, layout: None, registry: None }, client }
     }
 
     /// What `getPackument` finds for a package, read through `read` with the view of it (`None` for a package the
@@ -225,7 +249,10 @@ fn packument_of(name: &str, context: &Context, client: &HttpClient) -> Result<(O
         Cached::Fresh(found) => return Ok((Some(found), Vec::new())),
         Cached::Fetch { stale_file } => stale_file,
     };
-    let registry = npmrc::registry_for(name, &context.home, &context.root)?;
+    let registry = match &context.registry {
+        Some(registry) => registry.clone(),
+        None => npmrc::registry_for(name, &context.home, &context.root)?,
+    };
     let base = registry.strip_suffix('/').unwrap_or(&registry);
     let url = format!("{base}/{}", name.replacen('/', "%2f", 1));
 

@@ -631,6 +631,8 @@
 ["add","react","-g","-w","-O","-P","--workspace","--no-marshall-check"] => add
 ["add","react","lodash","--no-marshall-check","-F","app","--filter=lib"] => add
 ["add","react@","--no-marshall-check"] => add
+["add","react@18.2.0"] => add
+["add","react@18.2.0","lodash@^4.17.21"] => add
 ["add","status","--help"] => surface
 ["add","target"] => add
 ["add","target","--help"] => surface
