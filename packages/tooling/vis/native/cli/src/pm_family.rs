@@ -83,7 +83,7 @@ fn first(parsed: &Parsed, name: &str) -> Option<String> {
 /// `link`, `dedupe`, `unlink` and `why`, below a monorepo root or a turbo.json. Applies to any config at all.
 fn runs_at_workspace_root(verb: &str, cwd: &Path) -> bool {
     matches!(verb, "dedupe" | "link" | "unlink" | "why")
-        && (crate::vis_config::node_config_root(cwd).is_some_and(|root| root != cwd)
+        && (crate::root_search::config_root(cwd).is_some_and(|root| root != cwd)
             || cwd.ancestors().skip(1).any(|ancestor| ancestor.join("turbo.json").is_file()))
 }
 
@@ -148,7 +148,7 @@ pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
 
     // Where Node finds no monorepo root it drops every config, so a pin there is not Node's to honour:
     // the native detector answers the same way Node's installer detection does, with no backend.
-    let ignored_by_node = pinned.is_some() && verb != "outdated" && crate::vis_config::node_ignores_config(&cwd);
+    let ignored_by_node = pinned.is_some() && verb != "outdated" && crate::root_search::node_ignores_config(&cwd);
 
     // link, dedupe, unlink and why run Node's handler at the workspace root, not at the invocation directory.
     // A turbo.json above `cwd` makes that folder Node's root even where no package manager marks a workspace.
