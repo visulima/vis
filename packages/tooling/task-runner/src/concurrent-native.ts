@@ -194,6 +194,19 @@ const runNativeConcurrent = async (commands: ConcurrentCommandConfig[], options:
             },
             (batch: NativeProcessEventBatch): void => {
                 for (const event of batch.events) {
+                    if (event.count !== undefined && event.count > 1 && event.text !== undefined) {
+                        // Lines of one stream, folded by the addon into one object: unfold them here.
+                        if (onEvent) {
+                            const kind = event.kind as "stderr" | "stdout";
+
+                            for (const text of event.text.split("\n")) {
+                                onEvent({ index: event.index, kind, text });
+                            }
+                        }
+
+                        continue;
+                    }
+
                     if (event.kind === "started" && typeof event.pid === "number") {
                         indexToPid.set(event.index, event.pid);
                     } else if (event.kind === "close" || event.kind === "error") {

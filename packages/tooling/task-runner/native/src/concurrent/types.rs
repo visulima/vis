@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
+use task_runner_core::concurrent::grouping::Delivered;
 use task_runner_core::concurrent::types as core;
 
 /// Configuration for a single command to run concurrently.
@@ -150,6 +151,29 @@ pub struct ProcessEvent {
     /// OS process id (for started events). `None` when the platform
     /// could not provide a pid for the freshly spawned child.
     pub pid: Option<u32>,
+    /// Number of lines in `text` (for stdout/stderr events): when present and above 1, `text`
+    /// holds that many lines joined with `\n`, and the host splits it. Absent means one line.
+    pub count: Option<u32>,
+}
+
+impl From<Delivered> for ProcessEvent {
+    fn from(item: Delivered) -> Self {
+        match item {
+            Delivered::Event(event) => event.into(),
+            Delivered::Lines { index, stderr, text, count } => Self {
+                kind: (if stderr { "stderr" } else { "stdout" }).to_string(),
+                index,
+                text: Some(text),
+                exit_code: None,
+                killed: None,
+                message: None,
+                command_name: None,
+                duration_ms: None,
+                pid: None,
+                count: Some(count),
+            },
+        }
+    }
 }
 
 impl From<core::ProcessEvent> for ProcessEvent {
@@ -165,11 +189,16 @@ impl From<core::ProcessEvent> for ProcessEvent {
             command_name: None,
             duration_ms: None,
             pid: None,
+            count: None,
         };
 
         match event {
             core::ProcessEvent::Started { pid, .. } => flat.pid = pid,
             core::ProcessEvent::Stdout { text, .. } | core::ProcessEvent::Stderr { text, .. } => flat.text = Some(text),
+            core::ProcessEvent::Lines { text, count, .. } => {
+                flat.text = Some(text);
+                flat.count = Some(count);
+            }
             core::ProcessEvent::Close { exit_code, killed, command_name, duration_ms, .. } => {
                 flat.exit_code = Some(exit_code);
                 flat.killed = Some(killed);
@@ -230,6 +259,9 @@ impl From<core::ConcurrentRunResult> for ConcurrentRunResult {
 ///
 /// Every event of a run is delivered before the batch that carries `result` or `error`, so a
 /// caller that settles its promise from that batch has seen everything first.
+///
+/// Adjacent "stdout" or "stderr" lines of one command are folded into a single event with a
+/// `count` above 1 (see `ProcessEvent.count`), so a caller that wants lines splits `text` on `\n`.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct ProcessEventBatch {

@@ -1,9 +1,13 @@
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use tokio::sync::{mpsc, watch};
 
 use task_runner_core::concurrent::events::{event_channel, EventBatch};
+use task_runner_core::concurrent::grouping::group_output;
 use task_runner_core::concurrent::types::{ControlMessage, ProcessEvent as CoreProcessEvent};
 use task_runner_core::ConcurrentRunner;
 
@@ -17,6 +21,11 @@ const OUTPUT_CREDITS: usize = 4096;
 
 /// The most events handed to JavaScript in one call.
 const MAX_BATCH: usize = 512;
+
+/// Whether `event` is output (a line, or lines folded together) rather than a lifecycle event.
+fn is_output(event: &CoreProcessEvent) -> bool {
+    matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. } | CoreProcessEvent::Lines { .. })
+}
 
 /// The callback of `startConcurrent`. `CalleeHandled = false`: JS receives the batch itself.
 type BatchCallback = ThreadsafeFunction<ProcessEventBatch, (), ProcessEventBatch, Status, false>;
@@ -59,7 +68,7 @@ fn launch(runner: ConcurrentRunner, on_event: Option<EventCallback>, with_output
                 continue;
             };
 
-            if with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. }) {
+            if with_output || !is_output(&event) {
                 callback.call(event.into(), ThreadsafeFunctionCallMode::NonBlocking);
             }
         }
@@ -125,31 +134,60 @@ pub async fn run_concurrent_batch(
     wait_for_result(launched.result).await
 }
 
-/// Hand one batch to JavaScript and wait until it has been handled; only then do the batch's
-/// credits come back. Lines are left out unless `with_output`, and a batch with nothing left is
-/// not sent at all. False when there is no callback, or JavaScript can no longer be reached.
-async fn deliver(callback: Option<&BatchCallback>, mut batch: EventBatch, with_output: bool) -> bool {
-    let events: Vec<ProcessEvent> = std::mem::take(&mut batch.events)
-        .into_iter()
-        .filter(|event| {
-            with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
-        })
-        .map(Into::into)
-        .collect();
+/// Queue one batch for JavaScript. The batch's credits (see `event_channel`) come back when
+/// JavaScript has finished with it, not when it was queued, so what is queued or being handled
+/// stays bounded while several batches are in flight: the forwarder does not wait for each one,
+/// which would cost a round trip to the JavaScript thread per batch. JavaScript runs the calls in
+/// the order they were queued. Lines are left out unless `with_output`, and a batch with nothing
+/// left is not sent at all. False when there is no callback, or JavaScript can no longer be
+/// reached or has thrown (`broken`).
+fn deliver(
+    callback: Option<&BatchCallback>,
+    mut batch: EventBatch,
+    with_output: bool,
+    broken: &Arc<AtomicBool>,
+) -> bool {
+    // Adjacent lines of one stream travel as one object: building a JS object per line is what
+    // an output-heavy run spends its time on.
+    let wanted =
+        std::mem::take(&mut batch.events).into_iter().filter(|event| with_output || !is_output(event)).collect();
+    let events: Vec<ProcessEvent> = group_output(wanted).into_iter().map(Into::into).collect();
 
-    match callback {
-        Some(callback) if !events.is_empty() => {
-            callback.call_async(ProcessEventBatch { events, result: None, error: None }).await.is_ok()
-        }
-        Some(_) => true,
-        None => false,
+    let Some(callback) = callback else {
+        return false;
+    };
+
+    if broken.load(Ordering::Acquire) {
+        return false;
     }
+
+    if events.is_empty() {
+        return true;
+    }
+
+    let flag = Arc::clone(broken);
+    let status = callback.call_with_return_value(
+        ProcessEventBatch { events, result: None, error: None },
+        ThreadsafeFunctionCallMode::NonBlocking,
+        move |returned, _env| {
+            // Only now, with the callback done, does the batch give its credits back.
+            drop(batch);
+
+            if returned.is_err() {
+                flag.store(true, Ordering::Release);
+            }
+
+            Ok(())
+        },
+    );
+
+    status == Status::Ok
 }
 
 /// Start `runner` and forward its events to `on_batch`, in batches, ending with the result.
 ///
-/// The forwarder waits for the callback to return before it releases a batch, so the output
-/// credits (see `event_channel`) measure what JavaScript has not finished with. A child that
+/// A batch gives its output credits back when the callback has returned for it (see `deliver`), so
+/// the credits (see `event_channel`) measure what JavaScript has not finished with. A child that
 /// outpaces the callback blocks on its pipe instead of filling memory.
 ///
 /// The callback lives in the forwarding task and is dropped when the run ends, so it never keeps
@@ -162,6 +200,7 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
     spawn(async move {
         let mut run = tokio::spawn(async move { runner.run(sink, control_rx).await });
         let mut callback = on_batch;
+        let broken = Arc::new(AtomicBool::new(false));
         let mut outcome = None;
 
         // Everything the run produced goes out first, in the order it was produced.
@@ -169,7 +208,7 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
             tokio::select! {
                 batch = stream.next_batch(MAX_BATCH) => match batch {
                     Some(batch) => {
-                        if !deliver(callback.as_ref(), batch, with_output).await {
+                        if !deliver(callback.as_ref(), batch, with_output, &broken) {
                             callback = None;
                         }
                     }
@@ -193,7 +232,7 @@ fn launch_stream(runner: ConcurrentRunner, on_batch: Option<BatchCallback>, with
         stream.close();
 
         while let Some(batch) = stream.try_next_batch(MAX_BATCH) {
-            if !deliver(callback.as_ref(), batch, with_output).await {
+            if !deliver(callback.as_ref(), batch, with_output, &broken) {
                 callback = None;
             }
         }
@@ -234,7 +273,8 @@ pub struct ConcurrentRun {
 ///
 /// `onBatch` receives the events in the order they happened, several at a time, and the outcome
 /// of the run as the last batch (`result`, or `error` if the run itself failed); every event is
-/// delivered before it. Only "started", "close" and "error" events are reported unless
+/// delivered before it. Adjacent "stdout" or "stderr" lines of one command arrive as one event: its
+/// `count` is above 1 and its `text` is those lines joined with `\n` (see `ProcessEvent.count`). Only "started", "close" and "error" events are reported unless
 /// `options.streamOutput` is set, which adds the "stdout" and "stderr" lines (for a pty, raw chunks).
 /// An unknown option value throws before anything is spawned.
 ///

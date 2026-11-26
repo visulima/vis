@@ -246,7 +246,11 @@ describe("native concurrent runner (napi surface)", () => {
             expect(last.result?.success).toBe(true);
             expect(last.events).toHaveLength(0);
             expect(batches.slice(0, -1).every((batch) => batch.result === undefined && batch.error === undefined)).toBe(true);
-            expect(events.filter((event) => event.kind === "stdout")).toHaveLength(3000);
+
+            // Adjacent lines of a stream travel as one event (`count` lines joined with a newline).
+            const lines = events.filter((event) => event.kind === "stdout").flatMap((event) => (event.count && event.count > 1 ? event.text!.split("\n") : [event.text]));
+
+            expect(lines).toStrictEqual(Array.from({ length: 3000 }, (_, position) => String(position + 1)));
         });
 
         it("reports lines only when asked to", async () => {

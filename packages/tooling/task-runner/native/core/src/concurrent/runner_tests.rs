@@ -33,6 +33,41 @@ mod tests {
         ConcurrentRunnerOptions::default()
     }
 
+    /// Many pty commands at once, on every platform: each must close and deliver its output. On
+    /// Windows a ConPTY keeps its output open until the terminal is closed, so this is the test
+    /// for a run that never ends.
+    #[tokio::test]
+    async fn test_twenty_pty_commands_at_once_all_finish_with_their_output() {
+        let commands: Vec<_> = (0..20)
+            .map(|number| {
+                let mut config = make_config(&format!("echo pty-{number}"), None);
+                config.stdin = StdinMode::Pty;
+                config
+            })
+            .collect();
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), runner.run(event_tx, no_control()))
+            .await
+            .expect("a run of pty commands must end");
+
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.close_events.len(), 20);
+
+        let mut output = vec![String::new(); 20];
+
+        while let Ok(event) = event_rx.try_recv() {
+            if let ProcessEvent::Stdout { index, text } = event {
+                output[index as usize].push_str(&text);
+            }
+        }
+
+        for (number, text) in output.iter().enumerate() {
+            assert!(text.contains(&format!("pty-{number}")), "command {number} printed {text:?}");
+        }
+    }
+
     #[tokio::test]
     async fn test_single_echo_command() {
         let commands = vec![make_config("echo hello", Some("greeter"))];
@@ -1191,6 +1226,24 @@ mod tests {
         assert_eq!(seen.as_deref(), Some("[unset]"));
     }
 
+    /// The lines an output event carries, as `(command, is_stderr, line)`: a stream that bounds output
+    /// folds the lines of one read into one `Lines` event.
+    #[cfg(unix)]
+    fn lines_in(event: &ProcessEvent) -> Vec<(u32, bool, &str)> {
+        match event {
+            ProcessEvent::Stdout { index, text } => vec![(*index, false, text)],
+            ProcessEvent::Stderr { index, text } => vec![(*index, true, text)],
+            ProcessEvent::Lines { index, stderr, text, count } => {
+                let lines: Vec<_> = text.split('\n').map(|line| (*index, *stderr, line)).collect();
+
+                assert_eq!(lines.len(), *count as usize, "count must match the lines joined");
+
+                lines
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// A run on a stream that holds `capacity` output events at a time, with nobody reading it yet.
     #[cfg(unix)]
     struct BoundedRun {
@@ -1221,7 +1274,7 @@ mod tests {
         assert!(!run.result.is_finished(), "the child must be blocked on its full pipe");
 
         let first = run.stream.try_next_batch(usize::MAX).expect("something is queued");
-        let queued = first.events.iter().filter(|e| matches!(e, ProcessEvent::Stdout { .. })).count();
+        let queued: usize = first.events.iter().map(|event| lines_in(event).len()).sum();
 
         assert!(queued <= 8, "{queued} lines queued with a capacity of 8");
         drop(first);
@@ -1237,21 +1290,59 @@ mod tests {
                 .expect("the stream stays open until the close");
 
             for event in &batch.events {
-                match event {
-                    ProcessEvent::Stdout { text, .. } => {
-                        assert_eq!(text, &next.to_string());
-                        next += 1;
-                    }
-                    ProcessEvent::Close { exit_code, .. } => {
-                        assert_eq!(*exit_code, 0);
-                        closed = true;
-                    }
-                    _ => {}
+                for (_, _, line) in lines_in(event) {
+                    assert_eq!(line, next.to_string());
+                    next += 1;
+                }
+
+                if let ProcessEvent::Close { exit_code, .. } = event {
+                    assert_eq!(*exit_code, 0);
+                    closed = true;
                 }
             }
         }
 
         assert_eq!(next, 200_001);
+        assert!(run.result.await.unwrap().success);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_every_line_of_a_multi_megabyte_output_arrives_once_and_in_order_folded() {
+        // Two commands, each 600,000 numbered lines (about 4 MB): stdout of one, stderr of the other.
+        let commands = vec![make_config("seq 1 600000", None), make_config("seq 1 600000 1>&2", None)];
+        let mut run = start_bounded(commands, 4096);
+        let mut next = [1_u32; 2];
+        let mut closed = [false; 2];
+        let mut folded_events = 0;
+
+        while !closed.iter().all(|done| *done) {
+            let batch = tokio::time::timeout(std::time::Duration::from_secs(30), run.stream.next_batch(512))
+                .await
+                .expect("the run must keep producing while it is drained")
+                .expect("the stream stays open until both commands have closed");
+
+            for event in &batch.events {
+                if matches!(event, ProcessEvent::Lines { count: 2.., .. }) {
+                    folded_events += 1;
+                }
+
+                for (index, stderr, line) in lines_in(event) {
+                    assert_eq!(stderr, index == 1, "a line keeps its stream");
+                    assert_eq!(line, next[index as usize].to_string(), "command {index} lost or reordered a line");
+                    next[index as usize] += 1;
+                }
+
+                if let ProcessEvent::Close { index, exit_code, .. } = event {
+                    assert_eq!(*exit_code, 0);
+                    assert_eq!(next[*index as usize], 600_001, "the close comes after the last line");
+                    closed[*index as usize] = true;
+                }
+            }
+        }
+
+        assert_eq!(next, [600_001, 600_001]);
+        assert!(folded_events > 0, "a burst of lines must actually be folded");
         assert!(run.result.await.unwrap().success);
     }
 
@@ -1275,10 +1366,10 @@ mod tests {
                 .expect("the stream stays open until the close");
 
             for event in &batch.events {
-                match event {
-                    ProcessEvent::Stdout { .. } => seen += 1,
-                    ProcessEvent::Close { exit_code: code, .. } => exit_code = Some(*code),
-                    _ => {}
+                seen += lines_in(event).len();
+
+                if let ProcessEvent::Close { exit_code: code, .. } = event {
+                    exit_code = Some(*code);
                 }
             }
         }
@@ -1340,6 +1431,76 @@ mod tests {
         assert!(result.success, "{result:?} {events:?}");
         assert!(out.contains("tty"), "{out:?}");
         assert!(out.contains("24 80"), "{out:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_has_the_terminal_as_its_controlling_terminal_and_no_stray_descriptors() {
+        // `/dev/tty` opens only for a process whose session has the terminal as its own, which is
+        // what makes a resize reach it (SIGWINCH) however the command was started.
+        let mut run = start(
+            vec![pty_config("(: </dev/tty) 2>/dev/null && echo ctty; echo fds=$(ls /dev/fd | wc -l | tr -d ' ')")],
+            &default_options(),
+        );
+
+        run.wait_for_started(1).await;
+
+        let (result, events) = run.finish().await;
+        let out = stdout_of(&events);
+
+        assert!(result.success, "{result:?} {events:?}");
+        assert!(out.contains("ctty"), "{out:?}");
+
+        // 0, 1 and 2, plus the one `ls` opens to read the directory itself.
+        let fds: usize =
+            out.split("fds=").nth(1).and_then(|rest| rest.trim().parse().ok()).expect("a descriptor count");
+
+        assert!(fds <= 5, "the command inherited stray descriptors: {out:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_gets_the_same_environment_however_it_is_started() {
+        // An absolute shell path is started without a `fork` on macOS; a bare `sh` is looked up on
+        // `PATH` and goes through `portable-pty`. The command must not be able to tell.
+        let environment_of = |shell: &str| {
+            let options = ConcurrentRunnerOptions { shell_path: Some(shell.to_string()), ..default_options() };
+            let run = start(vec![pty_config("env | sort")], &options);
+
+            async move {
+                let (result, events) = run.finish().await;
+
+                assert!(result.success, "{result:?} {events:?}");
+
+                stdout_of(&events)
+                    .replace("\r\n", "\n")
+                    .lines()
+                    // `_` is the program that ran `env`, which a shell sets itself; the RUNNER_TEST_
+                    // variables are set and removed by other tests that run at the same time.
+                    .filter(|line| {
+                        !line.starts_with("_=") && !line.starts_with("SHLVL=") && !line.starts_with("RUNNER_TEST_")
+                    })
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        let absolute = environment_of("/bin/sh").await;
+        let searched = environment_of("sh").await;
+
+        assert!(absolute.iter().any(|line| line.starts_with("SHELL=")), "{absolute:?}");
+        assert!(absolute.iter().any(|line| line.starts_with("PWD=")), "{absolute:?}");
+        let only_in = |left: &[String], right: &[String]| {
+            left.iter().filter(|line| !right.contains(line)).cloned().collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            absolute,
+            searched,
+            "only absolute: {:?}; only searched: {:?}",
+            only_in(&absolute, &searched),
+            only_in(&searched, &absolute)
+        );
     }
 
     #[cfg(unix)]

@@ -3,7 +3,8 @@
 name: "Runner bench"
 
 # Times the native concurrent runner against the JS spawner on a release addon and prints the
-# table in the job summary (packages/tooling/task-runner/__bench__/concurrent-throughput.script.ts).
+# table in the job summary (packages/tooling/task-runner/__bench__/concurrent-throughput.script.ts):
+# echo tasks, plus the event path every `vis run` uses (output-heavy and pty tasks with an onEvent callback).
 #
 # Advisory: nothing here fails on a number, and it is not a required check. All three legs run on a
 # pull request that touches the runner or the harness, and on a manual run (the path filter keeps
@@ -79,7 +80,7 @@ jobs:
                   {
                       echo "### Concurrent runner: native vs JS spawner (${RUNNER_OS}, ${RUNNER_ARCH})"
                       echo
-                      echo "Advisory. The gate is plan 015's: 200 tasks within 1.25x, one cold task within +10 ms."
+                      echo "Advisory. The bars: 200 tasks within 1.25x and one cold task within +10 ms; with onEvent set, 10 MB and 100 MB of output and 20 pty tasks each within 1.25x of the JS spawner (the three event-path rows; a row that could not run says so)."
                   } >> "$GITHUB_STEP_SUMMARY"
                   BENCH_SUMMARY="$GITHUB_STEP_SUMMARY" pnpm --config.verify-deps-before-run=false bench:concurrent
 

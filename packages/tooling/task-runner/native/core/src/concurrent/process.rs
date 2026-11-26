@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -356,17 +357,21 @@ fn exit_code_of(status: std::process::ExitStatus) -> (i32, bool) {
 /// Longest line the reader buffers before emitting it as its own event.
 const MAX_LINE_BYTES: usize = 1 << 20;
 
-/// Read size for a single `read()`; large enough to swallow most line
-/// bursts in one syscall without holding an oversized buffer per process.
-const READ_CHUNK: usize = 8192;
+/// Read size for a single `read()`: the 64 KiB a Node stream reads at a time, so a burst of output
+/// is a few reads and a few wake-ups, not one per 8 KiB. The buffer lives on the heap, once per reader.
+const READ_CHUNK: usize = 65536;
 
-/// Strip a single trailing `\r` so Windows CRLF endings don't leak a
-/// carriage return into the emitted text. Matches the JS fallback's
-/// `/\r$/` replace (one trailing `\r`, not all of them).
-fn strip_trailing_cr(line: &[u8]) -> String {
+/// The text of a line: a single trailing `\r` stripped, so Windows CRLF endings don't leak a
+/// carriage return into it (the JS fallback's `/\r$/` replace: one, not all of them), and
+/// invalid UTF-8 replaced by U+FFFD. `from_utf8` checks a valid line (the usual case) far faster
+/// than the char-by-char walk `from_utf8_lossy` does, and borrows it.
+fn line_text(line: &[u8]) -> Cow<'_, str> {
     let end = if line.last() == Some(&b'\r') { line.len() - 1 } else { line.len() };
 
-    String::from_utf8_lossy(&line[..end]).into_owned()
+    match std::str::from_utf8(&line[..end]) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => Cow::Owned(String::from_utf8_lossy(&line[..end]).into_owned()),
+    }
 }
 
 /// Emit the longest valid-UTF-8 prefix of a line that reached the cap, keeping an
@@ -383,7 +388,77 @@ fn take_capped_prefix(pending: &mut Vec<u8>) -> String {
     text
 }
 
-/// Stream a child's stdout/stderr to `tx`, emitting one event per `\n`-
+/// The most text folded into one `Lines` event.
+const MAX_FOLDED_BYTES: usize = 256 * 1024;
+
+/// Collects the lines a reader finds until it has scanned its whole read, then hands them over as
+/// events: one `Stdout`/`Stderr` per line for a sink that wants that, or `Lines` events holding as
+/// many lines as the sink allows, joined with `\n`, which costs no allocation per line.
+struct Collector {
+    index: u32,
+    is_stderr: bool,
+    /// The most lines in a `Lines` event; `None` for an event per line.
+    fold: Option<usize>,
+    group: String,
+    in_group: u32,
+    events: Vec<ProcessEvent>,
+}
+
+impl Collector {
+    fn new(index: u32, is_stderr: bool, fold: Option<usize>) -> Self {
+        Self { index, is_stderr, fold, group: String::new(), in_group: 0, events: Vec::new() }
+    }
+
+    fn push(&mut self, text: &str) {
+        let Some(limit) = self.fold else {
+            let text = text.to_string();
+
+            self.events.push(if self.is_stderr {
+                ProcessEvent::Stderr { index: self.index, text }
+            } else {
+                ProcessEvent::Stdout { index: self.index, text }
+            });
+
+            return;
+        };
+
+        if self.in_group > 0
+            && (self.in_group as usize >= limit || self.group.len() + 1 + text.len() > MAX_FOLDED_BYTES)
+        {
+            self.close_group();
+        }
+
+        if self.in_group > 0 {
+            self.group.push('\n');
+        }
+
+        self.group.push_str(text);
+        self.in_group += 1;
+    }
+
+    fn close_group(&mut self) {
+        if self.in_group > 0 {
+            let text = std::mem::take(&mut self.group);
+
+            self.events.push(ProcessEvent::Lines {
+                index: self.index,
+                stderr: self.is_stderr,
+                text,
+                count: self.in_group,
+            });
+            self.in_group = 0;
+        }
+    }
+
+    /// Everything collected so far, in order.
+    fn take(&mut self) -> Vec<ProcessEvent> {
+        self.close_group();
+
+        std::mem::take(&mut self.events)
+    }
+}
+
+/// Stream a child's stdout/stderr to `sink`, emitting one line per `\n`-
 /// terminated line AND flushing any partial line after `PARTIAL_FLUSH` of
 /// idle time (or at EOF). Unlike `BufReader::lines()` / `next_line()`,
 /// which only yields on a newline or EOF, this surfaces spinner/progress/
@@ -398,54 +473,73 @@ async fn stream_output<R>(mut reader: R, sink: EventSink, index: u32, is_stderr:
 where
     R: AsyncRead + Unpin,
 {
-    let event = |text: String| {
-        if is_stderr {
-            ProcessEvent::Stderr { index, text }
-        } else {
-            ProcessEvent::Stdout { index, text }
-        }
-    };
-
     let mut pending: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; READ_CHUNK];
+    let mut chunk = vec![0u8; READ_CHUNK];
     // Lines completed by the last read, sent once it has been fully scanned.
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines = Collector::new(index, is_stderr, sink.fold_limit());
+
+    // One timer for the whole stream. It is armed when a partial line starts waiting and only
+    // looked at when it fires, not reset by every read: a timer per read is a cost per read.
+    let idle = tokio::time::sleep(PARTIAL_FLUSH);
+    tokio::pin!(idle);
+    let mut armed = false;
+    let mut last_read = std::time::Instant::now();
 
     loop {
-        // With a partial line buffered, bound the read so an idle stream
-        // still flushes it; with nothing pending, block until more data.
-        let read = if pending.is_empty() {
-            reader.read(&mut chunk).await
-        } else {
-            match timeout(PARTIAL_FLUSH, reader.read(&mut chunk)).await {
-                Ok(result) => result,
-                Err(_) => {
-                    lines.push(strip_trailing_cr(&pending));
-                    pending.clear();
-                    send_lines(&sink, &mut lines, &event).await;
-                    continue;
+        // With a partial line buffered, an idle stream still flushes it; with nothing pending,
+        // block until more data.
+        let read = loop {
+            if pending.is_empty() {
+                armed = false;
+
+                break reader.read(&mut chunk).await;
+            }
+
+            if !armed {
+                idle.as_mut().reset(tokio::time::Instant::from_std(last_read + PARTIAL_FLUSH));
+                armed = true;
+            }
+
+            tokio::select! {
+                biased;
+                result = reader.read(&mut chunk) => break result,
+                () = idle.as_mut() => {
+                    if last_read.elapsed() >= PARTIAL_FLUSH {
+                        lines.push(&line_text(&pending));
+                        pending.clear();
+                        send_lines(&sink, &mut lines).await;
+                    } else {
+                        idle.as_mut().reset(tokio::time::Instant::from_std(last_read + PARTIAL_FLUSH));
+                    }
                 }
             }
         };
+
+        last_read = std::time::Instant::now();
 
         match read {
             // EOF or read error: flush any trailing partial line, then stop.
             Ok(0) | Err(_) => {
                 if !pending.is_empty() {
-                    lines.push(strip_trailing_cr(&pending));
+                    lines.push(&line_text(&pending));
                 }
 
-                send_lines(&sink, &mut lines, &event).await;
+                send_lines(&sink, &mut lines).await;
 
                 break;
             }
             Ok(n) => {
                 let mut rest = &chunk[..n];
 
-                while let Some(position) = rest.iter().position(|&byte| byte == b'\n') {
-                    append_capped(&mut pending, &rest[..position], &mut lines);
-                    lines.push(strip_trailing_cr(&pending));
-                    pending.clear();
+                while let Some(position) = memchr::memchr(b'\n', rest) {
+                    if pending.is_empty() && position <= MAX_LINE_BYTES {
+                        // The whole line is in this read: no need to stage it in `pending`.
+                        lines.push(&line_text(&rest[..position]));
+                    } else {
+                        append_capped(&mut pending, &rest[..position], &mut lines);
+                        lines.push(&line_text(&pending));
+                        pending.clear();
+                    }
 
                     rest = &rest[position + 1..];
                 }
@@ -454,7 +548,7 @@ where
 
                 // The reader stops here while the consumer is behind, which stops it reading the
                 // pipe, which makes the child block on its next write.
-                if !send_lines(&sink, &mut lines, &event).await {
+                if !send_lines(&sink, &mut lines).await {
                     break;
                 }
             }
@@ -463,22 +557,18 @@ where
 }
 
 /// Send the completed lines in order. False when the stream was closed and the reader should stop.
-async fn send_lines(sink: &EventSink, lines: &mut Vec<String>, event: &impl Fn(String) -> ProcessEvent) -> bool {
-    for text in lines.drain(..) {
-        if !sink.send_output(event(text)).await {
-            return false;
-        }
-    }
+async fn send_lines(sink: &EventSink, lines: &mut Collector) -> bool {
+    let events = lines.take();
 
-    true
+    events.is_empty() || sink.send_output_many(events).await
 }
 
 /// Append `bytes` to the pending line, completing the buffered part first whenever
 /// it is already at the cap and more of the same line follows.
-fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], completed: &mut Vec<String>) {
+fn append_capped(pending: &mut Vec<u8>, mut bytes: &[u8], completed: &mut Collector) {
     while !bytes.is_empty() {
         if pending.len() >= MAX_LINE_BYTES {
-            completed.push(take_capped_prefix(pending));
+            completed.push(&take_capped_prefix(pending));
         }
 
         let take = (MAX_LINE_BYTES - pending.len()).min(bytes.len());
@@ -638,7 +728,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
-    use super::{stream_output, ShellArg};
+    use super::{stream_output, Collector, ShellArg, MAX_FOLDED_BYTES};
     use crate::concurrent::types::ProcessEvent;
 
     /// Receive the next event's text within `within`, or `None` on timeout/close.
@@ -654,6 +744,90 @@ mod tests {
             ProcessEvent::Stdout { text, .. } | ProcessEvent::Stderr { text, .. } => text,
             other => panic!("expected an output event, got {other:?}"),
         }
+    }
+
+    fn folded(events: Vec<ProcessEvent>) -> Vec<(u32, String)> {
+        events
+            .into_iter()
+            .map(|event| match event {
+                ProcessEvent::Lines { text, count, .. } => (count, text),
+                other => panic!("expected folded lines, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_collector_without_a_fold_limit_makes_an_event_per_line() {
+        let mut collector = Collector::new(3, true, None);
+
+        collector.push("a");
+        collector.push("");
+        collector.push("b");
+
+        assert_eq!(
+            collector.take(),
+            vec![
+                ProcessEvent::Stderr { index: 3, text: "a".to_string() },
+                ProcessEvent::Stderr { index: 3, text: String::new() },
+                ProcessEvent::Stderr { index: 3, text: "b".to_string() },
+            ]
+        );
+        assert!(collector.take().is_empty());
+    }
+
+    #[test]
+    fn a_collector_folds_up_to_the_limit_and_keeps_empty_lines() {
+        let mut collector = Collector::new(0, false, Some(3));
+
+        for line in ["a", "", "c", "d", "e"] {
+            collector.push(line);
+        }
+
+        assert_eq!(folded(collector.take()), vec![(3, "a\n\nc".to_string()), (2, "d\ne".to_string())]);
+    }
+
+    #[test]
+    fn a_collector_starts_a_new_group_at_the_byte_cap_and_a_long_line_stands_alone() {
+        let mut collector = Collector::new(0, false, Some(256));
+        let half = "x".repeat(MAX_FOLDED_BYTES / 2 - 1);
+        let huge = "y".repeat(MAX_FOLDED_BYTES + 1);
+
+        for line in [half.as_str(), half.as_str(), half.as_str(), huge.as_str(), "z"] {
+            collector.push(line);
+        }
+
+        let groups = folded(collector.take());
+
+        assert_eq!(groups.iter().map(|(count, _)| *count).collect::<Vec<_>>(), [2, 1, 1, 1]);
+        assert_eq!(groups[2].1, huge);
+        assert_eq!(groups[3].1, "z");
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_bounds_output_gets_the_lines_of_a_read_folded() {
+        let (mut writer, reader) = tokio::io::duplex(4096);
+        let (sink, mut stream) = crate::concurrent::events::event_channel(1024);
+        let handle = tokio::spawn(stream_output(reader, sink, 5, true));
+
+        writer.write_all(b"one\ntwo\r\n\nthree").await.unwrap();
+        drop(writer);
+        handle.await.unwrap();
+
+        let mut lines = Vec::new();
+
+        while let Some(batch) = stream.try_next_batch(100) {
+            for event in &batch.events {
+                let ProcessEvent::Lines { index, stderr, text, count } = event else {
+                    panic!("expected folded lines, got {event:?}");
+                };
+
+                assert_eq!((*index, *stderr), (5, true));
+                assert_eq!(text.split('\n').count(), *count as usize);
+                lines.extend(text.split('\n').map(str::to_string));
+            }
+        }
+
+        assert_eq!(lines, ["one", "two", "", "three"]);
     }
 
     #[tokio::test]

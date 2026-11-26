@@ -45,6 +45,46 @@ const modes = {
         process.stdout.write("def\n");
     },
 
+    // numbered <prefix> <count>: `count` numbered lines on stdout and on stderr at once, prefixed
+    // with `o<prefix>-` and `e<prefix>-`; every 1000th is empty, every 10000th is 300 KB long, every
+    // 777th ends in CRLF, and each stream ends with a `tail` that has no newline. The suite builds the
+    // same lines (`numberedLines`) to compare.
+    numbered: async ([prefix, count]) => {
+        const write = async (target, tag) => {
+            let pending = "";
+            const flush = async () => {
+                if (pending && !target.write(pending)) {
+                    await new Promise((resolve) => target.once("drain", resolve));
+                }
+
+                pending = "";
+            };
+
+            for (let number = 1; number <= Number(count); number += 1) {
+                const label = `${tag}${prefix}-${number}`;
+
+                if (number % 10_000 === 0) {
+                    pending += `${label}-${"y".repeat(300_000)}\n`;
+                } else if (number % 1000 === 0) {
+                    pending += "\n";
+                } else if (number % 777 === 0) {
+                    pending += `${label}\r\n`;
+                } else {
+                    pending += `${label} padding-padding-padding\n`;
+                }
+
+                if (pending.length > 65_536) {
+                    await flush();
+                }
+            }
+
+            pending += `${tag}${prefix}-tail`;
+            await flush();
+        };
+
+        await Promise.all([write(process.stdout, "o"), write(process.stderr, "e")]);
+    },
+
     // big-line <bytes>: one line of that length.
     "big-line": ([bytes]) => {
         process.stdout.write(`${"x".repeat(Number(bytes))}\n`);

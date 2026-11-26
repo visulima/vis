@@ -222,6 +222,25 @@ interface Scenario {
     react?: () => React;
 }
 
+/** One line of `probe.cjs numbered`, as a caller sees it: every 1000th is empty, every 10000th is 300 KB, every 777th had a CRLF. */
+const numberedLine = (label: string, number: number): string => {
+    if (number % 10_000 === 0) {
+        return `${label}-${"y".repeat(300_000)}`;
+    }
+
+    if (number % 1000 === 0) {
+        return "";
+    }
+
+    return number % 777 === 0 ? label : `${label} padding-padding-padding`;
+};
+
+/** The lines `probe.cjs numbered PREFIX COUNT` writes to one stream (`tag` "o" or "e"), as a caller sees them. */
+const numberedLines = (tag: "e" | "o", prefix: string, count: number): string[] => [
+    ...Array.from({ length: count }, (_, position) => numberedLine(`${tag}${prefix}-${position + 1}`, position + 1)),
+    `${tag}${prefix}-tail`,
+];
+
 const callKill = (afterText: string, signal?: string) => (): React => {
     let done = false;
 
@@ -333,6 +352,25 @@ const scenarios: Scenario[] = [
         commands: () => [{ command: "sleep 4 &" }],
         name: "a descendant holding the pipes does not hold the run",
         posixOnly: true,
+    },
+    {
+        // About 15 MB across four streams: every line of every stream reaches `onEvent` exactly once
+        // and in order, whatever the runner does to move events (the native one folds adjacent
+        // lines of a stream into one object and splits them again in JavaScript).
+        check: ({ events }) => {
+            for (const [index, prefix] of [[0, "a"], [1, "b"]] as const) {
+                for (const [kind, tag] of [["stdout", "o"], ["stderr", "e"]] as const) {
+                    const seen = events.filter((event) => event.index === index && event.kind === kind).map((event) => event.text);
+
+                    // The scenario's own test is running this check.
+                    // eslint-disable-next-line vitest/no-standalone-expect
+                    expect(seen).toStrictEqual(numberedLines(tag, prefix, 30_000));
+                }
+            }
+        },
+        commands: () => [{ command: probeCommand("numbered", "a", "30000") }, { command: probeCommand("numbered", "b", "30000") }],
+        name: "multi-megabyte output: every line once, in order, per command and stream",
+        options: { maxProcesses: 2 },
     },
     ...(directExecSafe ? [{ commands: () => [{ command: directCommand("out", "direct"), shell: false }], name: "shell: false" }] : []),
     ...(posix && existsSync("/bin/bash")
