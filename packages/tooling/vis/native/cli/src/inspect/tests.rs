@@ -815,11 +815,12 @@ mod downloads_marshall {
 
         assert!(only_downloads(&setup(Some(&registry))).is_err());
 
-        // Nothing listens at the downloads address.
+        // Nothing listens at the downloads address: a port that was free a moment ago.
         let (_registry, mut setup) = with_downloads(None, "pkg");
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
 
-        setup.context.services.downloads = "http://127.0.0.1:1/downloads".to_owned();
-        assert!(only_downloads(&setup).is_err());
+        setup.context.services.downloads = format!("http://127.0.0.1:{closed}/downloads");
+        assert!(only_downloads(&setup).unwrap_err().contains("the downloads request failed"));
 
         // An address `fetch` and the client may read differently.
         setup.context.services.downloads = "http://127.0.0.1:80/downloads".to_owned();

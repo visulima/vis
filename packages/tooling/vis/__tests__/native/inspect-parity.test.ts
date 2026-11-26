@@ -525,6 +525,23 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(result.summary.warningCount).toBe(downloads >= 20 && downloads < 10_000 ? 1 : 0);
         });
 
+        it.each([['"7"'], ["5.5"], ["-1"]])("hands over a cached count of %s, which Node writes differently", (downloads) => {
+            expect.hasAssertions();
+
+            const entry = `{"createdAt":${Date.now()},"downloads":${downloads},"observedAt":"2024-01-01T00:00:00.000Z","ttlMs":86400000}`;
+
+            run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/calm.json": entry }, native: false });
+        });
+
+        it("reads the cache file of a scoped package under its encoded name", () => {
+            expect.hasAssertions();
+
+            const entry = JSON.stringify({ createdAt: Date.now(), downloads: 12, observedAt: new Date().toISOString(), ttlMs: 86_400_000 });
+            const result = report(run({ args: ["@scope/bins", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/%40scope%2Fbins.json": entry }, native: true }).stdout);
+
+            expect(result.errors.map((finding) => finding.message)).toStrictEqual(["Only 12 downloads in the past month."]);
+        });
+
         it("runs after metadata and with the exit status Node gives", () => {
             expect.hasAssertions();
 

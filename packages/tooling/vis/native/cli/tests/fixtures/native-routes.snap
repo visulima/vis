@@ -1754,6 +1754,7 @@
 ["inspect","express","--json","--only","author,"] => inspect
 ["inspect","express","--json","--only","author,newBin"] => inspect
 ["inspect","express","--json","--only","downloads"] => inspect
+["inspect","express","--json","--only","downloads,author"] => inspect
 ["inspect","express","--json","--only","expiredDomains"] => inspect
 ["inspect","express","--json","--only","nope"] => inspect
 ["inspect","express","--json","--only","signatures"] => inspect
