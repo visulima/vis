@@ -116,7 +116,7 @@ impl Node<'_> {
     fn version(&mut self) -> Option<String> {
         let ask = &mut self.ask;
 
-        self.known.get_or_insert_with(|| ask()).clone()
+        self.known.get_or_insert_with(ask).clone()
     }
 }
 
@@ -277,11 +277,11 @@ fn findings(
             let mut parts = pin.split('@');
             let (expected, expected_version) = (parts.next().unwrap_or(""), parts.next());
 
-            if !running.is_empty() && !expected.is_empty() && running != expected {
-                count += 1;
-            } else if !running_version.is_empty()
-                && expected_version.is_some_and(|version| !version.is_empty() && version != running_version)
-            {
+            let other_manager = !running.is_empty() && !expected.is_empty() && running != expected;
+            let other_version = !running_version.is_empty()
+                && expected_version.is_some_and(|version| !version.is_empty() && version != running_version);
+
+            if other_manager || other_version {
                 count += 1;
             }
         }
