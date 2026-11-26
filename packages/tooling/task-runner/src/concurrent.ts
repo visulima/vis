@@ -1,10 +1,10 @@
 /**
  * Public API for the concurrent process runner.
  *
- * Runs on the native Rust addon, or on the pure JavaScript spawner for
- * callers that stream events, pipe stdin, use a PTY or opt out of the parent
- * environment. Integrates flow controllers
- * (restart, teardown, timings) around the core runner.
+ * Runs on the native Rust addon. The pure JavaScript spawner is only reachable
+ * through the `VIS_CONCURRENT_RUNNER=js` escape hatch, which is removed in the
+ * next release. Integrates flow controllers (restart, teardown, timings)
+ * around the core runner.
  */
 
 import { runConcurrentFallback } from "./concurrent-fallback";
@@ -13,8 +13,8 @@ import { detectScriptShell } from "./detect-shell";
 import { logTimings } from "./flow-controllers/log-timings";
 import { withRestart } from "./flow-controllers/restart-process";
 import { runTeardown } from "./flow-controllers/teardown";
-import { loadNativeBindings } from "./native-binding";
 import { buildEnhancedPath } from "./path-utils";
+import { resolveConcurrentRunner } from "./runner-switch";
 import type { ConcurrentCommandConfig, ConcurrentCommandInput, ConcurrentRunnerOptions, ConcurrentRunResult } from "./types";
 
 /**
@@ -84,7 +84,7 @@ const withEnhancedPathConfigs = (configs: ConcurrentCommandConfig[]): Concurrent
     });
 
 /**
- * Core runner function that dispatches to native or JS fallback.
+ * Core runner function: the native runner, or the JS spawner when `VIS_CONCURRENT_RUNNER=js`.
  * This is the inner runner without flow controller wrappers.
  */
 const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions): Promise<ConcurrentRunResult> => {
@@ -98,29 +98,22 @@ const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: Concurren
     // in lock-step.
     const configs = withEnhancedPathConfigs(rawConfigs);
 
-    const native = loadNativeBindings();
-
-    // Callers that use any of these still run on the JS spawner:
-    // - stdin piping or a PTY
-    // - `onEvent` streaming
-    // - `inheritEnv: false`
-    // The native runner (`runNativeConcurrent`) does all of them now, with the same results (the
-    // parity suite compares the two runners). Which one a caller gets stays as it was until the
-    // native runner meets the throughput bar.
-    const needsJsFallback = configs.some((c) => c.stdin === "pipe" || c.stdin === "pty" || c.inheritEnv === false) || !!options.onEvent;
-
-    if (native && !needsJsFallback) {
-        return runNativeConcurrent(configs, { ...options, shellPath });
+    // The native runner does everything a caller can ask for (event streaming, piped stdin, a PTY,
+    // `inheritEnv: false`, restart); the parity suite compares it with the JS spawner. The JS spawner
+    // is reached only through the one-release escape hatch `VIS_CONCURRENT_RUNNER=js`.
+    if (resolveConcurrentRunner() === "js") {
+        return runConcurrentFallback(configs, { ...options, shellPath });
     }
 
-    return runConcurrentFallback(configs, { ...options, shellPath });
+    return runNativeConcurrent(configs, { ...options, shellPath });
 };
 
 /**
  * Run commands concurrently with output streaming and process management.
  *
- * Automatically uses the native Rust addon for performance when available,
- * falling back to a pure JavaScript implementation.
+ * Runs on the native Rust addon. Set `VIS_CONCURRENT_RUNNER=js` to use the
+ * legacy pure JavaScript implementation instead (an escape hatch kept for one
+ * release; the variable and the JS implementation are removed after that).
  *
  * Supports flow controllers:
  * - `restart`: retry failed commands with configurable delay/backoff

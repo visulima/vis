@@ -15,7 +15,7 @@ Module layout in `src/`:
 - `backends/` — remote-cache backends: `http.ts` (Turbo-compatible), `reapi.ts` (Bazel REAPI gRPC), `factory.ts` (selection by `CacheMode`), `hash-bridge.ts` (maps task-hashes <-> action-digests), `types.ts` (the `RemoteCacheBackend` contract).
 - `cas/` — content-addressable store primitives (v2 layout): `digest.ts`, `paths.ts`, `store.ts`. Constants `V2_ROOT`/`V2_CAS`/`V2_AC`/`V2_INDEX`/`V2_TMP` live in `paths.ts`.
 - `cache.ts` — local cache façade (`Cache`, `DEFAULT_CACHE_DIRECTORY_NAME`, size helpers).
-- `concurrent.ts` / `concurrent-fallback.ts` — process orchestration; the `-fallback` variant is the pure-JS path used when the native addon isn't loaded.
+- `concurrent.ts` / `concurrent-native.ts` — process orchestration. The native runner owns every concurrent run; `concurrent-fallback.ts` is the deprecated pure-JS spawner, reachable only through the `VIS_CONCURRENT_RUNNER=js` escape hatch (`runner-switch.ts`) and removed after one release. Never route a new capability to the fallback.
 - `command-parser/` — `npm:build` shortcuts, `npm run watch-*` wildcard expansion, `{1}` argument placeholders.
 - `flow-controllers/` — restart-with-backoff, stdin routing, timing summaries, teardown commands.
 - `framework-inference.ts` — Next/Vite/CRA/Gatsby/Nuxt env-var auto-injection.

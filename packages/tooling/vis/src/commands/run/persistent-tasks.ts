@@ -103,10 +103,6 @@ export const runPersistentTasks = async (tasks: Task[], spawnContext: TaskSpawnC
     if (!lifecycleHooks) {
         await runConcurrently(commands, {
             killOthers: ["failure"],
-            onEvent: () => {
-                // No-op — presence forces the JS fallback path, which is
-                // the one with the hardened signal cleanup.
-            },
         });
 
         return;

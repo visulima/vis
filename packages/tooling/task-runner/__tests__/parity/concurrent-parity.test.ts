@@ -24,12 +24,12 @@
  * | - | -------- | ---------- | ------------- |
  * | 1 | the command cannot be spawned (missing cwd or shell) | `started`, `error`, close code -2 (a negative libuv error; -2 on POSIX) | `started`, `error`, close code 1 (the event order is the same on both) |
  * | 2 | a UTF-8 character split across two reads, within the 100 ms flush window | one U+FFFD per stray byte (each chunk decoded alone) | the character, once |
- * | 3 | `killTimeout` | never read: a command that ignores the kill signal runs on | SIGKILL after the timeout (137) |
+ * | 3 | `killTimeout` | never read: a command that ignores the kill signal runs on | SIGKILL after the timeout (137 when the command leads its process group; a wrapper shell that dies from the SIGTERM first, as dash does on Linux, reports 143) |
  * | 4 | `killOthers` fires with commands still queued | the run never resolves | resolves; the queued commands have no close event |
  * | 5 | `successCondition: "command-MyApp"` for a command named `MyApp` | lowercases the condition, never matches | matches |
  * | 6 | an unknown `successCondition`, `killSignal` or `killOthers` value | silently the default | rejects, naming the value |
  * | 7 | a pty command killed by a signal | exit code 0, `killed` true (node-pty's `exitCode`) | `128 + signal`, `killed` true |
- * | 8 | a pty command that cannot start (missing cwd) | `started`, then close code 1, no `error` | `started`, `error`, then close code 1 |
+ * | 8 | a pty command that cannot start (missing cwd) | `started`, then close code 1, no `error`; on Linux node-pty's helper also writes `chdir(2) failed.: No such file or directory` to the terminal, so a `stdout` event sits between the two | `started`, `error`, then close code 1 |
  *
  * ## Same on both (asserted equal in the scenarios, not differences)
  *
@@ -730,8 +730,10 @@ describe("accepted differences", () => {
     it.skipIf(!posix)("3. killTimeout: the native runner escalates to SIGKILL, the JS spawner never reads it", async () => {
         expect.assertions(6);
 
-        // The second command ignores SIGTERM and leaves by itself after 1.6 s.
-        const commands = () => [{ command: probeCommand("exit-after", "150", "1") }, { command: probeCommand("ignore-term", "1600") }];
+        // The second command ignores SIGTERM and leaves by itself after 1.6 s. It is `exec`ed so the
+        // probe is the process group's leader on every shell: dash (Linux) keeps a wrapper shell
+        // alive, which dies from the SIGTERM first and would be what the exit code reports (143).
+        const commands = () => [{ command: probeCommand("exit-after", "150", "1") }, { command: `exec ${probeCommand("ignore-term", "1600")}` }];
         const { js, native } = await both(commands, { killOthers: ["failure"], killTimeout: 300 });
 
         expect(closeOf(native, 1)).toMatchObject({ exitCode: 137, killed: true });
@@ -812,7 +814,8 @@ describe("accepted differences", () => {
 
             const { js, native } = await both(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory", stdin: "pty" }]);
 
-            expect(kindsOf(js)).toStrictEqual(["started", "close"]);
+            // node-pty's forked helper reports the failed chdir on the terminal on Linux; on macOS the spawn fails outright.
+            expect(kindsOf(js)).toStrictEqual(process.platform === "linux" ? ["started", "stdout", "close"] : ["started", "close"]);
             expect(closeOf(js).exitCode).toBe(1);
             expect(kindsOf(native)).toStrictEqual(["started", "error", "close"]);
             expect(closeOf(native).exitCode).toBe(1);
