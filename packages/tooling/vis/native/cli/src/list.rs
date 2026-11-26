@@ -326,6 +326,16 @@ pub(crate) fn inference_free(root: &Path, graph: &ProjectGraph) -> bool {
     collect(root, graph).is_some()
 }
 
+/// How many distinct target names the projects of `graph` hold, when [`inference_free`] holds: the script names
+/// across every project, which is what `vis status` counts.
+pub(crate) fn unique_target_count(root: &Path, graph: &ProjectGraph) -> Option<usize> {
+    let listed = collect(root, graph)?;
+    let names: HashSet<&str> =
+        listed.iter().flat_map(|project| project.targets.iter().map(|(name, _)| name.as_str())).collect();
+
+    Some(names.len())
+}
+
 /// Column width in UTF-16 units (`String.length`), which equals the char count for the
 /// BMP characters this table uses.
 fn units(text: &str) -> usize {
