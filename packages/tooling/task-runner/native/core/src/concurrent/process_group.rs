@@ -86,7 +86,16 @@ mod windows {
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
         TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE,
+    };
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        /// Undocumented-in-headers but stable ntdll export that decrements the suspend count of
+        /// every thread of a process; `windows-sys` has no binding for it. Returns an `NTSTATUS`.
+        fn NtResumeProcess(process: HANDLE) -> i32;
+    }
 
     /// Send `CTRL_BREAK_EVENT` to the process group rooted at `pid`.
     ///
@@ -170,6 +179,39 @@ mod windows {
         }
     }
 
+    /// Put a process that was created with `CREATE_SUSPENDED` into `job` (when there is one) and
+    /// resume it.
+    ///
+    /// Assigning while it is suspended means no descendant can start before the process is in the
+    /// job, so `TerminateJobObject` reaches the whole tree. A missing job or a failed assignment is
+    /// best-effort (the command still runs, a kill just cannot take the tree); a process that
+    /// cannot be resumed is an error, because it would never run. The caller must kill it then.
+    pub(crate) fn assign_and_resume(job: Option<&JobObject>, pid: u32) -> io::Result<()> {
+        // `PROCESS_SET_QUOTA | PROCESS_TERMINATE` is what job assignment needs.
+        // SAFETY: plain FFI call; the handle is closed below on every path.
+        let process_handle =
+            unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME, 0, pid) };
+        if process_handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+
+        if let Some(job) = job {
+            // SAFETY: both handles are valid; the process handle outlives the call.
+            let _ = unsafe { AssignProcessToJobObject(job.handle, process_handle) };
+        }
+
+        // SAFETY: `process_handle` is a valid process handle opened with `PROCESS_SUSPEND_RESUME`.
+        let status = unsafe { NtResumeProcess(process_handle) };
+        // SAFETY: the handle was opened above and is not used after this.
+        unsafe { CloseHandle(process_handle) };
+
+        // `NTSTATUS` success and informational codes are non-negative.
+        if status < 0 {
+            return Err(io::Error::other(format!("NtResumeProcess failed with NTSTATUS {status:#010x}")));
+        }
+        Ok(())
+    }
+
     impl Drop for JobObject {
         fn drop(&mut self) {
             unsafe { CloseHandle(self.handle) };
@@ -206,4 +248,4 @@ pub(crate) fn kill_tree(pid: u32, signal: KillSignal) -> std::io::Result<()> {
 pub(crate) use unix::pre_exec_setsid;
 
 #[cfg(windows)]
-pub(crate) use windows::{graceful_shutdown, JobObject};
+pub(crate) use windows::{assign_and_resume, graceful_shutdown, JobObject};

@@ -40,6 +40,18 @@ pub(crate) fn spawn_process(
 
     let pid = child.id();
 
+    // Windows: the child was created suspended. Put it in a Job Object before it runs, so a
+    // wrapper's first grandchild is already inside the job and a kill takes the whole tree. With
+    // no job (creation failed) the command still runs; only the tree kill is lost. A child that
+    // cannot be resumed would hang the run, so that is the spawn error (dropping `child` kills it).
+    #[cfg(windows)]
+    let job = {
+        let job = process_group::JobObject::new().ok();
+        let pid = pid.ok_or_else(|| std::io::Error::other("the spawned process has no pid"))?;
+        process_group::assign_and_resume(job.as_ref(), pid)?;
+        job
+    };
+
     // Surface the pid to the consumer before any output streams,
     // so JS-side signal handlers can register the child for cleanup
     // before it has a chance to emit anything.
@@ -129,30 +141,6 @@ pub(crate) fn spawn_process(
 
         let _ = completion_tx.send(CompletionMessage { index, close_event });
     });
-
-    // Windows: create Job Object and assign the child process for tree killing.
-    //
-    // KNOWN LIMITATION: the child is already running by the time we
-    // create + assign the Job Object. A wrapper that immediately
-    // re-`exec`s another binary (very common with `cmd.exe /s /c`)
-    // can fork a grandchild *before* AssignProcessToJobObject runs;
-    // that grandchild is outside the Job and so isn't terminated by
-    // `TerminateJobObject` or by `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
-    // The correct fix is `CreateProcessW(CREATE_SUSPENDED)` → assign
-    // → `ResumeThread`, which requires bypassing tokio's `Command`
-    // and using raw Win32 (tokio doesn't expose the primary thread
-    // handle). Deferred until we have a Windows test runtime to
-    // validate against; the `kill_on_drop(true)` + Job Object combo
-    // covers the common case, and the wider blast radius is bounded
-    // by Job Object cleanup on process exit.
-    #[cfg(windows)]
-    let job = {
-        let job = process_group::JobObject::new().ok();
-        if let (Some(ref j), Some(p)) = (&job, pid) {
-            let _ = j.assign_process_by_pid(p);
-        }
-        job
-    };
 
     Ok(ProcessInfo {
         index,
@@ -637,15 +625,16 @@ fn build_command(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> 
 
     // Windows: create the child as the leader of a new process group so
     // we can later target it with `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)`
-    // for graceful shutdown without also signalling our own console.
+    // for graceful shutdown without also signalling our own console, and suspended so
+    // `spawn_process` can put it in its Job Object before it runs (see `assign_and_resume`).
     //
     // Note: tokio's `creation_flags` always ORs `CREATE_UNICODE_ENVIRONMENT`
     // into the final flag set, so we don't lose unicode env support by
-    // setting only `CREATE_NEW_PROCESS_GROUP` here.
+    // setting only these two here.
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED};
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
     }
 
     cmd
@@ -730,6 +719,34 @@ mod tests {
 
     use super::{stream_output, Collector, ShellArg, MAX_FOLDED_BYTES};
     use crate::concurrent::types::ProcessEvent;
+
+    /// The child is created suspended: nothing it does is visible until it is assigned to its job
+    /// and resumed, which is what puts a wrapper's first grandchild inside the job.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_windows_child_stays_suspended_until_it_is_assigned_and_resumed() {
+        use super::{build_command, process_group};
+        use crate::concurrent::types::ConcurrentCommandConfig;
+
+        let marker = std::env::temp_dir().join(format!("vis-suspended-start-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let config =
+            ConcurrentCommandConfig { command: format!("echo ran> \"{}\"", marker.display()), ..Default::default() };
+
+        let mut child = build_command(&config, None).spawn().unwrap();
+        let pid = child.id().unwrap();
+
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        assert!(!marker.exists(), "the child ran before it was resumed");
+
+        let job = process_group::JobObject::new().ok();
+        process_group::assign_and_resume(job.as_ref(), pid).unwrap();
+
+        let status = timeout(Duration::from_secs(10), child.wait()).await.expect("the resumed child must finish");
+        assert!(status.unwrap().success());
+        assert!(marker.exists(), "the child did not run after it was resumed");
+        let _ = std::fs::remove_file(&marker);
+    }
 
     /// Receive the next event's text within `within`, or `None` on timeout/close.
     async fn next_text(rx: &mut mpsc::UnboundedReceiver<ProcessEvent>, within: Duration) -> Option<String> {

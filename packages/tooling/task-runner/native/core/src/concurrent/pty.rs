@@ -279,6 +279,14 @@ pub(crate) fn spawn_pty(
     });
 
     // Windows: the Job Object is what a kill takes down, as for a pipe command.
+    //
+    // KNOWN LIMITATION: unlike a pipe command, which is created suspended and assigned before it
+    // runs, the child here is already running when it is assigned. `portable-pty` creates it with a
+    // fixed `EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT` and exposes neither the
+    // creation flags nor the primary thread handle, so it cannot be started suspended. A
+    // wrapper that starts a grandchild in the instant before the assignment leaves that
+    // grandchild outside the job. Closing the window means replacing `portable-pty`'s ConPTY
+    // spawn with our own `CreateProcessW(CREATE_SUSPENDED)` call.
     #[cfg(windows)]
     let job = {
         let job = process_group::JobObject::new().ok();
