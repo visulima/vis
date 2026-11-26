@@ -139,12 +139,6 @@ fn now_ms() -> Result<u64, String> {
     u64::try_from(elapsed.as_millis()).map_err(|_| "the clock is out of range".to_owned())
 }
 
-/// The marshalls a run executes, or the reason it is Node's.
-fn selected_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
-    args::selected(flags.only.as_deref(), &args::process_lookup)
-        .ok_or_else(|| "a MARSHALL_DISABLE_* variable is not text".to_owned())
-}
-
 /// The plan of a run, or the reason it is Node's.
 fn answer(args: &[String]) -> Result<Plan, String> {
     let flags = args::parse(args)?;
@@ -153,7 +147,8 @@ fn answer(args: &[String]) -> Result<Plan, String> {
         return Err("the text report is a pail line with symbols pail's width rule does not cover".to_owned());
     }
 
-    let run = selected_marshalls(&flags)?;
+    let run = args::selected(flags.only.as_deref(), &args::process_lookup)
+        .ok_or("a MARSHALL_DISABLE_* variable is not text")?;
 
     if let Some(reason) = context_decline() {
         return Err(reason.to_owned());
