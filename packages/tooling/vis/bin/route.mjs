@@ -1462,7 +1462,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
-    // The JSON report of the marshalls that read the packument alone (`--only`, or the others turned off with `MARSHALL_DISABLE_*`).
+    // The JSON report of the marshalls the binary has: those that read the packument, and `downloads` (`--only`, or the others turned off with `MARSHALL_DISABLE_*`).
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
