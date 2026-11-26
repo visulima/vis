@@ -1,15 +1,16 @@
 //! `vis inspect <package>[@<spec>] --json [--strict] [--only <marshalls>]` — the native port of
 //! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument, and of
-//! `downloads`, which asks the registry's download API (see [`downloads`]).
+//! `downloads`, which asks the registry's download API (see [`downloads`]), and `archivedRepo`, which asks GitHub (see
+//! [`archived_repo`]).
 //!
 //! Node fetches the packument (`getPackument`, cached half an hour in `~/.vis/cache/packuments`), resolves the spec to a
 //! version, runs each marshall in turn and prints `{errors, findings, summary, warnings}`; it exits 1 when there is an
 //! error (or any finding with `--strict`) and 2 when the package is missing or the spec names no version. This module
 //! reproduces that for a unix CI run off a terminal at the root of a pnpm workspace (see [`context_decline`]).
 //!
-//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata` and `downloads`. A run that has to execute
-//! another marshall goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks up DNS records
-//! and `archivedRepo` and `signatures` ask other services. `MARSHALL_DISABLE_*` or `--only` make a run native.
+//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata`, `downloads` and `archivedRepo`. A run that
+//! has to execute another marshall goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks
+//! up DNS records and `signatures` asks the registry for its keys. `MARSHALL_DISABLE_*` or `--only` make a run native.
 //!
 //! Everything it cannot reproduce goes to Node before anything is printed or written:
 //!
@@ -22,9 +23,10 @@
 //! - a spec that is not a tag or an exact version (a range needs node-semver's `maxSatisfying`), versions that are not
 //!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names.
 //!
-//! The packument cache and the download counts are read and written as Node does: a fresh entry is used, a fetched answer
+//! The packument cache and the service caches are read and written as Node does: a fresh entry is used, a fetched answer
 //! is written, in the bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
 
+mod archived_repo;
 mod args;
 mod downloads;
 mod js_format;
@@ -74,11 +76,19 @@ struct Plan {
 struct Services {
     /// `DOWNLOADS_API_BASE`.
     downloads: String,
+    /// `GITHUB_API_BASE`.
+    github: String,
+    /// `GITHUB_TOKEN`, as the environment holds it: `archivedRepo` sends it, and checks it when it does.
+    github_token: Option<OsString>,
 }
 
 impl Services {
     fn production() -> Self {
-        Self { downloads: downloads::API.to_owned() }
+        Self {
+            downloads: downloads::API.to_owned(),
+            github: archived_repo::API.to_owned(),
+            github_token: std::env::var_os("GITHUB_TOKEN"),
+        }
     }
 }
 
@@ -125,6 +135,7 @@ fn native_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
                 | Marshall::NewBin
                 | Marshall::Metadata
                 | Marshall::Downloads
+                | Marshall::ArchivedRepo
         )
     }) {
         Some(other) => {
@@ -282,6 +293,21 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
                 }
 
                 let (found, changes) = downloads::run(client, base, &context.cache_dir, &flags.name, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
+            Marshall::ArchivedRepo => {
+                let base = &context.services.github;
+
+                if !url_is_plain(base) {
+                    return Err(format!("the GitHub address {base:?} is not a URL `fetch` and the client read alike"));
+                }
+
+                let token = context.services.github_token.as_deref();
+                let (found, changes) =
+                    archived_repo::run(client, base, token, &context.cache_dir, &view, &target, context.now_ms)?;
 
                 cache.extend(changes);
 

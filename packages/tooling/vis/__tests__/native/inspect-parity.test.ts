@@ -551,6 +551,50 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 
+    describe("the archivedRepo marshall", () => {
+        const cached = (body: string): Record<string, string> => {
+            return { ".vis/cache/archived-repo/o__r.json": `{"createdAt":${Date.now()},"ttlMs":86400000,${body}}` };
+        };
+        const ON = { MARSHALL_DISABLE_ARCHIVED_REPO: "0" };
+
+        it.each([
+            ['"archived":true,"archivedAt":"2024-01-02T03:04:05Z"', "Source repo o/r is archived (since 2024-01-02T03:04:05Z)."],
+            ['"archived":true', "Source repo o/r is archived."],
+            ['"archived":false,"missing":true', "Source repo o/r returned 404 from GitHub."],
+        ])("reports the cached state %s the way Node does", (body, message) => {
+            expect.hasAssertions();
+
+            const result = report(run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: true }).stdout);
+
+            expect(result.warnings.map((finding) => finding.message)).toStrictEqual([message]);
+        });
+
+        it.each(['"archived":false', '"archived":false,"missing":false'])("reports nothing for the cached state %s", (body) => {
+            expect.hasAssertions();
+
+            expect(report(run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: true }).stdout).warnings).toHaveLength(0);
+        });
+
+        it.each(["urls@1.0.0", "urls@1.1.0", "urls@1.2.0", "urls@1.3.0", "urls@1.4.0", "urls@1.5.0", "urls@1.6.0", "urls@1.7.0", "odd-url", "dangling", "null-repository"])("reads the repository of %s the way Node does", (name) => {
+            expect.hasAssertions();
+
+            run({ args: [name, "--json", "--only", "archivedRepo"], extra: ON, files: cached('"archived":true'), native: true });
+        });
+
+        it.each(['"archived":true,"archivedAt":5', '"archived":true,"archivedAt":{}'])("hands over the cached state %s, which Node prints through JavaScript", (body) => {
+            expect.hasAssertions();
+
+            run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: false });
+        });
+
+        it("does not look at GITHUB_TOKEN when the cache answers", () => {
+            expect.hasAssertions();
+
+            // The cached state answers, so no request carries the token.
+            run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: { ...ON, GITHUB_TOKEN: "a b" }, files: cached('"archived":true'), native: true });
+        });
+    });
+
     describe("what the marshalls that ask other services print", () => {
         const directory = (): string => realpathSync(mkdtempSync(join(scratch, "services-")));
         const PRELOAD = String.raw`
@@ -560,6 +604,7 @@ globalThis.fetch = async (url, options) => {
     const text = String(url);
     for (const [prefix, answer] of Object.entries(answers)) {
         if (text.startsWith(prefix)) {
+            require("node:fs").appendFileSync(process.env.REQUEST_LOG, JSON.stringify({ headers: options?.headers ?? null, url: text }) + "\n");
             if (answer.fail) throw new TypeError("fetch failed");
             return new Response(answer.body, { headers: answer.headers ?? {}, status: answer.status });
         }
@@ -569,8 +614,15 @@ globalThis.fetch = async (url, options) => {
 `;
 
         /** Node on the stub registry with the web services answering `answers`; what it prints, and the cache entries it wrote with the clock masked. */
-        const nodeWith = (name: string, only: string, answers: Record<string, { body?: string; fail?: boolean; status?: number }>): { cache: Record<string, string>; status: number | null; stdout: string } => {
-            const preload = join(directory(), "preload.cjs");
+        const nodeWith = (
+            name: string,
+            only: string,
+            answers: Record<string, { body?: string; fail?: boolean; status?: number }>,
+            extra: Record<string, string> = {},
+        ): { cache: Record<string, string>; requests: { headers: Record<string, string> | null; url: string }[]; status: number | null; stdout: string } => {
+            const scratchDirectory = directory();
+            const preload = join(scratchDirectory, "preload.cjs");
+            const log = join(scratchDirectory, "requests.log");
             const home = makeHome();
             const [nodeRoot] = harness.pair(workspaceFiles({ ".npmrc": `registry=${base}/\n` }));
 
@@ -579,7 +631,7 @@ globalThis.fetch = async (url, options) => {
             const result = spawnSync(process.execPath, ["--require", preload, nodeEntry, "inspect", name, "--json", "--only", only], {
                 cwd: nodeRoot,
                 encoding: "utf8",
-                env: Harness.environment({ HOME: home, MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", SERVICE_ANSWERS: JSON.stringify(answers) }),
+                env: Harness.environment({ HOME: home, MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", REQUEST_LOG: log, SERVICE_ANSWERS: JSON.stringify(answers), ...extra }),
             });
             const cache: Record<string, string> = {};
 
@@ -589,15 +641,22 @@ globalThis.fetch = async (url, options) => {
                 }
             }
 
-            return { cache, status: result.status, stdout: result.stdout };
+            const requests = existsSync(log)
+                ? readFileSync(log, "utf8")
+                    .split("\n")
+                    .filter(Boolean)
+                    .map((line) => JSON.parse(line) as { headers: Record<string, string> | null; url: string })
+                : [];
+
+            return { cache, requests, status: result.status, stdout: result.stdout };
         };
         const API = "https://api.npmjs.org/downloads/point/last-month/";
         const written = (downloads: number): Record<string, string> => {
             return { ".vis/cache/downloads/calm.json": `{"createdAt":"NOW","downloads":${downloads},"observedAt":"NOW","ttlMs":86400000}` };
         };
-        const finding = (severity: string, message: string): string => `{\n      "marshall": "downloads",\n      "message": "${message}",\n      "packageName": "calm",\n      "severity": "${severity}"\n    }`;
-        const reportOf = (severity: string, message: string): string => {
-            const one = finding(severity, message);
+        const finding = (marshall: string, severity: string, message: string): string => `{\n      "marshall": "${marshall}",\n      "message": "${message}",\n      "packageName": "calm",\n      "severity": "${severity}"\n    }`;
+        const reportOf = (severity: string, message: string, marshall = "downloads"): string => {
+            const one = finding(marshall, severity, message);
             const list = (key: string, own: boolean): string => `  "${key}": ${own ? `[\n    ${one}\n  ]` : "[]"}`;
 
             return `{\n${list("errors", severity === "error")},\n${list("findings", true)},\n  "summary": {\n    "errorCount": ${severity === "error" ? 1 : 0},\n    "warningCount": ${severity === "warning" ? 1 : 0}\n  },\n${list("warnings", severity === "warning")}\n}\n`;
@@ -643,6 +702,67 @@ globalThis.fetch = async (url, options) => {
             expect(result.stdout).toBe(reportOf("warning", "npm stats API returned no monthly download data."));
             expect(result.cache).toStrictEqual({});
         });
+
+        const GITHUB = "https://api.github.com/repos/o/r";
+        const archived = (extra: string): Record<string, string> => {
+            return { ".vis/cache/archived-repo/o__r.json": `{"createdAt":"NOW","ttlMs":86400000,${extra}}` };
+        };
+
+        it.each([
+            [200, '{"archived":true,"archived_at":"2024-01-02T03:04:05Z"}', "Source repo o/r is archived (since 2024-01-02T03:04:05Z).", '"archived":true,"archivedAt":"2024-01-02T03:04:05Z"'],
+            [200, '{"archived":true,"archived_at":null}', "Source repo o/r is archived.", '"archived":true'],
+            [404, '{"message":"Not Found"}', "Source repo o/r returned 404 from GitHub.", '"archived":false,"missing":true'],
+        ])("archivedRepo answers a %i with %j", (status, body, message, cached) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toBe(reportOf("warning", message, "archivedRepo"));
+            expect(result.cache).toStrictEqual(archived(cached));
+        });
+
+        it.each([
+            [200, '{"archived":false}', '"archived":false'],
+            [200, '{"archived":"yes"}', '"archived":false'],
+            [200, "{}", '"archived":false'],
+            [200, "[]", '"archived":false'],
+            [200, '{"archived":false,"archived_at":"x"}', '"archived":false,"archivedAt":"x"'],
+        ])("archivedRepo answers a %i with %j as no finding and caches it", (status, body, cached) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual(archived(cached));
+        });
+
+        it.each([
+            [403, "{}"],
+            [429, "{}"],
+            [500, "oops"],
+            [200, "null"],
+            [200, "not json"],
+        ])("archivedRepo answers a %i with %j as no finding and caches nothing", (status, body) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual({});
+        });
+
+        it("archivedRepo sends the headers the binary sends, and the token when GITHUB_TOKEN is set", () => {
+            expect.hasAssertions();
+
+            const plain = nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } });
+
+            expect(plain.requests).toStrictEqual([{ headers: { Accept: "application/vnd.github+json", "User-Agent": "visulima-vis-marshall" }, url: GITHUB }]);
+
+            const token = nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } }, { GITHUB_TOKEN: "ghp_Token-1" });
+
+            expect(token.requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", Authorization: "Bearer ghp_Token-1", "User-Agent": "visulima-vis-marshall" });
+            expect(nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } }, { GITHUB_TOKEN: "" }).requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", "User-Agent": "visulima-vis-marshall" });
+        });
     });
 
     describe("what goes to Node", () => {
@@ -668,7 +788,6 @@ globalThis.fetch = async (url, options) => {
         // Node answers these from the cache files of the services, so nothing reaches the network.
         it.each([
             ["every marshall", ["calm", "--json"]],
-            ["archivedRepo", ["calm", "--json", "--only", "archivedRepo,author"]],
             ["expiredDomains", ["calm", "--json", "--only", "expiredDomains"]],
         ])("hands over a run that needs a marshall that asks a service (%s)", (_label, args) => {
             expect.hasAssertions();
