@@ -72,7 +72,7 @@ impl Registry {
         Self { port, requests, paths }
     }
 
-    fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 }
