@@ -159,10 +159,17 @@ pub(crate) fn in_ci() -> bool {
 /// the shared cases of `native/cli/tests/fixtures/routing.json` run both halves for each variable and fail when
 /// the two differ.
 pub(crate) fn output_settings_are_default() -> bool {
-    !(env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
-        || env::var_os("DEBUG").is_some()
-        || env::var_os("PAIL_LOG_LEVEL").is_some()
-        || env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_")))
+    debug_output_is_default()
+        && !env::var_os("NODE_ENV").is_some_and(|value| value == "test" || value == "debug")
+        && env::var_os("PAIL_LOG_LEVEL").is_none()
+}
+
+/// Whether neither `DEBUG` nor a `CEREBRO_*` variable is in the environment: the part of
+/// [`output_settings_are_default`] that makes Node trace the command (`DEBUG`, cerebro's debug output level) around the
+/// output it prints. A command whose own output goes through no logger, such as `exec`, `hook run` or the package-manager
+/// commands, needs only this part: `NODE_ENV` and `PAIL_LOG_LEVEL` change what pail prints, and these print none of it.
+pub(crate) fn debug_output_is_default() -> bool {
+    env::var_os("DEBUG").is_none() && !env::vars_os().any(|(name, _)| name.to_string_lossy().starts_with("CEREBRO_"))
 }
 
 pub(crate) const DENO_FILES: [&str; 3] = ["deno.json", "deno.jsonc", "deno.lock"];

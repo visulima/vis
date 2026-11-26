@@ -36,6 +36,11 @@ const DISPATCHED: [&str; 15] = [
 /// Entry point. `args` is the full invocation including the leading `pm`, `raw_args` the same argv as
 /// the OS gave it (what a hand-off to Node replays). Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
+    // `DEBUG` and `CEREBRO_*` make Node trace the command before it runs; this path prints none of that.
+    if !crate::node_context::debug_output_is_default() {
+        crate::process::delegate(raw_args);
+    }
+
     error::finish(try_run(args, raw_args))
 }
 

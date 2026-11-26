@@ -20,7 +20,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
-use crate::node_context::{monorepo_root, quiet_context};
+use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::write_stdout;
 use crate::vis_config::{self, ConfigState};
 
@@ -487,6 +487,11 @@ fn reads_project_json(root: &Path, graph: &ProjectGraph) -> bool {
 /// The text `vis affected … --sparse-checkout` prints, or `None` when Node must answer.
 fn answer(args: &[String]) -> Option<String> {
     let options = parse(args)?;
+
+    if !output_settings_are_default() {
+        return None;
+    }
+
     let cwd = env::current_dir().ok()?;
     let root = monorepo_root(&cwd)?;
 

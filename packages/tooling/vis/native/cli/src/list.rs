@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::graph::{project_graph, GraphResult, ProjectGraph};
 use crate::js::RESERVED_NAMES;
-use crate::node_context::monorepo_root;
+use crate::node_context::{monorepo_root, output_settings_are_default};
 use crate::output::write_stdout;
 use crate::vis_config;
 
@@ -435,6 +435,11 @@ fn render(listed: &[Listed], format: Format) -> String {
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let answer = || -> Option<String> {
         let format = parse(args)?;
+
+        if !output_settings_are_default() {
+            return None;
+        }
+
         let cwd = env::current_dir().ok()?;
         let root = monorepo_root(&cwd)?;
 

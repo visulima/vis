@@ -108,6 +108,11 @@ pub(crate) fn uses_global_option(args: &[String]) -> bool {
 /// command) and `raw_args` the same argv as the OS gave it, so the config-delegation path can replay it
 /// byte for byte.
 pub fn run(full_args: &[String], raw_args: &[OsString]) -> ! {
+    // `DEBUG` and `CEREBRO_*` make Node trace the command before it runs; this path prints none of that.
+    if !crate::node_context::debug_output_is_default() {
+        crate::process::delegate(raw_args);
+    }
+
     let verb = full_args.first().map_or("", String::as_str);
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 

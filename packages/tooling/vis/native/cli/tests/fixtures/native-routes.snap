@@ -1642,6 +1642,7 @@
 ["ignore","--json"] => ignore
 ["ignore","--no-color"] => ignore
 ["ignore","--no-color","-h"] => surface
+["ignore","--target","docker"] => ignore
 ["ignore","--target","slug"] => ignore
 ["ignore","--target=npm","--write"] => ignore
 ["ignore","--version"] => ignore
@@ -1849,6 +1850,7 @@
 ["link","--version"] => link
 ["link","--version","--help"] => surface
 ["link","-h"] => surface
+["link","../x"] => link
 ["link","bloom","status"] => link
 ["link","bloom","status","--help"] => surface
 ["link","list"] => link
@@ -2268,6 +2270,7 @@
 ["remove","-h"] => surface
 ["remove","bloom","status"] => remove
 ["remove","bloom","status","--help"] => surface
+["remove","left-pad"] => remove
 ["remove","list"] => remove
 ["remove","lodash"] => remove
 ["remove","status","--help"] => surface

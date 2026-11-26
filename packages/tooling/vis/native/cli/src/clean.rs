@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use vis_core::clean::{find_lockfiles, find_node_modules, list_node_modules, remove_listed, CleanOutcome};
 
-use crate::node_context::{any_ancestor_has, in_ci, DENO_FILES};
+use crate::node_context::{any_ancestor_has, in_ci, output_settings_are_default, DENO_FILES};
 use crate::output::Output;
 use crate::pail::{Layout, Level};
 use crate::text::is_ascii_graphic_path;
@@ -72,7 +72,9 @@ fn plan(args: &[String]) -> Option<Plan> {
 
     let (dry_run, lockfile) = flags(args)?;
 
-    if !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
+    // Every message is a pail block, which `NODE_ENV`, `DEBUG` and `PAIL_LOG_LEVEL` can silence or add to, and `plan`
+    // runs before anything is removed.
+    if !output_settings_are_default() || !in_ci() || io::stdout().is_terminal() || io::stderr().is_terminal() {
         return None;
     }
 

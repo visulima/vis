@@ -19,7 +19,7 @@ use std::process::exit;
 use crate::error::WrapperError;
 use crate::fs_write::{open_for_write, overwrite};
 use crate::js::trim;
-use crate::node_context::{any_ancestor_has, in_ci, native_root_is_cwd, DENO_FILES};
+use crate::node_context::{any_ancestor_has, in_ci, native_root_is_cwd, output_settings_are_default, DENO_FILES};
 use crate::output::write_stdout;
 use crate::vis_config::has_vis_config;
 
@@ -149,6 +149,10 @@ fn parse(args: &[String]) -> Option<Options> {
 fn native_context(cwd: &Path, args: &[String]) -> Option<bool> {
     // Node's colour detection and path handling differ on Windows; the help route stays there too.
     if cfg!(windows) {
+        return None;
+    }
+
+    if !output_settings_are_default() {
         return None;
     }
 

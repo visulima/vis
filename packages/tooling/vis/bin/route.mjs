@@ -87,6 +87,17 @@ const colourIsDecidable = (environment, args) =>
 
 const pailOutputIsDecidable = (environment, args) => colourIsDecidable(environment, args) && (environment.TERM === undefined || TERMS_WITH_DEFAULT_SIZE.has(environment.TERM));
 
+// `DEBUG` and `CEREBRO_*`: the part of the output settings that makes Node trace a command around the output it prints. The
+// binary keeps the same list in `debug_output_is_default` (`native/cli/src/node_context.rs`). A command that prints through no
+// logger of its own (`exec`, `hook run`, the package-manager commands, `cache list`, `cache size`) needs only this part.
+const debugOutputIsDefault = (environment) => environment.DEBUG === undefined && !Object.keys(environment).some((key) => key.startsWith("CEREBRO_"));
+
+// The output settings that change what the binary's log lines (and the commands that print JSON beside them) look like:
+// `NODE_ENV` of `test` or `debug`, `DEBUG`, `PAIL_LOG_LEVEL` and `CEREBRO_*`. A run with any of them stays in Node.
+// The binary keeps the same list in `output_settings_are_default` (`native/cli/src/node_context.rs`); the `NODE_ENV`, `DEBUG`,
+// `PAIL_LOG_LEVEL` and `CEREBRO_*` cases of `native/cli/tests/fixtures/routing.json` run both halves and fail when they differ.
+const outputSettingsAreDefault = (environment) => !["debug", "test"].includes(environment.NODE_ENV) && environment.PAIL_LOG_LEVEL === undefined && debugOutputIsDefault(environment);
+
 // Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads. Same list
 // as `ROOT_MARKERS` in `native/cli/src/advisories.rs`; keep them in step.
 const ROOT_MARKERS = [
@@ -167,7 +178,7 @@ const ignoreMayRunNatively = (platform, environment, args, cwd, interactive, hol
         return false;
     }
 
-    if (!inCi(environment)) {
+    if (!inCi(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -187,7 +198,7 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
         return false;
     }
 
-    if (!inCi(environment) || !pailOutputIsDecidable(environment, args)) {
+    if (!inCi(environment) || !pailOutputIsDecidable(environment, args) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -201,7 +212,7 @@ const cleanMayRunNatively = (platform, environment, args, interactive) => {
 // CI context off a terminal. The binary re-checks everything, including the workspace, the home directory and the
 // profiles it would edit, so this only skips the extra process for a call it would delegate anyway. Windows stays in Node.
 const implodeMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -278,7 +289,7 @@ const LIST_NATIVE_SHAPES = [[], ["--json"], ["--format", "json"], ["--format", "
 // is native: no flags, `--json`, or one `--format` value. The binary re-checks the CI context and
 // every other shape, so this only skips the extra process when it would delegate anyway.
 const listMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -300,7 +311,7 @@ const cacheHashAsksForJson = (flags) => flags.includes("--format=json") || flags
 const cacheHashMayRunNatively = (platform, environment, args, interactive) => {
     const flags = args.slice(2);
 
-    if (platform === "win32" || interactive || !inCi(environment) || flags.length === 0 || !flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token))) {
+    if (platform === "win32" || interactive || !inCi(environment) || !outputSettingsAreDefault(environment) || flags.length === 0 || !flags.every((token) => !token.startsWith("-") || CACHE_HASH_FLAG.test(token))) {
         return false;
     }
 
@@ -316,7 +327,7 @@ const REPLAY_FLAG = /^--(?:format|run|task)(?:=.*)?$|^--(?:failed|list)$/;
 const replayMayRunNatively = (platform, environment, args, interactive) => {
     const flags = args.slice(1);
 
-    if (platform === "win32" || interactive || !inCi(environment) || !flags.every((token) => !token.startsWith("-") || REPLAY_FLAG.test(token))) {
+    if (platform === "win32" || interactive || !inCi(environment) || !outputSettingsAreDefault(environment) || !flags.every((token) => !token.startsWith("-") || REPLAY_FLAG.test(token))) {
         return false;
     }
 
@@ -371,7 +382,7 @@ const CACHE_CLEAN_VALUE_FLAG = /^--(?:cache-dir|type)$/;
 const CACHE_CLEAN_FLAG = /^--(?:cache-dir|type)=.+$|^--(?:dry-run|force)$/;
 
 const cacheCleanMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -388,7 +399,7 @@ const CACHE_PRUNE_VALUE_FLAG = /^--(?:cache-dir|scope|keep-last|max-age-days|max
 const CACHE_PRUNE_INLINE_FLAG = /^--(?:cache-dir|scope|keep-last|max-age-days|max-size)=.+$/;
 
 const cachePruneMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -414,7 +425,7 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
         return cachePruneMayRunNatively(platform, environment, args, interactive);
     }
 
-    return platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment);
+    return platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && debugOutputIsDefault(environment);
 };
 
 // Whether `vis affected` can pass the binary's native gate (`answer` in `affected.rs`). Only the
@@ -422,13 +433,13 @@ const cacheMayRunNatively = (subcommand, platform, environment, args, interactiv
 // --affected`, which the binary hands to Node itself. The binary re-checks everything, so this only
 // skips the extra process when it would delegate anyway.
 const affectedMayRunNatively = (platform, environment, args, interactive) =>
-    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && args.includes("--sparse-checkout");
+    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && args.includes("--sparse-checkout");
 
 // Whether `vis status` can pass the binary's native gate (`parse` and `answer` in `status.rs`): the plain overview or
 // `--json`, in a CI context off a terminal. The binary re-checks everything, including whether it can learn the Node
 // version a pin needs, so this only skips the extra process when it would delegate anyway.
 const statusMayRunNatively = (platform, environment, args, interactive) =>
-    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
+    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
@@ -1007,16 +1018,6 @@ const sbomMayRunNatively = (platform, environment, args, cwd, interactive, holds
     return output !== undefined && (output === "-" || pailOutputIsDecidable(environment, args));
 };
 
-// The output settings that change what the binary's log lines (and the commands that print JSON beside them) look like:
-// `NODE_ENV` of `test` or `debug`, `DEBUG`, `PAIL_LOG_LEVEL` and `CEREBRO_*`. A run with any of them stays in Node.
-// The binary keeps the same list in `output_settings_are_default` (`native/cli/src/advisories.rs`); the `NODE_ENV`, `DEBUG`,
-// `PAIL_LOG_LEVEL` and `CEREBRO_*` cases of `native/cli/tests/fixtures/routing.json` run both halves and fail when they differ.
-const outputSettingsAreDefault = (environment) =>
-    !["debug", "test"].includes(environment.NODE_ENV)
-    && environment.DEBUG === undefined
-    && environment.PAIL_LOG_LEVEL === undefined
-    && !Object.keys(environment).some((key) => key.startsWith("CEREBRO_"));
-
 // Whether `vis graph` can pass the binary's native gate (`parse` in `graph_view.rs`): the ASCII, DOT and JSON
 // graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal with no output setting
 // (`NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`, `CEREBRO_*`) that changes what the logger prints. `html`, `--output`
@@ -1556,8 +1557,16 @@ const helpOrNative = (args, mayRunNatively) => {
 // so routing them through the binary would only add a second Node boot; `hook list` has its own gate) and `advisories bloom status`.
 // The binary answers that one natively only for `--format json --cache-dir <dir>` and hands every other
 // shape to Node, as it does for `hook run`; the launcher does not check those flags.
-const alwaysNative = (command, subcommand, args) =>
-    NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
+// The ones that print no logger output of their own still trace under `DEBUG` and `CEREBRO_*` in Node, so a run with either
+// goes to Node (`--help` is the binary's whatever the environment is); `x` runs a file through a lean entry that traces nothing.
+const TRACED_NATIVE_COMMANDS = new Set(["dedupe", "exec", "link", "outdated", "pm", "remove", "unlink", "why"]);
+
+const alwaysNative = (command, subcommand, args, environment) => {
+    const traced
+        = TRACED_NATIVE_COMMANDS.has(command) || (command === "hook" && subcommand === "run") || (command === "advisories" && subcommand === "bloom" && args[2] === "status");
+
+    return traced ? asksForHelp(args) || debugOutputIsDefault(environment) : NATIVE_COMMANDS.has(command);
+};
 
 // The commands with a native shape, by the name they are typed with, each with the gate that decides it. A gate
 // answers `undefined` for a subcommand that is not one of them; the binary re-checks everything, so a gate only
@@ -1698,7 +1707,7 @@ const routesListingOrCompletionToNative = (args, command, subcommand) => {
 const routesCommandToNative = (args, platform, environment, cwd, interactive, holdsMarker = holdsRootMarker, cacheMayExist = taskCacheMayExist) => {
     const [command = "", subcommand] = args;
 
-    if (alwaysNative(command, subcommand, args)) {
+    if (alwaysNative(command, subcommand, args, environment)) {
         return true;
     }
 
