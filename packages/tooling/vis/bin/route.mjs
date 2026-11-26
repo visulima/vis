@@ -1017,6 +1017,62 @@ const outputSettingsAreDefault = (environment) =>
     && environment.PAIL_LOG_LEVEL === undefined
     && !Object.keys(environment).some((key) => key.startsWith("CEREBRO_"));
 
+// Whether `vis graph` can pass the binary's native gate (`parse` in `graph_view.rs`): the ASCII, DOT and JSON
+// graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal with no output setting
+// (`NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`, `CEREBRO_*`) that changes what the logger prints. `html`, `--output`
+// and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
+// would delegate anyway.
+const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
+const GRAPH_DEPTH = /^\d+$/;
+const GRAPH_FLAGS = new Map([
+    ["--depth", "depth"],
+    ["--format", "format"],
+    ["-d", "depth"],
+    ["-f", "format"],
+]);
+
+// The `[kind, value, next index]` of the graph option at `args[index]`, with its value after a space or an `=` (the
+// short names take a space only), or `undefined` when it is no graph option.
+const graphOption = (args, index) => {
+    const argument = args[index];
+    const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
+    const kind = GRAPH_FLAGS.get(equals === -1 ? argument : argument.slice(0, equals));
+
+    if (kind === undefined) {
+        return undefined;
+    }
+
+    return equals === -1 ? [kind, args[index + 1], index + 2] : [kind, argument.slice(equals + 1), index + 1];
+};
+
+const graphMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+        return false;
+    }
+
+    const seen = new Set();
+    let index = 1;
+
+    while (index < args.length) {
+        const option = graphOption(args, index);
+
+        if (option === undefined) {
+            return false;
+        }
+
+        const [kind, value, next] = option;
+
+        if (seen.has(kind) || !(kind === "format" ? GRAPH_FORMATS.has(value) : GRAPH_DEPTH.test(value))) {
+            return false;
+        }
+
+        seen.add(kind);
+        index = next;
+    }
+
+    return true;
+};
+
 // The flags `vis optimize` takes natively (`parse` in `optimize/mod.rs`): the boolean ones and `--format table|json`, each at
 // most once (`-d` is `--dry-run`).
 const OPTIMIZE_BOOLEAN_FLAGS = [["--dry-run", "-d"], ["--pin"], ["--prod"], ["--no-install"]];
@@ -1543,6 +1599,8 @@ const NATIVE_SHAPE_GATES = new Map([
     // The dependency-policy lints: the selectors, `--quiet` and `--format`.
     ["deps", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => depsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
+    // The ASCII, DOT and JSON graph; `html`, `--output` and the interactive viewer stay in Node.
+    ["graph", ({ args, environment, interactive, platform }) => helpOrNative(args, () => graphMayRunNatively(platform, environment, args, interactive))],
     // `hook list` and `hook validate` (which the binary answers only when it has nothing to report); `hook run` is native for every shape
     // (`alwaysNative`) and the other `hook` subcommands are Node's.
     [

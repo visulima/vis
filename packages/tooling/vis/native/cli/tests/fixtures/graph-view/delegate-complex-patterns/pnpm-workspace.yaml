@@ -1,0 +1,6 @@
+packages:
+  - "tools/z-tool"
+  - "packages/*"
+  - "apps/*"
+  - "tools/a-tool"
+  - "!packages/skipped"

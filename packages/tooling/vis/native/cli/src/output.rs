@@ -34,7 +34,7 @@ impl Output {
 /// The largest document Node reliably delivers to a pipe or socket. Its stdout is asynchronous there and the process
 /// exits right after writing, so what the reader has not yet taken from the pipe's buffer (64 KiB) is lost: a
 /// larger document arrives cut short, at a length that depends on how fast the reader is.
-const STREAM_LIMIT: usize = 64 * 1024;
+pub(crate) const STREAM_LIMIT: usize = 64 * 1024;
 
 /// Whether stdout is a pipe or a socket.
 #[cfg(unix)]

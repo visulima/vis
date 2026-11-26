@@ -794,6 +794,7 @@ mod tests {
         };
 
         ProjectGraph {
+            order: names.iter().map(|name| (*name).to_owned()).collect(),
             projects: names
                 .iter()
                 .map(|name| {

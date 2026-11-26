@@ -1,0 +1,1 @@
+{"name": "zeta", "version": "1.0.0", "bin": "cli.js", "dependencies": {"lib-a": "workspace:*"}, "devDependencies": {"lib-b": "workspace:*", "left-pad": "1.0.0"}}
