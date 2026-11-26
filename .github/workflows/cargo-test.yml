@@ -252,7 +252,8 @@ jobs:
     # The concurrent runner spawns processes and signals process groups, so the
     # Linux job above says little about macOS and Windows (fork path, cmd.exe
     # quoting, Job Objects). This leg runs the concurrent runner's tests and the
-    # core crate's clippy there. It is not part of the required-check aggregation below.
+    # core crate's clippy there. It is part of the required-check aggregation below, so a failure
+    # on any of its legs fails "Cargo Test Status".
     # Linux joins only for the parity suite: the Rust steps already run in the Linux job
     # above, and the repo-wide test job covers only the default runner setting.
     test-core-os:
@@ -440,7 +441,7 @@ jobs:
 
     cargo-test-required-check:
         name: "Cargo Test Status"
-        needs: ["files-changed", "test"]
+        needs: ["files-changed", "test", "test-core-os"]
         if: "always()"
         runs-on: "ubuntu-24.04"
         timeout-minutes: 1
@@ -452,6 +453,13 @@ jobs:
                     echo "Rust tests failed"
                     exit 1
                   fi
+                  # The OS matrix (the parity suite on both runner settings) must not pass by
+                  # being cancelled; a skipped job (no task-runner changes) is fine.
+                  if [ "$CORE_OS_RESULT" = "failure" ] || [ "$CORE_OS_RESULT" = "cancelled" ]; then
+                    echo "Task-runner core tests failed or were cancelled (macOS, Windows or Linux parity)"
+                    exit 1
+                  fi
                   echo "All Rust tests passed (or skipped)"
               env:
                   RESULT: "${{ needs.test.result }}"
+                  CORE_OS_RESULT: "${{ needs.test-core-os.result }}"
