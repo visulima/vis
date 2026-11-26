@@ -37,8 +37,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub(crate) use args::parse_package;
 use args::{Flags, Marshall};
 use marshalls::{Finding, Target};
 use packument::{Answer, Cached, View};
@@ -53,7 +54,7 @@ use crate::pail::{Layout, Level};
 
 /// A change to the cache a run makes once it is sure to answer.
 #[derive(Debug, PartialEq, Eq)]
-enum CacheAction {
+pub(crate) enum CacheAction {
     Write { file: PathBuf, text: String },
     Remove(PathBuf),
 }
@@ -144,20 +145,70 @@ fn answer(args: &[String]) -> Result<Plan, String> {
     Ok(plan)
 }
 
+/// The packuments as `getPackument` reaches them from a working directory, for the commands outside `inspect` that read
+/// a packument: the places, the clock and the client, built once.
+pub(crate) struct Packuments {
+    context: Context,
+    client: HttpClient,
+}
+
+impl Packuments {
+    /// The registry for a run from `root`, with `limit` as the time one request may take (a command picks the limit
+    /// the Node code it replaces gives its own request), or the reason the run is Node's: a proxy, CA or Node option
+    /// in the environment, or no usable `HOME`.
+    pub(crate) fn new(root: PathBuf, limit: Duration) -> Result<Self, String> {
+        if !network_environment_is_plain() {
+            return Err("a proxy, CA or Node option is set in the environment".to_owned());
+        }
+
+        let cache_dir = vis_cache_dir().ok_or("no cache directory (HOME is not a plain absolute path)")?;
+        let home = std::env::var("HOME").map_err(|_| "HOME is not text".to_owned())?;
+
+        Ok(Self::at(
+            root,
+            PathBuf::from(home),
+            cache_dir,
+            now_ms()?,
+            HttpClient::new(fetch_config(HttpConfig::from_env(limit, limit), limit)),
+        ))
+    }
+
+    /// The packuments of a run from `root`, with the places, the clock and the client given.
+    pub(crate) fn at(root: PathBuf, home: PathBuf, cache_dir: String, now_ms: u64, client: HttpClient) -> Self {
+        Self { context: Context { root, home, cache_dir, now_ms, layout: None }, client }
+    }
+
+    /// `resolveVersionRange` for a package: its version and the cache change that goes with the lookup. `None` for a
+    /// package the registry does not know, or a spec that names no version; the reason for a spec that is a range
+    /// (it needs node-semver), a packument this module does not read as Node does, and every failed request.
+    pub(crate) fn resolve_version(
+        &self,
+        name: &str,
+        spec: Option<&str>,
+    ) -> Result<Option<(String, Vec<CacheAction>)>, String> {
+        let (found, cache) = packument_of(name, &self.context, &self.client)?;
+        let Some(found) = found else { return Ok(None) };
+        let view = View::new(&found)?;
+        let Some(version) = resolve(&view, spec)? else { return Ok(None) };
+
+        if args::is_prototype_name(version) || semver_js::Version::parse(version).is_none() {
+            return Err(format!("the resolved version {version:?} is not strict semver"));
+        }
+
+        Ok(Some((version.to_owned(), cache)))
+    }
+}
+
 /// What `getPackument` returns for the package: the cut-down document, and the cache change that goes with it.
-fn packument_of(
-    flags: &Flags,
-    context: &Context,
-    client: &HttpClient,
-) -> Result<(Option<Js>, Vec<CacheAction>), String> {
-    let file = packument::cache_file(&context.cache_dir, &flags.name);
+fn packument_of(name: &str, context: &Context, client: &HttpClient) -> Result<(Option<Js>, Vec<CacheAction>), String> {
+    let file = packument::cache_file(&context.cache_dir, name);
     let stale_file = match packument::read_cache(&file, context.now_ms as f64)? {
         Cached::Fresh(found) => return Ok((Some(found), Vec::new())),
         Cached::Fetch { stale_file } => stale_file,
     };
-    let registry = npmrc::registry_for(&flags.name, &context.home, &context.root)?;
+    let registry = npmrc::registry_for(name, &context.home, &context.root)?;
     let base = registry.strip_suffix('/').unwrap_or(&registry);
-    let url = format!("{base}/{}", flags.name.replacen('/', "%2f", 1));
+    let url = format!("{base}/{}", name.replacen('/', "%2f", 1));
 
     if !url_is_plain(&url) {
         return Err(format!("the registry URL {url:?} is not a URL `fetch` and the client read alike"));
@@ -200,7 +251,7 @@ fn resolve<'a>(view: &View<'a>, spec: Option<&str>) -> Result<Option<&'a str>, S
 
 /// The whole run, up to what it prints: pure but for the cache read, the registry request and the clock in `context`.
 fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient) -> Result<Plan, String> {
-    let (found, cache) = packument_of(flags, context, client)?;
+    let (found, cache) = packument_of(&flags.name, context, client)?;
     let missing = |message: String| -> Result<Plan, String> {
         let layout = context
             .layout
@@ -256,7 +307,7 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
 }
 
 /// Makes the cache changes of a plan. A change that fails is Node's to report.
-fn commit(actions: &[CacheAction]) -> Result<(), String> {
+pub(crate) fn commit(actions: &[CacheAction]) -> Result<(), String> {
     for action in actions {
         match action {
             CacheAction::Write { file, text } => {
@@ -282,4 +333,4 @@ fn remove(file: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

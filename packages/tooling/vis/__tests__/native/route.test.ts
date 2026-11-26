@@ -192,6 +192,13 @@ describe("launcher routing (bin/route.mjs)", () => {
             [["dlx", "git+https://example.test/a.git"]],
             [["dlx", "npm:cowsay@1"]],
             [["dlx", "-p", "./local.tgz", "-c", "echo hi"]],
+            // The first-run gate is the binary's to decide: it does nothing with `--yes`, in CI and off a terminal, and on a
+            // terminal it answers only for a version that was approved.
+            [["dlx", "cowsay"]],
+            [["dlx", "--yes", "cowsay"]],
+            [["dlx", "cowsay", "-y"]],
+            [["dlx", "-p", "lolcatjs", "-c", "echo hi"]],
+            [["dlx", "-p", "lolcatjs", "-c", "./local.js"]],
         ])("routes `vis %j`, whatever the terminal and CI", (args: string[]) => {
             expect.assertions(3);
 
@@ -201,12 +208,8 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
 
         it.each([
-            // The first-run gate runs, which Node answers before any output.
-            [["dlx", "cowsay"]],
-            [["dlx", "--yes", "cowsay"]],
+            // `--info` shows the panel on every run, which Node renders.
             [["dlx", "--info", "cowsay"]],
-            [["dlx", "-p", "lolcatjs", "-c", "echo hi"]],
-            [["dlx", "-p", "lolcatjs", "-c", "./local.js"]],
             // Shapes of the command line.
             [["dlx"]],
             [["dlx", "--no-info"]],
@@ -224,22 +227,6 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect.assertions(1);
 
             expect(routesToNative(args, "linux", {}, "/work/app", false)).toBe(false);
-        });
-
-        it("follows VIS_DLX_NO_INFO the way isTruthyEnv does, and leaves a non-ASCII value to Node", () => {
-            expect.assertions(11);
-
-            const dlx = ["dlx", "cowsay"];
-
-            for (const value of ["1", "true", "YES", " on ", "anything"]) {
-                expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: value }, "/work/app", false)).toBe(true);
-            }
-
-            for (const value of ["", "0", "false", "no", " No "]) {
-                expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: value }, "/work/app", false)).toBe(false);
-            }
-
-            expect(routesToNative(dlx, "linux", { VIS_DLX_NO_INFO: "\u00A01" }, "/work/app", false)).toBe(false);
         });
 
         it("keeps the dlx in Node on Windows and where the environment changes the installer or Node's output", () => {

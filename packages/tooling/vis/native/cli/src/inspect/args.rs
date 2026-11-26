@@ -91,7 +91,7 @@ fn is_name(name: &str) -> bool {
 
 /// `parsePackageArg` for a name and spec in the plain shapes: the name splits at the `@` after its first character,
 /// and an empty spec is no spec.
-fn parse_package(raw: &str) -> Option<(String, Option<String>)> {
+pub(crate) fn parse_package(raw: &str) -> Option<(String, Option<String>)> {
     let separator = raw.get(1..)?.find('@').map(|at| at + 1);
     let (name, spec) = match separator {
         Some(at) => (&raw[..at], Some(&raw[at + 1..]).filter(|spec| !spec.is_empty())),

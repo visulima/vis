@@ -1277,6 +1277,7 @@
 ["dlx","bloom","status"] => dlx
 ["dlx","bloom","status","--help"] => surface
 ["dlx","cowsay"] => dlx
+["dlx","cowsay","-y"] => dlx
 ["dlx","git+https://example.test/a.git"] => dlx
 ["dlx","list"] => dlx
 ["dlx","status","--help"] => surface

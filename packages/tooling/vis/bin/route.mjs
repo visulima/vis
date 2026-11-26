@@ -727,35 +727,12 @@ const dlxShape = (rest) => {
     return shape.words.length > 0 ? shape : undefined;
 };
 
-// `isRegistrySpec` of the first-run gate (`src/dlx/first-run.ts`): not a path, URL or protocol alias.
-const PATH_SPEC = /^[./~]/;
-
-const isRegistrySpec = (spec) => {
-    const bare = spec.startsWith("@") ? spec.slice(1) : spec;
-
-    return spec !== "" && !PATH_SPEC.test(spec) && !bare.includes(":");
-};
-
-// `isTruthyEnv` for an ASCII value; the binary leaves any other to Node, where `trim` and Rust's differ.
-const isAscii = (text) => [...text].every((character) => character.codePointAt(0) <= 0x7F);
-
-const dlxGateIsSwitchedOff = (environment, shape) => {
-    const value = environment.VIS_DLX_NO_INFO;
-
-    if (value !== undefined && !isAscii(value)) {
-        return false;
-    }
-
-    const noInfoFromEnvironment = value !== undefined && !["", "0", "false", "no"].includes(value.trim().toLowerCase());
-    const vetted = [...shape.flags.has("-c") ? [] : shape.words.slice(0, 1), ...shape.packages];
-
-    return shape.flags.has("--no-info") || noInfoFromEnvironment || !vetted.some((spec) => isRegistrySpec(spec));
-};
-
-// Whether `vis dlx` can pass the binary's native gate (`plan` in `dlx.rs`): only the runs where the first-run gate does
-// nothing, the shapes above, and an environment that leaves the installer and Node's output alone. The lean entry reads
-// no config and no workspace root, and prints nothing of its own, so a terminal and a missing `CI` make no difference.
-// The binary re-checks everything, including the lockfiles, `packageManager` pins and `aube` on `PATH`.
+// Whether `vis dlx` can pass the binary's native gate (`plan` in `dlx.rs`): the shapes above, and an environment that
+// leaves the installer and Node's output alone. The first-run gate is the binary's to decide (it does nothing with
+// `--no-info`, `--yes`, CI or a stream that is not a terminal, and on a terminal it looks the package up and answers only
+// for a version already approved), and so are the lockfiles, `packageManager` pins and `aube` on `PATH`; this only skips
+// the extra process for a shape the binary would delegate anyway. The lean entry reads no config and no workspace root,
+// and prints nothing of its own.
 const dlxMayRunNatively = (platform, environment, args) => {
     if (
         platform === "win32"
@@ -766,9 +743,7 @@ const dlxMayRunNatively = (platform, environment, args) => {
         return false;
     }
 
-    const shape = dlxShape(args.slice(1));
-
-    return shape !== undefined && dlxGateIsSwitchedOff(environment, shape);
+    return dlxShape(args.slice(1)) !== undefined;
 };
 
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
