@@ -12,8 +12,9 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
 /**
  * `vis inspect &lt;package> --json` exists twice: the Node handler (`src/commands/inspect/handler.ts`) and the native path
  * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument (`author`, `provenance`,
- * `s1ngularity`, `newBin`, `metadata`), `downloads` (the registry's download API), `archivedRepo` (GitHub) and `signatures`, which
- * reads the registry's keys from `VIS_NPM_KEYS_URL` (a variable both sides honour, so the stub serves it) and verifies with ECDSA. For every input the native path accepts it must print the same JSON on the same
+ * `s1ngularity`, `newBin`, `metadata`), `downloads` (the registry's download API), `archivedRepo` (GitHub), `signatures`, which
+ * reads the registry's keys from `VIS_NPM_KEYS_URL` (a variable both sides honour, so the stub serves it) and verifies with ECDSA,
+ * and `expiredDomains` (a DNS lookup of the maintainers' domains), so the default set runs natively. For every input the native path accepts it must print the same JSON on the same
  * stream, end with the same exit status and leave the same packument cache as Node; every input it declines must be handed
  * to Node before anything is printed or written (see `workspace-parity-harness.ts` for how both are proved).
  *
@@ -96,6 +97,19 @@ const ANSWERS: Record<string, Answer> = {
     "/bom": { body: `${BOM}${JSON.stringify(packument("bom", { "1.0.0": version("amy") }))}` },
     "/calm": json(packument("calm", { "1.0.0": version("amy"), "1.1.0": version("amy"), "1.2.0": version("amy") }, { "1.0.0": ago(100.3), "1.1.0": ago(90.3), "1.2.0": ago(80.3) })),
     "/dangling": json(packument("dangling", { "1.0.0": version("amy") }, {}, { "dist-tags": { latest: "9.9.9" } })),
+    // Maintainer addresses in the shapes `extractDomain` reads: the user and the list, the same address twice, another address of
+    // the same domain, a domain in capitals, a name without an address, a string and a number in place of an address.
+    "/domains": json(
+        packument("domains", {
+            "1.0.0": {
+                _npmUser: { email: "Amy@GONE.example", name: "amy" },
+                license: "MIT",
+                maintainers: [{ email: "Amy@GONE.example", name: "amy" }, { email: "bob@gone.example", name: "bob" }, { email: "cat@fine.example", name: "cat" }, { name: "dan" }, "eve", { email: 5, name: "fay" }, { email: "gus@", name: "gus" }, { email: "hal@odd.example", name: "hal" }],
+                readme: "# readme",
+                repository: { url: "git+https://github.com/o/r.git" },
+            },
+        }),
+    ),
     "/dormant": json(packument("dormant", { "1.0.0": version("amy"), "1.1.0": version("amy") }, { "1.0.0": ago(200.4), "1.1.0": ago(100.3) })),
     "/empty": json({ name: "empty", versions: {} }),
     "/gzipped": { body: JSON.stringify(packument("gzipped", { "1.0.0": version("amy") }, { "1.0.0": ago(50.3) })), gzip: true },
@@ -114,6 +128,7 @@ const ANSWERS: Record<string, Answer> = {
     "/loose-version": json(packument("loose-version", { "1.0": version("amy"), "1.0.0": version("amy") }, { "1.0.0": ago(50.3) })),
     "/meta": json(packument("meta", { "1.0.0": { _npmUser: user("amy"), license: { type: " " }, readme: "ERROR: No README data found!", repository: { url: "nonsense" } } })),
     "/no-versions": json({ name: "no-versions" }),
+    "/non-ascii": json(packument("non-ascii", { "1.0.0": version("amy", { _npmUser: { email: "amy@EX\u00C4MPLE.test", name: "amy" } }) })),
     "/not-json": { body: "<html></html>" },
     "/null-dist": json(packument("null-dist", { "1.0.0": { dist: null } })),
     "/null-entry": json(packument("null-entry", { "1.0.0": null })),
@@ -871,6 +886,60 @@ globalThis.fetch = async (url, options) => {
         });
     });
 
+    describe("the expiredDomains marshall and the default set", () => {
+        const ON = { MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", MARSHALL_DISABLE_EXPIRED_DOMAINS: "0" };
+        const domain = (name: string, body: Record<string, unknown>): Record<string, string> => {
+            return { [`.vis/cache/expired-domains/${createHash("sha256").update(name).digest("hex").slice(0, 12)}.json`]: JSON.stringify({ createdAt: Date.now(), ttlMs: 86_400_000, ...body }) };
+        };
+
+        // Node answers these from the cache files of the services, so nothing reaches the network.
+        it.each([
+            ["the default set", ["calm", "--json"]],
+            ["the default set with --strict", ["calm", "--json", "--strict"]],
+            ["expiredDomains alone", ["calm", "--json", "--only", "expiredDomains"]],
+            ["every marshall but signatures, named", ["calm", "--json", "--only", "author,provenance,s1ngularity,newBin,metadata,downloads,expiredDomains,archivedRepo"]],
+        ])("answers %s from the caches of the services", (_label, args) => {
+            expect.hasAssertions();
+
+            run({ args, extra: ON, files: serviceCaches(), native: true });
+        });
+
+        it("reads each address of the version the way Node does", () => {
+            expect.hasAssertions();
+
+            const files = { ...domain("gone.example", { outcome: "expired" }), ...domain("fine.example", { outcome: "ok" }), ...domain("odd.example", { outcome: 5 }) };
+            const result = run({ args: ["domains", "--json", "--only", "expiredDomains"], extra: ON, files, native: true });
+            const messages = report(result.stdout).errors.map((finding) => finding.message);
+
+            expect(result.status).toBe(1);
+            expect(messages).toStrictEqual([
+                "Maintainer email domain gone.example (Amy@GONE.example) is unregistered \u2014 potential hijack risk.",
+                "Maintainer email domain gone.example (bob@gone.example) is unregistered \u2014 potential hijack risk.",
+                "Maintainer email domain odd.example (hal@odd.example) is unregistered \u2014 potential hijack risk.",
+            ]);
+        });
+
+        it.each([
+            ["an entry without an outcome", { outcome: undefined }, 1],
+            ["an outcome that is not ok", { outcome: "expired" }, 1],
+            ["an ok outcome", { outcome: "ok" }, 0],
+        ])("reads %s as Node does", (_label, body, errors) => {
+            expect.hasAssertions();
+
+            const files = { ...serviceCaches(), ...domain("example.test", body) };
+
+            expect(report(run({ args: ["calm", "--json", "--only", "expiredDomains"], extra: ON, files, native: true }).stdout).errors).toHaveLength(errors);
+        });
+
+        it("hands over a domain that is not ASCII, whose case JavaScript and Rust fold differently", () => {
+            expect.hasAssertions();
+
+            const files = domain("ex\u00E4mple.test", { outcome: "expired" });
+
+            run({ args: ["non-ascii", "--json", "--only", "expiredDomains"], extra: ON, files, native: false });
+        });
+    });
+
     describe("what goes to Node", () => {
         it.each([
             ["the text report", ["calm"]],
@@ -889,16 +958,6 @@ globalThis.fetch = async (url, options) => {
             expect.hasAssertions();
 
             run({ args, native: false });
-        });
-
-        // Node answers these from the cache files of the services, so nothing reaches the network.
-        it.each([
-            ["every marshall", ["calm", "--json"]],
-            ["expiredDomains", ["calm", "--json", "--only", "expiredDomains"]],
-        ])("hands over a run that needs a marshall that asks a service (%s)", (_label, args) => {
-            expect.hasAssertions();
-
-            run({ args, extra: { MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", MARSHALL_DISABLE_EXPIRED_DOMAINS: "0" }, files: serviceCaches(), native: false });
         });
 
         it.each(["server-error", "not-json", "array", "bom", "redirect"])("hands over the answer of %s", (name) => {

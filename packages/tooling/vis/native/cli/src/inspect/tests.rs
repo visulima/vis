@@ -110,6 +110,17 @@ struct Setup {
     home: PathBuf,
 }
 
+/// A setup that shares the home of `like` and takes `registry` as its registry.
+fn setup_with(registry: &Registry, like: &Setup) -> Setup {
+    let mut again = setup(Some(registry));
+
+    again.context.home = like.home.clone();
+    again.context.cache_dir = like.context.cache_dir.clone();
+    again.home = like.home.clone();
+
+    again
+}
+
 fn setup(registry: Option<&Registry>) -> Setup {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -144,6 +155,11 @@ fn setup(registry: Option<&Registry>) -> Setup {
                     || "http://127.0.0.1:49151/keys".to_owned(),
                     |registry| format!("{}/keys", registry.url()),
                 )),
+                dns: expired_domains::Resolver {
+                    servers: vec!["127.0.0.1:49151".parse().unwrap()],
+                    wait: std::time::Duration::from_millis(300),
+                    declined: None,
+                },
                 github_token: None,
             },
             root,
@@ -1525,5 +1541,352 @@ mod signatures_marshall {
             found[0].starts_with("[signatures]") && found.len() == 2 && found[1].starts_with("[archivedRepo]"),
             "{found:?}"
         );
+    }
+}
+
+mod expired_domains_marshall {
+    use std::net::UdpSocket;
+    use std::time::Duration;
+
+    use super::expired_domains::{Outcome, Resolver};
+    use super::*;
+
+    /// Every answer of a resolver the marshall classifies, with what Node's own resolver makes of it and what this
+    /// binary does (`__tests__/native/inspect-dns.test.ts` runs the same file against Node's `Resolver`).
+    const SCENARIOS: &str = include_str!("../../tests/fixtures/dns-scenarios.json");
+
+    fn name_wire(name: &str) -> Vec<u8> {
+        let mut out: Vec<u8> =
+            name.split('.').flat_map(|label| [&[label.len() as u8][..], label.as_bytes()].concat()).collect();
+
+        out.push(0);
+        out
+    }
+
+    fn record(entry: &Value) -> Vec<u8> {
+        let (kind, data) = match entry["type"].as_str().unwrap() {
+            "NS" => (2_u16, name_wire(entry["target"].as_str().unwrap())),
+            "CNAME" => (5, name_wire(entry["target"].as_str().unwrap())),
+            _ => (1, entry["address"].as_array().unwrap().iter().map(|byte| byte.as_u64().unwrap() as u8).collect()),
+        };
+        let mut out = vec![0xc0, 0x0c];
+
+        out.extend_from_slice(&kind.to_be_bytes());
+        out.extend_from_slice(&[0, 1, 0, 0, 1, 44]);
+        out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        out.extend_from_slice(&data);
+        out
+    }
+
+    /// The answer a scenario gives to `query`, or none.
+    fn reply(query: &[u8], scenario: &Value) -> Option<Vec<u8>> {
+        if scenario["silent"].as_bool() == Some(true) {
+            return None;
+        }
+
+        let mut end = 12;
+
+        while query[end] != 0 {
+            end += usize::from(query[end]) + 1;
+        }
+
+        end += 5;
+
+        let list = |key: &str| scenario[key].as_array().cloned().unwrap_or_default();
+        let (answers, authority) = (list("answers"), list("authority"));
+        let flags = 0x8180_u16
+            | if scenario["tc"].as_bool() == Some(true) { 0x0200 } else { 0 }
+            | scenario["rcode"].as_u64().unwrap() as u16;
+        let mut out = query[..2].to_vec();
+
+        out.extend_from_slice(&flags.to_be_bytes());
+        out.extend_from_slice(&[0, 1]);
+        out.extend_from_slice(&(answers.len() as u16).to_be_bytes());
+        out.extend_from_slice(&(authority.len() as u16).to_be_bytes());
+        out.extend_from_slice(&[0, 0]);
+        out.extend_from_slice(&query[12..end]);
+
+        for entry in answers.iter().chain(&authority) {
+            out.extend(record(entry));
+        }
+
+        Some(out)
+    }
+
+    struct Dns {
+        address: std::net::SocketAddr,
+        queries: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl Dns {
+        /// A resolver on 127.0.0.1 that answers each query with what `scenario_for` returns for its domain.
+        fn start(scenario_for: impl Fn(&str) -> Value + Send + 'static) -> Self {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let address = socket.local_addr().unwrap();
+            let queries = Arc::new(Mutex::new(Vec::new()));
+            let seen = Arc::clone(&queries);
+
+            thread::spawn(move || {
+                let mut buffer = [0_u8; 512];
+
+                while let Ok((length, from)) = socket.recv_from(&mut buffer) {
+                    let query = buffer[..length].to_vec();
+                    let mut at = 12;
+                    let mut labels = Vec::new();
+
+                    while query[at] != 0 {
+                        labels.push(
+                            String::from_utf8_lossy(&query[at + 1..at + 1 + usize::from(query[at])]).into_owned(),
+                        );
+                        at += usize::from(query[at]) + 1;
+                    }
+
+                    seen.lock().unwrap().push(query.clone());
+
+                    if let Some(answer) = reply(&query, &scenario_for(&labels.join("."))) {
+                        // An answer with another id first, which a resolver ignores.
+                        let mut stray = answer.clone();
+
+                        stray[0] ^= 0xff;
+                        drop(socket.send_to(&stray, from));
+                        drop(socket.send_to(&answer, from));
+                    }
+                }
+            });
+
+            Self { address, queries }
+        }
+
+        fn resolver(&self) -> Resolver {
+            Resolver { servers: vec![self.address], wait: Duration::from_millis(400), declined: None }
+        }
+    }
+
+    fn scenarios() -> Vec<Value> {
+        serde_json::from_str(SCENARIOS).unwrap()
+    }
+
+    #[test]
+    fn each_answer_is_read_the_way_nodes_resolver_reads_it() {
+        for scenario in scenarios() {
+            let chosen = scenario.clone();
+            let dns = Dns::start(move |_| chosen.clone());
+            let found = dns.resolver().lookup("example.test");
+            let name = scenario["name"].as_str().unwrap();
+
+            if scenario["native"].as_str() == Some("decline") {
+                assert!(found.is_err(), "{name}: {found:?}");
+            } else {
+                let expected = if scenario["expected"] == "registered" { Outcome::Registered } else { Outcome::Lapsed };
+
+                assert_eq!(found, Ok(expected), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_query_is_the_one_nodes_resolver_sends() {
+        let dns = Dns::start(|_| json!({ "rcode": 3, "answers": [] }));
+
+        dns.resolver().lookup("example.com").unwrap();
+
+        let queries = dns.queries.lock().unwrap();
+        let query = &queries[0];
+
+        // c-ares: recursion desired, one question, no other section and no EDNS, 29 bytes for `example.com`.
+        assert_eq!((query.len(), &query[2..12]), (29, &[0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0][..]));
+        assert_eq!(&query[12..], [7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0, 0, 2, 0, 1]);
+    }
+
+    #[test]
+    fn a_domain_that_is_not_a_plain_name_is_not_asked() {
+        let dns = Dns::start(|_| json!({ "rcode": 3, "answers": [] }));
+
+        for odd in ["localhost", "a b.example", "a..example", "-a.example", "x.example."] {
+            assert!(dns.resolver().lookup(odd).is_err(), "{odd}");
+        }
+
+        assert!(dns.queries.lock().unwrap().is_empty());
+    }
+
+    /// A package whose version has these maintainers.
+    fn package_of(user: Value, maintainers: &Value) -> Value {
+        packument(
+            &json!({ "1.0.0": { "_npmUser": user, "maintainers": maintainers, "license": "MIT", "readme": "# r", "repository": { "url": "git+https://github.com/o/r.git" } } }),
+            &json!({ "1.0.0": ago(100.0) }),
+        )
+    }
+
+    fn run_with(package: &Value, dns: &Dns) -> (Result<Plan, String>, Setup) {
+        let registry = Registry::start(answers(package));
+        let mut setup = setup(Some(&registry));
+
+        setup.context.services.dns = dns.resolver();
+
+        let plan = plan(&flags(&["pkg", "--json"]), &[Marshall::ExpiredDomains], &setup.context, &client());
+
+        (plan, setup)
+    }
+
+    fn domain_writes(plan: &Plan) -> Vec<String> {
+        plan.cache
+            .iter()
+            .filter_map(|action| match action {
+                CacheAction::Write { file, text } if file.to_string_lossy().contains("/expired-domains/") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn scenario_named(name: &str) -> Value {
+        scenarios().into_iter().find(|scenario| scenario["name"] == name).unwrap()
+    }
+
+    #[test]
+    fn a_lapsed_domain_is_an_error_for_each_address_and_asked_once() {
+        let (nx, ok) = (scenario_named("nxdomain"), scenario_named("ns records"));
+        let dns = Dns::start(move |domain| if domain == "gone.test" { nx.clone() } else { ok.clone() });
+        let package = package_of(
+            json!({ "name": "amy", "email": "Amy@Gone.test" }),
+            &json!([
+                { "name": "amy", "email": "Amy@Gone.test" },
+                { "name": "bob", "email": "bob@gone.test" },
+                { "name": "cat", "email": "cat@fine.test" },
+                { "name": "dan" },
+                "not an object",
+                { "email": 5 },
+            ]),
+        );
+        let (plan, _setup) = run_with(&package, &dns);
+        let plan = plan.unwrap();
+        let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+        // `Amy@Gone.test` once (the same address twice), `bob@gone.test` once; `fine.test` is registered.
+        assert_eq!(
+            messages(&report, "errors"),
+            [
+                "[expiredDomains] Maintainer email domain gone.test (Amy@Gone.test) is unregistered \u{2014} potential hijack risk.",
+                "[expiredDomains] Maintainer email domain gone.test (bob@gone.test) is unregistered \u{2014} potential hijack risk.",
+            ]
+        );
+        assert_eq!(plan.status, 1);
+        // One query per domain, one cache entry per domain, in the bytes Node writes.
+        assert_eq!(dns.queries.lock().unwrap().len(), 2);
+        assert_eq!(
+            domain_writes(&plan),
+            [
+                format!("{{\"createdAt\":{NOW},\"outcome\":\"expired\",\"ttlMs\":86400000}}"),
+                format!("{{\"createdAt\":{NOW},\"outcome\":\"ok\",\"ttlMs\":86400000}}"),
+            ]
+        );
+    }
+
+    fn plan_again(setup: &Setup) -> Result<Plan, String> {
+        plan(&flags(&["pkg", "--json"]), &[Marshall::ExpiredDomains], &setup.context, &client())
+    }
+
+    #[test]
+    fn fresh_entries_answer_without_a_query() {
+        let dns = Dns::start(|_| scenario_named("ns records"));
+        let package = package_of(json!({ "name": "amy", "email": "amy@cached.test" }), &json!([]));
+        let (_plan, setup) = run_with(&package, &dns);
+        let file = super::expired_domains::cache_file(&setup.context.cache_dir, "cached.test");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        dns.queries.lock().unwrap().clear();
+
+        // `expired`, and anything that is not `ok`, reads as lapsed; `ok` as registered.
+        for (text, finds) in [
+            (format!("{{\"createdAt\":{NOW},\"outcome\":\"expired\",\"ttlMs\":86400000}}"), true),
+            (format!("{{\"createdAt\":{NOW},\"ttlMs\":86400000}}"), true),
+            (format!("{{\"createdAt\":{NOW},\"outcome\":5,\"ttlMs\":86400000}}"), true),
+            (format!("{{\"createdAt\":{NOW},\"outcome\":\"ok\",\"ttlMs\":86400000}}"), false),
+        ] {
+            fs::write(&file, &text).unwrap();
+
+            // The registry stub of `run_with` is gone with its `Registry`; a fresh one serves the packument.
+            let registry = Registry::start(answers(&package));
+            let mut again = setup_with(&registry, &setup);
+
+            again.context.services.dns = dns.resolver();
+
+            let plan = plan_again(&again).unwrap();
+            let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+            assert_eq!(report["findings"].as_array().unwrap().len(), usize::from(finds), "{text}");
+            assert!(domain_writes(&plan).is_empty());
+            assert!(dns.queries.lock().unwrap().is_empty(), "{text}");
+        }
+
+        // Past its time: removed, asked again and written again.
+        fs::write(&file, r#"{"createdAt":1,"outcome":"expired","ttlMs":5}"#).unwrap();
+
+        let registry = Registry::start(answers(&package));
+        let mut again = setup_with(&registry, &setup);
+
+        again.context.services.dns = dns.resolver();
+
+        let plan = plan_again(&again).unwrap();
+
+        assert!(plan.cache.contains(&CacheAction::Remove(file)));
+        assert_eq!(domain_writes(&plan), [format!("{{\"createdAt\":{NOW},\"outcome\":\"ok\",\"ttlMs\":86400000}}")]);
+        assert_eq!(dns.queries.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn what_cannot_be_told_from_one_answer_is_handed_over() {
+        // A refusal, a lookup that times out, a CNAME and a domain that is not a plain name: no finding is made up.
+        for scenario in ["servfail", "no answer", "cname only", "truncated"] {
+            let chosen = scenario_named(scenario);
+            let dns = Dns::start(move |_| chosen.clone());
+            let package = package_of(json!({ "name": "amy", "email": "amy@asked.test" }), &json!([]));
+            let (plan, _setup) = run_with(&package, &dns);
+
+            assert!(plan.is_err(), "{scenario}");
+        }
+
+        let dns = Dns::start(|_| scenario_named("nxdomain"));
+
+        for package in [
+            package_of(json!({ "name": "amy", "email": "amy@localhost" }), &json!([])),
+            package_of(json!({ "name": "amy", "email": "amy@exämple.test" }), &json!([])),
+            package_of(json!(null), &json!([])),
+            package_of(json!({ "name": "amy", "email": "amy@asked.test" }), &json!({ "name": "not a list" })),
+            package_of(json!({ "name": "amy" }), &json!([null])),
+        ] {
+            assert!(run_with(&package, &dns).0.is_err());
+        }
+
+        // Nothing to ask: no maintainer with an address, or an address without a domain.
+        for user in [
+            json!({ "name": "amy" }),
+            json!({ "name": "amy", "email": "amy@" }),
+            json!("amy"),
+            json!({ "email": null }),
+        ] {
+            let (plan, _setup) = run_with(&package_of(user, &json!(null)), &dns);
+
+            assert!(plan.unwrap().stdout.contains("\"findings\": []"));
+        }
+
+        assert!(dns.queries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_resolver_that_answers_a_domain_only_after_the_wait_is_handed_over() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = socket.local_addr().unwrap();
+        let resolver = Resolver { servers: vec![address], wait: Duration::from_millis(100), declined: None };
+        let started = std::time::Instant::now();
+
+        assert!(resolver.lookup("example.test").unwrap_err().contains("in time"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        // A machine whose settings rotate the servers is not asked at all.
+        let resolver = Resolver { declined: Some("rotation".to_owned()), ..resolver };
+
+        assert_eq!(resolver.lookup("example.test"), Err("rotation".to_owned()));
     }
 }

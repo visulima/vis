@@ -1,17 +1,16 @@
 //! `vis inspect <package>[@<spec>] --json [--strict] [--only <marshalls>]` — the native port of
-//! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument, and of
-//! `downloads`, which asks the registry's download API (see [`downloads`]), and `archivedRepo`, which asks GitHub (see
-//! [`archived_repo`]), and `signatures`, which verifies the registry's signatures (see [`signatures`]).
+//! `src/commands/inspect/handler.ts` for its JSON report.
 //!
 //! Node fetches the packument (`getPackument`, cached half an hour in `~/.vis/cache/packuments`), resolves the spec to a
 //! version, runs each marshall in turn and prints `{errors, findings, summary, warnings}`; it exits 1 when there is an
 //! error (or any finding with `--strict`) and 2 when the package is missing or the spec names no version. This module
 //! reproduces that for a unix CI run off a terminal at the root of a pnpm workspace (see [`context_decline`]).
 //!
-//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata`, `downloads`, `archivedRepo` and
-//! `signatures` (which only `--only signatures` asks for). A run that has to execute `expiredDomains`, which looks up
-//! DNS records, goes to Node, so `vis inspect <package> --json` alone does too. `MARSHALL_DISABLE_*` or `--only` make a
-//! run native.
+//! What it runs: all nine marshalls, in the order of the handler (`signatures` only for `--only signatures`): `author`,
+//! `provenance`, `s1ngularity`, `newBin` and `metadata` read the packument; `downloads` asks the registry's download API,
+//! `archivedRepo` GitHub, `signatures` the registry's signing keys, and `expiredDomains` a DNS resolver for the NS records of
+//! the maintainers' domains (see [`downloads`], [`archived_repo`], [`signatures`] and [`expired_domains`]). `MARSHALL_DISABLE_*`
+//! and `--only` pick which.
 //!
 //! Everything it cannot reproduce goes to Node before anything is printed or written:
 //!
@@ -22,7 +21,10 @@
 //! - a registry answer other than 200 and 404, a redirect, a body that is not a JSON object, and a packument Node would
 //!   fail on or read through the prototype (see [`packument`]);
 //! - a spec that is not a tag or an exact version (a range needs node-semver's `maxSatisfying`), versions that are not
-//!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names.
+//!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names;
+//! - a service answer, or a resolver answer, that Node would read differently or that depends on the machine (a request
+//!   that fails before an answer, a redirect, a body that is not JSON, a DNS answer other than "NS records", "no such
+//!   domain" and "no data", a domain that is not a plain host name): each marshall's module names its cases.
 //!
 //! The packument cache and the service caches are read and written as Node does: a fresh entry is used, a fetched answer
 //! is written, in the bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
@@ -30,6 +32,7 @@
 mod archived_repo;
 mod args;
 mod downloads;
+mod expired_domains;
 mod js_format;
 mod js_value;
 mod marshalls;
@@ -85,6 +88,8 @@ struct Services {
     github: String,
     /// The registry's signing keys: `VIS_NPM_KEYS_URL` or npm's address (`None` for a variable that is not text).
     keys: Option<String>,
+    /// The resolver `expiredDomains` asks, and how long it waits.
+    dns: expired_domains::Resolver,
     /// `GITHUB_TOKEN`, as the environment holds it: `archivedRepo` sends it, and checks it when it does.
     github_token: Option<OsString>,
 }
@@ -94,6 +99,7 @@ impl Services {
         Self {
             downloads: downloads::API.to_owned(),
             github: archived_repo::API.to_owned(),
+            dns: expired_domains::Resolver::production(),
             keys: match std::env::var("VIS_NPM_KEYS_URL") {
                 Ok(url) => Some(url),
                 Err(std::env::VarError::NotPresent) => Some(KEYS_URL.to_owned()),
@@ -134,28 +140,9 @@ fn now_ms() -> Result<u64, String> {
 }
 
 /// The marshalls a run executes, or the reason it is Node's.
-fn native_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
-    let run = args::selected(flags.only.as_deref(), &args::process_lookup)
-        .ok_or("a MARSHALL_DISABLE_* variable is not text")?;
-
-    match run.iter().find(|marshall| {
-        !matches!(
-            marshall,
-            Marshall::Author
-                | Marshall::Provenance
-                | Marshall::S1ngularity
-                | Marshall::NewBin
-                | Marshall::Metadata
-                | Marshall::Downloads
-                | Marshall::ArchivedRepo
-                | Marshall::Signatures
-        )
-    }) {
-        Some(other) => {
-            Err(format!("the {} marshall is Node's (it asks a service this binary does not reproduce)", other.name()))
-        }
-        None => Ok(run),
-    }
+fn selected_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
+    args::selected(flags.only.as_deref(), &args::process_lookup)
+        .ok_or_else(|| "a MARSHALL_DISABLE_* variable is not text".to_owned())
 }
 
 /// The plan of a run, or the reason it is Node's.
@@ -166,7 +153,7 @@ fn answer(args: &[String]) -> Result<Plan, String> {
         return Err("the text report is a pail line with symbols pail's width rule does not cover".to_owned());
     }
 
-    let run = native_marshalls(&flags)?;
+    let run = selected_marshalls(&flags)?;
 
     if let Some(reason) = context_decline() {
         return Err(reason.to_owned());
@@ -335,7 +322,14 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
 
                 found
             }
-            other => return Err(format!("the {} marshall is not native", other.name())),
+            Marshall::ExpiredDomains => {
+                let (found, changes) =
+                    expired_domains::run(&context.services.dns, &context.cache_dir, &view, &target, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
         });
     }
 
