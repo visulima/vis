@@ -20,7 +20,7 @@
 //! delegation never follows a change to a file.
 
 mod fields;
-mod gitignore;
+pub(crate) mod gitignore;
 
 use std::env;
 use std::ffi::OsString;
@@ -415,7 +415,8 @@ fn glob_matches(pattern: &str, target: &str) -> bool {
             .all(|(pattern, target)| segment_matches(pattern.as_bytes(), target.as_bytes()))
 }
 
-fn segment_matches(pattern: &[u8], text: &[u8]) -> bool {
+/// One path segment against a pattern segment, case-sensitively: `*` any run of characters, `?` one character.
+pub(crate) fn segment_matches(pattern: &[u8], text: &[u8]) -> bool {
     let (mut p, mut t) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
 
