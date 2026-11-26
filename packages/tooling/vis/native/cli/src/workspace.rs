@@ -29,7 +29,7 @@ const CANDIDATE_MARKERS: [&str; 5] = ["package.json", "project.json", "Cargo.tom
 /// Root-level manifests of the non-JS ecosystems. Their resolvers claim directories the JS
 /// path would not, so any of them delegates. `*.gemspec`, `*.csproj` and `*.fsproj` are checked
 /// by suffix.
-const NON_JS_MARKERS: &[&str] = &[
+pub(crate) const NON_JS_MARKERS: &[&str] = &[
     "project.json",
     "Cargo.toml",
     "pyproject.toml",

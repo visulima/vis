@@ -7,9 +7,9 @@
 //! The root is the one `findMonorepoRootSync` picks for the working directory (see
 //! [`monorepo_root`]). The inherited `VIS_MONOREPO_ROOT` is not read, so it cannot change the answer. Target names
 //! come from `package.json` scripts alone. That is exact only when no inference detector applies to
-//! the project (`inference-triggers.json`, checked by `__tests__/native/list-inference-triggers.test.ts`)
-//! and no config changes the target set. Node prints tips and first-run notices to stderr outside CI,
-//! so the native path needs the same quiet context `advisories` uses.
+//! the project (`targets::inference_applies`, whose registry `__tests__/native/script-targets-parity.test.ts` and
+//! `list-inference-triggers.test.ts` check for drift) and no config changes the target set. Node prints tips and
+//! first-run notices to stderr outside CI, so the native path needs the same quiet context `advisories` uses.
 
 use std::collections::HashSet;
 use std::env;
@@ -24,10 +24,8 @@ use crate::graph::{project_graph, GraphResult, ProjectGraph};
 use crate::js::RESERVED_NAMES;
 use crate::node_context::{monorepo_root, output_settings_are_default};
 use crate::output::write_stdout;
+use crate::targets::{directory_names, inference_applies};
 use crate::vis_config;
-
-/// Detector trigger files and dependency names, generated from `BUILT_IN_DETECTORS`.
-const TRIGGERS_JSON: &str = include_str!("inference-triggers.json");
 
 /// Targets listed before the table cell is shortened to `a, b, c, d… (n)`.
 const TABLE_TARGET_LIMIT: usize = 4;
@@ -172,85 +170,8 @@ impl Manifest {
     }
 }
 
-#[derive(Deserialize)]
-struct Triggers {
-    #[serde(rename = "configFiles")]
-    config_files: Vec<String>,
-    #[serde(rename = "fallbackDependencies")]
-    fallback_dependencies: Vec<String>,
-}
-
-/// The config-file triggers split by how a project directory is checked: one directory listing answers
-/// every top-level name and suffix pattern, and only a pattern whose first path segment is present in the
-/// listing is looked at on disk.
-struct Detectors<'a> {
-    /// `(pattern, lowercased first segment)` of each trigger without a wildcard.
-    files: Vec<(&'a str, String)>,
-    /// The lowercased first segments of `files`: the only entry names a listing has to remember.
-    first_segments: HashSet<Vec<u8>>,
-    /// The part after the `*` of each wildcard trigger.
-    suffixes: Vec<&'a [u8]>,
-    dependencies: &'a [String],
-}
-
-impl<'a> Detectors<'a> {
-    fn new(triggers: &'a Triggers) -> Self {
-        let mut files = Vec::new();
-        let mut suffixes = Vec::new();
-
-        for pattern in &triggers.config_files {
-            match pattern.strip_prefix('*') {
-                Some(suffix) => suffixes.push(suffix.as_bytes()),
-                None => {
-                    files.push((pattern.as_str(), pattern.split('/').next().unwrap_or_default().to_ascii_lowercase()))
-                }
-            }
-        }
-
-        let first_segments = files.iter().map(|(_, segment)| segment.as_bytes().to_vec()).collect();
-
-        Self { files, first_segments, suffixes, dependencies: &triggers.fallback_dependencies }
-    }
-}
-
-/// Whether any inference detector would run on this project directory. Node then may enrich
-/// the script targets with a `type`, so the native path hands the project to Node.
-fn detector_triggered(project: &Path, manifest: &Manifest, detectors: &Detectors) -> Option<bool> {
-    let mut names: HashSet<Vec<u8>> = HashSet::new();
-    let mut ascii = true;
-
-    for entry in fs::read_dir(project).ok()? {
-        let entry = entry.ok()?;
-        let name = entry.file_name();
-        let bytes = name.as_encoded_bytes();
-
-        if detectors.suffixes.iter().any(|suffix| bytes.ends_with(suffix)) {
-            return Some(true);
-        }
-
-        ascii &= bytes.is_ascii();
-
-        let folded = bytes.to_ascii_lowercase();
-
-        if detectors.first_segments.contains(&folded) {
-            names.insert(folded);
-        }
-    }
-
-    // `exists` follows links and, on a case-insensitive volume, ignores case, so a pattern is only ruled out
-    // when no entry could be it under ASCII case folding. A name outside ASCII could fold onto one on such a
-    // volume (the Kelvin sign onto `k`), so that directory takes every check.
-    for (pattern, first_segment) in &detectors.files {
-        if (!ascii || names.contains(first_segment.as_bytes())) && project.join(pattern).exists() {
-            return Some(true);
-        }
-    }
-
-    Some(detectors.dependencies.iter().any(|name| manifest.declares(name)))
-}
-
 /// Reads one project's script targets, or `None` when Node must answer for it.
-fn project_scripts(root: &Path, directory: &str, detectors: &Detectors) -> Option<Vec<(String, String)>> {
+fn project_scripts(root: &Path, directory: &str) -> Option<Vec<(String, String)>> {
     if directory == "." || !directory.is_ascii() {
         return None;
     }
@@ -258,7 +179,7 @@ fn project_scripts(root: &Path, directory: &str, detectors: &Detectors) -> Optio
     let project = root.join(directory);
     let manifest: Manifest = serde_json::from_str(&fs::read_to_string(project.join("package.json")).ok()?).ok()?;
 
-    if detector_triggered(&project, &manifest, detectors)? {
+    if inference_applies(&project, &directory_names(&project)?, &|name| manifest.declares(name))? {
         return None;
     }
 
@@ -296,8 +217,6 @@ struct Listed {
 }
 
 fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
-    let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).ok()?;
-    let detectors = Detectors::new(&triggers);
     let mut listed = Vec::new();
 
     for (name, project) in &graph.projects {
@@ -306,7 +225,7 @@ fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
         }
 
         let directory = &project.directory;
-        let targets = project_scripts(root, directory, &detectors)?;
+        let targets = project_scripts(root, directory)?;
 
         listed.push(Listed {
             directory: directory.clone(),
@@ -542,10 +461,9 @@ mod tests {
     }
 
     fn triggered(label: &str, files: &[&str], manifest: &str) -> bool {
-        let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).unwrap();
         let project = detector_project(label, files);
         let parsed: Manifest = serde_json::from_str(manifest).unwrap();
-        let answer = detector_triggered(&project, &parsed, &Detectors::new(&triggers));
+        let answer = inference_applies(&project, &directory_names(&project).unwrap(), &|name| parsed.declares(name));
 
         let _ = fs::remove_dir_all(&project);
 
