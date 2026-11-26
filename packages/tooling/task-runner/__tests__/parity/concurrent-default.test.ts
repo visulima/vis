@@ -1,10 +1,8 @@
 /**
- * `runConcurrently` end to end, on whichever runner `VIS_CONCURRENT_RUNNER` selects.
+ * `runConcurrently` end to end.
  *
- * The parity suite calls the two runners directly. This file goes through the public entry point
- * with the cases that used to be routed to the JS spawner (`onEvent`, piped stdin, a pty,
- * `inheritEnv: false`, `restart`), and asserts results that hold on both runners. CI runs it twice:
- * with the variable unset (the native runner) and with `VIS_CONCURRENT_RUNNER=js` (the escape hatch).
+ * The behaviour suite calls the native runner directly. This file goes through the public entry
+ * point with the cases a caller combines (`onEvent`, piped stdin, a pty, `inheritEnv: false`, `restart`).
  */
 
 import { spawnSync } from "node:child_process";
@@ -23,9 +21,7 @@ const probeCommand = (...arguments_: string[]): string => [process.execPath, pro
 const lines = (events: ProcessEvent[], kind: "stderr" | "stdout", index = 0): string[] =>
     events.flatMap((event) => (event.kind === kind && event.index === index ? [event.text] : []));
 
-const runner = process.env["VIS_CONCURRENT_RUNNER"] === "js" ? "js (escape hatch)" : "native";
-
-describe(`runConcurrently on the ${runner} runner`, () => {
+describe("runConcurrently", () => {
     it("should stream events in order and resolve after the last one", async () => {
         expect.assertions(4);
 

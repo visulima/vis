@@ -1,20 +1,16 @@
 /**
  * Public API for the concurrent process runner.
  *
- * Runs on the native Rust addon. The pure JavaScript spawner is only reachable
- * through the `VIS_CONCURRENT_RUNNER=js` escape hatch, which is removed in the
- * next release. Integrates flow controllers (restart, teardown, timings)
+ * Runs on the native Rust addon. Integrates flow controllers (restart, teardown, timings)
  * around the core runner.
  */
 
-import { runConcurrentFallback } from "./concurrent-fallback";
 import { runNativeConcurrent } from "./concurrent-native";
 import { detectScriptShell } from "./detect-shell";
 import { logTimings } from "./flow-controllers/log-timings";
 import { withRestart } from "./flow-controllers/restart-process";
 import { runTeardown } from "./flow-controllers/teardown";
 import { buildEnhancedPath } from "./path-utils";
-import { resolveConcurrentRunner } from "./runner-switch";
 import type { ConcurrentCommandConfig, ConcurrentCommandInput, ConcurrentRunnerOptions, ConcurrentRunResult } from "./types";
 
 /**
@@ -84,8 +80,7 @@ const withEnhancedPathConfigs = (configs: ConcurrentCommandConfig[]): Concurrent
     });
 
 /**
- * Core runner function: the native runner, or the JS spawner when `VIS_CONCURRENT_RUNNER=js`.
- * This is the inner runner without flow controller wrappers.
+ * Core runner function: the native runner without the flow controller wrappers.
  */
 const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions): Promise<ConcurrentRunResult> => {
     // Resolve shell: explicit option > npm script-shell config > platform default
@@ -93,17 +88,8 @@ const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: Concurren
 
     // Prepend each cwd's `node_modules/.bin` ancestry to PATH so
     // bare binary names from package.json scripts resolve without
-    // forcing callers through `pnpm exec`. Done once here (instead
-    // of inside the native + JS spawners) so both code paths stay
-    // in lock-step.
+    // forcing callers through `pnpm exec`.
     const configs = withEnhancedPathConfigs(rawConfigs);
-
-    // The native runner does everything a caller can ask for (event streaming, piped stdin, a PTY,
-    // `inheritEnv: false`, restart); the parity suite compares it with the JS spawner. The JS spawner
-    // is reached only through the one-release escape hatch `VIS_CONCURRENT_RUNNER=js`.
-    if (resolveConcurrentRunner() === "js") {
-        return runConcurrentFallback(configs, { ...options, shellPath });
-    }
 
     return runNativeConcurrent(configs, { ...options, shellPath });
 };
@@ -111,9 +97,7 @@ const coreRun = async (rawConfigs: ConcurrentCommandConfig[], options: Concurren
 /**
  * Run commands concurrently with output streaming and process management.
  *
- * Runs on the native Rust addon. Set `VIS_CONCURRENT_RUNNER=js` to use the
- * legacy pure JavaScript implementation instead (an escape hatch kept for one
- * release; the variable and the JS implementation are removed after that).
+ * Runs on the native Rust addon.
  *
  * Supports flow controllers:
  * - `restart`: retry failed commands with configurable delay/backoff

@@ -2,7 +2,6 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { runConcurrentFallback } from "../../../src/concurrent-fallback";
 import { runNativeConcurrent } from "../../../src/concurrent-native";
 import { createInputHandler } from "../../../src/flow-controllers/input-handler";
 import { formatTimingTable } from "../../../src/flow-controllers/log-timings";
@@ -185,12 +184,10 @@ describe(createInputHandler, () => {
     });
 });
 
-// The restart wrapper sits on top of whichever runner `runConcurrently` picks, so it is
-// exercised on both.
-describe.each([
-    { name: "JS spawner", run: runConcurrentFallback },
-    { name: "native runner", run: runNativeConcurrent },
-])("withRestart on the $name", ({ run }) => {
+// The restart wrapper sits on top of the runner `runConcurrently` uses.
+describe("withRestart on the native runner", () => {
+    const run = runNativeConcurrent;
+
     it("should not restart when tries is 0", async () => {
         expect.assertions(2);
 

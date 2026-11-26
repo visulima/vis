@@ -11,7 +11,7 @@ description: High-performance monorepo task runner with intelligent caching
 
 ## Why Task Runner?
 
-- **Concurrent process runner** - Run multiple commands in parallel on the native Rust runner (a JS runner stays behind `VIS_CONCURRENT_RUNNER=js` for one release)
+- **Concurrent process runner** - Run multiple commands in parallel on the native Rust runner
 - **Process tree management** - Clean signal propagation via setsid/killpg (Unix) and Job Objects (Windows)
 - **Command parser** - `npm:build` shortcuts, `npm run watch-*` wildcards, `{1}` argument placeholders
 - **npm script-shell support** - Honors `npm config set script-shell` for custom shells

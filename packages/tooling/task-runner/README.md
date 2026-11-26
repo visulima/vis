@@ -198,7 +198,7 @@ await runConcurrently([
 ]);
 ```
 
-### Native runner (and the `VIS_CONCURRENT_RUNNER` escape hatch)
+### Native runner
 
 `runConcurrently` runs every command on the Rust NAPI addon, including commands that stream events (`onEvent`), pipe stdin, run in a pty, set `inheritEnv: false` or use `restart`:
 
@@ -209,20 +209,14 @@ await runConcurrently([
 
 The addon is required: when it cannot be loaded, `runConcurrently` throws instead of degrading to another implementation.
 
-**Escape hatch (one release).** Set `VIS_CONCURRENT_RUNNER=js` to run on the previous TypeScript spawner instead. Unset, empty or `native` selects the native runner; any other value is reported on stderr and ignored. The hatch exists for one release so a regression in the native runner can be worked around without waiting for a fix. It prints one line to stderr when used, and the variable, the JS spawner and `runConcurrentFallback` are removed in the next release. If you need it, please report why.
+Behaviour worth knowing:
 
-```bash
-VIS_CONCURRENT_RUNNER=js vis run build
-```
-
-Differences you can see between the two runners (the native value is the one that stays):
-
-- a command that cannot be spawned closes with exit code `1` (the JS spawner: `-2`);
-- a UTF-8 character split across two reads is decoded correctly (the JS spawner prints replacement characters);
-- `killTimeout` applies: a command that ignores the kill signal gets `SIGKILL` after it (the JS spawner never escalated);
-- `killOthers` with commands still queued resolves (the JS spawner never resolved);
-- `successCondition: "command-MyApp"` matches a command named `MyApp` (the JS spawner lowercased the condition);
-- an unknown `successCondition`, `killSignal` or `killOthers` value is an error naming the value (the JS spawner silently used the default);
+- a command that cannot be spawned reports `started`, `error` and `close` with exit code `1`;
+- a UTF-8 character split across two reads is decoded correctly;
+- `killTimeout` applies: a command that ignores the kill signal gets `SIGKILL` after it;
+- `killOthers` with commands still queued resolves, and the queued commands have no `close` event;
+- `successCondition: "command-MyApp"` matches a command named `MyApp`;
+- an unknown `successCondition`, `killSignal` or `killOthers` value is an error naming the value;
 - a pty command that cannot start reports an `error` event; a pty command killed by a signal exits `128 + signal`.
 
 ## Caching Modes
@@ -352,7 +346,7 @@ The HTTP backend has no such requirement.
 
 The package exports many building blocks for custom task runners:
 
-- **Concurrent Runner**: `runConcurrently`, `runConcurrentFallback` (deprecated: only for the `VIS_CONCURRENT_RUNNER=js` escape hatch, removed in the next release), `detectScriptShell`
+- **Concurrent Runner**: `runConcurrently`, `detectScriptShell`
 - **Command Parser**: `parseCommands`, `expandShortcut`, `expandWildcard`, `expandArguments`, `stripQuotes`
 - **Flow Controllers**: `withRestart`, `createInputHandler`, `logTimings`, `formatTimingTable`, `runTeardown`
 - **Task Graph**: `createTaskGraph`, `findCycle`, `walkTaskGraph`, `makeAcyclic`

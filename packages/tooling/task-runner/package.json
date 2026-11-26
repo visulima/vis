@@ -62,7 +62,6 @@
         "LICENSE.md"
     ],
     "scripts": {
-        "bench:concurrent": "vitest run --config __bench__/throughput.vitest.config.ts --disableConsoleIntercept",
         "bench:native": "cargo bench --manifest-path native/Cargo.toml",
         "build": "packem build --development",
         "build:native": "napi build --platform --release --esm --manifest-path native/Cargo.toml --output-dir . --js index.js",
@@ -86,7 +85,6 @@
         "test:watch": "vitest"
     },
     "dependencies": {
-        "@lydell/node-pty": "catalog:dev",
         "@visulima/humanizer": "4.0.0",
         "@visulima/path": "5.0.0",
         "nanotar": "catalog:node"

@@ -6,7 +6,7 @@ This file provides guidance to AI coding agents when working with code in this d
 
 ## Overview
 
-`@visulima/task-runner` is the engine behind `@visulima/vis`: a monorepo task runner with two caching modes (Nx-style explicit inputs or Vite Task-style auto-fingerprinting), dependency-aware scheduling, affected detection, Turborepo-compatible HTTP remote cache, and a Bazel REAPI gRPC backend. Heavy paths (file hashing, concurrent process management, graph operations) run in Rust via NAPI; everything else is TypeScript with a pure-JS fallback.
+`@visulima/task-runner` is the engine behind `@visulima/vis`: a monorepo task runner with two caching modes (Nx-style explicit inputs or Vite Task-style auto-fingerprinting), dependency-aware scheduling, affected detection, Turborepo-compatible HTTP remote cache, and a Bazel REAPI gRPC backend. Heavy paths (file hashing, concurrent process management, graph operations) run in Rust via NAPI; everything else is TypeScript (file hashing and graph operations keep a pure-JS fallback; the concurrent runner does not).
 
 ## Architecture
 
@@ -15,13 +15,13 @@ Module layout in `src/`:
 - `backends/` — remote-cache backends: `http.ts` (Turbo-compatible), `reapi.ts` (Bazel REAPI gRPC), `factory.ts` (selection by `CacheMode`), `hash-bridge.ts` (maps task-hashes <-> action-digests), `types.ts` (the `RemoteCacheBackend` contract).
 - `cas/` — content-addressable store primitives (v2 layout): `digest.ts`, `paths.ts`, `store.ts`. Constants `V2_ROOT`/`V2_CAS`/`V2_AC`/`V2_INDEX`/`V2_TMP` live in `paths.ts`.
 - `cache.ts` — local cache façade (`Cache`, `DEFAULT_CACHE_DIRECTORY_NAME`, size helpers).
-- `concurrent.ts` / `concurrent-native.ts` — process orchestration. The native runner owns every concurrent run; `concurrent-fallback.ts` is the deprecated pure-JS spawner, reachable only through the `VIS_CONCURRENT_RUNNER=js` escape hatch (`runner-switch.ts`) and removed after one release. Never route a new capability to the fallback.
+- `concurrent.ts` / `concurrent-native.ts` — process orchestration. The native runner owns every concurrent run; there is no JavaScript spawner: a new capability goes into the Rust runner.
 - `command-parser/` — `npm:build` shortcuts, `npm run watch-*` wildcard expansion, `{1}` argument placeholders.
 - `flow-controllers/` — restart-with-backoff, stdin routing, timing summaries, teardown commands.
 - `framework-inference.ts` — Next/Vite/CRA/Gatsby/Nuxt env-var auto-injection.
 - `affected.ts` — git-diff-based change detection + dependency expansion.
 - `task-graph*.ts`, `task-orchestrator.ts`, `task-scheduler.ts`, `task-hasher.ts` — scheduling and hashing.
-- `native-binding.ts` — single chokepoint for talking to the Rust addon. When the native `.node` isn't loadable, every call site here transparently degrades to the JS implementation. New native methods MUST follow this pattern: optional native call -> JS fallback -> identical observable behaviour.
+- `native-binding.ts` — single chokepoint for talking to the Rust addon. When the native `.node` isn't loadable, the call sites for hashing and graph operations degrade to the JS implementation; the concurrent runner throws instead. New native methods for hashing or graph work follow the pattern optional native call -> JS fallback -> identical observable behaviour; a runner capability has no JS twin.
 
 ## Local development
 

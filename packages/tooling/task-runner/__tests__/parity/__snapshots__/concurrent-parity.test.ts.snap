@@ -1,0 +1,1998 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the colour policy, with a mocked terminal > a pty command: tty false, NO_COLOR undefined 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null,"TERM":"xterm-256color"}
+",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > a pty command: tty true, NO_COLOR '1' 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":"1","TERM":"xterm-256color"}
+",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > a pty command: tty true, NO_COLOR undefined 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null,"TERM":"xterm-256color"}
+",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"2","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"2","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty false, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"2","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR '1', parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":null,"NO_COLOR":"1"}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR '2', task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"2","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR '0', inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"0","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv false 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null}",
+]
+`;
+
+exports[`the colour policy, with a mocked terminal > tty true, NO_COLOR undefined, parent FORCE_COLOR undefined, task FORCE_COLOR undefined, inheritEnv true 1`] = `
+[
+  "{"FORCE_COLOR":"1","NO_COLOR":null}",
+]
+`;
+
+exports[`the native runner, scenario by scenario > CRLF output 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "one",
+        "two",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'chunks' 'out' 'b25lDQp0d28NCg=='",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > SIGINT: the result says 0, the close event keeps 143 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": true,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > SIGTERM: a termination that keeps the exit code 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 143,
+        "index": 0,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a 200 KB single line 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "<200000 characters>",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'big-line' '200000'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a child killed by SIGKILL reports 128 + 9 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 137,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "kill -KILL $$",
+        "exitCode": 137,
+        "index": 0,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a child killed by SIGTERM reports 128 + 15 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "kill -TERM $$",
+        "exitCode": 143,
+        "index": 0,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a custom shellPath 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "/bin/bash",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "echo $0",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a descendant holding the pipes does not hold the run 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "sleep 4 &",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a last line without a newline on stderr 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [
+        "no newline at the end",
+      ],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'chunks' 'err' 'bm8gbmV3bGluZSBhdCB0aGUgZW5k'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a non-zero exit code 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 3,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit' '3'",
+        "exitCode": 3,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > a partial line flushed after the idle time 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "abc",
+        "def",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'partial'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > empty output 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > exit code 0 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > four commands, maxProcesses 1 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "c0",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "c1",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "c2",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "3": {
+      "closed": {
+        "commandName": "c3",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '80' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "c0",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '60' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "c1",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '40' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "c2",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '20' '1'",
+        "exitCode": 1,
+        "index": 3,
+        "killed": false,
+        "name": "c3",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > four commands, maxProcesses 2 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "c0",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "c1",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "c2",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "3": {
+      "closed": {
+        "commandName": "c3",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '80' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "c0",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '60' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "c1",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '40' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "c2",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '20' '1'",
+        "exitCode": 1,
+        "index": 3,
+        "killed": false,
+        "name": "c3",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > kill through the started event 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 143,
+        "index": 0,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > killOthers failure 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '150' '1'",
+        "exitCode": 1,
+        "index": 0,
+        "killed": false,
+      },
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 143,
+        "index": 1,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > killOthers success 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '150' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 143,
+        "index": 1,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > piped stdin: a write after started, and a child that reads it 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "got:hello",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'read-line'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty and pipe commands under one killOthers 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "",
+      ],
+    },
+    "1": {
+      "closed": {
+        "exitCode": 143,
+        "killed": true,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hanging",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '400' '1'",
+        "exitCode": 1,
+        "index": 0,
+        "killed": false,
+      },
+      {
+        "command": "'<node>' '<probe>' 'hang'",
+        "exitCode": 143,
+        "index": 1,
+        "killed": true,
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty with inheritEnv: false gets a SHELL the caller passes 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "{'SHELL':'/custom/shell','PARITY_PARENT_ONLY':null}
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'env' 'SHELL' 'PARITY_PARENT_ONLY'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty with inheritEnv: false gets only the caller's variables 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "{'SHELL':null,'PARITY_PARENT_ONLY':null}
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'env' 'SHELL' 'PARITY_PARENT_ONLY'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty: a size with a zero dimension gives the default terminal 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "24 80
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "stty size",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty: a write after started 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "hello
+got:hello
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'read-line'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty: always through the shell, whatever \`shell\` says 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "one
+two
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "echo one && echo two",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty: resize reaches the child 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "size:80x24
+size:100x30
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'resize'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > pty: the child sees a terminal 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "tty:true:true:true
+",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'tty'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > several commands, unlimited 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "alpha",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "beta",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "gamma",
+        "exitCode": 2,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit' '1'",
+        "exitCode": 1,
+        "index": 0,
+        "killed": false,
+        "name": "alpha",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit' '0'",
+        "exitCode": 0,
+        "index": 1,
+        "killed": false,
+        "name": "beta",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '60' '2'",
+        "exitCode": 2,
+        "index": 2,
+        "killed": false,
+        "name": "gamma",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > shell: false 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "direct",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "<node> <probe> out direct",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > stdout and stderr lines of one command 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [
+        "e1",
+        "e2",
+        "e3",
+      ],
+      "stdout": [
+        "o1",
+        "o2",
+        "o3",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'both'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition !command-2 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition !command-build 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition !command-lint 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition all 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition command-1 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": false,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition command-build 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition command-test 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition first 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > successCondition last 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "commandName": "build",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "1": {
+      "closed": {
+        "commandName": "lint",
+        "exitCode": 1,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+    "2": {
+      "closed": {
+        "commandName": "test",
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '10' '0'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+        "name": "build",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '120' '1'",
+        "exitCode": 1,
+        "index": 1,
+        "killed": false,
+        "name": "lint",
+      },
+      {
+        "command": "'<node>' '<probe>' 'exit-after' '240' '0'",
+        "exitCode": 0,
+        "index": 2,
+        "killed": false,
+        "name": "test",
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > the command leads a session of its own 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "session-leader",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "sid=$(python3 -c 'import os; print(os.getsid(0))'); [ '$sid' = '$$' ] && echo session-leader || echo 'not a session leader ($sid, $$)'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > the env overlay 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "{'PARITY_OVERLAY':'from-overlay','PARITY_UNSET':null}",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'env' 'PARITY_OVERLAY' 'PARITY_UNSET'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;
+
+exports[`the native runner, scenario by scenario > the working directory 1`] = `
+{
+  "commands": {
+    "0": {
+      "closed": {
+        "exitCode": 0,
+        "killed": false,
+      },
+      "errors": [],
+      "framing": "ok",
+      "stderr": [],
+      "stdout": [
+        "<tmp>",
+      ],
+    },
+  },
+  "result": {
+    "closeEvents": [
+      {
+        "command": "'<node>' '<probe>' 'cwd'",
+        "exitCode": 0,
+        "index": 0,
+        "killed": false,
+      },
+    ],
+    "success": true,
+  },
+}
+`;

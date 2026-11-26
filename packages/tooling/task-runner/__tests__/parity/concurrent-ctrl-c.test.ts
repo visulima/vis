@@ -3,9 +3,8 @@
  * gets SIGINT, exits 0 (a user interrupt is not a failure) and leaves no child behind, whether
  * the command is the shell's direct child or something it started in the background.
  *
- * It runs on whichever runner `VIS_CONCURRENT_RUNNER` selects (the CLI inherits the variable), so
- * CI runs it on both. The CLI imports `dist/`, so the test needs `pnpm exec packem build --development`
- * first; without a build it is skipped locally and fails on CI.
+ * The CLI imports `dist/`, so the test needs `pnpm exec packem build --development` first;
+ * without a build it is skipped locally and fails on CI.
  */
 
 import { spawn } from "node:child_process";

@@ -1,7 +1,7 @@
 /**
  * The concurrent runner on the native addon.
  *
- * Does everything the JS spawner (`runConcurrentFallback`) does for a caller: streams events to `onEvent`
+ * Does everything a caller can ask for: streams events to `onEvent`
  * (with the `kill`, `write` and `resize` closures on `started`), runs commands with piped stdin or
  * in a pty, honours `inheritEnv`, and turns SIGINT, SIGTERM and process exit into a teardown of the
  * children. The addon itself installs no signal handlers and decides nothing about colour: both
@@ -57,7 +57,7 @@ const resolveEnv = (config: ConcurrentCommandConfig): Record<string, string> => 
 
 /**
  * A terminal dimension the addon accepts, or the default. Callers pass `process.stdout.columns`,
- * which some terminals report as 0; node-pty falls back to the default size for that, and the addon
+ * which some terminals report as 0; a terminal library would fall back to the default size for that, and the addon
  * refuses it, which would fail the whole run over a cosmetic size.
  */
 const terminalSize = (size: { cols: number; rows: number } | undefined): { cols: number; rows: number } | undefined => {

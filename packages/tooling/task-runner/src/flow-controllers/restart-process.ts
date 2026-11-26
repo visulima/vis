@@ -38,7 +38,7 @@ interface RestartState {
 
 /**
  * Wraps a runner function to add restart-on-failure behavior.
- * @param runFn The underlying runner function (runConcurrently or runConcurrentFallback)
+ * @param runFn The underlying runner function (`runConcurrently` or `runNativeConcurrent`)
  * @param commands The original command configs
  * @param options Runner options
  * @param restartOptions Restart-specific options

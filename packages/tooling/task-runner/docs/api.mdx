@@ -9,7 +9,7 @@ description: Full API reference for all exported functions and types
 
 ### `runConcurrently(commands, options?)`
 
-Run commands concurrently with real-time output streaming. Runs on the native Rust addon; `VIS_CONCURRENT_RUNNER=js` selects the previous TypeScript spawner, an escape hatch that is removed after one release (see the package README).
+Run commands concurrently with real-time output streaming. Runs on the native Rust addon (see the package README).
 
 ```typescript
 import { runConcurrently } from "@visulima/task-runner";
@@ -264,7 +264,7 @@ if (isNativeAvailable()) {
 }
 ```
 
-Pure-TypeScript fallbacks ship for the native addon's file hashing and cycle detection so callers never need to branch on platform. The concurrent process runner is the exception: it requires the addon, and its TypeScript spawner is only reachable through the `VIS_CONCURRENT_RUNNER=js` escape hatch, which is removed after one release.
+Pure-TypeScript fallbacks ship for the native addon's file hashing and cycle detection so callers never need to branch on platform. The concurrent process runner is the exception: it requires the addon.
 
 ## Worktree detection
 
