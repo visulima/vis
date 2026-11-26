@@ -125,6 +125,27 @@ const rootIsCwd = (cwd, holdsMarker = holdsRootMarker) => {
 // `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.
 const inCi = (environment) => ["CI", "CONTINUOUS_INTEGRATION"].some((key) => environment[key] !== undefined && environment[key] !== "0" && environment[key] !== "false");
 
+// The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
+// differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
+// the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
+// both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
+const NETWORK_VARIABLES = [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "NODE_USE_ENV_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "NODE_OPTIONS",
+];
+
+const networkEnvironmentIsPlain = (environment) => NETWORK_VARIABLES.every((name) => environment[name] === undefined);
+
 // Whether the launcher's root search ends at `cwd`, so a binary that computes the root from the working
 // directory finds the same one as Node. The inherited `VIS_MONOREPO_ROOT` is only a reason to delegate,
 // never the root itself.
@@ -1070,27 +1091,6 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
 
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
-
-// The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
-// differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
-// the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
-// both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
-const NETWORK_VARIABLES = [
-    "ALL_PROXY",
-    "all_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-    "NODE_USE_ENV_PROXY",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_TLS_REJECT_UNAUTHORIZED",
-    "NODE_OPTIONS",
-];
-
-const networkEnvironmentIsPlain = (environment) => NETWORK_VARIABLES.every((name) => environment[name] === undefined);
 
 // Whether `vis security keys-refresh` can pass the binary's native gate (`parse` and `answer` in `keys_refresh.rs`): `--json`,
 // alone or with `--clear` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a

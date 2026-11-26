@@ -42,7 +42,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) use args::parse_package;
 use args::{Flags, Marshall};
-pub(crate) use clean::{any_finding, entry_or_latest, Checks};
+pub(crate) use clean::{entry_or_latest, first_finding, Checks};
 pub(crate) use js_format::parse_date;
 pub(crate) use marshalls::{has_provenance, prior_with_provenance};
 use marshalls::{Finding, Target};

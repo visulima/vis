@@ -5,7 +5,7 @@
 //! whether there is one, so each check answers with that, and `Err` for every shape the checks do not read as Node does.
 
 use super::js_format::parse_date;
-use super::marshalls::{author, metadata, new_bin, provenance, s1ngularity, Target};
+use super::marshalls::{author_in_pipeline, metadata, new_bin, provenance, s1ngularity, Target};
 use super::packument::View;
 use crate::keys_refresh::Js;
 
@@ -97,26 +97,38 @@ fn too_young_or_idle(view: &View, now_ms: f64) -> Result<bool, String> {
     Ok(modified.is_some_and(|modified| (now_ms - modified) / MS_PER_DAY > UNMAINTAINED_DAYS))
 }
 
-/// Whether any of the checks finds something for `name@version` in the packument (`None`: the registry does not know the
-/// package, which no check reports).
-pub(crate) fn any_finding(
+/// The first check that finds something for `name@version` in the packument, by its name (`None`: the registry does not
+/// know the package, which no check reports, or no check finds anything).
+pub(crate) fn first_finding(
     view: Option<&View>,
     name: &str,
     version: &str,
     now_ms: u64,
     checks: Checks,
-) -> Result<bool, String> {
-    let Some(view) = view else { return Ok(false) };
+) -> Result<Option<&'static str>, String> {
+    let Some(view) = view else { return Ok(None) };
     let target = Target { name, version };
     let now = now_ms as f64;
 
-    Ok((checks.author && !author(view, &target, now)?.is_empty())
-        || (checks.provenance && !provenance(view, &target)?.is_empty())
-        || (checks.s1ngularity && !s1ngularity(view, &target)?.is_empty())
-        || (checks.new_bin && !new_bin(view, &target)?.is_empty())
-        || (checks.metadata && !metadata(view, &target)?.is_empty())
-        || (checks.deprecation && deprecated(view, version)?)
-        || (checks.package_age && too_young_or_idle(view, now)?))
+    let found = if checks.author && author_in_pipeline(view, &target)? {
+        "author"
+    } else if checks.provenance && !provenance(view, &target)?.is_empty() {
+        "provenance"
+    } else if checks.s1ngularity && !s1ngularity(view, &target)?.is_empty() {
+        "s1ngularity"
+    } else if checks.new_bin && !new_bin(view, &target)?.is_empty() {
+        "newBin"
+    } else if checks.metadata && !metadata(view, &target)?.is_empty() {
+        "metadata"
+    } else if checks.deprecation && deprecated(view, version)? {
+        "deprecation"
+    } else if checks.package_age && too_young_or_idle(view, now)? {
+        "packageAge"
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(found))
 }
 
 #[cfg(test)]
@@ -147,7 +159,7 @@ mod tests {
         let found = |body: &str, version: &str| {
             let js = parse(body);
 
-            any_finding(Some(&view_of(&js)), "p", version, NOW, check)
+            first_finding(Some(&view_of(&js)), "p", version, NOW, check).map(|found| found.is_some())
         };
         let deprecated =
             r#"{"name":"p","versions":{"1.0.0":{"deprecated":"use q"},"2.0.0":{}},"dist-tags":{"latest":"2.0.0"}}"#;
@@ -172,7 +184,7 @@ mod tests {
             );
         }
         assert!(found(r#"{"name":"p","versions":{"1.0.0":{"deprecated":"café"}}}"#, "1.0.0").is_err());
-        assert_eq!(any_finding(None, "p", "1.0.0", NOW, check), Ok(false));
+        assert_eq!(first_finding(None, "p", "1.0.0", NOW, check), Ok(None));
     }
 
     #[test]
@@ -197,7 +209,7 @@ mod tests {
         let found = |time: &str| {
             let js = parse(&format!(r#"{{"name":"p","versions":{{"1.0.0":{{}}}},"time":{time}}}"#));
 
-            any_finding(Some(&view_of(&js)), "p", "1.0.0", NOW, check)
+            first_finding(Some(&view_of(&js)), "p", "1.0.0", NOW, check).map(|found| found.is_some())
         };
 
         assert_eq!(found(&format!(r#"{{"created":"{}","modified":"{}"}}"#, ago(500.0), ago(10.0))), Ok(false));
@@ -214,9 +226,38 @@ mod tests {
     }
 
     #[test]
+    fn the_author_check_is_the_one_the_add_pipeline_runs() {
+        let check = only(|checks| checks.author = true);
+        let user = |name: &str| format!(r#"{{"_npmUser":{{"name":"{name}"}}}}"#);
+        let found = |versions: &[(&str, &str, &str)], version: &str| {
+            let entries: Vec<String> = versions.iter().map(|(v, who, _)| format!(r#""{v}":{}"#, user(who))).collect();
+            let times: Vec<String> = versions.iter().map(|(v, _, time)| format!(r#""{v}":"{time}""#)).collect();
+            let js = parse(&format!(
+                r#"{{"name":"p","versions":{{{}}},"time":{{{}}}}}"#,
+                entries.join(","),
+                times.join(",")
+            ));
+
+            first_finding(Some(&view_of(&js)), "p", version, NOW, check).map(|found| found.is_some())
+        };
+        let (old, recent) = ("2020-01-01T00:00:00.000Z", "2024-06-14T00:00:00.000Z");
+
+        // A first publish by someone new reports, however young the package: the window that would excuse it is `undefined`.
+        assert_eq!(found(&[("1.0.0", "amy", recent), ("1.1.0", "bob", recent)], "1.1.0"), Ok(true));
+        assert_eq!(found(&[("1.0.0", "amy", old), ("1.1.0", "bob", old)], "1.1.0"), Ok(true));
+        // The same publisher, a brand-new package, and a version nobody published before it do not.
+        assert_eq!(found(&[("1.0.0", "amy", old), ("1.1.0", "amy", old)], "1.1.0"), Ok(false));
+        assert_eq!(found(&[("1.0.0", "amy", old)], "1.0.0"), Ok(false));
+        // A release published yesterday, and one whose maintainer was away for years, do not report either: their
+        // thresholds are `undefined` too.
+        assert_eq!(found(&[("1.0.0", "amy", old), ("1.1.0", "amy", recent)], "1.1.0"), Ok(false));
+        assert_eq!(found(&[("1.0.0", "amy", old), ("1.1.0", "amy", "2024-06-15T00:00:00.000Z")], "1.1.0"), Ok(false));
+    }
+
+    #[test]
     fn the_checks_that_are_off_find_nothing() {
         let js = parse(r#"{"name":"p","versions":{"1.0.0":{"deprecated":"x"}}}"#);
 
-        assert_eq!(any_finding(Some(&view_of(&js)), "p", "1.0.0", NOW, Checks::default()), Ok(false));
+        assert_eq!(first_finding(Some(&view_of(&js)), "p", "1.0.0", NOW, Checks::default()), Ok(None));
     }
 }

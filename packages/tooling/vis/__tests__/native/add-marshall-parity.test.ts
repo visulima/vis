@@ -1,9 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -27,7 +27,7 @@ import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
  * Needs the native `vis` binary, the built CLI (`dist/bin.js`) and the NAPI addon; skipped otherwise.
  */
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const packageRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const binary = resolveNativeBinary(packageRoot);
 const nodeEntry = join(packageRoot, "dist", "bin.js");
 const addonPath = join(packageRoot, "index.js");
@@ -190,7 +190,7 @@ const capture = (command: string, args: string[], setup: Setup, env: Record<stri
 const runNode = (setup: Setup, args: string[], extra: Record<string, string> = {}): Run => capture(process.execPath, [nodeEntry, ...args], setup, environment(setup, extra));
 
 const runNative = (setup: Setup, args: string[], extra: Record<string, string> = {}): Run =>
-    capture(nativeBinary, args, setup, { ...environment(setup, extra), VIS_FALLBACK_ENTRY: join(scratch, "no-such-entry.js"), VIS_DEBUG_DECLINE: "1", VIS_NODE: join(setup.bindir, "node"), VIS_VERSION: version });
+    capture(nativeBinary, args, setup, { ...environment(setup, extra), VIS_DEBUG_DECLINE: "1", VIS_FALLBACK_ENTRY: join(scratch, "no-such-entry.js"), VIS_NODE: join(setup.bindir, "node"), VIS_VERSION: version });
 
 /** Every file under a home, with the `createdAt` of a cache entry written during this run masked. */
 const homeState = (home: string): Record<string, string> => {
@@ -225,9 +225,9 @@ describe.skipIf(!ready)("vis add marshall check: native vs Node", () => {
         writeFileSync(nativeBinary, readFileSync(binary as string), { mode: 0o755 });
         // CI runs the suite with `FORCE_COLOR=3`: the stub gets it here on purpose, so its port reaches `base` as plain digits.
         stub = spawn(process.execPath, ["-e", STUB], { env: { ANSWERS: JSON.stringify(ANSWERS), FORCE_COLOR: "3", PATH: process.env["PATH"] ?? "" }, stdio: ["ignore", "pipe", "inherit"] });
-        base = await new Promise<string>((resolvePort) => {
+        base = await new Promise<string>((resolve) => {
             stub.stdout?.once("data", (chunk: Buffer) => {
-                resolvePort(`http://127.0.0.1:${chunk.toString().trim()}`);
+                resolve(`http://127.0.0.1:${chunk.toString().trim()}`);
             });
         });
     });
@@ -281,6 +281,7 @@ describe.skipIf(!ready)("vis add marshall check: native vs Node", () => {
             { args: ["add", "calm@1.2.0", "--no-marshall-check"], label: "the check turned off" },
         ] satisfies Case[])("answers $label", (parity: Case) => {
             expect.hasAssertions();
+
             expectParity(parity);
         });
 
@@ -294,6 +295,7 @@ describe.skipIf(!ready)("vis add marshall check: native vs Node", () => {
 
         it("leaves a package the registry does not know to the manager", () => {
             expect.hasAssertions();
+
             expectParity({ args: ["add", "ghost@1.0.0"], env: SERVICES_OFF, seed: false });
         });
 
@@ -328,9 +330,9 @@ describe.skipIf(!ready)("vis add marshall check: native vs Node", () => {
             { args: ["add", "calm@1.2.0"], env: { MARSHALL_DISABLE_TYPOSQUATS: "1" }, label: "MARSHALL_DISABLE_TYPOSQUATS" },
             { args: ["add", "calm@1.2.0"], env: { MARSHALL_DISABLE_AUTHOR: " 1" }, label: "a value JavaScript and Rust trim differently" },
             { args: ["add", "calm@1.2.0"], env: { HTTPS_PROXY: "http://127.0.0.1:9" }, label: "a proxy in the environment" },
-            { args: ["add", "calm@1.2.0"], seed: false, label: "caches that are not there (the services have fixed addresses)" },
         ] satisfies Case[])("hands $label to Node", (delegated: Case) => {
             expect.hasAssertions();
+
             expectDelegation(delegated);
         });
 

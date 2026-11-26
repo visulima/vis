@@ -28,7 +28,7 @@ use regex::bytes::Regex;
 use crate::cache::dirs::vis_cache_dir;
 use crate::http::node_fetch::fetch_config;
 use crate::http::{HttpClient, HttpConfig};
-use crate::inspect::{any_finding, entry_or_latest, CacheAction, Checks, Packuments, View};
+use crate::inspect::{entry_or_latest, first_finding, CacheAction, Checks, Packuments, View};
 use crate::keys_refresh::{Js, FETCH_TIMEOUT};
 use services::Services;
 
@@ -264,8 +264,8 @@ fn run_checks(
             let mut collected = Needs::default();
 
             for version in &versions[name] {
-                if any_finding(view, name, version, now_ms, enabled.packument)? {
-                    return Err(format!("{name}@{version} has a finding"));
+                if let Some(check) = first_finding(view, name, version, now_ms, enabled.packument)? {
+                    return Err(format!("{name}@{version} has a finding of the {check} check"));
                 }
 
                 if let Some(view) = view {
