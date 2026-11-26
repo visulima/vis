@@ -110,15 +110,16 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
         expect(result.status).toBe(7);
     });
 
+    // `dashboard` is a TUI, which stays in Node by design, so this example does not go native later.
     it("falls through to the in-process Node entry for non-native commands", () => {
         expect.assertions(2);
 
-        const result = spawnSync(process.execPath, [launcher, "status", "--json"], {
+        const result = spawnSync(process.execPath, [launcher, "dashboard", "--json"], {
             encoding: "utf8",
             env: launcherEnvironment(),
         });
 
-        expect(result.stdout).toContain("FALLBACK:status,--json");
+        expect(result.stdout).toContain("FALLBACK:dashboard,--json");
         expect(result.status).toBe(5);
     });
 
