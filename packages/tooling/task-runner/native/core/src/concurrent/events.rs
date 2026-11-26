@@ -109,14 +109,12 @@ impl EventSink {
     /// Queue output events in order, waiting for their credits first. One wait covers up to
     /// [`CREDIT_STEP`] events, so a burst of lines from one read costs one semaphore round trip,
     /// not one per line. False once the stream has been closed (events not yet queued are dropped).
-    pub async fn send_output_many(&self, events: Vec<ProcessEvent>) -> bool {
+    pub async fn send_output_many(&self, mut events: Vec<ProcessEvent>) -> bool {
         debug_assert!(events.iter().all(is_output), "only output events carry a credit");
 
         let Some(credits) = &self.credits else {
             return self.tx.send_run(events);
         };
-
-        let mut events = events;
 
         while !events.is_empty() {
             // The part that fits one wait goes out as one run; the rest waits for its own credits.

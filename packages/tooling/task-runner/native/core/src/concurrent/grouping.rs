@@ -46,12 +46,8 @@ pub fn group_output(events: Vec<ProcessEvent>) -> Vec<Delivered> {
     let mut delivered: Vec<Delivered> = Vec::with_capacity(events.len());
 
     for event in events {
-        if is_foldable(&event) {
-            if let Some(Delivered::Lines { .. } | Delivered::Event(_)) = delivered.last() {
-                if try_fold(delivered.last_mut().expect("just matched a last item"), &event) {
-                    continue;
-                }
-            }
+        if is_foldable(&event) && delivered.last_mut().is_some_and(|last| try_fold(last, &event)) {
+            continue;
         }
 
         delivered.push(Delivered::Event(event));
