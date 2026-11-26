@@ -18,7 +18,7 @@ use super::*;
 
 const DAY: u64 = 24 * 60 * 60 * 1000;
 /// 2024-06-15T12:00:00.000Z.
-const NOW: u64 = 1_718_452_800_000;
+pub(crate) const NOW: u64 = 1_718_452_800_000;
 
 /// `YYYY-MM-DDTHH:MM:SS.sssZ` of a time in milliseconds, the inverse of `parse_date`.
 fn iso(ms: u64) -> String {
@@ -42,7 +42,7 @@ fn iso(ms: u64) -> String {
     )
 }
 
-fn ago(days: f64) -> String {
+pub(crate) fn ago(days: f64) -> String {
     iso(NOW - (days * DAY as f64) as u64)
 }
 
@@ -51,7 +51,7 @@ pub(crate) type Answers = HashMap<String, (u16, String, Vec<(String, String)>)>;
 pub(crate) struct Registry {
     port: u16,
     pub(crate) requests: Arc<AtomicUsize>,
-    paths: Arc<Mutex<Vec<String>>>,
+    pub(crate) paths: Arc<Mutex<Vec<String>>>,
 }
 
 impl Registry {
@@ -136,6 +136,7 @@ fn setup(registry: Option<&Registry>) -> Setup {
             cache_dir,
             now_ms: NOW,
             layout: Some(Layout { width: 80, colour: false }),
+            registry: None,
         },
         home,
     }
@@ -166,12 +167,12 @@ fn all() -> Vec<Marshall> {
     .unwrap()
 }
 
-fn user(name: &str) -> Value {
+pub(crate) fn user(name: &str) -> Value {
     json!({ "name": name, "email": format!("{name}@example.test") })
 }
 
 /// A version entry that has everything the metadata marshall wants.
-fn entry(user_name: &str, extra: &Value) -> Value {
+pub(crate) fn entry(user_name: &str, extra: &Value) -> Value {
     let mut base = json!({
         "_npmUser": user(user_name), "license": "MIT", "readme": "# readme", "repository": { "type": "git", "url": "git+https://github.com/o/r.git" },
     });
@@ -183,14 +184,14 @@ fn entry(user_name: &str, extra: &Value) -> Value {
     base
 }
 
-fn packument(versions: &Value, times: &Value) -> Value {
+pub(crate) fn packument(versions: &Value, times: &Value) -> Value {
     let latest = versions.as_object().unwrap().keys().next_back().unwrap().clone();
 
     json!({ "name": "pkg", "dist-tags": { "latest": latest, "next": "2.0.0-beta.1" }, "versions": versions, "time": times })
 }
 
 /// A package with three releases by one maintainer, the newest 80 days old.
-fn calm() -> Value {
+pub(crate) fn calm() -> Value {
     packument(
         &json!({ "1.0.0": entry("amy", &json!({})), "1.1.0": entry("amy", &json!({})), "1.2.0": entry("amy", &json!({})) }),
         &json!({ "1.0.0": ago(100.0), "1.1.0": ago(90.0), "1.2.0": ago(80.0) }),
@@ -649,4 +650,19 @@ fn a_packument_that_is_handed_over_is_not_cached() {
 
     assert!(plan(&flags(&["pkg", "--json"]), &all(), &setup.context, &client()).is_err());
     assert!(!setup.home.join(".vis/cache/packuments").exists());
+}
+
+#[test]
+fn a_registry_on_the_context_is_asked_instead_of_the_npmrc() {
+    let asked = Registry::start(answers(&calm()));
+    let ignored = Registry::start(HashMap::new());
+    let mut setup = setup(Some(&ignored));
+
+    setup.context.registry = Some(asked.url());
+
+    let (found, cache) = packument_of("pkg", &setup.context, &client()).unwrap();
+
+    assert!(found.is_some() && cache.len() == 1);
+    assert_eq!(asked.requests.load(Ordering::SeqCst), 1);
+    assert_eq!(ignored.requests.load(Ordering::SeqCst), 0);
 }

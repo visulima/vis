@@ -91,6 +91,9 @@ describe("launcher routing (bin/route.mjs)", () => {
             [["add", "react", "-D", "lodash", "-E", flag]],
             [["add", "react", flag, "-F", "app", "--filter=lib"]],
             [["add", "react", "-g", "-w", "-O", "-P", "--workspace", "--run-scripts", "--no-socket-check", "--no-typosquat-check", flag]],
+            // Without the flag the binary runs the marshall check itself.
+            [["add", "react"]],
+            [["add", "react@18.2.0", "-D", "@scope/pkg@^1.2.0"]],
         ])("routes `vis %j` in CI", (args: string[]) => {
             expect.assertions(1);
 
@@ -98,7 +101,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
 
         it.each([
-            [["add", "react"]],
+            [["add"]],
             [["add", flag]],
             [["add", "-D", flag]],
             [["add", "-F", "app", "react", flag]],
@@ -119,6 +122,27 @@ describe("launcher routing (bin/route.mjs)", () => {
             expect.assertions(1);
 
             expect(routesToNative(args, "linux", ci, "/work/app", false)).toBe(false);
+        });
+
+        it("reads the MARSHALL_DISABLE_* variables of the marshalls the check runs, and keeps every other MARSHALL_* variable in Node", () => {
+            expect.assertions(6);
+
+            const add = ["add", "react@18.2.0"];
+
+            expect(routesToNative(add, "linux", { ...ci, MARSHALL_DISABLE_AUTHOR: "1", MARSHALL_DISABLE_EXPIRED_DOMAINS: "1" }, "/work/app", false)).toBe(true);
+            expect(routesToNative(add, "linux", { ...ci, MARSHALL_DISABLE_NEW_BIN: "0" }, "/work/app", false)).toBe(true);
+
+            for (const variable of ["MARSHALL_DISABLE_ALL", "MARSHALL_DISABLE_TYPOSQUATS", "MARSHALL_DISABLE_SOCKET", "MARSHALL_OTHER"]) {
+                expect(routesToNative(add, "linux", { ...ci, [variable]: "1" }, "/work/app", false)).toBe(false);
+            }
+        });
+
+        it("keeps the check's requests where fetch would go: a proxy or CA setting keeps the add in Node, unless there is no check", () => {
+            expect.assertions(3);
+
+            expect(routesToNative(["add", "react"], "linux", { ...ci, HTTPS_PROXY: "http://proxy.test:3128" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(["add", "react"], "linux", { ...ci, NODE_EXTRA_CA_CERTS: "/ca.pem" }, "/work/app", false)).toBe(false);
+            expect(routesToNative(["add", "react", flag], "linux", { ...ci, HTTPS_PROXY: "http://proxy.test:3128" }, "/work/app", false)).toBe(true);
         });
 
         it("keeps the add in Node outside CI, on a terminal, on Windows and where output settings could change", () => {

@@ -125,6 +125,27 @@ const rootIsCwd = (cwd, holdsMarker = holdsRootMarker) => {
 // `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.
 const inCi = (environment) => ["CI", "CONTINUOUS_INTEGRATION"].some((key) => environment[key] !== undefined && environment[key] !== "0" && environment[key] !== "false");
 
+// The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
+// differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
+// the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
+// both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
+const NETWORK_VARIABLES = [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "NODE_USE_ENV_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "NODE_OPTIONS",
+];
+
+const networkEnvironmentIsPlain = (environment) => NETWORK_VARIABLES.every((name) => environment[name] === undefined);
+
 // Whether the launcher's root search ends at `cwd`, so a binary that computes the root from the working
 // directory finds the same one as Node. The inherited `VIS_MONOREPO_ROOT` is only a reason to delegate,
 // never the root itself.
@@ -561,7 +582,8 @@ const installShapeIsNative = (flags) => {
 // Whether the context lets `vis install` and `vis add` pass the binary's native gate (`install::setup` in
 // `install.rs`): a CI context with no terminal, no colour the binary cannot decide and none of the variables that change which installer Node
 // picks or what its output looks like. It stays in Node on Windows, where Node runs the package manager through a shell.
-const installContextIsNative = (platform, environment, args, interactive) => {
+// `allowedMarshall` names the `MARSHALL_*` variables the command reads itself; any other one changes what Node does before it installs.
+const installContextIsNative = (platform, environment, args, interactive, allowedMarshall = []) => {
     if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
         return false;
     }
@@ -569,7 +591,7 @@ const installContextIsNative = (platform, environment, args, interactive) => {
     return !(
         ["debug", "test"].includes(environment.NODE_ENV)
         || ["DEBUG", "PAIL_LOG_LEVEL", "VIS_INSTALLER", "VIS_MONOREPO_ROOT", "VIS_RUNTIME", "VIS_SECURITY_WARNINGS"].some((key) => environment[key] !== undefined)
-        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_") || key.startsWith("MARSHALL_"))
+        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_") || (key.startsWith("MARSHALL_") && !allowedMarshall.includes(key)))
     );
 };
 
@@ -579,7 +601,7 @@ const installContextIsNative = (platform, environment, args, interactive) => {
 const installMayRunNatively = (platform, environment, args, interactive) => installContextIsNative(platform, environment, args, interactive) && installShapeIsNative(args.slice(1));
 
 // The flags `vis add` takes natively (`parse` in `add.rs`): each at most once, none of them with a value except
-// `--filter`. `--no-marshall-check` is required: without it Node looks the packages up in the registry first.
+// `--filter`.
 const ADD_FLAGS = [
     ["-D", "--save-dev"],
     ["-E", "--exact"],
@@ -597,8 +619,23 @@ const ADD_FLAGS = [
 // A package argument of the plain `name[@spec]` or `@scope/name[@spec]` shape (`parse_package_argument` in `add.rs`).
 const ADD_PACKAGE = /^(?:@[a-z0-9][\w.~-]*\/)?[a-z0-9][\w.~-]*(?:@[\w.^~<>=*|+:/#,@-]+)?$/i;
 
+// The `MARSHALL_DISABLE_*` variables of the marshalls the check of `vis add` runs (`disable_variables` in
+// `native/cli/src/marshall_check/mod.rs`), which the binary reads; any other `MARSHALL_*` variable stays in Node.
+const ADD_MARSHALL_VARIABLES = [
+    "ARCHIVED_REPO",
+    "AUTHOR",
+    "DEPRECATION",
+    "DOWNLOADS",
+    "EXPIRED_DOMAINS",
+    "METADATA",
+    "NEW_BIN",
+    "PACKAGE_AGE",
+    "PROVENANCE",
+    "S1NGULARITY",
+].map((name) => `MARSHALL_DISABLE_${name}`);
+
 // Whether the arguments after `add` are a shape the binary answers: plain packages first, then the flags above and
-// `--filter` with a value, and `--no-marshall-check` among them.
+// `--filter` with a value.
 const addShapeIsNative = (rest) => {
     const seen = new Set();
     let packages = 0;
@@ -642,7 +679,7 @@ const addShapeIsNative = (rest) => {
         index += 1;
     }
 
-    return packages > 0 && rest.includes("--no-marshall-check");
+    return packages > 0;
 };
 
 // Whether `vis add` can pass the binary's native gate (`plan` in `add.rs`). The binary re-checks everything,
@@ -676,8 +713,13 @@ const addColourIsPlain = (environment) => {
     return !ADD_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && (term === undefined || term.includes("dumb") || term.includes("mono"));
 };
 
+// The marshall check asks the registry and other services, which needs the environment to lead `fetch` and the binary's
+// client to the same servers the same way; `--no-marshall-check` makes no request.
 const addMayRunNatively = (platform, environment, args, interactive) =>
-    installContextIsNative(platform, environment, args, interactive) && addColourIsPlain(environment) && addShapeIsNative(args.slice(1));
+    installContextIsNative(platform, environment, args, interactive, ADD_MARSHALL_VARIABLES)
+    && addColourIsPlain(environment)
+    && addShapeIsNative(args.slice(1))
+    && (args.includes("--no-marshall-check") || networkEnvironmentIsPlain(environment));
 
 // A word of `vis info` the binary passes through (`is_plain_word` in `native/cli/src/info.rs`): the package, then the fields.
 const INFO_WORD = /^[a-z@][\w@/.~^<>=*|+:#,-]*$/i;
@@ -1055,27 +1097,6 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
 
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
-
-// The variables that change how Node's `fetch` reaches a server or whom it trusts, or that the native HTTP client reads
-// differently: the proxy variables and Node's switch for reading them, the CA files, and the Node options. The binary keeps
-// the same list in `NETWORK_VARIABLES` (`http/node_fetch.rs`); the shared cases of `native/cli/tests/fixtures/routing.json` run
-// both halves for each variable and fail when the two differ. `NO_PROXY` alone changes nothing.
-const NETWORK_VARIABLES = [
-    "ALL_PROXY",
-    "all_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-    "NODE_USE_ENV_PROXY",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_TLS_REJECT_UNAUTHORIZED",
-    "NODE_OPTIONS",
-];
-
-const networkEnvironmentIsPlain = (environment) => NETWORK_VARIABLES.every((name) => environment[name] === undefined);
 
 // Whether `vis security keys-refresh` can pass the binary's native gate (`parse` and `answer` in `keys_refresh.rs`): `--json`,
 // alone or with `--clear` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a

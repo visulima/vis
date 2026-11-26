@@ -279,7 +279,7 @@ fn is_approved(file: &Path, name: &str, version: &str) -> bool {
 }
 
 /// `isTruthyEnv`: on unless empty, `0`, `false` or `no`, ignoring case and surrounding space.
-fn is_truthy(value: &str) -> bool {
+pub(crate) fn is_truthy(value: &str) -> bool {
     !matches!(value.trim().to_lowercase().as_str(), "" | "0" | "false" | "no")
 }
 

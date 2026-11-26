@@ -130,7 +130,7 @@ pub(crate) fn json_number(value: f64) -> String {
 
 /// Fills `bytes` from the operating system's entropy.
 #[cfg(unix)]
-fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
+pub(crate) fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
     use std::io::Read;
 
     std::fs::File::open("/dev/urandom").ok()?.read_exact(bytes).ok()
@@ -138,7 +138,7 @@ fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
 
 /// Fills `bytes` from the randomly keyed hasher the standard library seeds, mixed with the time and process id.
 #[cfg(not(unix))]
-fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
+pub(crate) fn fill_random(bytes: &mut [u8; 16]) -> Option<()> {
     use std::hash::{BuildHasher, Hasher};
     use std::time::{SystemTime, UNIX_EPOCH};
 

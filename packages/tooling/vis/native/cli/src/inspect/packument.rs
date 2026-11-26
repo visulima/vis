@@ -304,6 +304,11 @@ impl<'a> View<'a> {
         }
     }
 
+    /// `Object.entries(time)`, in no particular order.
+    pub(crate) fn time_entries(&self) -> impl Iterator<Item = (&'a str, &'a Js)> + '_ {
+        self.time.iter().map(|(key, value)| (*key, *value))
+    }
+
     /// Every version, in the order of `Object.keys`, parsed; the reason for a hand-off when one is not in the strict
     /// semver form node-semver reads the same way.
     pub(super) fn semver(&self) -> Result<&[(&'a str, Version)], String> {

@@ -36,9 +36,9 @@ pub(super) struct Finding {
 }
 
 /// The package and version the run inspects.
-pub(super) struct Target<'a> {
-    pub name: &'a str,
-    pub version: &'a str,
+pub(crate) struct Target<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) version: &'a str,
 }
 
 impl Target<'_> {
@@ -112,6 +112,18 @@ fn recent_version(view: &View, target: &Target, now_ms: f64) -> Result<Option<Fi
 }
 
 fn new_publisher(view: &View, target: &Target, now_ms: f64) -> Result<Option<Finding>, String> {
+    new_publisher_within(view, target, now_ms, Some(NEW_PUBLISHER_WINDOW_DAYS))
+}
+
+/// The new-publisher check, with the window below which a first-time publisher is unremarkable. `None` is a window of
+/// `undefined`, which no age is within: the pipeline of `vis add` passes every threshold as `undefined`, and its
+/// spread over the defaults replaces them.
+fn new_publisher_within(
+    view: &View,
+    target: &Target,
+    now_ms: f64,
+    window_days: Option<f64>,
+) -> Result<Option<Finding>, String> {
     let Some(entry) = view.entry(target.version) else { return Ok(None) };
     let Some(current) = identity(entry)? else { return Ok(None) };
     let version = parsed(target)?;
@@ -129,7 +141,7 @@ fn new_publisher(view: &View, target: &Target, now_ms: f64) -> Result<Option<Fin
     let Some(first_release) = published(view, first)? else { return Ok(None) };
     let age = (now_ms - first_release) / MS_PER_DAY;
 
-    if age <= NEW_PUBLISHER_WINDOW_DAYS {
+    if window_days.is_some_and(|window| age <= window) {
         return Ok(None);
     }
 
@@ -170,6 +182,14 @@ fn dormant_maintainer(view: &View, target: &Target, now_ms: f64) -> Result<Optio
     }
 
     Ok(None)
+}
+
+/// The author marshall as the pipeline of `vis add` runs it. It passes the five thresholds as `undefined`, and
+/// `{ ...DEFAULT_THRESHOLDS, ...thresholds }` lets them replace the defaults: a comparison with `undefined` is false, so
+/// the recent-version and dormant-maintainer checks never report, and the new-publisher check has no window that excuses a
+/// young package. Whether it reports is all `vis add` needs.
+pub(crate) fn author_in_pipeline(view: &View, target: &Target) -> Result<bool, String> {
+    Ok(new_publisher_within(view, target, 0.0, None)?.is_some())
 }
 
 /// The author marshall: a version published recently, by someone new, or by someone who has been away.

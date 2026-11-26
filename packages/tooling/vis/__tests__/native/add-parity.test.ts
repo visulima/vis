@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 
 /**
- * `vis add` with `--no-marshall-check` exists twice: the Node handler (`src/commands/add/handler.ts`,
+ * `vis add --no-marshall-check` exists twice: the Node handler (`src/commands/add/handler.ts`,
  * with the plugins that run around it) and the native path (`native/cli/src/add.rs`). For every fixture below
  * the two get the same arguments and the same environment, with stub package managers on `PATH` that write
  * their name, arguments and working directory to a log. The log, vis's own stdout and stderr (up to the clock
@@ -295,10 +295,8 @@ const DELEGATED_CASES: DelegatedCase[] = [
         ["add", "lodas", FLAG, "--no-socket-check"],
     ].map((args) => { return { args, fixture: "pnpm-single", label: `vis ${args.join(" ")}` }; }),
     // Shapes of the command line.
+    // (Without the flag the binary runs the marshall check itself: see `add-marshall-parity.test.ts`.)
     ...[
-        ["add", "react"],
-        ["add", "react", "--no-socket-check"],
-        ["add", "react", "--no-typosquat-check"],
         ["add", FLAG],
         ["add"],
         ["add", "-D", FLAG],
