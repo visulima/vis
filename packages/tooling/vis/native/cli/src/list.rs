@@ -436,7 +436,6 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let answer = || -> Option<String> {
         let format = parse(args)?;
 
-        // Node's output depends on the settings (`DEBUG` adds a trace around it), so a configured one is Node's.
         if !output_settings_are_default() {
             return None;
         }

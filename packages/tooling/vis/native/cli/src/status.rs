@@ -312,7 +312,6 @@ fn render_text(overview: &Overview, style: Style) -> String {
 fn answer(args: &[String]) -> Option<String> {
     let json = parse(args)?;
 
-    // Node's output depends on the settings (`DEBUG` adds a trace around it), so a configured one is Node's.
     if !output_settings_are_default() {
         return None;
     }

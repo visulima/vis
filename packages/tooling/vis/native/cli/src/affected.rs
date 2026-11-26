@@ -488,7 +488,6 @@ fn reads_project_json(root: &Path, graph: &ProjectGraph) -> bool {
 fn answer(args: &[String]) -> Option<String> {
     let options = parse(args)?;
 
-    // Node's output depends on the settings (`DEBUG` adds a trace around it), so a configured one is Node's.
     if !output_settings_are_default() {
         return None;
     }

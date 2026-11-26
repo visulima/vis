@@ -152,7 +152,6 @@ fn native_context(cwd: &Path, args: &[String]) -> Option<bool> {
         return None;
     }
 
-    // Node's output depends on the settings (`DEBUG` adds a trace around it), so a configured one is Node's.
     if !output_settings_are_default() {
         return None;
     }
