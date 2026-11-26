@@ -269,6 +269,10 @@ When aube is the installer, `vis doctor` surfaces aube's effective hardening pos
 
 For `vis ignore`, see the [command reference](./docs/commands/ignore.mdx) and the [deployment build gating section](./docs/guides/ci-cd.mdx#deployment-build-gating) of the CI/CD guide.
 
+### Runner escape hatch
+
+`vis run` executes its tasks on the native runner. For one release, `VIS_CONCURRENT_RUNNER=js` runs them on the previous TypeScript spawner instead (unset or `native` selects the native runner). It prints one line to stderr when used and is removed in the next release. See [`vis run`](./docs/commands/run.mdx#runner-escape-hatch).
+
 ### Diagnosing cache misses
 
 When a task you expected to be cached re-ran, ask vis what changed:

@@ -10,6 +10,7 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/task-runner/native/**"
             - "packages/tooling/task-runner/src/concurrent*.ts"
             - "packages/tooling/task-runner/src/force-color.ts"
+            - "packages/tooling/task-runner/src/runner-switch.ts"
             - "packages/tooling/task-runner/__tests__/parity/**"
             - "packages/terminal/tui/native/**"
             - "packages/tooling/vis/native/**"
@@ -22,6 +23,7 @@ on: # yamllint disable-line rule:truthy
             - "packages/tooling/task-runner/native/**"
             - "packages/tooling/task-runner/src/concurrent*.ts"
             - "packages/tooling/task-runner/src/force-color.ts"
+            - "packages/tooling/task-runner/src/runner-switch.ts"
             - "packages/tooling/task-runner/__tests__/parity/**"
             - "packages/terminal/tui/native/**"
             - "packages/tooling/vis/native/**"
@@ -76,6 +78,7 @@ jobs:
                         - 'packages/tooling/task-runner/native/Cargo.lock'
                         - 'packages/tooling/task-runner/src/concurrent*.ts'
                         - 'packages/tooling/task-runner/src/force-color.ts'
+                        - 'packages/tooling/task-runner/src/runner-switch.ts'
                         - 'packages/tooling/task-runner/__tests__/parity/**'
                       tui:
                         - 'packages/terminal/tui/native/src/**'
@@ -117,6 +120,7 @@ jobs:
                         - 'packages/tooling/task-runner/native/Cargo.lock'
                         - 'packages/tooling/task-runner/src/concurrent*.ts'
                         - 'packages/tooling/task-runner/src/force-color.ts'
+                        - 'packages/tooling/task-runner/src/runner-switch.ts'
                         - 'packages/tooling/task-runner/__tests__/parity/**'
                       tui:
                         - 'packages/terminal/tui/native/src/**'
@@ -249,6 +253,8 @@ jobs:
     # Linux job above says little about macOS and Windows (fork path, cmd.exe
     # quoting, Job Objects). This leg runs the concurrent runner's tests and the
     # core crate's clippy there. It is not part of the required-check aggregation below.
+    # Linux joins only for the parity suite: the Rust steps already run in the Linux job
+    # above, and the repo-wide test job covers only the default runner setting.
     test-core-os:
         name: "Test task-runner core (${{ matrix.os }})"
         needs: "files-changed"
@@ -260,7 +266,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                os: ["macos-latest", "windows-latest"]
+                os: ["macos-latest", "windows-latest", "ubuntu-24.04"]
         steps:
             - name: "Git checkout"
               uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
@@ -276,11 +282,13 @@ jobs:
             # Only the concurrent runner's tests: the hashing and worktree tests have
             # never run on Windows and are not what this leg is for.
             - name: "Run cargo test"
+              if: "runner.os != 'Linux'"
               shell: "bash"
               working-directory: "packages/tooling/task-runner/native"
               run: "cargo test -p task-runner-core --verbose concurrent"
 
             - name: "Run cargo clippy"
+              if: "runner.os != 'Linux'"
               shell: "bash"
               working-directory: "packages/tooling/task-runner/native"
               run: "cargo clippy -p task-runner-core --all-targets -- -D warnings"
@@ -289,6 +297,7 @@ jobs:
             # lint them, together with the injected library of the same platform
             # (`undocumented_unsafe_blocks` is set in each Cargo.toml).
             - name: "Run cargo clippy (native addon + fspy tracker)"
+              if: "runner.os != 'Linux'"
               shell: "bash"
               working-directory: "packages/tooling/task-runner/native"
               run: |
@@ -301,7 +310,9 @@ jobs:
 
             # The parity suite runs the JS spawner and the native runner side by side, so it
             # needs the built addon. It is the only place the two are compared on macOS and
-            # Windows (fork path, cmd.exe quoting, ConPTY, Job Objects).
+            # Windows (fork path, cmd.exe quoting, ConPTY, Job Objects). `runConcurrently` runs on
+            # the native runner by default and on the JS spawner under `VIS_CONCURRENT_RUNNER=js`
+            # (a one-release escape hatch), so the suite runs once per setting.
             - name: "Setup resources and environment"
               uses: "anolilab/workflows/step/node@1f3a7f7e561f7690fe19dea5d2ed225def53c908" # v26.0.6
               with:
@@ -318,10 +329,23 @@ jobs:
               working-directory: "packages/tooling/task-runner"
               run: "pnpm build:native:debug"
 
-            - name: "Run the concurrent runner parity suite"
+            # The Ctrl+C test (__tests__/parity/concurrent-ctrl-c.test.ts) runs a mini CLI that imports the built package.
+            - name: "Build the package"
               shell: "bash"
               working-directory: "packages/tooling/task-runner"
-              run: "pnpm exec vitest run __tests__/parity"
+              run: "pnpm exec packem build --development"
+
+            - name: "Run the concurrent runner parity suite (native runner, the default)"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner"
+              run: "pnpm exec vitest run __tests__/parity __tests__/unit/runner-switch.test.ts"
+
+            - name: "Run the concurrent runner parity suite (VIS_CONCURRENT_RUNNER=js escape hatch)"
+              shell: "bash"
+              working-directory: "packages/tooling/task-runner"
+              env:
+                  VIS_CONCURRENT_RUNNER: "js"
+              run: "pnpm exec vitest run __tests__/parity __tests__/unit/runner-switch.test.ts"
 
     # Native criterion benches tracked on CodSpeed. Separate from the JS
     # benches in codspeed.yml (those run each package's bench script under the

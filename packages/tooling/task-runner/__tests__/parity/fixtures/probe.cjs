@@ -93,6 +93,14 @@ const modes = {
         return new Promise(() => {});
     },
 
+    // hang-pid: print its own pid, then stay alive until killed.
+    "hang-pid": () => {
+        console.log(`pid:${process.pid}`);
+        setInterval(() => {}, 1000);
+
+        return new Promise(() => {});
+    },
+
     // ignore-term <ms>: ignore SIGTERM, and leave by itself after that long.
     "ignore-term": async ([ms]) => {
         process.on("SIGTERM", () => {});
