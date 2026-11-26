@@ -195,6 +195,10 @@ impl From<core::ProcessEvent> for ProcessEvent {
         match event {
             core::ProcessEvent::Started { pid, .. } => flat.pid = pid,
             core::ProcessEvent::Stdout { text, .. } | core::ProcessEvent::Stderr { text, .. } => flat.text = Some(text),
+            core::ProcessEvent::Lines { text, count, .. } => {
+                flat.text = Some(text);
+                flat.count = Some(count);
+            }
             core::ProcessEvent::Close { exit_code, killed, command_name, duration_ms, .. } => {
                 flat.exit_code = Some(exit_code);
                 flat.killed = Some(killed);

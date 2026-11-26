@@ -257,6 +257,11 @@ pub enum ProcessEvent {
     Stdout { index: u32, text: String },
     /// One line of standard error.
     Stderr { index: u32, text: String },
+    /// `count` lines of standard output or error (`stderr`) of one command, joined with `\n`. A
+    /// stream made by [`event_channel`](super::events::event_channel) carries the lines a reader
+    /// finds together in these, so a burst of output is a few events and not one per line; a bare
+    /// channel gets `Stdout` and `Stderr` events, one per line.
+    Lines { index: u32, stderr: bool, text: String, count: u32 },
     /// The command finished. A signalled child has exit code `128 + signal`.
     Close { index: u32, exit_code: i32, killed: bool, command_name: Option<String>, duration_ms: f64 },
     /// The command could not be spawned.
@@ -270,6 +275,7 @@ impl ProcessEvent {
             Self::Started { index, .. }
             | Self::Stdout { index, .. }
             | Self::Stderr { index, .. }
+            | Self::Lines { index, .. }
             | Self::Close { index, .. }
             | Self::Error { index, .. } => *index,
         }
@@ -280,7 +286,8 @@ impl ProcessEvent {
         match self {
             Self::Started { .. } => "started",
             Self::Stdout { .. } => "stdout",
-            Self::Stderr { .. } => "stderr",
+            Self::Stderr { .. } | Self::Lines { stderr: true, .. } => "stderr",
+            Self::Lines { .. } => "stdout",
             Self::Close { .. } => "close",
             Self::Error { .. } => "error",
         }

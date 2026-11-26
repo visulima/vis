@@ -27,19 +27,6 @@ use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, Pr
 /// Read size for the terminal's output.
 const READ_CHUNK: usize = 8192;
 
-// TEMPORARY: Windows hang diagnosis.
-fn trace(message: &str) {
-    if std::env::var_os("VIS_PTY_TRACE").is_some() {
-        eprintln!(
-            "[pty {:?}] {message}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() % 100_000)
-                .unwrap_or(0)
-        );
-    }
-}
-
 /// What the runner can do to a running pty command beyond signalling it.
 pub(crate) struct PtyControl {
     /// `None` once the terminal has been closed (see `close_terminal`).
@@ -216,7 +203,6 @@ pub(crate) fn spawn_pty(
     let reader = master.try_clone_reader().map_err(std::io::Error::other)?;
     let writer = master.take_writer().map_err(std::io::Error::other)?;
 
-    trace(&format!("{index}: spawned pid {pid:?}"));
     sink.send(ProcessEvent::Started { index, pid });
 
     let parked = Arc::new(AtomicUsize::new(0));
@@ -236,7 +222,6 @@ pub(crate) fn spawn_pty(
 
         move || {
             read_output(reader, &output, &runtime, index, &abandoned, &activity, &input);
-            trace(&format!("{index}: reader ended"));
 
             let _ = output_done_tx.send(());
         }
@@ -261,12 +246,9 @@ pub(crate) fn spawn_pty(
         let (exit_code, signalled) = exit_rx.await.unwrap_or((-1, false));
         let duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
-        trace(&format!("{index}: exited with {exit_code}"));
-
         // On Windows the output only ends once the terminal is closed.
         #[cfg(windows)]
         close_terminal(&terminal, &activity, &parked, &giving_up).await;
-        trace(&format!("{index}: terminal closed"));
         #[cfg(not(windows))]
         drop(terminal);
 
@@ -280,8 +262,6 @@ pub(crate) fn spawn_pty(
             &giving_up,
         )
         .await;
-
-        trace(&format!("{index}: drained {drained}"));
 
         if !drained {
             abandoned.store(true, Ordering::Release);
@@ -449,11 +429,7 @@ async fn close_terminal(
     }
 
     if let Some(master) = master.lock().ok().and_then(|mut master| master.take()) {
-        std::thread::spawn(move || {
-            trace("closing the pseudo console");
-            drop(master);
-            trace("pseudo console closed");
-        });
+        std::thread::spawn(move || drop(master));
     }
 }
 
@@ -480,6 +456,22 @@ fn take_cursor_requests(text: &mut String) -> usize {
     requests
 }
 
+/// On Windows, answer the cursor position requests in `text` and return the rest of it.
+#[cfg(windows)]
+fn answer_cursor_requests(mut text: String, input: &mpsc::UnboundedSender<Vec<u8>>) -> String {
+    for _ in 0..take_cursor_requests(&mut text) {
+        let _ = input.send(CURSOR_REPLY.to_vec());
+    }
+
+    text
+}
+
+/// Elsewhere the consumer's terminal answers its own requests.
+#[cfg(not(windows))]
+fn answer_cursor_requests(text: String, _input: &mpsc::UnboundedSender<Vec<u8>>) -> String {
+    text
+}
+
 /// Read the terminal until it ends, sending each chunk as an output event. Runs on its own thread.
 fn read_output(
     mut reader: Box<dyn Read + Send>,
@@ -498,15 +490,7 @@ fn read_output(
     while let Ok(count @ 1..) = reader.read(&mut buffer) {
         activity.touch();
 
-        #[allow(unused_mut)]
-        let mut text = chunker.push(&buffer[..count]);
-
-        #[cfg(windows)]
-        for _ in 0..take_cursor_requests(&mut text) {
-            let _ = input.send(CURSOR_REPLY.to_vec());
-        }
-        #[cfg(not(windows))]
-        let _ = input;
+        let text = answer_cursor_requests(chunker.push(&buffer[..count]), input);
 
         if abandoned.load(Ordering::Acquire) {
             return;

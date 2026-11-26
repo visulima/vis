@@ -76,7 +76,6 @@ jobs:
               working-directory: "packages/tooling/task-runner"
               env:
                   BENCH_OUT: "${{ runner.temp }}/runner-bench.json"
-                  VIS_PTY_TRACE: "1"
               run: |
                   {
                       echo "### Concurrent runner: native vs JS spawner (${RUNNER_OS}, ${RUNNER_ARCH})"

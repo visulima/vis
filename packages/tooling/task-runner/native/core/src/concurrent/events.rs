@@ -22,14 +22,24 @@ use tokio::sync::{mpsc, Semaphore};
 
 use super::types::ProcessEvent;
 
-/// Whether `event` is a line of output, the only kind that costs a credit.
-fn is_output(event: &ProcessEvent) -> bool {
-    matches!(event, ProcessEvent::Stdout { .. } | ProcessEvent::Stderr { .. })
+/// What `event` costs in credits: one per line of output, nothing for anything else.
+fn credits_of(event: &ProcessEvent) -> usize {
+    match event {
+        ProcessEvent::Stdout { .. } | ProcessEvent::Stderr { .. } => 1,
+        ProcessEvent::Lines { count, .. } => *count as usize,
+        _ => 0,
+    }
 }
 
-/// The most output events [`EventSink::send_output_many`] waits for at once (less on a stream
-/// that holds fewer), so one wait can always be satisfied.
-const CREDIT_STEP: usize = 64;
+/// Whether `event` is output, the only kind that costs credits.
+fn is_output(event: &ProcessEvent) -> bool {
+    credits_of(event) > 0
+}
+
+/// The most credits [`EventSink::send_output_many`] waits for at once, and the most lines a
+/// reader folds into one event (less on a stream that holds fewer), so one wait can always be
+/// satisfied.
+const CREDIT_STEP: usize = 256;
 
 /// Where a sink puts its events: one by one on a bare channel, or in runs on a stream's channel.
 #[derive(Clone)]
@@ -66,11 +76,14 @@ pub struct EventSink {
     parked: Option<Arc<AtomicUsize>>,
     /// How many credits [`Self::send_output_many`] waits for at once: at most the capacity.
     step: usize,
+    /// Whether readers should fold the lines of one read into `Lines` events (on a stream that
+    /// bounds output), instead of sending an event per line.
+    folds_lines: bool,
 }
 
 impl From<mpsc::UnboundedSender<ProcessEvent>> for EventSink {
     fn from(tx: mpsc::UnboundedSender<ProcessEvent>) -> Self {
-        Self { tx: Tx::Events(tx), credits: None, parked: None, step: CREDIT_STEP }
+        Self { tx: Tx::Events(tx), credits: None, parked: None, step: CREDIT_STEP, folds_lines: false }
     }
 }
 
@@ -84,19 +97,25 @@ impl EventSink {
         Self { parked: Some(parked), ..self.clone() }
     }
 
+    /// How many lines a reader may put in one `Lines` event, or `None` when this sink wants one
+    /// event per line.
+    pub(crate) fn fold_limit(&self) -> Option<usize> {
+        self.folds_lines.then_some(self.step)
+    }
+
     /// Queue a lifecycle event. Never waits. False once the stream has been closed.
     pub fn send(&self, event: ProcessEvent) -> bool {
         self.tx.send(event)
     }
 
-    /// Queue an output event, waiting for a credit first. False once the stream has been closed.
+    /// Queue an output event, waiting for its credits first. False once the stream has been closed.
     pub async fn send_output(&self, event: ProcessEvent) -> bool {
         debug_assert!(is_output(&event), "only output events carry a credit");
 
         if let Some(credits) = &self.credits {
             let _parked = self.park();
 
-            match credits.acquire().await {
+            match credits.acquire_many(u32::try_from(credits_of(&event)).unwrap_or(u32::MAX)).await {
                 // The credit comes back when the batch carrying the event is dropped.
                 Ok(permit) => permit.forget(),
                 Err(_) => return false,
@@ -107,22 +126,36 @@ impl EventSink {
     }
 
     /// Queue output events in order, waiting for their credits first. One wait covers up to
-    /// [`CREDIT_STEP`] events, so a burst of lines from one read costs one semaphore round trip,
+    /// [`CREDIT_STEP`] credits, so a burst of lines from one read costs one semaphore round trip,
     /// not one per line. False once the stream has been closed (events not yet queued are dropped).
-    pub async fn send_output_many(&self, mut events: Vec<ProcessEvent>) -> bool {
+    pub async fn send_output_many(&self, events: Vec<ProcessEvent>) -> bool {
         debug_assert!(events.iter().all(is_output), "only output events carry a credit");
 
         let Some(credits) = &self.credits else {
             return self.tx.send_run(events);
         };
 
-        while !events.is_empty() {
-            // The part that fits one wait goes out as one run; the rest waits for its own credits.
-            let rest = events.split_off(events.len().min(self.step));
-            let step = std::mem::replace(&mut events, rest);
+        let mut events = events.into_iter().peekable();
+
+        while events.peek().is_some() {
+            // As many events as fit one wait go out as one run; the rest waits for its own credits.
+            let mut step = Vec::new();
+            let mut wanted = 0;
+
+            while let Some(next) = events.peek() {
+                let cost = credits_of(next);
+
+                if !step.is_empty() && wanted + cost > self.step {
+                    break;
+                }
+
+                wanted += cost;
+                step.extend(events.next());
+            }
+
             let _parked = self.park();
 
-            match credits.acquire_many(u32::try_from(step.len()).unwrap_or(u32::MAX)).await {
+            match credits.acquire_many(u32::try_from(wanted).unwrap_or(u32::MAX)).await {
                 Ok(permit) => permit.forget(),
                 Err(_) => return false,
             }
@@ -197,6 +230,7 @@ pub fn event_channel(capacity: usize) -> (EventSink, EventStream) {
             credits: Some(Arc::clone(&credits)),
             parked: None,
             step: capacity.clamp(1, CREDIT_STEP),
+            folds_lines: true,
         },
         EventStream { rx, carry: VecDeque::new(), credits: Some(credits) },
     )
@@ -269,7 +303,7 @@ impl EventStream {
     }
 
     fn batch(&self, events: Vec<ProcessEvent>) -> EventBatch {
-        let held = events.iter().filter(|event| is_output(event)).count();
+        let held = events.iter().map(credits_of).sum();
 
         EventBatch { events, credits: self.credits.clone(), held }
     }
@@ -541,6 +575,66 @@ mod tests {
         }
 
         assert_eq!(seen, ["a", "b", "c"]);
+    }
+
+    fn folded(index: u32, text: &str, count: u32) -> ProcessEvent {
+        ProcessEvent::Lines { index, stderr: false, text: text.to_string(), count }
+    }
+
+    #[tokio::test]
+    async fn folded_lines_cost_one_credit_each_and_give_them_back_together() {
+        let (sink, mut stream) = event_channel(4);
+
+        assert!(sink.send_output(folded(0, "a\nb\nc", 3)).await);
+
+        let blocked = tokio::spawn({
+            let sink = sink.clone();
+
+            async move { sink.send_output(folded(0, "d\ne", 2)).await }
+        });
+
+        // Three of four credits are out; two more lines do not fit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!blocked.is_finished(), "a group waits for as many credits as it has lines");
+
+        drop(stream.next_batch(10).await.unwrap());
+        assert!(timeout(Duration::from_secs(1), blocked).await.unwrap().unwrap());
+    }
+
+    #[tokio::test]
+    async fn runs_are_split_so_that_no_wait_asks_for_more_credits_than_the_stream_holds() {
+        // Capacity 4: a wait is for at most 4 lines, so three groups of 2 go out as 2 + 2 + 2 over three waits.
+        let (sink, mut stream) = event_channel(4);
+        let sender = tokio::spawn({
+            let sink = sink.clone();
+
+            async move {
+                sink.send_output_many(vec![folded(0, "1\n2", 2), folded(0, "3\n4", 2), folded(0, "5\n6", 2)]).await
+            }
+        });
+        let mut received = Vec::new();
+
+        while received.len() < 3 {
+            let batch = timeout(Duration::from_secs(5), stream.next_batch(10)).await.expect("must not stall").unwrap();
+
+            received.extend(batch.events.iter().map(|event| match event {
+                ProcessEvent::Lines { text, .. } => text.clone(),
+                other => panic!("unexpected {other:?}"),
+            }));
+        }
+
+        assert!(sender.await.unwrap());
+        assert_eq!(received, ["1\n2", "3\n4", "5\n6"]);
+    }
+
+    #[test]
+    fn only_a_stream_that_bounds_output_asks_readers_to_fold() {
+        let (bounded, _stream) = event_channel(1000);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        assert_eq!(bounded.fold_limit(), Some(CREDIT_STEP));
+        assert_eq!(EventSink::from(tx).fold_limit(), None);
+        assert_eq!(event_channel(8).0.fold_limit(), Some(8));
     }
 
     #[tokio::test]

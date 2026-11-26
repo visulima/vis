@@ -22,6 +22,11 @@ const OUTPUT_CREDITS: usize = 4096;
 /// The most events handed to JavaScript in one call.
 const MAX_BATCH: usize = 512;
 
+/// Whether `event` is output (a line, or lines folded together) rather than a lifecycle event.
+fn is_output(event: &CoreProcessEvent) -> bool {
+    matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. } | CoreProcessEvent::Lines { .. })
+}
+
 /// The callback of `startConcurrent`. `CalleeHandled = false`: JS receives the batch itself.
 type BatchCallback = ThreadsafeFunction<ProcessEventBatch, (), ProcessEventBatch, Status, false>;
 
@@ -63,7 +68,7 @@ fn launch(runner: ConcurrentRunner, on_event: Option<EventCallback>, with_output
                 continue;
             };
 
-            if with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. }) {
+            if with_output || !is_output(&event) {
                 callback.call(event.into(), ThreadsafeFunctionCallMode::NonBlocking);
             }
         }
@@ -144,12 +149,8 @@ fn deliver(
 ) -> bool {
     // Adjacent lines of one stream travel as one object: building a JS object per line is what
     // an output-heavy run spends its time on.
-    let wanted = std::mem::take(&mut batch.events)
-        .into_iter()
-        .filter(|event| {
-            with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
-        })
-        .collect();
+    let wanted =
+        std::mem::take(&mut batch.events).into_iter().filter(|event| with_output || !is_output(event)).collect();
     let events: Vec<ProcessEvent> = group_output(wanted).into_iter().map(Into::into).collect();
 
     let Some(callback) = callback else {

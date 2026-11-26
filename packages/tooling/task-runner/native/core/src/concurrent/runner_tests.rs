@@ -38,7 +38,6 @@ mod tests {
     /// for a run that never ends.
     #[tokio::test]
     async fn test_twenty_pty_commands_at_once_all_finish_with_their_output() {
-        std::env::set_var("VIS_PTY_TRACE", "1"); // TEMPORARY
         let commands: Vec<_> = (0..20)
             .map(|number| {
                 let mut config = make_config(&format!("echo pty-{number}"), None);
@@ -1227,6 +1226,24 @@ mod tests {
         assert_eq!(seen.as_deref(), Some("[unset]"));
     }
 
+    /// The lines an output event carries, as `(command, is_stderr, line)`: a stream that bounds output
+    /// folds the lines of one read into one `Lines` event.
+    #[cfg(unix)]
+    fn lines_in(event: &ProcessEvent) -> Vec<(u32, bool, &str)> {
+        match event {
+            ProcessEvent::Stdout { index, text } => vec![(*index, false, text)],
+            ProcessEvent::Stderr { index, text } => vec![(*index, true, text)],
+            ProcessEvent::Lines { index, stderr, text, count } => {
+                let lines: Vec<_> = text.split('\n').map(|line| (*index, *stderr, line)).collect();
+
+                assert_eq!(lines.len(), *count as usize, "count must match the lines joined");
+
+                lines
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// A run on a stream that holds `capacity` output events at a time, with nobody reading it yet.
     #[cfg(unix)]
     struct BoundedRun {
@@ -1257,7 +1274,7 @@ mod tests {
         assert!(!run.result.is_finished(), "the child must be blocked on its full pipe");
 
         let first = run.stream.try_next_batch(usize::MAX).expect("something is queued");
-        let queued = first.events.iter().filter(|e| matches!(e, ProcessEvent::Stdout { .. })).count();
+        let queued: usize = first.events.iter().map(|event| lines_in(event).len()).sum();
 
         assert!(queued <= 8, "{queued} lines queued with a capacity of 8");
         drop(first);
@@ -1273,16 +1290,14 @@ mod tests {
                 .expect("the stream stays open until the close");
 
             for event in &batch.events {
-                match event {
-                    ProcessEvent::Stdout { text, .. } => {
-                        assert_eq!(text, &next.to_string());
-                        next += 1;
-                    }
-                    ProcessEvent::Close { exit_code, .. } => {
-                        assert_eq!(*exit_code, 0);
-                        closed = true;
-                    }
-                    _ => {}
+                for (_, _, line) in lines_in(event) {
+                    assert_eq!(line, next.to_string());
+                    next += 1;
+                }
+
+                if let ProcessEvent::Close { exit_code, .. } = event {
+                    assert_eq!(*exit_code, 0);
+                    closed = true;
                 }
             }
         }
@@ -1293,15 +1308,13 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_every_line_of_a_multi_megabyte_output_arrives_once_and_in_order_through_the_grouping() {
-        use crate::concurrent::grouping::{group_output, Delivered};
-
+    async fn test_every_line_of_a_multi_megabyte_output_arrives_once_and_in_order_folded() {
         // Two commands, each 600,000 numbered lines (about 4 MB): stdout of one, stderr of the other.
         let commands = vec![make_config("seq 1 600000", None), make_config("seq 1 600000 1>&2", None)];
         let mut run = start_bounded(commands, 4096);
         let mut next = [1_u32; 2];
         let mut closed = [false; 2];
-        let mut grouped_items = 0;
+        let mut folded_events = 0;
 
         while !closed.iter().all(|done| *done) {
             let batch = tokio::time::timeout(std::time::Duration::from_secs(30), run.stream.next_batch(512))
@@ -1309,44 +1322,27 @@ mod tests {
                 .expect("the run must keep producing while it is drained")
                 .expect("the stream stays open until both commands have closed");
 
-            for item in group_output(batch.events.clone()) {
-                let (index, text) = match item {
-                    Delivered::Event(ProcessEvent::Stdout { index, text }) => {
-                        assert_eq!(index, 0, "the stdout command is command 0");
-                        (index, vec![text])
-                    }
-                    Delivered::Event(ProcessEvent::Stderr { index, text }) => {
-                        assert_eq!(index, 1, "the stderr command is command 1");
-                        (index, vec![text])
-                    }
-                    Delivered::Lines { index, stderr, text, count } => {
-                        grouped_items += 1;
-                        assert_eq!(stderr, index == 1, "a group keeps its stream");
+            for event in &batch.events {
+                if matches!(event, ProcessEvent::Lines { count: 2.., .. }) {
+                    folded_events += 1;
+                }
 
-                        let lines: Vec<String> = text.split('\n').map(str::to_string).collect();
-
-                        assert_eq!(lines.len(), count as usize);
-                        (index, lines)
-                    }
-                    Delivered::Event(ProcessEvent::Close { index, exit_code, .. }) => {
-                        assert_eq!(exit_code, 0);
-                        assert_eq!(next[index as usize], 600_001, "the close comes after the last line");
-                        closed[index as usize] = true;
-
-                        continue;
-                    }
-                    Delivered::Event(_) => continue,
-                };
-
-                for line in text {
+                for (index, stderr, line) in lines_in(event) {
+                    assert_eq!(stderr, index == 1, "a line keeps its stream");
                     assert_eq!(line, next[index as usize].to_string(), "command {index} lost or reordered a line");
                     next[index as usize] += 1;
+                }
+
+                if let ProcessEvent::Close { index, exit_code, .. } = event {
+                    assert_eq!(*exit_code, 0);
+                    assert_eq!(next[*index as usize], 600_001, "the close comes after the last line");
+                    closed[*index as usize] = true;
                 }
             }
         }
 
         assert_eq!(next, [600_001, 600_001]);
-        assert!(grouped_items > 0, "a burst of lines must actually be folded");
+        assert!(folded_events > 0, "a burst of lines must actually be folded");
         assert!(run.result.await.unwrap().success);
     }
 
@@ -1370,10 +1366,10 @@ mod tests {
                 .expect("the stream stays open until the close");
 
             for event in &batch.events {
-                match event {
-                    ProcessEvent::Stdout { .. } => seen += 1,
-                    ProcessEvent::Close { exit_code: code, .. } => exit_code = Some(*code),
-                    _ => {}
+                seen += lines_in(event).len();
+
+                if let ProcessEvent::Close { exit_code: code, .. } = event {
+                    exit_code = Some(*code);
                 }
             }
         }
