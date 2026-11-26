@@ -4,3 +4,4 @@ native/**/target/
 
 # Scratch bundle the cold-process runner bench builds (deleted when the run ends)
 __bench__/.cold/
+__bench__/.output/
