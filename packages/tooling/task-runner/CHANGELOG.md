@@ -1,3 +1,78 @@
+## @visulima/task-runner [3.1.0-next.3](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.2...@visulima/task-runner@3.1.0-next.3) (2026-11-26)
+
+### Features
+
+* **task-runner:** drive the native runner from one TypeScript entry point ([e5c99aa](https://github.com/visulima/vis/commit/e5c99aabde8b7d6eff280a36e6a430b13977670f))
+* **task-runner:** run `stdin: "pty"` commands in the native runner ([bf57b64](https://github.com/visulima/vis/commit/bf57b642e6e8527b81bde308c6cfbb9385a8d9e7))
+* **task-runner:** run concurrent commands on the native runner by default ([ddc4a69](https://github.com/visulima/vis/commit/ddc4a69b7eff587d769c4a5d6e265692c0d886a6))
+* **task-runner:** stream native runner events in bounded batches and take stdin writes ([8a8bf00](https://github.com/visulima/vis/commit/8a8bf00a99e1736ac69ac8cbb8e877c1bde14147))
+
+### Bug Fixes
+
+* **task-runner:** accept every POSIX kill signal name and harden the new CI leg ([8acb6ae](https://github.com/visulima/vis/commit/8acb6aeccedb7cec5a596ac56f586852f3026483))
+* **task-runner:** anchor the shared cache at the main worktree's top level ([5699685](https://github.com/visulima/vis/commit/5699685401c14ecd624ab08d7b91b0217e339d7c))
+* **task-runner:** bound the pipe drain, report signals as 128+n and cap line buffering in the native runner ([be790fb](https://github.com/visulima/vis/commit/be790fbf7b2768a21075529772a8be55876a5cef))
+* **task-runner:** declare `incomplete` on the seccomp tracking result type ([217735c](https://github.com/visulima/vis/commit/217735ca099d9b3338b2e0a950685d391c784cfa))
+* **task-runner:** do not key the cache on a trace the seccomp tracker reports as incomplete ([e0d2886](https://github.com/visulima/vis/commit/e0d2886342814aba41061b8cceefff358c6be088))
+* **task-runner:** fail the Windows tracked spawn instead of hanging when the DLL does not attach ([640242f](https://github.com/visulima/vis/commit/640242fabaf6dc909c847a9389a690fbcb8b81a8))
+* **task-runner:** give native runs a cancellable handle and install no process-wide signal handlers ([3bb28c5](https://github.com/visulima/vis/commit/3bb28c51aebecf8144d57c54e838abb4e50c0452))
+* **task-runner:** hash files behind symlinks and inside ignored-named base directories ([2ebc560](https://github.com/visulima/vis/commit/2ebc560dd58c255f8595b59679cd99c27dd4ab46))
+* **task-runner:** keep a relative program absolute when the command has a cwd ([51cc5fd](https://github.com/visulima/vis/commit/51cc5fd9fdcf10718fa35ae67343991c2b7e12f4))
+* **task-runner:** keep a zero-sized terminal from failing a native pty run, and tighten the parity suite ([f6aab88](https://github.com/visulima/vis/commit/f6aab886fb2b76cc1ee27e870d2bbe5facfe6fe5))
+* **task-runner:** keep the macOS report socket across child spawns and nested trackers ([0000e95](https://github.com/visulima/vis/commit/0000e9522a033a50ec01ae264a3e64dbece52b45))
+* **task-runner:** make the Windows IAT patcher resolve originals safely and skip unbound imports ([e6c546f](https://github.com/visulima/vis/commit/e6c546f359ca75de48127bb72ea830847984f6de))
+* **task-runner:** match the JS spawner on spawn failures, interrupts and a clean pty environment ([4620b31](https://github.com/visulima/vis/commit/4620b31a62312617b041433f13370018abb57f2f))
+* **task-runner:** notify the seccomp supervisor on foreign-ABI syscalls and reject unencodable BPF jumps ([fdd7abb](https://github.com/visulima/vis/commit/fdd7abb62a2e64425f2bf5a88007e640a2cf77fa))
+* **task-runner:** pass the real open() mode to the macOS interpose hooks on arm64 ([d359a21](https://github.com/visulima/vis/commit/d359a2118bcf10b5f82bb8a216e8d8913ce11043))
+* **task-runner:** record failed lookups from the macOS interpose hooks as missing ([77e2dd1](https://github.com/visulima/vis/commit/77e2dd143b76d055a564135355dbdbb8c1991e64))
+* **task-runner:** reject unknown native runner options instead of falling back silently ([d9c5f18](https://github.com/visulima/vis/commit/d9c5f182b2d7363ef56037b5408df796899d6746))
+* **task-runner:** release a waiting reader when the event stream is dropped ([bd1caf4](https://github.com/visulima/vis/commit/bd1caf46d3824cefdd3cc81a9a90add1be886656))
+* **task-runner:** report absolute paths from the macOS interpose hooks ([18a4b84](https://github.com/visulima/vis/commit/18a4b84f68edbaa878a3b8cd7ba6814951b45957))
+* **task-runner:** stop non-ASCII paths from panicking the Windows file hooks ([e3ab31e](https://github.com/visulima/vis/commit/e3ab31e01389e2849c1c5454e2e5fcd0c0a841de))
+* **task-runner:** stop the seccomp supervisor hanging on a drained listener and keep serving descendants ([ff22961](https://github.com/visulima/vis/commit/ff2296116c20ff5e91241d6320cb8c28c9784c8d))
+
+### Performance Improvements
+
+* **task-runner:** start native commands with posix_spawn on macOS ([d78c97a](https://github.com/visulima/vis/commit/d78c97a0e3b5ac4a59d70b78216bf49a81cfe758))
+* **vis:** stop a native run at the first task that is not a cache hit ([#204](https://github.com/visulima/vis/issues/204)) ([1845aba](https://github.com/visulima/vis/commit/1845aba1a2d698b8802df57a39cef5ae2b84a9ea))
+
+### Documentation
+
+* **task-runner:** say what node-pty does with a zero-sized terminal ([ad298b4](https://github.com/visulima/vis/commit/ad298b46251f861061d9e3e7a7e453a6bf187ebe))
+
+### Styles
+
+* **task-runner:** put a parity scenario comment on its own line ([2449022](https://github.com/visulima/vis/commit/24490228cd826123df3ecfb529899b4f466b00e9))
+
+### Miscellaneous Chores
+
+* **task-runner:** add a throughput benchmark for the two concurrent runners ([0d5a9a4](https://github.com/visulima/vis/commit/0d5a9a4a75dde698c43daa5e8fb988534e5cf12d))
+
+### Code Refactoring
+
+* **fspy-seccomp:** validate the BPF jumps, use libc's ioctl numbers, document unsafe ([ad71bc0](https://github.com/visulima/vis/commit/ad71bc08746e3839c06afe9d95bd875488f70adb))
+* **task-runner:** drop a redundant result check and refresh a stale spawn comment ([4f1797d](https://github.com/visulima/vis/commit/4f1797d99dba1453d2c8043db61ed33ef0dceb55))
+* **task-runner:** export the JS-compat helpers from one module ([9ce0b8b](https://github.com/visulima/vis/commit/9ce0b8bfbf8b302f25b209b791f7b12e7fc5fce4))
+* **task-runner:** key tasks with the hashers the native CLI uses ([#208](https://github.com/visulima/vis/issues/208)) ([1f4721d](https://github.com/visulima/vis/commit/1f4721d9b018d965943f0baaf74bc718e5d03245))
+* **task-runner:** model the native runner's events as an enum ([c4675a7](https://github.com/visulima/vis/commit/c4675a71841a9a4674acf6ec04d2098a1584de0c))
+* **task-runner:** share the tracker wire format and document unsafe blocks ([efaee7f](https://github.com/visulima/vis/commit/efaee7f7a9851414bcf8e3113ea3b0daf31d0537))
+* **task-runner:** simplify the batch forwarder and make a pty test check the resize ([ab4b335](https://github.com/visulima/vis/commit/ab4b3350d3886d790886da0ea8337d1d4a213633))
+
+### Tests
+
+* **fspy:** drop two tests that restate a constant or a compile-time assertion ([02e862f](https://github.com/visulima/vis/commit/02e862f817e60a194a04f3b77b35b036e78a3bf6))
+* **task-runner:** assert the three ruled differences as equal in the parity suite ([1b2c3d1](https://github.com/visulima/vis/commit/1b2c3d1c476c0e0b17807847ec840298bfc4af89))
+* **task-runner:** correct the CI note on the Windows injection tests ([654d38b](https://github.com/visulima/vis/commit/654d38b905125a9277e86bd0241ebdacfc6ed2bf))
+* **task-runner:** make two accepted-difference checks hold on Linux ([eed726c](https://github.com/visulima/vis/commit/eed726cf56453ee9740dc9d64fdc4b2c522c587f))
+* **task-runner:** measure the concurrent runners cold and in CI ([5e51523](https://github.com/visulima/vis/commit/5e51523a209d117d1643dac2958a8c507c8ff6d8))
+* **task-runner:** order the new parity case's keys as the lint rules expect ([c80498d](https://github.com/visulima/vis/commit/c80498dd03a50076a180e4ee83a51056a3794635))
+* **task-runner:** run the restart wrapper's tests on both runners ([9912cfb](https://github.com/visulima/vis/commit/9912cfba963daca1fbcacf9f2053bf29c4684b03))
+* **task-runner:** run the same scenarios against both concurrent runners ([22c0318](https://github.com/visulima/vis/commit/22c03184d142ac9a1bbdc573bbd4553d9b6d825d))
+
+### Continuous Integration
+
+* **task-runner:** run the native runner's tests on macOS and Windows ([0d6f2f8](https://github.com/visulima/vis/commit/0d6f2f8e00c76f0f9b98317290c9d88a7e17e9f5))
+
 ## @visulima/task-runner [3.1.0-next.2](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.1...@visulima/task-runner@3.1.0-next.2) (2026-11-23)
 
 ### Features
