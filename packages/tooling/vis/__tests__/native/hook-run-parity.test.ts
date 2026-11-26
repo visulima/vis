@@ -180,7 +180,8 @@ const runNative = (root: string, spec: Case): Outcome & { delegated: boolean } =
     const result = spawnSync(binary as string, ["hook", "run", spec.stage ?? "pre-commit", ...(spec.args ?? []), ...(spec.flags ?? [])], {
         cwd: root,
         encoding: "utf8",
-        env: { ...process.env, VIS_FALLBACK_ENTRY: stub, VIS_FALLBACK_ENTRY_OVERRIDE: stub, VIS_HOOK_TRACE: "1", VIS_NODE: "sh" },
+        // `DEBUG` and `CEREBRO_*` make the binary hand the run to Node (`debug_output_is_default`), which these cases do not test.
+        env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "DEBUG" && !name.startsWith("CEREBRO_"))), VIS_FALLBACK_ENTRY: stub, VIS_FALLBACK_ENTRY_OVERRIDE: stub, VIS_HOOK_TRACE: "1", VIS_NODE: "sh" },
     });
 
     rmSync(stub, { force: true });

@@ -81,7 +81,8 @@ const cacheDirFor = (name: string, files: Record<string, string>): string => {
  */
 const run = (command: string, args: string[], options: { ci: boolean; cwd?: string; extraEnv?: Record<string, string> }) => {
     // An inherited root (from a parent vis run) would make the native gate answer for another workspace.
-    const env: Record<string, string | undefined> = { ...process.env };
+    // `DEBUG` and `CEREBRO_*` make the binary hand the run to Node (`debug_output_is_default`); a case that wants one passes it in `extraEnv`.
+    const env: Record<string, string | undefined> = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "DEBUG" && !name.startsWith("CEREBRO_")));
 
     delete env["VIS_MONOREPO_ROOT"];
     Object.assign(env, { VIS_CLI_TEST: "1", VIS_NO_UPDATE_CHECK: "1", ...options.extraEnv });

@@ -89,11 +89,18 @@ const TRACED: Record<string, Case> = {
     dedupe: { args: ["dedupe"], files: workspaceFiles(app("a")) },
     exec: { args: ["exec", "echo", "hi"], files: workspaceFiles(app("a")) },
     "hook run": { args: ["hook", "run", "pre-commit", "--all-files"], files: hookProject, repository: true },
+    link: { args: ["link", "../x"], files: workspaceFiles(app("a")) },
     pm: { args: ["pm", "cache", "dir"], files: workspaceFiles(app("a")) },
     remove: { args: ["remove", "left-pad"], files: workspaceFiles(app("a")) },
     unlink: { args: ["unlink"], files: workspaceFiles(app("a")) },
     why: { args: ["why", "left-pad"], files: workspaceFiles(app("a")) },
 };
+
+/**
+ * `outdated` prints a catalog notice that the stubbed package manager of this suite does not reproduce, so its native answer
+ * is not compared with Node's; it is only handed over under the tracing settings and must match Node through the hand-off.
+ */
+const OUTDATED: Case = { args: ["outdated"], files: workspaceFiles(app("a")) };
 
 /** The settings that change what Node prints around every command. */
 const TRACING: Record<string, string>[] = [{ DEBUG: "1" }, { CEREBRO_OUTPUT_LEVEL: "128" }];
@@ -215,6 +222,14 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.assertions(3);
 
             compare(spec, setting, true);
+        });
+    });
+
+    describe("outdated", () => {
+        it.each(TRACING)("hands the run to Node under %j", (setting) => {
+            expect.assertions(3);
+
+            compare(OUTDATED, setting, true);
         });
     });
 });
