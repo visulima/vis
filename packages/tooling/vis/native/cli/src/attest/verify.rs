@@ -168,11 +168,11 @@ fn answer(args: &[String]) -> Result<Outcome, String> {
     }
 
     let flags = Flags { format, fail_on_error };
-    let (findings, cache) = scan(&packuments, keys.keys.as_deref(), &packages, &allowlist, now_ms()?)?;
+    let (scanned, cache) = scan(&packuments, keys.keys.as_deref(), &packages, &allowlist, now_ms()?);
+    let outcome = scanned.and_then(|findings| report(flags, packages.len(), &findings));
 
-    let outcome = report(flags, packages.len(), &findings);
-
-    // The table of findings is Node's, which finds the cache this run filled.
+    // A run that ends here for Node (the table of findings, or a package this binary cannot read) leaves it the cache
+    // this run filled, which is the bytes Node writes, so Node does not fetch it all again.
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(reason) => {
@@ -234,14 +234,15 @@ struct Checked {
 }
 
 /// Both marshalls over every package, with [`CONCURRENCY`] packages in flight: the provenance findings, then the
-/// signature findings, each in the order of the packages, and the cache changes. The first failure is the run's.
+/// signature findings, each in the order of the packages, and the cache changes of the packages that were read, whether or
+/// not another one failed. The first failure is the run's.
 fn scan(
     packuments: &Packuments,
     keys: Option<&[RegistryKey]>,
     packages: &[Package],
     allowlist: &HashSet<String>,
     now_ms: u64,
-) -> Result<(Vec<Finding>, Vec<CacheAction>), String> {
+) -> (Result<Vec<Finding>, String>, Vec<CacheAction>) {
     let by_id: HashMap<&str, &RegistryKey> =
         keys.unwrap_or_default().iter().map(|key| (key.keyid.as_str(), key)).collect();
     let next = AtomicUsize::new(0);
@@ -267,9 +268,22 @@ fn scan(
     let mut provenance = Vec::new();
     let mut signatures = Vec::new();
     let mut cache = Vec::new();
+    let mut failure: Option<String> = None;
 
     for (package, checked) in packages.iter().zip(results.into_inner().expect("a worker panicked")) {
-        let checked = checked.ok_or("a package was not checked")??;
+        let checked = match checked {
+            Some(Ok(checked)) => checked,
+            Some(Err(reason)) => {
+                failure.get_or_insert(reason);
+
+                continue;
+            }
+            None => {
+                failure.get_or_insert_with(|| "a package was not checked".to_owned());
+
+                continue;
+            }
+        };
 
         if let Some(prior) = checked.provenance {
             provenance.push(Finding {
@@ -290,7 +304,7 @@ fn scan(
 
     provenance.extend(signatures);
 
-    Ok((provenance, cache))
+    (failure.map_or(Ok(provenance), Err), cache)
 }
 
 /// Both marshalls for one package that is not on the allowlist. `keys` is `None` when the registry's keys could not be
@@ -522,9 +536,9 @@ mod tests {
         let registry = Registry::start(packuments.iter().map(|(name, body)| (format!("/{name}"), ok(body))).collect());
         let (source, _) = packuments_for(&registry);
         let allowlist: HashSet<String> = allowlist.iter().map(|name| (*name).to_owned()).collect();
-        let result = scan(&source, keys, packages, &allowlist, NOW);
+        let (found, cache) = scan(&source, keys, packages, &allowlist, NOW);
 
-        (result, registry.requests.load(Ordering::SeqCst))
+        (found.map(|findings| (findings, cache)), registry.requests.load(Ordering::SeqCst))
     }
 
     fn codes(findings: &[Finding]) -> Vec<(String, &'static str, String)> {
@@ -687,9 +701,26 @@ mod tests {
         let signer = Signer::new();
         let registry = Registry::start(HashMap::from([("/a".to_owned(), (500, "{}".to_owned(), Vec::new()))]));
         let (source, _) = packuments_for(&registry);
-        let result = scan(&source, Some(&[key(&signer, "k", None)]), &[package("a", "1.0.0")], &HashSet::new(), NOW);
+        let (found, cache) =
+            scan(&source, Some(&[key(&signer, "k", None)]), &[package("a", "1.0.0")], &HashSet::new(), NOW);
 
-        assert!(result.is_err());
+        assert!(found.is_err() && cache.is_empty());
+    }
+
+    #[test]
+    fn a_failing_package_leaves_the_cache_of_the_others_to_node() {
+        let signer = Signer::new();
+        let registry = Registry::start(HashMap::from([
+            ("/a".to_owned(), ok(&packument("a", &[("1.0.0", signed_dist(&signer, "k", "a", "1.0.0"))]))),
+            ("/b".to_owned(), (500, "{}".to_owned(), Vec::new())),
+            ("/c".to_owned(), ok(&packument("c", &[("1.0.0", signed_dist(&signer, "k", "c", "1.0.0"))]))),
+        ]));
+        let (source, _) = packuments_for(&registry);
+        let packages = [package("a", "1.0.0"), package("b", "1.0.0"), package("c", "1.0.0")];
+        let (found, cache) = scan(&source, Some(&[key(&signer, "k", None)]), &packages, &HashSet::new(), NOW);
+
+        assert!(found.is_err());
+        assert_eq!(cache.len(), 2);
     }
 
     fn finding_of(code: &'static str, severity: Severity) -> Finding {

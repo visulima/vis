@@ -746,98 +746,6 @@ const dlxMayRunNatively = (platform, environment, args) => {
     return dlxShape(args.slice(1)) !== undefined;
 };
 
-// The flags of `vis attest` (`parse` in `attest/mod.rs`): `--name value` or `--name=value` for the values, `--name` for the
-// switches, each at most once, and plain words. A value that is empty or starts with a dash, any other flag and `--` are not.
-const attestShape = (rest, values, switches) => {
-    const shape = { values: new Map(), switches: new Set(), words: [] };
-
-    for (let index = 0; index < rest.length; index += 1) {
-        const token = rest[index];
-
-        if (!token.startsWith("-")) {
-            shape.words.push(token);
-
-            continue;
-        }
-
-        if (!token.startsWith("--")) {
-            return undefined;
-        }
-
-        const [name, ...inline] = token.slice(2).split("=");
-
-        if (switches.includes(name)) {
-            if (inline.length > 0 || shape.switches.has(name)) {
-                return undefined;
-            }
-
-            shape.switches.add(name);
-
-            continue;
-        }
-
-        if (!values.includes(name) || shape.values.has(name)) {
-            return undefined;
-        }
-
-        const value = inline.length > 0 ? inline.join("=") : rest[++index];
-
-        if (value === undefined || value === "" || value.startsWith("-")) {
-            return undefined;
-        }
-
-        shape.values.set(name, value);
-    }
-
-    return shape;
-};
-
-const ATTEST_FORMATS = ["json", "ndjson", "table"];
-
-// Whether `vis attest <subject>` can pass the binary's native gate (`answer` in `attest/emit.rs`): the run that has no ambient OIDC
-// token, so Node hashes the artifact and skips signing. A run that signs, `--require-signing` and the failures stay in Node. The
-// binary re-checks everything, including the subject and the workspace.
-const attestEmitShapeIsNative = (environment, rest) => {
-    const shape = attestShape(rest, ["format", "output", "predicate"], ["require-signing"]);
-
-    return shape !== undefined
-        && shape.words.length === 1
-        && shape.words[0] !== "verify"
-        && !shape.switches.has("require-signing")
-        && [undefined, "slsaProvenance"].includes(shape.values.get("predicate"))
-        && [undefined, ...ATTEST_FORMATS].includes(shape.values.get("format"))
-        && environment.CI !== "true"
-        && environment.ACTIONS_ID_TOKEN_REQUEST_URL === undefined
-        && environment.SIGSTORE_ID_TOKEN === undefined;
-};
-
-// Whether `vis attest verify` can pass the binary's native gate (`answer` in `attest/verify.rs`): no `--prod-only`, no word, no
-// `MARSHALL_*` or `VIS_NPM_KEYS_URL`. The binary re-checks everything, including the lockfile, the registry and the keys.
-const attestVerifyShapeIsNative = (environment, rest) => {
-    const shape = attestShape(rest, ["format", "fail-on", "allowlist"], []);
-
-    return shape !== undefined
-        && shape.words.length === 0
-        && [undefined, ...ATTEST_FORMATS].includes(shape.values.get("format"))
-        && [undefined, "warning", "error"].includes(shape.values.get("fail-on"))
-        && environment.VIS_NPM_KEYS_URL === undefined
-        && !Object.keys(environment).some((key) => key.startsWith("MARSHALL_"));
-};
-
-// `vis attest <subject>` and `vis attest verify`, in a CI context off a terminal at the root of a pnpm workspace, with no proxy,
-// CA or Node option in the environment.
-const attestMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
-        return false;
-    }
-
-    if (!outputSettingsAreDefault(environment) || !networkEnvironmentIsPlain(environment)) {
-        return false;
-    }
-
-    return args[1] === "verify" ? attestVerifyShapeIsNative(environment, args.slice(2)) : attestEmitShapeIsNative(environment, args.slice(1));
-};
-
 // Whether `vis sync ci-workflow` can pass the binary's native gate (`native_root` and `parse` in
 // `ci_workflow/mod.rs`): the generator and its `--check`, with `--check` at most once and any number of
 // `--provider` values. The binary re-checks everything, including the config, the providers and the
@@ -1172,6 +1080,102 @@ const keysRefreshArgsAreNative = (args) => {
     const flags = args.slice(2);
 
     return (flags.length === 1 && flags[0] === "--json") || (flags.length === 2 && flags.includes("--json") && flags.includes("--clear"));
+};
+
+// The flags of `vis attest` (`parse` in `attest/mod.rs`): `--name value` or `--name=value` for the values, `--name` for the
+// switches, each at most once, and plain words. A value that is empty or starts with a dash, any other flag and `--` are not.
+const attestFlag = (shape, rest, index, values, switches) => {
+    const [name, ...inline] = rest[index].slice(2).split("=");
+
+    if (switches.includes(name)) {
+        if (inline.length > 0 || shape.switches.has(name)) {
+            return undefined;
+        }
+
+        shape.switches.add(name);
+
+        return index + 1;
+    }
+
+    const value = inline.length > 0 ? inline.join("=") : rest[index + 1];
+
+    if (!values.includes(name) || shape.values.has(name) || value === undefined || value === "" || value.startsWith("-")) {
+        return undefined;
+    }
+
+    shape.values.set(name, value);
+
+    return inline.length > 0 ? index + 1 : index + 2;
+};
+
+const attestShape = (rest, values, switches) => {
+    const shape = { switches: new Set(), values: new Map(), words: [] };
+    let index = 0;
+
+    while (index < rest.length) {
+        const token = rest[index];
+
+        if (!token.startsWith("-")) {
+            shape.words.push(token);
+            index += 1;
+
+            continue;
+        }
+
+        index = token.startsWith("--") ? attestFlag(shape, rest, index, values, switches) : undefined;
+
+        if (index === undefined) {
+            return undefined;
+        }
+    }
+
+    return shape;
+};
+
+const ATTEST_FORMATS = ["json", "ndjson", "table"];
+
+// Whether `vis attest <subject>` can pass the binary's native gate (`answer` in `attest/emit.rs`): the run that has no ambient OIDC
+// token, so Node hashes the artifact and skips signing. A run that signs, `--require-signing` and the failures stay in Node. The
+// binary re-checks everything, including the subject and the workspace.
+const attestEmitShapeIsNative = (environment, rest) => {
+    const shape = attestShape(rest, ["format", "output", "predicate"], ["require-signing"]);
+
+    return shape !== undefined
+        && shape.words.length === 1
+        && shape.words[0] !== "verify"
+        && !shape.switches.has("require-signing")
+        && ["slsaProvenance", undefined].includes(shape.values.get("predicate"))
+        && [undefined, ...ATTEST_FORMATS].includes(shape.values.get("format"))
+        && environment.CI !== "true"
+        && environment.ACTIONS_ID_TOKEN_REQUEST_URL === undefined
+        && environment.SIGSTORE_ID_TOKEN === undefined;
+};
+
+// Whether `vis attest verify` can pass the binary's native gate (`answer` in `attest/verify.rs`): no `--prod-only`, no word, no
+// `MARSHALL_*` or `VIS_NPM_KEYS_URL`. The binary re-checks everything, including the lockfile, the registry and the keys.
+const attestVerifyShapeIsNative = (environment, rest) => {
+    const shape = attestShape(rest, ["format", "fail-on", "allowlist"], []);
+
+    return shape !== undefined
+        && shape.words.length === 0
+        && [undefined, ...ATTEST_FORMATS].includes(shape.values.get("format"))
+        && ["error", undefined, "warning"].includes(shape.values.get("fail-on"))
+        && environment.VIS_NPM_KEYS_URL === undefined
+        && !Object.keys(environment).some((key) => key.startsWith("MARSHALL_"));
+};
+
+// `vis attest <subject>` and `vis attest verify`, in a CI context off a terminal at the root of a pnpm workspace, with no proxy,
+// CA or Node option in the environment.
+const attestMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    if (!outputSettingsAreDefault(environment) || !networkEnvironmentIsPlain(environment)) {
+        return false;
+    }
+
+    return args[1] === "verify" ? attestVerifyShapeIsNative(environment, args.slice(2)) : attestEmitShapeIsNative(environment, args.slice(1));
 };
 
 const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {

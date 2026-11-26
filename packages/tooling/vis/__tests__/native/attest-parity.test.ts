@@ -15,7 +15,7 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
  * same exit status and leave the same cache files as Node; every input it declines must be handed to Node before anything is
  * printed (see `workspace-parity-harness.ts` for how both are proved).
  *
- * The native path answers two leaves. `vis attest <subject>` answers the run with no ambient OIDC token, where Node hashes the artifact and
+ * The native path answers two leaves. `vis attest &lt;subject>` answers the run with no ambient OIDC token, where Node hashes the artifact and
  * skips signing. `vis attest verify` checks the locked packages against the registry: the registry is a stub in a separate process
  * that the `.npmrc` of the workspace points both sides at, and the signing keys sit in the key cache of each side's `HOME`
  * (fresh, so neither side asks the network), signed here with real ECDSA P-256 keys. Each side has its own `HOME`, because the
@@ -289,10 +289,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             run({ args, native: false, packages: CLEAN });
         });
 
-        it("hands a failing registry to Node", () => {
+        it("hands a failing registry to Node, with the cache of the packages that were read", () => {
             expect.hasAssertions();
 
-            run({ args: ["verify", "--format", "json"], native: false, packages: [...CLEAN, ["broken", "1.0.0"]] });
+            run({ args: ["verify", "--format", "json"], native: false, packages: [...CLEAN, ["broken", "1.0.0"]], warm: true });
         });
     });
 
