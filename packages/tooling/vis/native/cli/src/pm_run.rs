@@ -10,13 +10,13 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command, Stdio};
 
 use vis_core::detect::{detect_package_manager, DetectPackageManagerOptions};
-use vis_core::lockfiles::LOCKFILES;
 
 use vis_core::resolve::ResolvedCommand;
 
 use crate::error::WrapperError;
 use crate::pail::Layout;
-use crate::vis_config::{self, read_json, ConfigState};
+use crate::root_search::{self, read_json};
+use crate::vis_config::{self, ConfigState};
 
 /// Where Node finds the workspace root, as far as the native path needs to know.
 #[derive(Debug, PartialEq, Eq)]
@@ -124,38 +124,17 @@ fn context_allows_native(allowed: &[String]) -> bool {
 /// has ruled out markers above it). `None` when the search ends in a state the native path does not read:
 /// several lockfile managers, or a `package.json` it cannot parse.
 fn root_here(cwd: &Path) -> Option<Root> {
-    let mut managers: Vec<&str> =
-        LOCKFILES.iter().filter(|(file, _)| cwd.join(file).exists()).map(|(_, manager)| *manager).collect();
-
-    managers.dedup();
-
+    let managers = root_search::lockfile_managers(cwd);
     let manifest = cwd.join("package.json");
 
-    // Node reads `package.json` for a `packageManager` pin when no lockfile names the manager.
-    if managers.is_empty() && manifest.exists() && read_json(&manifest).is_none() {
-        return None;
-    }
-
     // The search stops at the nearest directory that names a manager, so no lockfile here means no
-    // root anywhere (nothing above holds a marker).
+    // root anywhere (nothing above holds a marker). Node reads `package.json` for a `packageManager`
+    // pin then, and the native path leaves an unparsable one alone.
     let [manager] = managers.as_slice() else {
-        return if managers.is_empty() { Some(Root::None) } else { None };
+        return (managers.is_empty() && (!manifest.exists() || read_json(&manifest).is_some())).then_some(Root::None);
     };
 
-    let is_root = match *manager {
-        "pnpm" => cwd.join("pnpm-workspace.yaml").exists(),
-        "npm" | "yarn" => match read_json(&manifest) {
-            Some(manifest) => {
-                manifest.get("workspaces").is_some_and(|workspaces| workspaces.is_object() || workspaces.is_array())
-            }
-            // Node reads an unparsable `package.json` as no root; the native path leaves it alone.
-            None if manifest.exists() => return None,
-            None => false,
-        },
-        _ => false,
-    };
-
-    Some(if is_root { Root::Here } else { Root::None })
+    Some(if root_search::is_workspace_root(cwd, Some(*manager))? { Root::Here } else { Root::None })
 }
 
 fn has_bun_lockfile(cwd: &Path) -> bool {

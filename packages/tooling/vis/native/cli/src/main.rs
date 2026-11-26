@@ -79,6 +79,7 @@ mod process;
 #[cfg(unix)]
 mod removal;
 mod replay;
+mod root_search;
 mod route;
 mod run;
 mod run_summary;

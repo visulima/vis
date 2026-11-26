@@ -10,6 +10,8 @@ use std::path::{Component, Path};
 
 use rayon::prelude::*;
 
+use crate::sort_package_json::gitignore::Rules;
+use crate::sort_package_json::segment_matches;
 use crate::vis_config::has_vis_config;
 
 /// Outcome of resolving a root's project directories.
@@ -208,7 +210,7 @@ pub(crate) fn expand_patterns(
                         return None;
                     }
 
-                    if star_match(glob, &name) && is_project(&root.join(&name)) {
+                    if segment_matches(glob.as_bytes(), name.as_bytes()) && is_project(&root.join(&name)) {
                         directories.push(name);
                     }
                 }
@@ -450,43 +452,13 @@ fn unique(directories: Vec<String>) -> Vec<String> {
 
 /// Whether `directory` survives the `.gitignore` rules; `None` for a name outside ASCII, which Node compares
 /// differently, and so is Node's.
-fn is_unignored(rules: &[Rule], directory: &str) -> Option<bool> {
-    directory.is_ascii().then(|| !is_ignored(rules, directory))
+fn is_unignored(rules: &Rules, directory: &str) -> Option<bool> {
+    directory.is_ascii().then(|| !rules.ignores(directory, true))
 }
 
 /// The directory names directly under `directory`, in the order `walkSync` yields them (see [`list_dirs`]).
 pub(crate) fn child_directories(directory: &Path) -> Option<Vec<String>> {
     list_dirs(directory, Some(1))
-}
-
-fn star_match(pattern: &str, text: &str) -> bool {
-    let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
-    let (mut p, mut t) = (0, 0);
-    let mut star: Option<usize> = None;
-    let mut mark = 0;
-
-    while t < text.len() {
-        if p < pattern.len() && pattern[p] == b'*' {
-            star = Some(p);
-            mark = t;
-            p += 1;
-        } else if p < pattern.len() && pattern[p] == text[t] {
-            p += 1;
-            t += 1;
-        } else if let Some(position) = star {
-            p = position + 1;
-            mark += 1;
-            t = mark;
-        } else {
-            return false;
-        }
-    }
-
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-
-    p == pattern.len()
 }
 
 /// A directory the Node walk would skip. Its skip regexes (`/node_modules/`, `/\.git/`) run on
@@ -545,89 +517,17 @@ fn walk(dir: &Path, prefix: &str, depth: usize, found: &mut Vec<String>) -> Opti
     Some(())
 }
 
-/// One root `.gitignore` rule, with segments compared case-insensitively.
-struct Rule {
-    anchored: bool,
-    segments: Vec<String>,
-}
-
-/// The rules `buildGitignoreMatcher` applies: the built-in excludes, then the root `.gitignore`.
-/// Only literal names are reproduced. Negations, globs, escapes, and whitespace delegate.
-fn gitignore_rules(root: &Path) -> Option<Vec<Rule>> {
-    let mut rules = vec![
-        Rule { anchored: false, segments: vec![".git".to_string()] },
-        Rule { anchored: false, segments: vec!["node_modules".to_string()] },
-    ];
+/// The rules `buildGitignoreMatcher` applies: the built-in excludes, then the root `.gitignore`, as far as
+/// [`Rules`] reproduces them (`None` delegates).
+fn gitignore_rules(root: &Path) -> Option<Rules> {
     let path = root.join(".gitignore");
 
     // Matches `safeRead`: an unreadable or non-file `.gitignore` is treated as absent.
     if !path.is_file() {
-        return Some(rules);
+        return Rules::from_lines([]);
     }
 
-    let text = fs::read_to_string(&path).ok()?;
-
-    if !text.is_ascii() {
-        return None;
-    }
-
-    for line in text.split('\n') {
-        if let Some(rule) = parse_gitignore_line(line)? {
-            rules.push(rule);
-        }
-    }
-
-    Some(rules)
-}
-
-/// `None` delegates. `Some(None)` is a blank or comment line.
-fn parse_gitignore_line(line: &str) -> Option<Option<Rule>> {
-    if line.is_empty() || line.starts_with('#') {
-        return Some(None);
-    }
-
-    if line.starts_with('!') || !line.bytes().all(|byte| byte == b'/' || is_name_byte(byte)) {
-        return None;
-    }
-
-    let body = line.strip_prefix('/').unwrap_or(line);
-    let body = body.strip_suffix('/').unwrap_or(body);
-
-    if body.is_empty() || body.ends_with('/') {
-        return None;
-    }
-
-    let segments: Vec<&str> = body.split('/').collect();
-
-    if segments.iter().any(|segment| segment.is_empty() || *segment == "." || *segment == "..") {
-        return None;
-    }
-
-    Some(Some(Rule {
-        anchored: line.starts_with('/') || segments.len() > 1,
-        segments: segments.iter().map(|segment| segment.to_ascii_lowercase()).collect(),
-    }))
-}
-
-/// Whether `directory` (relative, `/`-separated) is ignored. A rule also ignores everything under
-/// the directory it matches, so every ancestor prefix is tested.
-fn is_ignored(rules: &[Rule], directory: &str) -> bool {
-    let components: Vec<&str> = directory.split('/').collect();
-
-    (1..=components.len()).any(|depth| {
-        rules.iter().any(|rule| {
-            if rule.anchored {
-                rule.segments.len() == depth
-                    && rule
-                        .segments
-                        .iter()
-                        .zip(&components[..depth])
-                        .all(|(rule_segment, component)| rule_segment.eq_ignore_ascii_case(component))
-            } else {
-                rule.segments.len() == 1 && rule.segments[0].eq_ignore_ascii_case(components[depth - 1])
-            }
-        })
-    })
+    Rules::from_lines(fs::read_to_string(&path).ok()?.split('\n'))
 }
 
 #[cfg(test)]
@@ -687,18 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn star_match_is_anchored_and_star_only() {
-        assert!(star_match("pkg-*", "pkg-a"));
-        assert!(star_match("pkg-*", "pkg-"));
-        assert!(!star_match("pkg-*", "xpkg-a"));
-        assert!(star_match("@*", "@scope"));
-        assert!(star_match("*", ""));
-        assert!(star_match("a*b*c", "axxbyyc"));
-        assert!(!star_match("a*b", "ab!"));
-        assert!(!star_match("pkg.a", "pkgXa"));
-    }
-
-    #[test]
     fn yaml_reads_the_packages_list_only() {
         let text = "catalog:\n  x: 1\npackages:\n  # comment\n  - 'packages/*'\n  - \"libs/**\"\n  - tools/cli/\n\noverrides:\n  - ignored\n";
 
@@ -725,64 +613,54 @@ mod tests {
         assert_eq!(strip_quotes("'a/*"), "a/*");
     }
 
-    fn rules(text: &str) -> Vec<Rule> {
-        let mut all = vec![
-            Rule { anchored: false, segments: vec![".git".into()] },
-            Rule { anchored: false, segments: vec!["node_modules".into()] },
-        ];
-
-        for line in text.split('\n') {
-            if let Some(rule) = parse_gitignore_line(line).expect("supported rule") {
-                all.push(rule);
-            }
-        }
-
-        all
+    fn rules(text: &str) -> Rules {
+        Rules::from_lines(text.split('\n')).expect("supported rule")
     }
 
     #[test]
     fn gitignore_unanchored_name_ignores_at_any_depth() {
         let r = rules("skipped\n");
 
-        assert!(is_ignored(&r, "skipped"));
-        assert!(is_ignored(&r, "packages/skipped"));
-        assert!(is_ignored(&r, "packages/skipped/deeper"));
-        assert!(!is_ignored(&r, "packages/skipped2"));
+        assert!(r.ignores("skipped", true));
+        assert!(r.ignores("packages/skipped", true));
+        assert!(r.ignores("packages/skipped/deeper", true));
+        assert!(!r.ignores("packages/skipped2", true));
     }
 
     #[test]
     fn gitignore_anchored_path_only_matches_from_the_root() {
         let r = rules("/root-skip\nnested/hidden\n");
 
-        assert!(is_ignored(&r, "root-skip"));
-        assert!(!is_ignored(&r, "packages/root-skip"));
-        assert!(is_ignored(&r, "nested/hidden/p"));
-        assert!(!is_ignored(&r, "x/nested/hidden"));
+        assert!(r.ignores("root-skip", true));
+        assert!(!r.ignores("packages/root-skip", true));
+        assert!(r.ignores("nested/hidden/p", true));
+        assert!(!r.ignores("x/nested/hidden", true));
     }
 
     #[test]
     fn gitignore_matches_ascii_case_insensitively() {
-        assert!(is_ignored(&rules("Upper/\n"), "upper"));
-        assert!(is_ignored(&rules("Upper\n"), "x/UPPER"));
+        assert!(rules("Upper/\n").ignores("upper", true));
+        assert!(rules("Upper\n").ignores("x/UPPER", true));
     }
 
     #[test]
     fn gitignore_builtin_excludes_apply_at_any_depth() {
         let r = rules("");
 
-        assert!(is_ignored(&r, "a/node_modules"));
-        assert!(is_ignored(&r, ".git"));
-        assert!(!is_ignored(&r, ".github"));
+        assert!(r.ignores("a/node_modules", true));
+        assert!(r.ignores(".git", true));
+        assert!(!r.ignores(".github", true));
     }
 
     #[test]
     fn gitignore_delegates_on_unsupported_rules() {
-        for line in ["!keep", "*.log", "a/**/b", "dist*", "a b", "\\#x", "a//b", "/"] {
-            assert!(parse_gitignore_line(line).is_none(), "{line}");
+        for line in ["!keep", "a/**/b", "**/b", "a b", "a[1]", "\\#x", "a//b", "/", "a\r", "ü"] {
+            assert!(Rules::from_lines([line]).is_none(), "{line}");
         }
 
-        assert!(matches!(parse_gitignore_line("# note"), Some(None)));
-        assert!(matches!(parse_gitignore_line(""), Some(None)));
+        for line in ["# note", "", "  ", "*.log", "dist*", "a?", "tmp?/", "/build-*", "# café"] {
+            assert!(Rules::from_lines([line]).is_some(), "{line}");
+        }
     }
 
     #[test]
@@ -862,6 +740,46 @@ mod gitignore_fixture_tests {
             project_directories(&root),
             Membership::Native(vec!["packages/a".to_string(), "nested/keep".to_string()])
         );
+    }
+
+    /// The same files and the same list as the wildcard case of `workspace-membership.test.ts`, whose Node run is the
+    /// reference: `*` and `?` in the root `.gitignore` are matched here, not left to Node.
+    #[test]
+    fn root_gitignore_drops_wildcard_matches() {
+        let root = std::env::temp_dir().join(format!("vis-workspace-gitignore-wildcard-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        let files = [
+            ("package.json", "{\"name\":\"root\",\"private\":true}"),
+            (".gitignore", "*-skip\ntmp?\n/build-*\nnested/*/gen\nMixed*\n   \n# café\n"),
+            ("pnpm-workspace.yaml", "packages:\n  - \"packages/**\"\n  - \"nested/**\"\n  - \"build-*\"\n"),
+            ("build-one/package.json", "{\"name\":\"p\"}"),
+            ("nested/a/gen/package.json", "{\"name\":\"p\"}"),
+            ("nested/a/keep/package.json", "{\"name\":\"p\"}"),
+            ("nested/gen/package.json", "{\"name\":\"p\"}"),
+            ("packages/MixedCase/package.json", "{\"name\":\"p\"}"),
+            ("packages/a-skip/package.json", "{\"name\":\"p\"}"),
+            ("packages/a/package.json", "{\"name\":\"p\"}"),
+            ("packages/build-two/package.json", "{\"name\":\"p\"}"),
+            ("packages/tmp1/package.json", "{\"name\":\"p\"}"),
+            ("packages/tmp12/package.json", "{\"name\":\"p\"}"),
+            ("packages/x/b-skip/package.json", "{\"name\":\"p\"}"),
+        ];
+
+        for (path, text) in files {
+            let target = root.join(path);
+            fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+            fs::write(target, text).expect("write");
+        }
+
+        let Membership::Native(mut got) = project_directories(&root) else {
+            panic!("wildcard rules should stay native");
+        };
+        got.sort();
+
+        assert_eq!(got, ["nested/a/keep", "nested/gen", "packages/a", "packages/build-two", "packages/tmp12"]);
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

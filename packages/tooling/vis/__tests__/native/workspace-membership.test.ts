@@ -107,4 +107,39 @@ describe("native workspace membership parity", () => {
 
         expect(discover(root)).toStrictEqual(["nested/keep", "packages/a"]);
     });
+
+    // The same files and the same list as `root_gitignore_drops_wildcard_matches` in `native/cli/src/workspace.rs`.
+    it("matches the root .gitignore wildcard rules", () => {
+        expect.assertions(1);
+
+        const root = mkdtempSync(join(tmpdir(), "vis-workspace-gitignore-wildcard-"));
+
+        onTestFinished(() => {
+            rmSync(root, { force: true, recursive: true });
+        });
+
+        const files: Record<string, string> = {
+            ".gitignore": "*-skip\ntmp?\n/build-*\nnested/*/gen\nMixed*\n   \n# café\n",
+            "build-one/package.json": "{}",
+            "nested/a/gen/package.json": "{}",
+            "nested/a/keep/package.json": "{}",
+            "nested/gen/package.json": "{}",
+            "package.json": '{"name":"root","private":true}',
+            "packages/a-skip/package.json": "{}",
+            "packages/a/package.json": "{}",
+            "packages/build-two/package.json": "{}",
+            "packages/MixedCase/package.json": "{}",
+            "packages/tmp1/package.json": "{}",
+            "packages/tmp12/package.json": "{}",
+            "packages/x/b-skip/package.json": "{}",
+            "pnpm-workspace.yaml": 'packages:\n  - "packages/**"\n  - "nested/**"\n  - "build-*"\n',
+        };
+
+        for (const [path, text] of Object.entries(files)) {
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), text);
+        }
+
+        expect(discover(root)).toStrictEqual(["nested/a/keep", "nested/gen", "packages/a", "packages/build-two", "packages/tmp12"]);
+    });
 });

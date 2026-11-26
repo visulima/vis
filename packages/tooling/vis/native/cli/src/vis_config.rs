@@ -16,10 +16,9 @@ use oxc_ast::ast::{
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use serde_json::{Map, Number, Value};
-use vis_core::lockfiles::LOCKFILES;
 
-use crate::js::is_truthy;
 use crate::node_context::any_ancestor_has;
+use crate::root_search::config_root;
 
 /// Top-level keys the native path must leave to Node. `runtime` and `extends` change what
 /// the Node loader resolves, `versionConstraint` can fail the run, `security` makes the Node
@@ -100,7 +99,7 @@ fn read_config(cwd: &Path, evaluate: bool) -> ConfigState {
         // `vis.config` from is never run, so neither reaches the evaluator.
         None if evaluate
             && path.extension().is_some_and(|extension| extension != "json")
-            && node_config_root(cwd).as_deref() == path.parent() =>
+            && config_root(cwd).as_deref() == path.parent() =>
         {
             match crate::config_cache::resolve(&path) {
                 Some(crate::config_cache::Resolved::Data(value)) if value.is_object() => ConfigState::Static(value),
@@ -145,42 +144,6 @@ pub fn requires_node(state: &ConfigState) -> bool {
     }
 }
 
-/// The monorepo root Node's config loader reads `vis.config` from for `cwd`, or `None` when Node
-/// finds none and ignores the config. Mirrors `findMonorepoRoot`: a lerna root, else the workspace
-/// marker of the package manager the nearest lockfile or `packageManager` field names. A file that
-/// cannot be read or parsed makes Node fail the same lookup, so it counts as no root.
-pub fn node_config_root(cwd: &Path) -> Option<PathBuf> {
-    for directory in cwd.ancestors() {
-        if directory.join("lerna.json").is_file() {
-            let lerna = read_json(&directory.join("lerna.json"))?;
-
-            if lerna.is_object()
-                && (lerna.get("useWorkspaces").is_some_and(is_truthy) || lerna.get("packages").is_some_and(is_truthy))
-            {
-                return Some(directory.to_path_buf());
-            }
-
-            break;
-        }
-
-        if directory.join("turbo.json").is_file() {
-            break;
-        }
-    }
-
-    let (directory, manager) = nearest_package_manager(cwd)?;
-
-    let is_root = match manager {
-        Some("npm" | "yarn") => read_json(&directory.join("package.json"))
-            .and_then(|manifest| manifest.get("workspaces").cloned())
-            .is_some_and(|workspaces| workspaces.is_object() || workspaces.is_array()),
-        Some("pnpm") => directory.join("pnpm-workspace.yaml").exists(),
-        _ => false,
-    };
-
-    is_root.then(|| directory.to_path_buf())
-}
-
 /// Whether Node reads a `vis.config` pin from `cwd` and runs the pinned manager itself, so the
 /// native path may do the same. Node loads only the config file in the workspace root, and only the
 /// `.ts`/`.js` names (never `.json`). Node also picks its runtime from a bun lockfile, and a runtime
@@ -190,67 +153,7 @@ pub fn node_reads_pin(cwd: &Path) -> bool {
     let bun_lockfile =
         cwd.ancestors().any(|directory| directory.join("bun.lock").exists() || directory.join("bun.lockb").exists());
 
-    has_config && !bun_lockfile && node_config_root(cwd).as_deref() == Some(cwd)
-}
-
-/// Whether Node finds no monorepo root for `cwd` and so ignores every `vis.config` on the way up.
-/// `findMonorepoRoot` fails without an error only when no lerna or turbo marker, no lockfile and no
-/// `packageManager` pin is found, and every `package.json` parses. Any other failure is reported by Node,
-/// so it returns `false` and the command stays with Node.
-pub fn node_ignores_config(cwd: &Path) -> bool {
-    for directory in cwd.ancestors() {
-        let marked = directory.join("lerna.json").exists()
-            || directory.join("turbo.json").exists()
-            || LOCKFILES.iter().any(|(file, _)| directory.join(file).exists());
-
-        if marked {
-            return false;
-        }
-
-        let manifest_path = directory.join("package.json");
-
-        if manifest_path.exists() {
-            let Some(manifest) = read_json(&manifest_path) else {
-                return false;
-            };
-
-            if manifest.get("packageManager").and_then(Value::as_str).is_some() {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-/// The nearest directory that names a package manager, with that manager. `None` for the manager
-/// means the nearest marker names one Node cannot resolve a workspace from, such as bun.
-fn nearest_package_manager(cwd: &Path) -> Option<(&Path, Option<&'static str>)> {
-    for directory in cwd.ancestors() {
-        if let Some((_, name)) = LOCKFILES.iter().find(|(file, _)| directory.join(file).exists()) {
-            return Some((directory, Some(name)));
-        }
-
-        let manifest_path = directory.join("package.json");
-
-        if !manifest_path.is_file() {
-            continue;
-        }
-
-        let manifest = read_json(&manifest_path)?;
-
-        if let Some(field) = manifest.get("packageManager").and_then(Value::as_str) {
-            let name = ["npm", "yarn", "pnpm", "bun"].into_iter().find(|name| field.starts_with(name));
-
-            return Some((directory, name));
-        }
-    }
-
-    None
-}
-
-pub(crate) fn read_json(path: &Path) -> Option<Value> {
-    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+    has_config && !bun_lockfile && config_root(cwd).as_deref() == Some(cwd)
 }
 
 /// The config file of each directory from `cwd` up to the root, nearest first.
@@ -658,94 +561,6 @@ mod tests {
         }
 
         dir
-    }
-
-    #[test]
-    fn a_single_package_is_not_a_monorepo_root_for_node() {
-        let dir = files("single", &[("package.json", "{}"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")]);
-
-        assert_eq!(node_config_root(&dir), None);
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_bare_pnpm_workspace_has_no_node_root_and_node_ignores_its_config() {
-        let dir = files(
-            "bare-pnpm-workspace",
-            &[("pnpm-workspace.yaml", "packages: []\n"), ("vis.config.ts", "export default {};\n")],
-        );
-
-        assert_eq!(node_config_root(&dir), None);
-        assert!(node_ignores_config(&dir));
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_manifest_that_does_not_parse_is_not_a_silent_node_failure() {
-        let dir = files("broken-manifest", &[("package.json", "{"), ("pnpm-workspace.yaml", "packages: []\n")]);
-
-        assert!(!node_ignores_config(&dir));
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_workspace_marker_of_the_nearest_manager_is_a_monorepo_root() {
-        let pnpm = files(
-            "pnpm-root",
-            &[("pnpm-workspace.yaml", "packages: []\n"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")],
-        );
-        let npm = files("npm-root", &[("package.json", "{\"workspaces\":[]}"), ("package-lock.json", "{}")]);
-
-        assert_eq!(node_config_root(&pnpm), Some(pnpm.clone()));
-        assert_eq!(node_config_root(&npm), Some(npm.clone()));
-
-        fs::remove_dir_all(&pnpm).ok();
-        fs::remove_dir_all(&npm).ok();
-    }
-
-    #[test]
-    fn lerna_packages_make_a_root_even_for_bun() {
-        let dir = files("lerna-bun", &[("lerna.json", "{\"packages\":[]}"), ("bun.lock", "{}")]);
-
-        assert_eq!(node_config_root(&dir), Some(dir.clone()));
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn bun_workspaces_without_lerna_are_not_a_root_for_node() {
-        let dir = files("bun-workspaces", &[("package.json", "{\"workspaces\":[\"p/*\"]}"), ("bun.lock", "{}")]);
-
-        assert_eq!(node_config_root(&dir), None);
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn the_nearest_package_manager_decides_the_root() {
-        let root =
-            files("nearest", &[("pnpm-workspace.yaml", "packages: []\n"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")]);
-        let child = root.join("child");
-
-        fs::create_dir_all(&child).unwrap();
-        fs::write(child.join("package.json"), "{}").unwrap();
-        fs::write(child.join("package-lock.json"), "{}").unwrap();
-
-        assert_eq!(node_config_root(&child), None);
-
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn an_unparsable_manifest_is_not_a_root_for_node() {
-        let dir = files("bad-json", &[("package.json", "{"), ("pnpm-workspace.yaml", "packages: []\n")]);
-
-        assert_eq!(node_config_root(&dir), None);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

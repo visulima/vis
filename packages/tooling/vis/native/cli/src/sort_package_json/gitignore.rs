@@ -105,28 +105,7 @@ fn compile(line: &str) -> Option<Option<Rule>> {
 
 /// `*` matches any run of characters and `?` exactly one, case-insensitively; both stay inside a segment.
 fn segment_matches(pattern: &str, text: &str) -> bool {
-    let pattern = pattern.to_ascii_lowercase().into_bytes();
-    let text = text.to_ascii_lowercase().into_bytes();
-    let (mut p, mut t) = (0, 0);
-    let mut star: Option<(usize, usize)> = None;
-
-    while t < text.len() {
-        if p < pattern.len() && pattern[p] == b'*' {
-            star = Some((p, t));
-            p += 1;
-        } else if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
-            p += 1;
-            t += 1;
-        } else if let Some((star_at, matched)) = star {
-            p = star_at + 1;
-            t = matched + 1;
-            star = Some((star_at, matched + 1));
-        } else {
-            return false;
-        }
-    }
-
-    pattern[p..].iter().all(|&byte| byte == b'*')
+    super::segment_matches(pattern.to_ascii_lowercase().as_bytes(), text.to_ascii_lowercase().as_bytes())
 }
 
 #[cfg(test)]

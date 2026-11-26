@@ -4,12 +4,10 @@
 
 use std::env;
 use std::ffi::OsStr;
-use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use vis_core::lockfiles::LOCKFILES;
-
+use crate::root_search::{lockfile_managers, read_json, Manager};
 use crate::vis_config::has_vis_config;
 
 /// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads in a
@@ -96,18 +94,14 @@ pub(crate) fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
             return dir.join("pnpm-workspace.yaml").is_file().then(|| dir.to_path_buf());
         }
 
-        if LOCKFILES.iter().any(|(name, manager)| *manager != "pnpm" && dir.join(name).exists()) {
+        if lockfile_managers(dir).iter().any(|manager| *manager != Manager::Pnpm) {
             return None;
         }
 
         let manifest = dir.join("package.json");
 
-        if manifest.exists() {
-            let parsed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&manifest).ok()?).ok()?;
-
-            if parsed.get("packageManager").is_some() {
-                return None;
-            }
+        if manifest.exists() && read_json(&manifest)?.get("packageManager").is_some() {
+            return None;
         }
     }
 
@@ -181,6 +175,8 @@ pub(crate) fn any_ancestor_has(directory: &Path, names: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     /// `<temp>/vis-root-gate-<name>/app`, with a `package.json` in `app` and, when asked, in its parent.
