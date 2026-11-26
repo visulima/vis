@@ -36,7 +36,7 @@ const shapes = (command: string): string[][] => [
     ...(command === "why" || command === "outdated" ? [[command, "--json", "-h"]] : []),
 ];
 
-describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis package-manager commands, --help: native vs Node", () => {
+describe.skipIf(!binary || !existsSync(nodeEntry))("vis package-manager commands, --help: native vs Node", () => {
     const paths = { bin: "", marker: "", project: "", stub: "" };
 
     beforeAll(() => {

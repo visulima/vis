@@ -49,7 +49,7 @@ const environment = (columns: string, color: boolean): Record<string, string> =>
     return env;
 };
 
-describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis cache group help: native vs Node", () => {
+describe.skipIf(!binary || !existsSync(nodeEntry))("vis cache group help: native vs Node", () => {
     const paths = { project: "", stub: "" };
 
     beforeAll(() => {
