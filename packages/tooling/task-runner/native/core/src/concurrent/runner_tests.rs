@@ -33,6 +33,42 @@ mod tests {
         ConcurrentRunnerOptions::default()
     }
 
+    /// Many pty commands at once, on every platform: each must close and deliver its output. On
+    /// Windows a ConPTY keeps its output open until the terminal is closed, so this is the test
+    /// for a run that never ends.
+    #[tokio::test]
+    async fn test_twenty_pty_commands_at_once_all_finish_with_their_output() {
+        std::env::set_var("VIS_PTY_TRACE", "1"); // TEMPORARY
+        let commands: Vec<_> = (0..20)
+            .map(|number| {
+                let mut config = make_config(&format!("echo pty-{number}"), None);
+                config.stdin = StdinMode::Pty;
+                config
+            })
+            .collect();
+        let runner = ConcurrentRunner::new(commands, &default_options());
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<ProcessEvent>();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), runner.run(event_tx, no_control()))
+            .await
+            .expect("a run of pty commands must end");
+
+        assert!(result.success, "{result:?}");
+        assert_eq!(result.close_events.len(), 20);
+
+        let mut output = vec![String::new(); 20];
+
+        while let Ok(event) = event_rx.try_recv() {
+            if let ProcessEvent::Stdout { index, text } = event {
+                output[index as usize].push_str(&text);
+            }
+        }
+
+        for (number, text) in output.iter().enumerate() {
+            assert!(text.contains(&format!("pty-{number}")), "command {number} printed {text:?}");
+        }
+    }
+
     #[tokio::test]
     async fn test_single_echo_command() {
         let commands = vec![make_config("echo hello", Some("greeter"))];

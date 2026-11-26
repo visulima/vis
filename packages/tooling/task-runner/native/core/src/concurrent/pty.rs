@@ -27,9 +27,23 @@ use super::types::{ConcurrentCloseEvent, ConcurrentCommandConfig, KillSignal, Pr
 /// Read size for the terminal's output.
 const READ_CHUNK: usize = 8192;
 
+// TEMPORARY: Windows hang diagnosis.
+fn trace(message: &str) {
+    if std::env::var_os("VIS_PTY_TRACE").is_some() {
+        eprintln!(
+            "[pty {:?}] {message}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() % 100_000)
+                .unwrap_or(0)
+        );
+    }
+}
+
 /// What the runner can do to a running pty command beyond signalling it.
 pub(crate) struct PtyControl {
-    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    /// `None` once the terminal has been closed (see `close_terminal`).
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     pid: Option<u32>,
     terminated: Arc<AtomicBool>,
 }
@@ -38,7 +52,9 @@ impl PtyControl {
     /// Change the terminal's size. The command gets SIGWINCH.
     pub(crate) fn resize(&self, size: PtySize) {
         if let Ok(master) = self.master.lock() {
-            let _ = master.resize(portable_size(size));
+            if let Some(master) = master.as_ref() {
+                let _ = master.resize(portable_size(size));
+            }
         }
     }
 }
@@ -49,6 +65,12 @@ impl Drop for PtyControl {
     fn drop(&mut self) {
         if let (Some(pid), false) = (self.pid, self.terminated.load(Ordering::Acquire)) {
             let _ = process_group::kill_tree(pid, KillSignal::Kill);
+        }
+
+        // Closing a Windows terminal blocks (see `close_terminal`): not on the runner's thread.
+        #[cfg(windows)]
+        if let Some(master) = self.master.lock().ok().and_then(|mut master| master.take()) {
+            std::thread::spawn(move || drop(master));
         }
     }
 }
@@ -194,20 +216,25 @@ pub(crate) fn spawn_pty(
     let reader = master.try_clone_reader().map_err(std::io::Error::other)?;
     let writer = master.take_writer().map_err(std::io::Error::other)?;
 
+    trace(&format!("{index}: spawned pid {pid:?}"));
     sink.send(ProcessEvent::Started { index, pid });
 
     let parked = Arc::new(AtomicUsize::new(0));
     let output = sink.counting_parked(Arc::clone(&parked));
     let abandoned = Arc::new(AtomicBool::new(false));
+    let activity = Arc::new(Activity::new());
     let runtime = Handle::current();
+    let master = Arc::new(Mutex::new(Some(master)));
 
     let (output_done_tx, output_done_rx) = oneshot::channel::<()>();
 
     std::thread::spawn({
         let abandoned = Arc::clone(&abandoned);
+        let activity = Arc::clone(&activity);
 
         move || {
-            read_output(reader, &output, &runtime, index, &abandoned);
+            read_output(reader, &output, &runtime, index, &abandoned, &activity);
+            trace(&format!("{index}: reader ended"));
 
             let _ = output_done_tx.send(());
         }
@@ -228,10 +255,20 @@ pub(crate) fn spawn_pty(
     let giving_up = Arc::clone(giving_up);
     let command = config.command.clone();
     let name = config.name.clone();
+    let terminal = Arc::clone(&master);
 
     tokio::spawn(async move {
         let (exit_code, signalled) = exit_rx.await.unwrap_or((-1, false));
         let duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+        trace(&format!("{index}: exited with {exit_code}"));
+
+        // On Windows the output only ends once the terminal is closed.
+        #[cfg(windows)]
+        close_terminal(&terminal, &activity, &parked, &giving_up).await;
+        trace(&format!("{index}: terminal closed"));
+        #[cfg(not(windows))]
+        drop(terminal);
 
         // A descendant that outlives the command keeps the terminal open, and the output would
         // never end: give it the same grace the pipes get, then reap the group.
@@ -243,6 +280,8 @@ pub(crate) fn spawn_pty(
             &giving_up,
         )
         .await;
+
+        trace(&format!("{index}: drained {drained}"));
 
         if !drained {
             abandoned.store(true, Ordering::Release);
@@ -276,7 +315,7 @@ pub(crate) fn spawn_pty(
         pid,
         terminated: Arc::clone(&terminated),
         input: Some(InputHandle::from_sender(input_tx)),
-        pty: Some(PtyControl { master: Arc::new(Mutex::new(master)), pid, terminated }),
+        pty: Some(PtyControl { master, pid, terminated }),
         #[cfg(windows)]
         job,
     })
@@ -357,6 +396,67 @@ fn start_without_fork(builder: &CommandBuilder, size: PtySize) -> Option<(super:
     Some((master, pid))
 }
 
+/// When a terminal's output was last read, so that a Windows terminal is closed only once the
+/// output has stopped.
+struct Activity {
+    started: Instant,
+    /// Milliseconds after `started`.
+    last: std::sync::atomic::AtomicU64,
+}
+
+impl Activity {
+    fn new() -> Self {
+        Self { started: Instant::now(), last: std::sync::atomic::AtomicU64::new(0) }
+    }
+
+    fn touch(&self) {
+        self.last.store(self.started.elapsed().as_millis() as u64, Ordering::Release);
+    }
+
+    /// How long since the output was last read (or since the terminal opened).
+    #[cfg(windows)]
+    fn idle(&self) -> std::time::Duration {
+        self.started.elapsed().saturating_sub(std::time::Duration::from_millis(self.last.load(Ordering::Acquire)))
+    }
+}
+
+/// Close the terminal of a command that has exited, once its output has gone quiet.
+///
+/// A ConPTY's output pipe stays open after its command exits, until `ClosePseudoConsole`; the
+/// reader would wait for the end of the output for the whole drain grace, and then the terminal
+/// would be closed with nobody reading it, which can block for good. Closing it here, while the
+/// reader is still reading, ends the output as soon as it has all been read. `ClosePseudoConsole`
+/// blocks until the console host is done, so it runs on a thread of its own.
+#[cfg(windows)]
+async fn close_terminal(
+    master: &Mutex<Option<Box<dyn MasterPty + Send>>>,
+    activity: &Activity,
+    parked: &AtomicUsize,
+    giving_up: &AtomicBool,
+) {
+    use std::time::Duration;
+
+    const QUIET: Duration = Duration::from_millis(75);
+    const LONGEST_WAIT: Duration = Duration::from_secs(1);
+
+    let waited = Instant::now();
+
+    // Output that is still arriving, or that the consumer has not taken yet, is not finished.
+    while (activity.idle() < QUIET && waited.elapsed() < LONGEST_WAIT)
+        || (parked.load(Ordering::Acquire) > 0 && !giving_up.load(Ordering::Acquire))
+    {
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
+
+    if let Some(master) = master.lock().ok().and_then(|mut master| master.take()) {
+        std::thread::spawn(move || {
+            trace("closing the pseudo console");
+            drop(master);
+            trace("pseudo console closed");
+        });
+    }
+}
+
 /// Read the terminal until it ends, sending each chunk as an output event. Runs on its own thread.
 fn read_output(
     mut reader: Box<dyn Read + Send>,
@@ -364,6 +464,7 @@ fn read_output(
     runtime: &Handle,
     index: u32,
     abandoned: &AtomicBool,
+    activity: &Activity,
 ) {
     let mut chunker = Utf8Chunker::default();
     let mut buffer = [0u8; READ_CHUNK];
@@ -371,6 +472,8 @@ fn read_output(
     // A read error is how a terminal reports the end of its output on some platforms (EIO on
     // Linux when the last slave descriptor closes), so it ends the stream like EOF does.
     while let Ok(count @ 1..) = reader.read(&mut buffer) {
+        activity.touch();
+
         let text = chunker.push(&buffer[..count]);
 
         if abandoned.load(Ordering::Acquire) {
