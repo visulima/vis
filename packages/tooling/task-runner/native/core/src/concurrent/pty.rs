@@ -227,20 +227,20 @@ pub(crate) fn spawn_pty(
     let master = Arc::new(Mutex::new(Some(master)));
 
     let (output_done_tx, output_done_rx) = oneshot::channel::<()>();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     std::thread::spawn({
         let abandoned = Arc::clone(&abandoned);
         let activity = Arc::clone(&activity);
+        let input = input_tx.clone();
 
         move || {
-            read_output(reader, &output, &runtime, index, &abandoned, &activity);
+            read_output(reader, &output, &runtime, index, &abandoned, &activity, &input);
             trace(&format!("{index}: reader ended"));
 
             let _ = output_done_tx.send(());
         }
     });
-
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     std::thread::spawn(move || write_input(writer, input_rx));
 
@@ -457,6 +457,29 @@ async fn close_terminal(
     }
 }
 
+/// What a ConPTY writes when it starts a command: a request for the cursor position. `portable-pty`
+/// always asks ConPTY to inherit the cursor, and the command does not start until the request is
+/// answered, so a host that does not answer runs nothing.
+#[cfg(any(windows, test))]
+const CURSOR_REQUEST: &str = "\x1b[6n";
+
+/// The answer: the cursor is at row 1, column 1.
+#[cfg(windows)]
+const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
+
+/// Take every cursor position request out of `text`; returns how many there were, each of which
+/// is owed a reply. The consumer gets the output without them: the runner answered, so it must not.
+#[cfg(any(windows, test))]
+fn take_cursor_requests(text: &mut String) -> usize {
+    let requests = text.matches(CURSOR_REQUEST).count();
+
+    if requests > 0 {
+        *text = text.replace(CURSOR_REQUEST, "");
+    }
+
+    requests
+}
+
 /// Read the terminal until it ends, sending each chunk as an output event. Runs on its own thread.
 fn read_output(
     mut reader: Box<dyn Read + Send>,
@@ -465,6 +488,7 @@ fn read_output(
     index: u32,
     abandoned: &AtomicBool,
     activity: &Activity,
+    input: &mpsc::UnboundedSender<Vec<u8>>,
 ) {
     let mut chunker = Utf8Chunker::default();
     let mut buffer = [0u8; READ_CHUNK];
@@ -474,7 +498,15 @@ fn read_output(
     while let Ok(count @ 1..) = reader.read(&mut buffer) {
         activity.touch();
 
-        let text = chunker.push(&buffer[..count]);
+        #[allow(unused_mut)]
+        let mut text = chunker.push(&buffer[..count]);
+
+        #[cfg(windows)]
+        for _ in 0..take_cursor_requests(&mut text) {
+            let _ = input.send(CURSOR_REPLY.to_vec());
+        }
+        #[cfg(not(windows))]
+        let _ = input;
 
         if abandoned.load(Ordering::Acquire) {
             return;
@@ -571,6 +603,19 @@ mod tests {
         let chunks: Vec<&[u8]> = grin.chunks(1).collect();
 
         assert_eq!(decode(&chunks).concat(), "😀");
+    }
+
+    #[test]
+    fn cursor_position_requests_are_taken_out_of_the_output_and_counted() {
+        let mut text = "\x1b[?9001h\x1b[6n\x1b[2Jhello\x1b[6n".to_string();
+
+        assert_eq!(take_cursor_requests(&mut text), 2);
+        assert_eq!(text, "\x1b[?9001h\x1b[2Jhello");
+
+        let mut plain = "no request here".to_string();
+
+        assert_eq!(take_cursor_requests(&mut plain), 0);
+        assert_eq!(plain, "no request here");
     }
 
     #[test]
