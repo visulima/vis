@@ -1757,13 +1757,16 @@
 ["inspect","express","--json","--only"] => inspect
 ["inspect","express","--json","--only","archivedRepo"] => inspect
 ["inspect","express","--json","--only","archivedRepo,author"] => inspect
+["inspect","express","--json","--only","archivedRepo,expiredDomains"] => inspect
 ["inspect","express","--json","--only","author","--only","newBin"] => inspect
 ["inspect","express","--json","--only","author,"] => inspect
 ["inspect","express","--json","--only","author,newBin"] => inspect
 ["inspect","express","--json","--only","downloads"] => inspect
+["inspect","express","--json","--only","downloads,author"] => inspect
 ["inspect","express","--json","--only","expiredDomains"] => inspect
 ["inspect","express","--json","--only","nope"] => inspect
 ["inspect","express","--json","--only","signatures"] => inspect
+["inspect","express","--json","--only","signatures,expiredDomains"] => inspect
 ["inspect","express","--json","--only=author"] => inspect
 ["inspect","express","--json","--strict","--strict"] => inspect
 ["inspect","express","--json=true"] => inspect

@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -11,15 +11,20 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
 
 /**
  * `vis inspect &lt;package> --json` exists twice: the Node handler (`src/commands/inspect/handler.ts`) and the native path
- * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument alone (`author`, `provenance`,
- * `s1ngularity`, `newBin`, `metadata`). For every input the native path accepts it must print the same JSON on the same
+ * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument (`author`, `provenance`,
+ * `s1ngularity`, `newBin`, `metadata`), `downloads` (the registry's download API), `archivedRepo` (GitHub), `signatures`, which
+ * reads the registry's keys from `VIS_NPM_KEYS_URL` (a variable both sides honour, so the stub serves it) and verifies with ECDSA,
+ * and `expiredDomains` (a DNS lookup of the maintainers' domains), so the default set runs natively. For every input the native path accepts it must print the same JSON on the same
  * stream, end with the same exit status and leave the same packument cache as Node; every input it declines must be handed
  * to Node before anything is printed or written (see `workspace-parity-harness.ts` for how both are proved).
  *
  * The registry is a stub in a separate process (the runs block this one) that the `.npmrc` of the workspace points both
  * sides at, so nothing reaches the network. Each side gets its own `HOME`, because the cache lives in
  * `~/.vis/cache/packuments`; the `createdAt` of a fresh cache entry is masked. The marshalls that ask other services
- * (`expiredDomains`, `archivedRepo`, `downloads`) are switched off with `MARSHALL_DISABLE_*`, which both sides read.
+ * (`expiredDomains`, `archivedRepo`, `downloads`) are switched off with `MARSHALL_DISABLE_*`, which both sides read. A run that
+ * needs `downloads` answers from the cache file both sides read (the download API's address is a constant, so no run can
+ * point either side at a stub); what each side does with an answer of the API is proved by `downloads answers` below, with
+ * Node's `fetch` replaced and the binary's side by the unit tests in `native/cli/src/inspect/tests.rs`, which assert the same text.
  */
 
 const harness = new Harness(["inspect"]);
@@ -44,6 +49,25 @@ const packument = (name: string, versions: Record<string, unknown>, time: Record
 const BOM = String.fromCodePoint(0xFE_FF);
 /** A readme with an accented letter, the line separator U+2028, an astral character, a quote and a backslash. */
 const README = `caf\u00E9 ${String.fromCodePoint(0x20_28)} ${String.fromCodePoint(0x1_F6_00)} "q" \\`;
+
+/** Registry signing keys made for the run: the key a signature must verify against, an expired one, one that expires far ahead, and a stranger. */
+const signingKey = (): { privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"]; spki: string } => {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    return { privateKey, spki: publicKey.export({ format: "der", type: "spki" }).toString("base64") };
+};
+const KEY_ONE = signingKey();
+const KEY_STRANGER = signingKey();
+const registryKey = (keyid: string, key = KEY_ONE, expires?: string): Record<string, unknown> => {
+    return { key: key.spki, keyid, keytype: "ecdsa-sha2-nistp256", scheme: "ecdsa-sha2-nistp256", ...(expires === undefined ? {} : { expires }) };
+};
+/** `SHA256:null` has `"expires": null`, as npm's current key does. */
+const KEYS = [registryKey("SHA256:one"), registryKey("SHA256:old", KEY_ONE, "2020-01-01T00:00:00.000Z"), registryKey("SHA256:later", KEY_ONE, "2999-01-01T00:00:00.000Z"), { ...registryKey("SHA256:null"), expires: null }];
+const sign = (name: string, integrity: string, key = KEY_ONE): string => createSign("SHA256").update(`${name}@1.0.0:${integrity}`).end().sign(key.privateKey, "base64");
+const signedPackage = (name: string, signatures: { keyid: string; sig?: string }[], integrity: string | false = "sha512-integrity"): Record<string, unknown> => packument(name, { "1.0.0": version("amy", { dist: { ...(integrity === false ? {} : { integrity }), signatures } }) }, { "1.0.0": ago(50.3) });
+const keyed = (name: string, keyid = "SHA256:one", key = KEY_ONE): { keyid: string; sig: string } => {
+    return { keyid, sig: sign(name, "sha512-integrity", key) };
+};
 
 const SIGNED = { dist: { attestations: { provenance: { predicateType: "x" } }, tarball: "https://registry.example.test/p.tgz", unpackedSize: 12_345 } };
 
@@ -73,6 +97,19 @@ const ANSWERS: Record<string, Answer> = {
     "/bom": { body: `${BOM}${JSON.stringify(packument("bom", { "1.0.0": version("amy") }))}` },
     "/calm": json(packument("calm", { "1.0.0": version("amy"), "1.1.0": version("amy"), "1.2.0": version("amy") }, { "1.0.0": ago(100.3), "1.1.0": ago(90.3), "1.2.0": ago(80.3) })),
     "/dangling": json(packument("dangling", { "1.0.0": version("amy") }, {}, { "dist-tags": { latest: "9.9.9" } })),
+    // Maintainer addresses in the shapes `extractDomain` reads: the user and the list, the same address twice, another address of
+    // the same domain, a domain in capitals, a name without an address, a string and a number in place of an address.
+    "/domains": json(
+        packument("domains", {
+            "1.0.0": {
+                _npmUser: { email: "Amy@GONE.example", name: "amy" },
+                license: "MIT",
+                maintainers: [{ email: "Amy@GONE.example", name: "amy" }, { email: "bob@gone.example", name: "bob" }, { email: "cat@fine.example", name: "cat" }, { name: "dan" }, "eve", { email: 5, name: "fay" }, { email: "gus@", name: "gus" }, { email: "hal@odd.example", name: "hal" }],
+                readme: "# readme",
+                repository: { url: "git+https://github.com/o/r.git" },
+            },
+        }),
+    ),
     "/dormant": json(packument("dormant", { "1.0.0": version("amy"), "1.1.0": version("amy") }, { "1.0.0": ago(200.4), "1.1.0": ago(100.3) })),
     "/empty": json({ name: "empty", versions: {} }),
     "/gzipped": { body: JSON.stringify(packument("gzipped", { "1.0.0": version("amy") }, { "1.0.0": ago(50.3) })), gzip: true },
@@ -82,10 +119,16 @@ const ANSWERS: Record<string, Answer> = {
             "1.1.0": version("amy", { scripts: { install: "node b.js", postinstall: "node c.js", preinstall: "" } }),
         }),
     ),
+    // The registry's signing keys, at addresses `VIS_NPM_KEYS_URL` names.
+    "/keys/empty": { body: "{}" },
+    "/keys/not-json": { body: "<html></html>" },
+    "/keys/ok": json({ keys: KEYS }),
+    "/keys/server-error": { body: "broken", status: 500 },
     "/loose-tag": json(packument("loose-tag", { "1.0.0": version("amy") }, {}, { "dist-tags": { latest: "v1.0.0" } })),
     "/loose-version": json(packument("loose-version", { "1.0": version("amy"), "1.0.0": version("amy") }, { "1.0.0": ago(50.3) })),
     "/meta": json(packument("meta", { "1.0.0": { _npmUser: user("amy"), license: { type: " " }, readme: "ERROR: No README data found!", repository: { url: "nonsense" } } })),
     "/no-versions": json({ name: "no-versions" }),
+    "/non-ascii": json(packument("non-ascii", { "1.0.0": version("amy", { _npmUser: { email: "amy@EX\u00C4MPLE.test", name: "amy" } }) })),
     "/not-json": { body: "<html></html>" },
     "/null-dist": json(packument("null-dist", { "1.0.0": { dist: null } })),
     "/null-entry": json(packument("null-entry", { "1.0.0": null })),
@@ -110,6 +153,15 @@ const ANSWERS: Record<string, Answer> = {
     "/redirect": { body: "", headers: { location: "/calm" }, status: 302 },
     // What goes to Node.
     "/server-error": { body: "broken", status: 500 },
+    "/sig-bad": json(signedPackage("sig-bad", [keyed("sig-bad", "SHA256:one", KEY_STRANGER)])),
+    "/sig-expired": json(signedPackage("sig-expired", [keyed("sig-expired", "SHA256:old")])),
+    "/sig-future": json(signedPackage("sig-future", [keyed("sig-future", "SHA256:later")])),
+    "/sig-good": json(signedPackage("sig-good", [keyed("sig-good")])),
+    "/sig-malformed": json(signedPackage("sig-malformed", [{ keyid: "SHA256:one", sig: "not base64!" }])),
+    "/sig-no-integrity": json(signedPackage("sig-no-integrity", [{ keyid: "SHA256:one", sig: "x" }], false)),
+    "/sig-none": json(signedPackage("sig-none", [])),
+    "/sig-null-expiry": json(signedPackage("sig-null-expiry", [keyed("sig-null-expiry", "SHA256:null")])),
+    "/sig-two": json(signedPackage("sig-two", [keyed("sig-two"), { keyid: "SHA256:unlisted", sig: "x" }])),
     "/tagless": json({ name: "tagless", versions: { "1.0.0": version("amy"), "2.0.0": version("amy") } }),
     // Repository URLs in the shapes `URL.canParse` judges the same way in every version of Node.
     "/urls": json(
@@ -508,6 +560,386 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
     });
 
+    describe("the downloads marshall", () => {
+        const count = (downloads: number): Record<string, string> => {
+            return { ".vis/cache/downloads/calm.json": JSON.stringify({ createdAt: Date.now(), downloads, observedAt: new Date().toISOString(), ttlMs: 86_400_000 }) };
+        };
+
+        it.each([[0], [5], [19], [20], [9999], [10_000], [3_000_000]])("reports a cached count of %i the way Node does", (downloads) => {
+            expect.hasAssertions();
+
+            const result = report(run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: count(downloads), native: true }).stdout);
+
+            expect(result.summary.errorCount).toBe(downloads < 20 ? 1 : 0);
+            expect(result.summary.warningCount).toBe(downloads >= 20 && downloads < 10_000 ? 1 : 0);
+        });
+
+        it.each([['"7"'], ["5.5"], ["-1"]])("hands over a cached count of %s, which Node writes differently", (downloads) => {
+            expect.hasAssertions();
+
+            const entry = `{"createdAt":${Date.now()},"downloads":${downloads},"observedAt":"2024-01-01T00:00:00.000Z","ttlMs":86400000}`;
+
+            run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/calm.json": entry }, native: false });
+        });
+
+        it("reads the cache file of a scoped package under its encoded name", () => {
+            expect.hasAssertions();
+
+            const entry = JSON.stringify({ createdAt: Date.now(), downloads: 12, observedAt: new Date().toISOString(), ttlMs: 86_400_000 });
+            const result = report(run({ args: ["@scope/bins", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/%40scope%2Fbins.json": entry }, native: true }).stdout);
+
+            expect(result.errors.map((finding) => finding.message)).toStrictEqual(["Only 12 downloads in the past month."]);
+        });
+
+        it("runs after metadata and with the exit status Node gives", () => {
+            expect.hasAssertions();
+
+            const result = run({ args: ["young", "--json", "--only", "metadata,downloads,author"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files: { ".vis/cache/downloads/young.json": count(5)[".vis/cache/downloads/calm.json"] as string }, native: true });
+
+            expect(result.status).toBe(1);
+        });
+    });
+
+    describe("the archivedRepo marshall", () => {
+        const cached = (body: string): Record<string, string> => {
+            return { ".vis/cache/archived-repo/o__r.json": `{"createdAt":${Date.now()},"ttlMs":86400000,${body}}` };
+        };
+        const ON = { MARSHALL_DISABLE_ARCHIVED_REPO: "0" };
+
+        it.each([
+            ['"archived":true,"archivedAt":"2024-01-02T03:04:05Z"', "Source repo o/r is archived (since 2024-01-02T03:04:05Z)."],
+            ['"archived":true', "Source repo o/r is archived."],
+            ['"archived":false,"missing":true', "Source repo o/r returned 404 from GitHub."],
+        ])("reports the cached state %s the way Node does", (body, message) => {
+            expect.hasAssertions();
+
+            const result = report(run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: true }).stdout);
+
+            expect(result.warnings.map((finding) => finding.message)).toStrictEqual([message]);
+        });
+
+        it.each(['"archived":false', '"archived":false,"missing":false'])("reports nothing for the cached state %s", (body) => {
+            expect.hasAssertions();
+
+            expect(report(run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: true }).stdout).warnings).toHaveLength(0);
+        });
+
+        it.each(["urls@1.0.0", "urls@1.1.0", "urls@1.2.0", "urls@1.3.0", "urls@1.4.0", "urls@1.5.0", "urls@1.6.0", "urls@1.7.0", "odd-url", "dangling", "null-repository"])("reads the repository of %s the way Node does", (name) => {
+            expect.hasAssertions();
+
+            run({ args: [name, "--json", "--only", "archivedRepo"], extra: ON, files: cached('"archived":true'), native: true });
+        });
+
+        it.each(['"archived":true,"archivedAt":5', '"archived":true,"archivedAt":{}'])("hands over the cached state %s, which Node prints through JavaScript", (body) => {
+            expect.hasAssertions();
+
+            run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: ON, files: cached(body), native: false });
+        });
+
+        it("does not look at GITHUB_TOKEN when the cache answers", () => {
+            expect.hasAssertions();
+
+            // The cached state answers, so no request carries the token.
+            run({ args: ["calm", "--json", "--only", "archivedRepo"], extra: { ...ON, GITHUB_TOKEN: "a b" }, files: cached('"archived":true'), native: true });
+        });
+    });
+
+    describe("what the marshalls that ask other services print", () => {
+        const directory = (): string => realpathSync(mkdtempSync(join(scratch, "services-")));
+        const PRELOAD = String.raw`
+const original = globalThis.fetch;
+const answers = JSON.parse(process.env.SERVICE_ANSWERS);
+globalThis.fetch = async (url, options) => {
+    const text = String(url);
+    for (const [prefix, answer] of Object.entries(answers)) {
+        if (text.startsWith(prefix)) {
+            require("node:fs").appendFileSync(process.env.REQUEST_LOG, JSON.stringify({ headers: options?.headers ?? null, url: text }) + "\n");
+            if (answer.fail) throw new TypeError("fetch failed");
+            return new Response(answer.body, { headers: answer.headers ?? {}, status: answer.status });
+        }
+    }
+    return original(url, options);
+};
+`;
+
+        /** Node on the stub registry with the web services answering `answers`; what it prints, and the cache entries it wrote with the clock masked. */
+        const nodeWith = (
+            name: string,
+            only: string,
+            answers: Record<string, { body?: string; fail?: boolean; status?: number }>,
+            extra: Record<string, string> = {},
+        ): { cache: Record<string, string>; requests: { headers: Record<string, string> | null; url: string }[]; status: number | null; stdout: string } => {
+            const scratchDirectory = directory();
+            const preload = join(scratchDirectory, "preload.cjs");
+            const log = join(scratchDirectory, "requests.log");
+            const home = makeHome();
+            const [nodeRoot] = harness.pair(workspaceFiles({ ".npmrc": `registry=${base}/\n` }));
+
+            writeFileSync(preload, PRELOAD);
+
+            const result = spawnSync(process.execPath, ["--require", preload, nodeEntry, "inspect", name, "--json", "--only", only], {
+                cwd: nodeRoot,
+                encoding: "utf8",
+                env: Harness.environment({ HOME: home, MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", REQUEST_LOG: log, SERVICE_ANSWERS: JSON.stringify(answers), ...extra }),
+            });
+            const cache: Record<string, string> = {};
+
+            for (const [file, text] of Object.entries(homeState(home))) {
+                if (!file.includes("packuments")) {
+                    cache[file] = text.replace(/"observedAt":"[^"]+"/, '"observedAt":"NOW"');
+                }
+            }
+
+            const requests = existsSync(log)
+                ? readFileSync(log, "utf8")
+                    .split("\n")
+                    .filter(Boolean)
+                    .map((line) => JSON.parse(line) as { headers: Record<string, string> | null; url: string })
+                : [];
+
+            return { cache, requests, status: result.status, stdout: result.stdout };
+        };
+        const API = "https://api.npmjs.org/downloads/point/last-month/";
+        const written = (downloads: number): Record<string, string> => {
+            return { ".vis/cache/downloads/calm.json": `{"createdAt":"NOW","downloads":${downloads},"observedAt":"NOW","ttlMs":86400000}` };
+        };
+        const finding = (marshall: string, severity: string, message: string): string => `{\n      "marshall": "${marshall}",\n      "message": "${message}",\n      "packageName": "calm",\n      "severity": "${severity}"\n    }`;
+        const reportOf = (severity: string, message: string, marshall = "downloads"): string => {
+            const one = finding(marshall, severity, message);
+            const list = (key: string, own: boolean): string => `  "${key}": ${own ? `[\n    ${one}\n  ]` : "[]"}`;
+
+            return `{\n${list("errors", severity === "error")},\n${list("findings", true)},\n  "summary": {\n    "errorCount": ${severity === "error" ? 1 : 0},\n    "warningCount": ${severity === "warning" ? 1 : 0}\n  },\n${list("warnings", severity === "warning")}\n}\n`;
+        };
+
+        it.each([
+            [5, "error", "Only 5 downloads in the past month."],
+            [19, "error", "Only 19 downloads in the past month."],
+            [20, "warning", "Only 20 downloads in the past month."],
+            [9999, "warning", "Only 9999 downloads in the past month."],
+        ])("downloads answers a count of %i", (downloads, severity, message) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body: JSON.stringify({ downloads }), status: 200 } });
+
+            expect(result.stdout).toBe(reportOf(severity, message));
+            expect(result.cache).toStrictEqual(written(downloads));
+        });
+
+        it("downloads answers a large count with no finding and caches it", () => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body: '{"downloads":10000}', status: 200 } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual(written(10_000));
+        });
+
+        it.each([
+            [404, '{"error":"not found"}'],
+            [429, "{}"],
+            [500, "oops"],
+            [200, "{}"],
+            [200, '{"downloads":"5"}'],
+            [200, "null"],
+            [200, "[]"],
+            [200, "not json"],
+        ])("downloads answers a %i with %j as no data and caches nothing", (status, body) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "downloads", { [API]: { body, status } });
+
+            expect(result.stdout).toBe(reportOf("warning", "npm stats API returned no monthly download data."));
+            expect(result.cache).toStrictEqual({});
+        });
+
+        const GITHUB = "https://api.github.com/repos/o/r";
+        const archived = (extra: string): Record<string, string> => {
+            return { ".vis/cache/archived-repo/o__r.json": `{"createdAt":"NOW","ttlMs":86400000,${extra}}` };
+        };
+
+        it.each([
+            [200, '{"archived":true,"archived_at":"2024-01-02T03:04:05Z"}', "Source repo o/r is archived (since 2024-01-02T03:04:05Z).", '"archived":true,"archivedAt":"2024-01-02T03:04:05Z"'],
+            [200, '{"archived":true,"archived_at":null}', "Source repo o/r is archived.", '"archived":true'],
+            [404, '{"message":"Not Found"}', "Source repo o/r returned 404 from GitHub.", '"archived":false,"missing":true'],
+        ])("archivedRepo answers a %i with %j", (status, body, message, cached) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toBe(reportOf("warning", message, "archivedRepo"));
+            expect(result.cache).toStrictEqual(archived(cached));
+        });
+
+        it.each([
+            [200, '{"archived":false}', '"archived":false'],
+            [200, '{"archived":"yes"}', '"archived":false'],
+            [200, "{}", '"archived":false'],
+            [200, "[]", '"archived":false'],
+            [200, '{"archived":false,"archived_at":"x"}', '"archived":false,"archivedAt":"x"'],
+        ])("archivedRepo answers a %i with %j as no finding and caches it", (status, body, cached) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual(archived(cached));
+        });
+
+        it.each([
+            [403, "{}"],
+            [429, "{}"],
+            [500, "oops"],
+            [200, "null"],
+            [200, "not json"],
+        ])("archivedRepo answers a %i with %j as no finding and caches nothing", (status, body) => {
+            expect.hasAssertions();
+
+            const result = nodeWith("calm", "archivedRepo", { [GITHUB]: { body, status } });
+
+            expect(result.stdout).toContain('"findings": []');
+            expect(result.cache).toStrictEqual({});
+        });
+
+        it("archivedRepo sends the headers the binary sends, and the token when GITHUB_TOKEN is set", () => {
+            expect.hasAssertions();
+
+            const plain = nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } });
+
+            expect(plain.requests).toStrictEqual([{ headers: { Accept: "application/vnd.github+json", "User-Agent": "visulima-vis-marshall" }, url: GITHUB }]);
+
+            const token = nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } }, { GITHUB_TOKEN: "ghp_Token-1" });
+
+            expect(token.requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", Authorization: "Bearer ghp_Token-1", "User-Agent": "visulima-vis-marshall" });
+            expect(nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } }, { GITHUB_TOKEN: "" }).requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", "User-Agent": "visulima-vis-marshall" });
+        });
+    });
+
+    describe("the signatures marshall", () => {
+        const keys = (path: string): Record<string, string> => {
+            return { VIS_NPM_KEYS_URL: `${base}${path}` };
+        };
+        const only = ["--json", "--only", "signatures"];
+
+        it.each([
+            ["sig-good", "no finding"],
+            ["sig-future", "no finding"],
+            ["sig-null-expiry", "a key with a null expiry"],
+            ["sig-two", "an unrecognized keyid"],
+            ["sig-expired", "an expired key"],
+            ["sig-none", "a missing signature"],
+            ["sig-no-integrity", "a missing integrity"],
+        ])("reports %s (%s) the way Node does", (name) => {
+            expect.hasAssertions();
+
+            run({ args: [name, ...only], extra: keys("/keys/ok"), native: true });
+        });
+
+        it("reports the findings and the exit status Node gives", () => {
+            expect.hasAssertions();
+
+            const result = run({ args: ["sig-two", ...only], extra: keys("/keys/ok"), native: true });
+
+            expect(result.status).toBe(1);
+            expect(report(result.stdout).errors.map((finding) => finding.message)).toStrictEqual(["Package sig-two@1.0.0 was signed with an unrecognized keyid (SHA256:unlisted)."]);
+            expect(report(run({ args: ["sig-expired", ...only], extra: keys("/keys/ok"), native: true }).stdout).warnings.map((finding) => finding.message)).toStrictEqual([
+                "Package sig-expired@1.0.0 was signed with an expired key (SHA256:old, expired 2020-01-01T00:00:00.000Z).",
+            ]);
+        });
+
+        it.each(["/keys/server-error", "/keys/empty"])("answers the keys address %s the way Node does", (path) => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: keys(path), native: true });
+        });
+
+        it("uses the cached keys, and the old ones when the registry refuses", () => {
+            expect.hasAssertions();
+
+            const entry = (createdAt: number, ttlMs: number): Record<string, string> => {
+                return { ".vis/cache/registry-keys/npmjs.json": JSON.stringify({ createdAt, keys: KEYS, ttlMs }) };
+            };
+
+            run({ args: ["sig-good", ...only], extra: keys("/keys/server-error"), files: entry(Date.now(), 86_400_000), native: true });
+            run({ args: ["sig-good", ...only], extra: keys("/keys/server-error"), files: entry(1, 5), native: true });
+            run({ args: ["sig-good", ...only], extra: keys("/keys/ok"), files: entry(1, 5), native: true });
+        });
+
+        it.each(["sig-bad", "sig-malformed"])("hands over %s, which Node reports as an invalid signature", (name) => {
+            expect.hasAssertions();
+
+            const result = run({ args: [name, ...only], extra: keys("/keys/ok"), native: false });
+
+            expect(result.status).toBe(1);
+            expect(report(result.stdout).errors.map((finding) => finding.message)).toStrictEqual([`Package ${name}@1.0.0 signature did not verify against SHA256:one.`]);
+        });
+
+        it("hands over a keys answer that is not JSON", () => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: keys("/keys/not-json"), native: false });
+        });
+
+        it("hands over a keys address that is not a plain URL", () => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: { VIS_NPM_KEYS_URL: "http://127.0.0.1:80/keys" }, native: false });
+        });
+    });
+
+    describe("the expiredDomains marshall and the default set", () => {
+        const ON = { MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", MARSHALL_DISABLE_EXPIRED_DOMAINS: "0" };
+        const domain = (name: string, body: Record<string, unknown>): Record<string, string> => {
+            return { [`.vis/cache/expired-domains/${createHash("sha256").update(name).digest("hex").slice(0, 12)}.json`]: JSON.stringify({ createdAt: Date.now(), ttlMs: 86_400_000, ...body }) };
+        };
+
+        // Node answers these from the cache files of the services, so nothing reaches the network.
+        it.each([
+            ["the default set", ["calm", "--json"]],
+            ["the default set with --strict", ["calm", "--json", "--strict"]],
+            ["expiredDomains alone", ["calm", "--json", "--only", "expiredDomains"]],
+            ["every marshall but signatures, named", ["calm", "--json", "--only", "author,provenance,s1ngularity,newBin,metadata,downloads,expiredDomains,archivedRepo"]],
+        ])("answers %s from the caches of the services", (_label, args) => {
+            expect.hasAssertions();
+
+            run({ args, extra: ON, files: serviceCaches(), native: true });
+        });
+
+        it("reads each address of the version the way Node does", () => {
+            expect.hasAssertions();
+
+            const files = { ...domain("gone.example", { outcome: "expired" }), ...domain("fine.example", { outcome: "ok" }), ...domain("odd.example", { outcome: 5 }) };
+            const result = run({ args: ["domains", "--json", "--only", "expiredDomains"], extra: ON, files, native: true });
+            const messages = report(result.stdout).errors.map((finding) => finding.message);
+
+            expect(result.status).toBe(1);
+            expect(messages).toStrictEqual([
+                "Maintainer email domain gone.example (Amy@GONE.example) is unregistered \u2014 potential hijack risk.",
+                "Maintainer email domain gone.example (bob@gone.example) is unregistered \u2014 potential hijack risk.",
+                "Maintainer email domain odd.example (hal@odd.example) is unregistered \u2014 potential hijack risk.",
+            ]);
+        });
+
+        it.each([
+            ["an entry without an outcome", { outcome: undefined }, 1],
+            ["an outcome that is not ok", { outcome: "expired" }, 1],
+            ["an ok outcome", { outcome: "ok" }, 0],
+        ])("reads %s as Node does", (_label, body, errors) => {
+            expect.hasAssertions();
+
+            const files = { ...serviceCaches(), ...domain("example.test", body) };
+
+            expect(report(run({ args: ["calm", "--json", "--only", "expiredDomains"], extra: ON, files, native: true }).stdout).errors).toHaveLength(errors);
+        });
+
+        it("hands over a domain that is not ASCII, whose case JavaScript and Rust fold differently", () => {
+            expect.hasAssertions();
+
+            const files = domain("ex\u00E4mple.test", { outcome: "expired" });
+
+            run({ args: ["non-ascii", "--json", "--only", "expiredDomains"], extra: ON, files, native: false });
+        });
+    });
+
     describe("what goes to Node", () => {
         it.each([
             ["the text report", ["calm"]],
@@ -526,26 +958,6 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.hasAssertions();
 
             run({ args, native: false });
-        });
-
-        // Node answers these from the cache files of the services, so nothing reaches the network.
-        it.each([
-            ["every marshall", ["calm", "--json"]],
-            ["downloads", ["calm", "--json", "--only", "downloads"]],
-            ["archivedRepo", ["calm", "--json", "--only", "archivedRepo,author"]],
-            ["expiredDomains", ["calm", "--json", "--only", "expiredDomains"]],
-        ])("hands over a run that needs a marshall that asks a service (%s)", (_label, args) => {
-            expect.hasAssertions();
-
-            run({ args, extra: { MARSHALL_DISABLE_ARCHIVED_REPO: "0", MARSHALL_DISABLE_DOWNLOADS: "0", MARSHALL_DISABLE_EXPIRED_DOMAINS: "0" }, files: serviceCaches(), native: false });
-        });
-
-        it("hands over a download count below the floor", () => {
-            expect.hasAssertions();
-
-            const files = { ".vis/cache/downloads/calm.json": JSON.stringify({ createdAt: Date.now(), downloads: 5, observedAt: new Date().toISOString(), ttlMs: 86_400_000 }) };
-
-            run({ args: ["calm", "--json", "--only", "downloads"], extra: { MARSHALL_DISABLE_DOWNLOADS: "0" }, files, native: false });
         });
 
         it.each(["server-error", "not-json", "array", "bom", "redirect"])("hands over the answer of %s", (name) => {

@@ -238,9 +238,9 @@ fn read_cache(file: &Path) -> Result<Option<Cached>, String> {
 }
 
 /// A fetched key set: how many keys, and `JSON.stringify(keys)` to cache.
-struct Fetched {
-    count: usize,
-    raw: String,
+pub(crate) struct Fetched {
+    pub(crate) count: usize,
+    pub(crate) raw: String,
 }
 
 /// A parsed JSON value that keeps what JavaScript's `JSON.parse` and `JSON.stringify` keep: the order of an
@@ -385,7 +385,7 @@ impl Js {
 /// What Node does with a 2xx body that is a JSON object: a missing or non-array `keys` is the empty list. `None`
 /// hands the run to Node: a body that is not an object, one `response.json()` would read differently (a
 /// byte-order mark, a repeated `keys`), or one that does not parse, which Node answers as a failed request.
-fn fetched_keys(text: &str) -> Option<Fetched> {
+pub(crate) fn fetched_keys(text: &str) -> Option<Fetched> {
     if text.starts_with('\u{feff}') || !text.trim_start().starts_with('{') {
         return None;
     }
@@ -521,7 +521,7 @@ fn registry_keys_at(file: &Path, url: &str, now_ms: u64, client: &HttpClient) ->
 }
 
 /// `JSON.stringify({createdAt, keys, ttlMs})` for a fetched list.
-fn entry_text(now_ms: u64, keys: &Fetched) -> String {
+pub(crate) fn entry_text(now_ms: u64, keys: &Fetched) -> String {
     format!("{{\"createdAt\":{now_ms},\"keys\":{},\"ttlMs\":{TTL_MS}}}", keys.raw)
 }
 
@@ -529,7 +529,6 @@ fn write_entry(file: &Path, entry: &str) -> bool {
     file.parent().is_some_and(|directory| fs::create_dir_all(directory).is_ok()) && fs::write(file, entry).is_ok()
 }
 
-/// `writeCachedKeys`: `JSON.stringify({createdAt, keys, ttlMs})`.
 fn store(file: &Path, keys: &Fetched) -> bool {
     let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return false };
 

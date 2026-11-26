@@ -1,14 +1,16 @@
 //! `vis inspect <package>[@<spec>] --json [--strict] [--only <marshalls>]` — the native port of
-//! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument.
+//! `src/commands/inspect/handler.ts` for its JSON report.
 //!
 //! Node fetches the packument (`getPackument`, cached half an hour in `~/.vis/cache/packuments`), resolves the spec to a
 //! version, runs each marshall in turn and prints `{errors, findings, summary, warnings}`; it exits 1 when there is an
 //! error (or any finding with `--strict`) and 2 when the package is missing or the spec names no version. This module
 //! reproduces that for a unix CI run off a terminal at the root of a pnpm workspace (see [`context_decline`]).
 //!
-//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin` and `metadata`. A run that has to execute another marshall
-//! goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks up DNS records and
-//! `archivedRepo`, `downloads` and `signatures` ask other services. `MARSHALL_DISABLE_*` or `--only` make a run native.
+//! What it runs: all nine marshalls, in the order of the handler (`signatures` only for `--only signatures`): `author`,
+//! `provenance`, `s1ngularity`, `newBin` and `metadata` read the packument; `downloads` asks the registry's download API,
+//! `archivedRepo` GitHub, `signatures` the registry's signing keys, and `expiredDomains` a DNS resolver for the NS records of
+//! the maintainers' domains (see [`downloads`], [`archived_repo`], [`signatures`] and [`expired_domains`]). `MARSHALL_DISABLE_*`
+//! and `--only` pick which.
 //!
 //! Everything it cannot reproduce goes to Node before anything is printed or written:
 //!
@@ -19,13 +21,19 @@
 //! - a registry answer other than 200 and 404, a redirect, a body that is not a JSON object, and a packument Node would
 //!   fail on or read through the prototype (see [`packument`]);
 //! - a spec that is not a tag or an exact version (a range needs node-semver's `maxSatisfying`), versions that are not
-//!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names.
+//!   strict semver, a time that is not in the form registries write, and the field types [`marshalls`] names;
+//! - a service answer, or a resolver answer, that Node would read differently or that depends on the machine (a request
+//!   that fails before an answer, a redirect, a body that is not JSON, a DNS answer other than "NS records", "no such
+//!   domain" and "no data", a domain that is not a plain host name): each marshall's module names its cases.
 //!
-//! The packument cache is read and written as Node does: a fresh entry is used, a fetched packument is written, in the
-//! bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
+//! The packument cache and the service caches are read and written as Node does: a fresh entry is used, a fetched answer
+//! is written, in the bytes `JSON.stringify` writes. All writes come after the last place a run can be handed over.
 
+mod archived_repo;
 mod args;
 mod clean;
+mod downloads;
+mod expired_domains;
 mod js_format;
 mod js_value;
 mod marshalls;
@@ -33,6 +41,8 @@ mod npmrc;
 mod packument;
 mod report;
 mod semver_js;
+mod service_cache;
+mod signatures;
 
 use std::ffi::OsString;
 use std::fs;
@@ -73,8 +83,42 @@ struct Plan {
     cache: Vec<CacheAction>,
 }
 
-/// What the run reads from outside: the places and the time.
+/// `DEFAULT_KEYS_URL` of `registry-keys.ts`.
+const KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
+
+/// The web services a run asks, as addresses so that a test can point them at a stub on this machine.
+struct Services {
+    /// `DOWNLOADS_API_BASE`.
+    downloads: String,
+    /// `GITHUB_API_BASE`.
+    github: String,
+    /// The registry's signing keys: `VIS_NPM_KEYS_URL` or npm's address (`None` for a variable that is not text).
+    keys: Option<String>,
+    /// The resolver `expiredDomains` asks, and how long it waits.
+    dns: expired_domains::Resolver,
+    /// `GITHUB_TOKEN`, as the environment holds it: `archivedRepo` sends it, and checks it when it does.
+    github_token: Option<OsString>,
+}
+
+impl Services {
+    fn production() -> Self {
+        Self {
+            downloads: downloads::API.to_owned(),
+            github: archived_repo::API.to_owned(),
+            dns: expired_domains::Resolver::production(),
+            keys: match std::env::var("VIS_NPM_KEYS_URL") {
+                Ok(url) => Some(url),
+                Err(std::env::VarError::NotPresent) => Some(KEYS_URL.to_owned()),
+                Err(std::env::VarError::NotUnicode(_)) => None,
+            },
+            github_token: std::env::var_os("GITHUB_TOKEN"),
+        }
+    }
+}
+
+/// What the run reads from outside: the places, the services and the time.
 struct Context {
+    services: Services,
     root: PathBuf,
     home: PathBuf,
     cache_dir: String,
@@ -104,24 +148,6 @@ fn now_ms() -> Result<u64, String> {
     u64::try_from(elapsed.as_millis()).map_err(|_| "the clock is out of range".to_owned())
 }
 
-/// The marshalls a run executes, or the reason it is Node's.
-fn native_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
-    let run = args::selected(flags.only.as_deref(), &args::process_lookup)
-        .ok_or("a MARSHALL_DISABLE_* variable is not text")?;
-
-    match run.iter().find(|marshall| {
-        !matches!(
-            marshall,
-            Marshall::Author | Marshall::Provenance | Marshall::S1ngularity | Marshall::NewBin | Marshall::Metadata
-        )
-    }) {
-        Some(other) => {
-            Err(format!("the {} marshall is Node's (it asks a service this binary does not reproduce)", other.name()))
-        }
-        None => Ok(run),
-    }
-}
-
 /// The plan of a run, or the reason it is Node's.
 fn answer(args: &[String]) -> Result<Plan, String> {
     let flags = args::parse(args)?;
@@ -130,7 +156,8 @@ fn answer(args: &[String]) -> Result<Plan, String> {
         return Err("the text report is a pail line with symbols pail's width rule does not cover".to_owned());
     }
 
-    let run = native_marshalls(&flags)?;
+    let run = args::selected(flags.only.as_deref(), &args::process_lookup)
+        .ok_or("a MARSHALL_DISABLE_* variable is not text")?;
 
     if let Some(reason) = context_decline() {
         return Err(reason.to_owned());
@@ -144,6 +171,7 @@ fn answer(args: &[String]) -> Result<Plan, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not text".to_owned())?;
     let root = std::env::current_dir().map_err(|error| format!("the working directory is unknown: {error}"))?;
     let context = Context {
+        services: Services::production(),
         root,
         home: PathBuf::from(home),
         cache_dir,
@@ -202,7 +230,18 @@ impl Packuments {
 
     /// The packuments of a run from `root`, with the places, the clock and the client given.
     pub(crate) fn at(root: PathBuf, home: PathBuf, cache_dir: String, now_ms: u64, client: HttpClient) -> Self {
-        Self { context: Context { root, home, cache_dir, now_ms, layout: None, registry: None }, client }
+        Self {
+            context: Context {
+                services: Services::production(),
+                root,
+                home,
+                cache_dir,
+                now_ms,
+                layout: None,
+                registry: None,
+            },
+            client,
+        }
     }
 
     /// What `getPackument` finds for a package, read through `read` with the view of it (`None` for a package the
@@ -295,9 +334,10 @@ fn resolve<'a>(view: &View<'a>, spec: Option<&str>) -> Result<Option<&'a str>, S
     }
 }
 
-/// The whole run, up to what it prints: pure but for the cache read, the registry request and the clock in `context`.
+/// The whole run, up to what it prints: pure but for the packument and download-count caches it reads, the registry and
+/// download API requests, and the clock in `context`.
 fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient) -> Result<Plan, String> {
-    let (found, cache) = packument_of(&flags.name, context, client)?;
+    let (found, mut cache) = packument_of(&flags.name, context, client)?;
     let missing = |message: String| -> Result<Plan, String> {
         let layout = context
             .layout
@@ -342,7 +382,53 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
             Marshall::S1ngularity => marshalls::s1ngularity(&view, &target)?,
             Marshall::NewBin => marshalls::new_bin(&view, &target)?,
             Marshall::Metadata => marshalls::metadata(&view, &target)?,
-            other => return Err(format!("the {} marshall is not native", other.name())),
+            Marshall::Downloads => {
+                let base = &context.services.downloads;
+
+                if !url_is_plain(base) {
+                    return Err(format!(
+                        "the downloads address {base:?} is not a URL `fetch` and the client read alike"
+                    ));
+                }
+
+                let (found, changes) = downloads::run(client, base, &context.cache_dir, &flags.name, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
+            Marshall::Signatures => {
+                let keys = context.services.keys.as_deref();
+                let (found, changes) =
+                    signatures::run(client, keys, &context.cache_dir, &view, &target, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
+            Marshall::ArchivedRepo => {
+                let base = &context.services.github;
+
+                if !url_is_plain(base) {
+                    return Err(format!("the GitHub address {base:?} is not a URL `fetch` and the client read alike"));
+                }
+
+                let token = context.services.github_token.as_deref();
+                let (found, changes) =
+                    archived_repo::run(client, base, token, &context.cache_dir, &view, &target, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
+            Marshall::ExpiredDomains => {
+                let (found, changes) =
+                    expired_domains::run(&context.services.dns, &context.cache_dir, &view, &target, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
         });
     }
 
@@ -361,7 +447,7 @@ pub(crate) fn commit(actions: &[CacheAction]) -> Result<(), String> {
 
                 fs::create_dir_all(directory)
                     .and_then(|()| fs::write(file, text))
-                    .map_err(|error| format!("the packument cache cannot be written: {error}"))?;
+                    .map_err(|error| format!("the cache file {} cannot be written: {error}", file.display()))?;
             }
             CacheAction::Remove(file) => remove(file)?,
         }
@@ -374,7 +460,7 @@ fn remove(file: &Path) -> Result<(), String> {
     match fs::remove_file(file) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("the packument cache cannot be removed: {error}")),
+        Err(error) => Err(format!("the cache file {} cannot be removed: {error}", file.display())),
     }
 }
 
