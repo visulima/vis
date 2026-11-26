@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 
-import { afterAll, beforeAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Files } from "./workspace-parity-harness";
 import { binary, Harness, json, nodeEntry, workspaceFiles } from "./workspace-parity-harness";
@@ -33,7 +33,7 @@ const tree = (): Files => {
     };
 };
 
-const gitignores: Array<[string, string]> = [
+const gitignores: [string, string][] = [
     ["a typical build and log list", "# build output\ndist/\nbuild/\n*.log\n*.tsbuildinfo\n.DS_Store\n.env.*\ncoverage\n"],
     ["a wildcard suffix on a name", "*-skip\n"],
     ["a single-character wildcard", "tmp?\n"],
@@ -48,7 +48,7 @@ const gitignores: Array<[string, string]> = [
     ["a lone question mark", "?\n"],
 ];
 
-const nodeOnly: Array<[string, string]> = [
+const nodeOnly: [string, string][] = [
     ["a negated wildcard", "packages/*\n!packages/a\n"],
     ["a double star", "**/b-skip\n"],
     ["a character class", "packages/[a]\n"],
@@ -73,6 +73,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     it.each(gitignores)(".gitignore with %s lists the same projects", (_name, ignore) => {
+        expect.hasAssertions();
+
         const files = workspaceFiles({ ...tree(), ".gitignore": ignore });
 
         listTable?.expectParity(files, []);
@@ -82,6 +84,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     it.each(nodeOnly)(".gitignore with %s goes to Node and matches it", (_name, ignore) => {
+        expect.hasAssertions();
+
         const files = workspaceFiles({ ...tree(), ".gitignore": ignore });
 
         listTable?.expectDelegation(files, []);
