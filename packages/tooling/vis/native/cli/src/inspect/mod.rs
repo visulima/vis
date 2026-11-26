@@ -328,7 +328,8 @@ fn resolve<'a>(view: &View<'a>, spec: Option<&str>) -> Result<Option<&'a str>, S
     }
 }
 
-/// The whole run, up to what it prints: pure but for the cache read, the registry request and the clock in `context`.
+/// The whole run, up to what it prints: pure but for the packument and download-count caches it reads, the registry and
+/// download API requests, and the clock in `context`.
 fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient) -> Result<Plan, String> {
     let (found, mut cache) = packument_of(&flags.name, context, client)?;
     let missing = |message: String| -> Result<Plan, String> {
@@ -409,7 +410,7 @@ pub(crate) fn commit(actions: &[CacheAction]) -> Result<(), String> {
 
                 fs::create_dir_all(directory)
                     .and_then(|()| fs::write(file, text))
-                    .map_err(|error| format!("the packument cache cannot be written: {error}"))?;
+                    .map_err(|error| format!("the cache file {} cannot be written: {error}", file.display()))?;
             }
             CacheAction::Remove(file) => remove(file)?,
         }
@@ -422,7 +423,7 @@ fn remove(file: &Path) -> Result<(), String> {
     match fs::remove_file(file) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("the packument cache cannot be removed: {error}")),
+        Err(error) => Err(format!("the cache file {} cannot be removed: {error}", file.display())),
     }
 }
 
