@@ -51,8 +51,10 @@ const argumentSets: string[][] = [[], ["--json"], ["--format=table"], ["--format
 
 // The runner's own colour variables are dropped (a CI runner sets several), and a case adds the one it tests.
 const contextEnvironment = (fixture: string, ci: boolean, colour: Record<string, string> = {}): Record<string, string | undefined> => {
+    // The output settings are dropped: vitest sets `NODE_ENV=test`, which the native path declines (`output_settings_are_default`).
+    const inherited = Object.entries(withoutColour(process.env)).filter(([name]) => !["DEBUG", "NODE_ENV", "PAIL_LOG_LEVEL"].includes(name) && !name.startsWith("CEREBRO_"));
     const env: Record<string, string | undefined> = {
-        ...withoutColour(process.env),
+        ...Object.fromEntries(inherited),
         VIS_CLI_TEST: "1",
         VIS_MONOREPO_ROOT: fixture,
         VIS_NO_UPDATE_CHECK: "1",

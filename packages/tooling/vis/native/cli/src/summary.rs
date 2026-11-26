@@ -19,7 +19,7 @@ use serde_json::value::RawValue;
 
 use crate::cache::entries::{mtime_ms, sorted_entries};
 use crate::js::{is_index_like, MAX_SAFE_INTEGER};
-use crate::node_context::{in_ci, monorepo_root, quiet_context};
+use crate::node_context::{in_ci, monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::Output;
 use crate::pail::{pail_width, Layout, Level};
 use crate::run_summary::{Probe, ProbeId, Summary};
@@ -31,6 +31,11 @@ use crate::text::is_ascii_graphic;
 /// side would normalise differently. `json` runs print raw, so colour does not matter there.
 pub(crate) fn context(args: &[String], json: bool) -> Option<(PathBuf, Layout)> {
     if !cfg!(unix) {
+        return None;
+    }
+
+    // The table is pail blocks, and the JSON a trace (`DEBUG`) wraps: a configured setting is Node's for both.
+    if !output_settings_are_default() {
         return None;
     }
 

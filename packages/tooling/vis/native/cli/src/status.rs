@@ -28,7 +28,7 @@ use serde_json::Value;
 use crate::graph::{project_graph, GraphResult};
 use crate::json::{stringify, Json};
 use crate::list::unique_target_count;
-use crate::node_context::{monorepo_root, quiet_context};
+use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::write_stdout;
 use crate::runtime_check::count_findings;
 use crate::term::{piped_colour_level, Style};
@@ -311,6 +311,12 @@ fn render_text(overview: &Overview, style: Style) -> String {
 /// The text of one invocation, or `None` when Node must answer it.
 fn answer(args: &[String]) -> Option<String> {
     let json = parse(args)?;
+
+    // Node's output depends on the settings (`DEBUG` adds a trace around it), so a configured one is Node's.
+    if !output_settings_are_default() {
+        return None;
+    }
+
     let cwd = env::current_dir().ok()?;
     let root = monorepo_root(&cwd)?;
 

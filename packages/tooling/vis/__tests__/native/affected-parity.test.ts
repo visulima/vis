@@ -27,7 +27,8 @@ const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "
 const PROVIDER_ENVIRONMENT = /^(?:BUILD_|BUILDKITE|CI$|CI_|CIRCLE|CONTINUOUS_INTEGRATION$|GIT_|GITHUB_|GITLAB_CI$|SYSTEM_|TF_BUILD$)/u;
 
 const KEPT_GIT_CONFIG = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
-const DROPPED = new Set(["VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_VERSION"]);
+// The output settings are dropped too: vitest sets `NODE_ENV=test`, which the native path declines (`output_settings_are_default`).
+const DROPPED = new Set(["DEBUG", "NODE_ENV", "PAIL_LOG_LEVEL", "VIS_FALLBACK_ENTRY", "VIS_FALLBACK_ENTRY_OVERRIDE", "VIS_VERSION"]);
 
 // The runner's own colour variables are dropped (a CI runner sets several), and a case adds the one it tests.
 const baseEnvironment = (): Record<string, string | undefined> =>
@@ -38,7 +39,7 @@ const baseEnvironment = (): Record<string, string | undefined> =>
             GIT_CONFIG_NOSYSTEM: "1",
             VIS_CLI_TEST: "1",
             VIS_NO_UPDATE_CHECK: "1",
-        }).filter(([key]) => !DROPPED.has(key) && (KEPT_GIT_CONFIG.has(key) || !PROVIDER_ENVIRONMENT.test(key))),
+        }).filter(([key]) => !DROPPED.has(key) && !key.startsWith("CEREBRO_") && (KEPT_GIT_CONFIG.has(key) || !PROVIDER_ENVIRONMENT.test(key))),
     );
 
 // A delegated error path prints a Node stack, whose async frames differ from one run to the next. Only V8 frames

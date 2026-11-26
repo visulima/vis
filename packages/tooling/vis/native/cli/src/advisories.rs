@@ -20,7 +20,7 @@ use std::process::exit;
 use serde_json::Value;
 
 use crate::js::{js_number, json_string, pretty_document};
-use crate::node_context::native_context;
+use crate::node_context::{debug_output_is_default, native_context};
 use crate::output::write_stdout;
 
 /// Keys of the manifest object, in the order `parseManifest` returns them, with the upstream
@@ -90,7 +90,7 @@ fn parse(args: &[String]) -> Option<String> {
 
 /// Answer the invocation, or delegate to Node, with the raw argv so no byte changes on the way. Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
-    let planned = parse(args).filter(|_| native_context());
+    let planned = parse(args).filter(|_| native_context() && debug_output_is_default());
 
     let Some(cache_dir) = planned else {
         crate::process::delegate(raw_args);

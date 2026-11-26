@@ -323,6 +323,11 @@ fn execute(plan: Plan) -> ! {
 /// Entry point for `vis hook run …`; `raw_args` is the same argv as the OS gave it, for the hand-off to Node.
 /// Never returns.
 pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
+    // `DEBUG` and `CEREBRO_*` make Node trace the command before it runs; this path prints none of that.
+    if !crate::node_context::debug_output_is_default() {
+        crate::process::delegate(raw_args);
+    }
+
     match prepare(args) {
         None => crate::process::delegate(raw_args),
         Some(Prepared::NoHooks(stage)) => {

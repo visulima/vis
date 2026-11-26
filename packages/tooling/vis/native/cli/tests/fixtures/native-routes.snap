@@ -1642,6 +1642,7 @@
 ["ignore","--json"] => ignore
 ["ignore","--no-color"] => ignore
 ["ignore","--no-color","-h"] => surface
+["ignore","--target","docker"] => ignore
 ["ignore","--target","slug"] => ignore
 ["ignore","--target=npm","--write"] => ignore
 ["ignore","--version"] => ignore
