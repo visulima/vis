@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -12,7 +12,8 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
 /**
  * `vis inspect &lt;package> --json` exists twice: the Node handler (`src/commands/inspect/handler.ts`) and the native path
  * (`native/cli/src/inspect/`), which runs the marshalls that read the registry's packument (`author`, `provenance`,
- * `s1ngularity`, `newBin`, `metadata`) and `downloads`, which asks the registry's download API. For every input the native path accepts it must print the same JSON on the same
+ * `s1ngularity`, `newBin`, `metadata`), `downloads` (the registry's download API), `archivedRepo` (GitHub) and `signatures`, which
+ * reads the registry's keys from `VIS_NPM_KEYS_URL` (a variable both sides honour, so the stub serves it) and verifies with ECDSA. For every input the native path accepts it must print the same JSON on the same
  * stream, end with the same exit status and leave the same packument cache as Node; every input it declines must be handed
  * to Node before anything is printed or written (see `workspace-parity-harness.ts` for how both are proved).
  *
@@ -47,6 +48,25 @@ const packument = (name: string, versions: Record<string, unknown>, time: Record
 const BOM = String.fromCodePoint(0xFE_FF);
 /** A readme with an accented letter, the line separator U+2028, an astral character, a quote and a backslash. */
 const README = `caf\u00E9 ${String.fromCodePoint(0x20_28)} ${String.fromCodePoint(0x1_F6_00)} "q" \\`;
+
+/** Registry signing keys made for the run: the key a signature must verify against, an expired one, one that expires far ahead, and a stranger. */
+const signingKey = (): { privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"]; spki: string } => {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    return { privateKey, spki: publicKey.export({ format: "der", type: "spki" }).toString("base64") };
+};
+const KEY_ONE = signingKey();
+const KEY_STRANGER = signingKey();
+const registryKey = (keyid: string, key = KEY_ONE, expires?: string): Record<string, unknown> => {
+    return { key: key.spki, keyid, keytype: "ecdsa-sha2-nistp256", scheme: "ecdsa-sha2-nistp256", ...(expires === undefined ? {} : { expires }) };
+};
+/** `SHA256:null` has `"expires": null`, as npm's current key does. */
+const KEYS = [registryKey("SHA256:one"), registryKey("SHA256:old", KEY_ONE, "2020-01-01T00:00:00.000Z"), registryKey("SHA256:later", KEY_ONE, "2999-01-01T00:00:00.000Z"), { ...registryKey("SHA256:null"), expires: null }];
+const sign = (name: string, integrity: string, key = KEY_ONE): string => createSign("SHA256").update(`${name}@1.0.0:${integrity}`).end().sign(key.privateKey, "base64");
+const signedPackage = (name: string, signatures: { keyid: string; sig?: string }[], integrity: string | false = "sha512-integrity"): Record<string, unknown> => packument(name, { "1.0.0": version("amy", { dist: { ...(integrity === false ? {} : { integrity }), signatures } }) }, { "1.0.0": ago(50.3) });
+const keyed = (name: string, keyid = "SHA256:one", key = KEY_ONE): { keyid: string; sig: string } => {
+    return { keyid, sig: sign(name, "sha512-integrity", key) };
+};
 
 const SIGNED = { dist: { attestations: { provenance: { predicateType: "x" } }, tarball: "https://registry.example.test/p.tgz", unpackedSize: 12_345 } };
 
@@ -85,6 +105,11 @@ const ANSWERS: Record<string, Answer> = {
             "1.1.0": version("amy", { scripts: { install: "node b.js", postinstall: "node c.js", preinstall: "" } }),
         }),
     ),
+    // The registry's signing keys, at addresses `VIS_NPM_KEYS_URL` names.
+    "/keys/empty": { body: "{}" },
+    "/keys/not-json": { body: "<html></html>" },
+    "/keys/ok": json({ keys: KEYS }),
+    "/keys/server-error": { body: "broken", status: 500 },
     "/loose-tag": json(packument("loose-tag", { "1.0.0": version("amy") }, {}, { "dist-tags": { latest: "v1.0.0" } })),
     "/loose-version": json(packument("loose-version", { "1.0": version("amy"), "1.0.0": version("amy") }, { "1.0.0": ago(50.3) })),
     "/meta": json(packument("meta", { "1.0.0": { _npmUser: user("amy"), license: { type: " " }, readme: "ERROR: No README data found!", repository: { url: "nonsense" } } })),
@@ -113,6 +138,15 @@ const ANSWERS: Record<string, Answer> = {
     "/redirect": { body: "", headers: { location: "/calm" }, status: 302 },
     // What goes to Node.
     "/server-error": { body: "broken", status: 500 },
+    "/sig-bad": json(signedPackage("sig-bad", [keyed("sig-bad", "SHA256:one", KEY_STRANGER)])),
+    "/sig-expired": json(signedPackage("sig-expired", [keyed("sig-expired", "SHA256:old")])),
+    "/sig-future": json(signedPackage("sig-future", [keyed("sig-future", "SHA256:later")])),
+    "/sig-good": json(signedPackage("sig-good", [keyed("sig-good")])),
+    "/sig-malformed": json(signedPackage("sig-malformed", [{ keyid: "SHA256:one", sig: "not base64!" }])),
+    "/sig-no-integrity": json(signedPackage("sig-no-integrity", [{ keyid: "SHA256:one", sig: "x" }], false)),
+    "/sig-none": json(signedPackage("sig-none", [])),
+    "/sig-null-expiry": json(signedPackage("sig-null-expiry", [keyed("sig-null-expiry", "SHA256:null")])),
+    "/sig-two": json(signedPackage("sig-two", [keyed("sig-two"), { keyid: "SHA256:unlisted", sig: "x" }])),
     "/tagless": json({ name: "tagless", versions: { "1.0.0": version("amy"), "2.0.0": version("amy") } }),
     // Repository URLs in the shapes `URL.canParse` judges the same way in every version of Node.
     "/urls": json(
@@ -762,6 +796,78 @@ globalThis.fetch = async (url, options) => {
 
             expect(token.requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", Authorization: "Bearer ghp_Token-1", "User-Agent": "visulima-vis-marshall" });
             expect(nodeWith("calm", "archivedRepo", { [GITHUB]: { body: "{}", status: 200 } }, { GITHUB_TOKEN: "" }).requests[0]?.headers).toStrictEqual({ Accept: "application/vnd.github+json", "User-Agent": "visulima-vis-marshall" });
+        });
+    });
+
+    describe("the signatures marshall", () => {
+        const keys = (path: string): Record<string, string> => {
+            return { VIS_NPM_KEYS_URL: `${base}${path}` };
+        };
+        const only = ["--json", "--only", "signatures"];
+
+        it.each([
+            ["sig-good", "no finding"],
+            ["sig-future", "no finding"],
+            ["sig-null-expiry", "a key with a null expiry"],
+            ["sig-two", "an unrecognized keyid"],
+            ["sig-expired", "an expired key"],
+            ["sig-none", "a missing signature"],
+            ["sig-no-integrity", "a missing integrity"],
+        ])("reports %s (%s) the way Node does", (name) => {
+            expect.hasAssertions();
+
+            run({ args: [name, ...only], extra: keys("/keys/ok"), native: true });
+        });
+
+        it("reports the findings and the exit status Node gives", () => {
+            expect.hasAssertions();
+
+            const result = run({ args: ["sig-two", ...only], extra: keys("/keys/ok"), native: true });
+
+            expect(result.status).toBe(1);
+            expect(report(result.stdout).errors.map((finding) => finding.message)).toStrictEqual(["Package sig-two@1.0.0 was signed with an unrecognized keyid (SHA256:unlisted)."]);
+            expect(report(run({ args: ["sig-expired", ...only], extra: keys("/keys/ok"), native: true }).stdout).warnings.map((finding) => finding.message)).toStrictEqual([
+                "Package sig-expired@1.0.0 was signed with an expired key (SHA256:old, expired 2020-01-01T00:00:00.000Z).",
+            ]);
+        });
+
+        it.each(["/keys/server-error", "/keys/empty"])("answers the keys address %s the way Node does", (path) => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: keys(path), native: true });
+        });
+
+        it("uses the cached keys, and the old ones when the registry refuses", () => {
+            expect.hasAssertions();
+
+            const entry = (createdAt: number, ttlMs: number): Record<string, string> => {
+                return { ".vis/cache/registry-keys/npmjs.json": JSON.stringify({ createdAt, keys: KEYS, ttlMs }) };
+            };
+
+            run({ args: ["sig-good", ...only], extra: keys("/keys/server-error"), files: entry(Date.now(), 86_400_000), native: true });
+            run({ args: ["sig-good", ...only], extra: keys("/keys/server-error"), files: entry(1, 5), native: true });
+            run({ args: ["sig-good", ...only], extra: keys("/keys/ok"), files: entry(1, 5), native: true });
+        });
+
+        it.each(["sig-bad", "sig-malformed"])("hands over %s, which Node reports as an invalid signature", (name) => {
+            expect.hasAssertions();
+
+            const result = run({ args: [name, ...only], extra: keys("/keys/ok"), native: false });
+
+            expect(result.status).toBe(1);
+            expect(report(result.stdout).errors.map((finding) => finding.message)).toStrictEqual([`Package ${name}@1.0.0 signature did not verify against SHA256:one.`]);
+        });
+
+        it("hands over a keys answer that is not JSON", () => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: keys("/keys/not-json"), native: false });
+        });
+
+        it("hands over a keys address that is not a plain URL", () => {
+            expect.hasAssertions();
+
+            run({ args: ["sig-good", ...only], extra: { VIS_NPM_KEYS_URL: "http://127.0.0.1:80/keys" }, native: false });
         });
     });
 

@@ -1,16 +1,17 @@
 //! `vis inspect <package>[@<spec>] --json [--strict] [--only <marshalls>]` — the native port of
 //! `src/commands/inspect/handler.ts` for the JSON report of the marshalls that read the registry's packument, and of
 //! `downloads`, which asks the registry's download API (see [`downloads`]), and `archivedRepo`, which asks GitHub (see
-//! [`archived_repo`]).
+//! [`archived_repo`]), and `signatures`, which verifies the registry's signatures (see [`signatures`]).
 //!
 //! Node fetches the packument (`getPackument`, cached half an hour in `~/.vis/cache/packuments`), resolves the spec to a
 //! version, runs each marshall in turn and prints `{errors, findings, summary, warnings}`; it exits 1 when there is an
 //! error (or any finding with `--strict`) and 2 when the package is missing or the spec names no version. This module
 //! reproduces that for a unix CI run off a terminal at the root of a pnpm workspace (see [`context_decline`]).
 //!
-//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata`, `downloads` and `archivedRepo`. A run that
-//! has to execute another marshall goes to Node, so `vis inspect <package> --json` alone does too: `expiredDomains` looks
-//! up DNS records and `signatures` asks the registry for its keys. `MARSHALL_DISABLE_*` or `--only` make a run native.
+//! What it runs: `author`, `provenance`, `s1ngularity`, `newBin`, `metadata`, `downloads`, `archivedRepo` and
+//! `signatures` (which only `--only signatures` asks for). A run that has to execute `expiredDomains`, which looks up
+//! DNS records, goes to Node, so `vis inspect <package> --json` alone does too. `MARSHALL_DISABLE_*` or `--only` make a
+//! run native.
 //!
 //! Everything it cannot reproduce goes to Node before anything is printed or written:
 //!
@@ -37,6 +38,7 @@ mod packument;
 mod report;
 mod semver_js;
 mod service_cache;
+mod signatures;
 
 use std::ffi::OsString;
 use std::fs;
@@ -72,12 +74,17 @@ struct Plan {
     cache: Vec<CacheAction>,
 }
 
+/// `DEFAULT_KEYS_URL` of `registry-keys.ts`.
+const KEYS_URL: &str = "https://registry.npmjs.org/-/npm/v1/keys";
+
 /// The web services a run asks, as addresses so that a test can point them at a stub on this machine.
 struct Services {
     /// `DOWNLOADS_API_BASE`.
     downloads: String,
     /// `GITHUB_API_BASE`.
     github: String,
+    /// The registry's signing keys: `VIS_NPM_KEYS_URL` or npm's address (`None` for a variable that is not text).
+    keys: Option<String>,
     /// `GITHUB_TOKEN`, as the environment holds it: `archivedRepo` sends it, and checks it when it does.
     github_token: Option<OsString>,
 }
@@ -87,6 +94,11 @@ impl Services {
         Self {
             downloads: downloads::API.to_owned(),
             github: archived_repo::API.to_owned(),
+            keys: match std::env::var("VIS_NPM_KEYS_URL") {
+                Ok(url) => Some(url),
+                Err(std::env::VarError::NotPresent) => Some(KEYS_URL.to_owned()),
+                Err(std::env::VarError::NotUnicode(_)) => None,
+            },
             github_token: std::env::var_os("GITHUB_TOKEN"),
         }
     }
@@ -136,6 +148,7 @@ fn native_marshalls(flags: &Flags) -> Result<Vec<Marshall>, String> {
                 | Marshall::Metadata
                 | Marshall::Downloads
                 | Marshall::ArchivedRepo
+                | Marshall::Signatures
         )
     }) {
         Some(other) => {
@@ -293,6 +306,15 @@ fn plan(flags: &Flags, run: &[Marshall], context: &Context, client: &HttpClient)
                 }
 
                 let (found, changes) = downloads::run(client, base, &context.cache_dir, &flags.name, context.now_ms)?;
+
+                cache.extend(changes);
+
+                found
+            }
+            Marshall::Signatures => {
+                let keys = context.services.keys.as_deref();
+                let (found, changes) =
+                    signatures::run(client, keys, &context.cache_dir, &view, &target, context.now_ms)?;
 
                 cache.extend(changes);
 

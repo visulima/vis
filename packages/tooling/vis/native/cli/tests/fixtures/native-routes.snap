@@ -1723,6 +1723,7 @@
 ["inspect","express","--json","--only","expiredDomains"] => inspect
 ["inspect","express","--json","--only","nope"] => inspect
 ["inspect","express","--json","--only","signatures"] => inspect
+["inspect","express","--json","--only","signatures,expiredDomains"] => inspect
 ["inspect","express","--json","--only=author"] => inspect
 ["inspect","express","--json","--strict","--strict"] => inspect
 ["inspect","express","--json=true"] => inspect

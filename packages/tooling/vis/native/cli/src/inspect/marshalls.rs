@@ -42,7 +42,7 @@ pub(super) struct Target<'a> {
 }
 
 impl Target<'_> {
-    fn finding(&self, marshall: &'static str, severity: Severity, message: String) -> Finding {
+    pub(super) fn finding(&self, marshall: &'static str, severity: Severity, message: String) -> Finding {
         Finding { marshall, message, package: self.name.to_owned(), severity }
     }
 }

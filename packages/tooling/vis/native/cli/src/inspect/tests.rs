@@ -140,6 +140,10 @@ fn setup(registry: Option<&Registry>) -> Setup {
                     || "http://127.0.0.1:49151/github".to_owned(),
                     |registry| format!("{}/github", registry.url()),
                 ),
+                keys: Some(registry.map_or_else(
+                    || "http://127.0.0.1:49151/keys".to_owned(),
+                    |registry| format!("{}/keys", registry.url()),
+                )),
                 github_token: None,
             },
             root,
@@ -1200,5 +1204,326 @@ mod archived_repo_marshall {
             ]
         );
         assert_eq!(plan.status, 1);
+    }
+}
+
+mod signatures_marshall {
+    use super::signatures::fixtures::TestKey;
+    use super::*;
+
+    const KEYID: &str = "SHA256:test-key";
+    const INTEGRITY: &str = "sha512-abc";
+
+    /// A package whose only version carries `dist`.
+    fn package(dist: &Value) -> Value {
+        packument(&json!({ "1.0.0": entry("amy", &json!({ "dist": dist })) }), &json!({ "1.0.0": ago(100.0) }))
+    }
+
+    fn signed(key: &TestKey, keyid: &str) -> Value {
+        json!({ "integrity": INTEGRITY, "signatures": [{ "keyid": keyid, "sig": key.sign(&format!("pkg@1.0.0:{INTEGRITY}")) }] })
+    }
+
+    fn registry_key(key: &TestKey, keyid: &str, extra: &Value) -> Value {
+        let mut found = json!({ "keyid": keyid, "keytype": "ecdsa-sha2-nistp256", "scheme": "ecdsa-sha2-nistp256", "key": key.spki_base64() });
+
+        for (name, value) in extra.as_object().unwrap() {
+            found[name] = value.clone();
+        }
+
+        found
+    }
+
+    type Reply = (u16, String, Vec<(String, String)>);
+
+    fn keys_answer(keys: &[Value]) -> Reply {
+        ok(&json!({ "keys": keys }))
+    }
+
+    fn world(package: &Value, keys: Option<Reply>) -> (Registry, Setup) {
+        let mut answers = answers(package);
+
+        if let Some(answer) = keys {
+            answers.insert("/keys".to_owned(), answer);
+        }
+
+        let registry = Registry::start(answers);
+        let setup = setup(Some(&registry));
+
+        (registry, setup)
+    }
+
+    fn only_signatures(setup: &Setup) -> Result<Plan, String> {
+        plan(&flags(&["pkg", "--json"]), &[Marshall::Signatures], &setup.context, &client())
+    }
+
+    fn findings_of(plan: &Plan) -> Vec<String> {
+        messages(&serde_json::from_str::<Value>(&plan.stdout).unwrap(), "findings")
+    }
+
+    fn key_writes(plan: &Plan) -> Vec<String> {
+        plan.cache
+            .iter()
+            .filter_map(|action| match action {
+                CacheAction::Write { file, text } if file.to_string_lossy().contains("registry-keys") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_signature_that_verifies_is_no_finding_and_the_keys_are_cached_as_node_caches_them() {
+        let key = TestKey::new();
+        let keys = [registry_key(&key, KEYID, &json!({}))];
+        let (registry, setup) = world(&package(&signed(&key, KEYID)), Some(keys_answer(&keys)));
+        let plan = only_signatures(&setup).unwrap();
+
+        assert!(plan.stdout.contains("\"findings\": []"));
+        assert_eq!(plan.status, 0);
+        assert_eq!(
+            key_writes(&plan),
+            [format!("{{\"createdAt\":{NOW},\"keys\":{},\"ttlMs\":86400000}}", serde_json::to_string(&keys).unwrap())]
+        );
+        assert!(registry.paths.lock().unwrap()[1].to_ascii_lowercase().contains("accept: application/json"));
+    }
+
+    #[test]
+    fn a_missing_signature_or_integrity_is_a_warning() {
+        let key = TestKey::new();
+        let keys = [registry_key(&key, KEYID, &json!({}))];
+
+        for (dist, message) in [
+            (json!({}), "[signatures] Package pkg@1.0.0 has no dist.signatures from the registry."),
+            (json!({ "signatures": [] }), "[signatures] Package pkg@1.0.0 has no dist.signatures from the registry."),
+            (
+                json!({ "signatures": [{ "keyid": KEYID, "sig": "x" }] }),
+                "[signatures] Package pkg@1.0.0 has signatures but no dist.integrity to verify against.",
+            ),
+            (
+                json!({ "integrity": "", "signatures": [{ "keyid": KEYID, "sig": "x" }] }),
+                "[signatures] Package pkg@1.0.0 has signatures but no dist.integrity to verify against.",
+            ),
+        ] {
+            let (_registry, setup) = world(&package(&dist), Some(keys_answer(&keys)));
+            let plan = only_signatures(&setup).unwrap();
+
+            assert_eq!(findings_of(&plan), [message], "{dist}");
+            assert_eq!((plan.status, key_writes(&plan).len()), (0, 1));
+        }
+    }
+
+    #[test]
+    fn an_unknown_keyid_is_an_error_and_an_expired_key_a_warning() {
+        let key = TestKey::new();
+        let keys = [
+            registry_key(&key, KEYID, &json!({})),
+            registry_key(&key, "SHA256:old", &json!({ "expires": "2020-01-01T00:00:00.000Z" })),
+            registry_key(&key, "SHA256:later", &json!({ "expires": "2999-01-01T00:00:00.000Z" })),
+            registry_key(&key, "SHA256:blank", &json!({ "expires": "" })),
+        ];
+        let sig = key.sign(&format!("pkg@1.0.0:{INTEGRITY}"));
+        let two = |first: &str, second: &str| {
+            package(
+                &json!({ "integrity": INTEGRITY, "signatures": [{ "keyid": first, "sig": sig }, { "keyid": second, "sig": sig }] }),
+            )
+        };
+
+        let (_registry, setup) = world(&two("SHA256:unlisted", KEYID), Some(keys_answer(&keys)));
+        let plan = only_signatures(&setup).unwrap();
+
+        assert_eq!(
+            findings_of(&plan),
+            ["[signatures] Package pkg@1.0.0 was signed with an unrecognized keyid (SHA256:unlisted)."]
+        );
+        assert_eq!(plan.status, 1);
+
+        let (_registry, setup) = world(&two("SHA256:old", "SHA256:later"), Some(keys_answer(&keys)));
+        let plan = only_signatures(&setup).unwrap();
+
+        assert_eq!(
+            findings_of(&plan),
+            ["[signatures] Package pkg@1.0.0 was signed with an expired key (SHA256:old, expired 2020-01-01T00:00:00.000Z)."]
+        );
+        assert_eq!(plan.status, 0);
+
+        // The blank `expires` never expires and the signature is checked.
+        let (_registry, setup) = world(&two("SHA256:blank", "SHA256:later"), Some(keys_answer(&keys)));
+
+        assert!(findings_of(&only_signatures(&setup).unwrap()).is_empty());
+    }
+
+    #[test]
+    fn a_signature_that_does_not_verify_here_is_handed_to_node() {
+        let (key, other) = (TestKey::new(), TestKey::new());
+        let keys = [registry_key(&key, KEYID, &json!({}))];
+
+        for dist in [
+            signed(&other, KEYID),
+            json!({ "integrity": "sha512-different", "signatures": signed(&key, KEYID)["signatures"] }),
+            json!({ "integrity": INTEGRITY, "signatures": [{ "keyid": KEYID, "sig": "not base64!" }] }),
+            json!({ "integrity": INTEGRITY, "signatures": [{ "keyid": KEYID }] }),
+        ] {
+            let (_registry, setup) = world(&package(&dist), Some(keys_answer(&keys)));
+
+            assert!(only_signatures(&setup).unwrap_err().contains("does not verify here"), "{dist}");
+        }
+
+        // A key that is not P-256 SPKI.
+        let odd = [json!({ "keyid": KEYID, "key": "AAAA" })];
+        let (_registry, setup) = world(&package(&signed(&key, KEYID)), Some(keys_answer(&odd)));
+
+        assert!(only_signatures(&setup).is_err());
+    }
+
+    #[test]
+    fn a_keys_request_that_is_refused_falls_back_to_the_old_keys_or_reports_it() {
+        let key = TestKey::new();
+        let package = package(&signed(&key, KEYID));
+
+        // No keys: `fetch-failed` for the package, whatever its signatures say.
+        for status in [404, 500, 429] {
+            let (_registry, setup) = world(&package, Some((status, "{}".to_owned(), Vec::new())));
+            let plan = only_signatures(&setup).unwrap();
+
+            assert_eq!(findings_of(&plan), ["[signatures] Could not fetch registry signing keys."]);
+            assert_eq!((plan.status, key_writes(&plan).len()), (0, 0));
+        }
+
+        // Old keys: used, and nothing is written.
+        let (_registry, setup) = world(&package, Some((500, "{}".to_owned(), Vec::new())));
+        let file = setup.home.join(".vis/cache/registry-keys/npmjs.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            &file,
+            format!("{{\"createdAt\":1,\"keys\":{},\"ttlMs\":5}}", json!([registry_key(&key, KEYID, &json!({}))])),
+        )
+        .unwrap();
+
+        let plan = only_signatures(&setup).unwrap();
+
+        assert!(plan.stdout.contains("\"findings\": []") && key_writes(&plan).is_empty());
+
+        // An old file and a good answer: the answer replaces it.
+        let (_registry, setup) = world(&package, Some(keys_answer(&[registry_key(&key, KEYID, &json!({}))])));
+        let file = setup.home.join(".vis/cache/registry-keys/npmjs.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "{\"createdAt\":1,\"keys\":[],\"ttlMs\":5}").unwrap();
+        assert_eq!(key_writes(&only_signatures(&setup).unwrap()).len(), 1);
+    }
+
+    #[test]
+    fn fresh_keys_are_read_without_a_request() {
+        let key = TestKey::new();
+        let (registry, setup) = world(&package(&signed(&key, KEYID)), None);
+        let file = setup.home.join(".vis/cache/registry-keys/npmjs.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            &file,
+            format!(
+                "{{\"createdAt\":{},\"keys\":{},\"ttlMs\":86400000}}",
+                NOW - 1000,
+                json!([registry_key(&key, KEYID, &json!({}))])
+            ),
+        )
+        .unwrap();
+
+        let plan = only_signatures(&setup).unwrap();
+
+        assert!(plan.stdout.contains("\"findings\": []") && key_writes(&plan).is_empty());
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 1);
+
+        for odd in [
+            "garbage",
+            "[]",
+            "{}",
+            "{\"createdAt\":1,\"ttlMs\":9,\"keys\":{}}",
+            "{\"createdAt\":\"1\",\"ttlMs\":9,\"keys\":[]}",
+        ] {
+            fs::write(&file, odd).unwrap();
+            assert!(only_signatures(&setup).is_err(), "{odd}");
+        }
+    }
+
+    #[test]
+    fn an_answer_that_has_no_keys_array_means_no_keys() {
+        let key = TestKey::new();
+
+        for body in ["{}", r#"{"keys":"x"}"#, r#"{"keys":null}"#, r#"{"keys":[]}"#] {
+            let (_registry, setup) = world(&package(&signed(&key, KEYID)), Some((200, body.to_owned(), Vec::new())));
+            let plan = only_signatures(&setup).unwrap();
+
+            assert_eq!(
+                findings_of(&plan),
+                ["[signatures] Package pkg@1.0.0 was signed with an unrecognized keyid (SHA256:test-key)."],
+                "{body}"
+            );
+            assert_eq!(key_writes(&plan), [format!("{{\"createdAt\":{NOW},\"keys\":[],\"ttlMs\":86400000}}")]);
+        }
+    }
+
+    #[test]
+    fn what_node_may_read_differently_is_handed_over() {
+        let key = TestKey::new();
+        let package = package(&signed(&key, KEYID));
+
+        for (status, body) in [
+            (200, "<html></html>"),
+            (200, ""),
+            (200, "[]"),
+            (200, "null"),
+            (200, "\u{feff}{}"),
+            (200, r#"{"keys":[],"keys":[]}"#),
+        ] {
+            let (_registry, setup) = world(&package, Some((status, body.to_owned(), Vec::new())));
+
+            assert!(only_signatures(&setup).is_err(), "{body:?}");
+        }
+
+        // A redirect, and an expiry or keyid this module does not read the way `Date.parse` and `Map` do.
+        let (_registry, setup) =
+            world(&package, Some((301, String::new(), vec![("location".to_owned(), "/other".to_owned())])));
+
+        assert!(only_signatures(&setup).is_err());
+
+        for odd in
+            [json!({ "keyid": KEYID, "key": key.spki_base64(), "expires": "2999" }), json!({ "keyid": 5 }), json!(null)]
+        {
+            let (_registry, setup) = world(&package, Some(keys_answer(std::slice::from_ref(&odd))));
+
+            assert!(only_signatures(&setup).is_err(), "{odd}");
+        }
+
+        // A bad address, and no address at all.
+        let (_registry, mut setup) = world(&package, None);
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+
+        setup.context.services.keys = Some(format!("http://127.0.0.1:{closed}/keys"));
+        assert!(only_signatures(&setup).unwrap_err().contains("the keys request failed"));
+        setup.context.services.keys = Some("http://127.0.0.1:80/keys".to_owned());
+        assert!(only_signatures(&setup).unwrap_err().contains("not a URL"));
+        setup.context.services.keys = None;
+        assert!(only_signatures(&setup).unwrap_err().contains("not text"));
+    }
+
+    #[test]
+    fn signatures_are_checked_in_the_order_of_the_handler() {
+        let key = TestKey::new();
+        let package =
+            package(&json!({ "integrity": INTEGRITY, "signatures": [{ "keyid": "SHA256:unlisted", "sig": "x" }] }));
+        let (_registry, setup) = world(&package, Some(keys_answer(&[registry_key(&key, KEYID, &json!({}))])));
+        let run = [Marshall::Signatures, Marshall::ArchivedRepo];
+        let plan = plan(&flags(&["pkg", "--json"]), &run, &setup.context, &client()).unwrap();
+
+        // The signature finding comes first; the repository answers 404, a warning after it.
+        let found = findings_of(&plan);
+
+        assert!(
+            found[0].starts_with("[signatures]") && found.len() == 2 && found[1].starts_with("[archivedRepo]"),
+            "{found:?}"
+        );
     }
 }

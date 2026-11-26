@@ -1119,11 +1119,12 @@ const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive
 // in the plain shape of a registry name and spec, `--json`, and `--strict` and `--only <list>` at most once, for a pnpm workspace
 // whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node option in the environment.
 // The marshalls the run executes (those `--only` names, or all but `signatures`, less the ones `MARSHALL_DISABLE_*` turns off) must
-// be among the seven the binary has (`INSPECT_NATIVE_MARSHALLS`: the five that read the packument alone, `downloads`, which asks the
-// registry's download API, and `archivedRepo`, which asks GitHub): `expiredDomains` and `signatures` ask other services, so a plain
-// `vis inspect <package> --json` stays in Node. The binary re-checks everything, including the registry and the packument.
+// be among the eight the binary has (`INSPECT_NATIVE_MARSHALLS`: the five that read the packument alone, `downloads`, which asks the
+// registry's download API, `archivedRepo`, which asks GitHub, and `signatures`, which reads the registry's keys and verifies with
+// ECDSA): `expiredDomains` looks up DNS records, so a plain `vis inspect <package> --json` stays in Node. The binary re-checks
+// everything, including the registry and the packument.
 const INSPECT_MARSHALLS = ["author", "provenance", "s1ngularity", "newBin", "metadata", "downloads", "expiredDomains", "signatures", "archivedRepo"];
-const INSPECT_NATIVE_MARSHALLS = new Set(["archivedRepo", "author", "downloads", "metadata", "newBin", "provenance", "s1ngularity"]);
+const INSPECT_NATIVE_MARSHALLS = new Set(["archivedRepo", "author", "downloads", "metadata", "newBin", "provenance", "s1ngularity", "signatures"]);
 const INSPECT_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const INSPECT_SPEC = /^[\w.+-]*$/;
 const INSPECT_ONLY = /^[\da-z,]+$/i;
@@ -1462,7 +1463,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
-    // The JSON report of the marshalls the binary has: those that read the packument, `downloads` and `archivedRepo` (`--only`, or the others turned off with `MARSHALL_DISABLE_*`).
+    // The JSON report of the marshalls the binary has: those that read the packument, `downloads`, `archivedRepo` and `signatures` (`--only`, or the others turned off with `MARSHALL_DISABLE_*`).
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],

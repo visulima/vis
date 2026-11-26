@@ -83,6 +83,10 @@ rustls = { version = "0.23", default-features = false, features = [
   "std"
 ] }
 
+# Already in the tree through `rustls`; named here to verify the registry's ECDSA P-256 signatures
+# (`src/inspect/signatures.rs`). The version and features are the ones `rustls` already links.
+ring = { version = "0.17", default-features = false }
+
 [dev-dependencies]
 # A self-signed certificate generated at test time, and a TLS server to present it, so the extra-CA path
 # is proven without a network (src/http/tests.rs).

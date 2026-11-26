@@ -176,7 +176,7 @@ fn bearer_token(value: Option<&OsStr>) -> Result<Option<&str>, String> {
 }
 
 /// `entry = versions[version] ?? versions[resolveLatestVersion(...)]`.
-fn version_entry<'a>(view: &View<'a>, version: &str) -> Result<Option<&'a Js>, String> {
+pub(super) fn version_entry<'a>(view: &View<'a>, version: &str) -> Result<Option<&'a Js>, String> {
     if let Some(entry) = view.entry(version) {
         return Ok(Some(entry));
     }
