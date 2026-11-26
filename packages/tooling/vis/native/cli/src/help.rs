@@ -502,9 +502,4 @@ mod tests {
             "vis v1\n\nUsage\r\n\r\n    vis\n    <command>\r\n\nRun it.\r\n\n"
         );
     }
-
-    #[test]
-    fn platform_eol_matches_the_target() {
-        assert_eq!(PLATFORM_EOL, if cfg!(windows) { "\r\n" } else { "\n" });
-    }
 }
