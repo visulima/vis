@@ -404,8 +404,8 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && args.includes("--sparse-checkout");
 
 // Whether `vis status` can pass the binary's native gate (`parse` and `answer` in `status.rs`): the plain overview or
-// `--json`, in a CI context off a terminal. The binary re-checks everything, including the root files that make the
-// runtime findings Node's, so this only skips the extra process when it would delegate anyway.
+// `--json`, in a CI context off a terminal. The binary re-checks everything, including whether it can learn the Node
+// version a pin needs, so this only skips the extra process when it would delegate anyway.
 const statusMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
@@ -1516,7 +1516,7 @@ const NATIVE_SHAPE_GATES = new Map([
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
     ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
-    // The overview and its `--json`; a root pinning a Node version, or run summaries of an unexpected shape, stay in Node.
+    // The overview and its `--json`; a Node pin the binary cannot check (no `node` on PATH) or run summaries of an unexpected shape stay in Node.
     ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],
     [
         "sync",

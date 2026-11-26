@@ -251,7 +251,6 @@ fn overview(root: &Path) -> Option<Overview> {
         Err(env::VarError::NotPresent) => None,
         Err(env::VarError::NotUnicode(_)) => return None,
     };
-    let runtime_issues = count_findings(root, user_agent, &mut node_version)?;
 
     let GraphResult::Native(graph) = project_graph(root) else {
         return None;
@@ -261,6 +260,8 @@ fn overview(root: &Path) -> Option<Overview> {
     let summaries = read_summaries(root)?;
     let flaky_tasks = flaky_count(&run_history(root, &summaries)?)?;
     let cache_hit_rate = cache_hit_rate(&summaries)?;
+    // Last, because it may start `node`: a workspace Node answers anyway does not pay for that.
+    let runtime_issues = count_findings(root, user_agent, &mut node_version)?;
 
     Some(Overview { cache_hit_rate, flaky_tasks, projects: graph.projects.len(), runtime_issues, targets })
 }
