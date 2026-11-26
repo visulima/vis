@@ -7,13 +7,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs;
 use std::path::Path;
 
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::workspace::{project_directories, Membership};
+use crate::package_json::{parse_field, PackageJson, GRAPH_FIELDS};
+use crate::workspace::project_packages;
 
 /// Outcome of building the graph of a root.
 #[derive(Debug, PartialEq)]
@@ -82,27 +82,31 @@ impl EdgeKind {
 }
 
 /// The `package.json` fields the graph reads. Everything else is ignored, as Node ignores it.
-#[derive(Default, Deserialize)]
-#[serde(default)]
+#[derive(Default)]
 struct Manifest {
     name: Option<String>,
-    bin: Present,
+    /// Whether `bin` is present at all. Node tests `bin !== undefined`, so `"bin": null` counts.
+    has_bin: bool,
     dependencies: DepKeys,
-    #[serde(rename = "devDependencies")]
     dev_dependencies: DepKeys,
-    #[serde(rename = "peerDependencies")]
     peer_dependencies: DepKeys,
 }
 
-/// Whether a key is present at all. Node tests `bin !== undefined`, so `"bin": null` counts.
-#[derive(Default)]
-struct Present(bool);
+impl Manifest {
+    /// The graph's reading of a parsed manifest, or `None` for a shape this module does not reproduce: a repeated
+    /// field, or a dependency field that is not a map or `null`.
+    fn read(package: &PackageJson) -> Option<Self> {
+        if package.repeats(GRAPH_FIELDS) {
+            return None;
+        }
 
-impl<'de> Deserialize<'de> for Present {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        IgnoredAny::deserialize(deserializer)?;
-
-        Ok(Present(true))
+        Some(Self {
+            name: package.name(),
+            has_bin: package.has_bin,
+            dependencies: parse_field(package.dependencies.as_deref())?,
+            dev_dependencies: parse_field(package.dev_dependencies.as_deref())?,
+            peer_dependencies: parse_field(package.peer_dependencies.as_deref())?,
+        })
     }
 }
 
@@ -166,20 +170,23 @@ impl<'de> Visitor<'de> for DepKeysVisitor {
 ///
 /// `root` must satisfy the same preconditions as `workspace::project_directories`.
 pub fn project_graph(root: &Path) -> GraphResult {
-    resolve(root).unwrap_or(GraphResult::Delegate)
+    project_graph_with_manifests(root).map_or(GraphResult::Delegate, |(graph, _)| GraphResult::Native(graph))
 }
 
-fn resolve(root: &Path) -> Option<GraphResult> {
-    let Membership::Native(directories) = project_directories(root) else {
-        return None;
-    };
+/// The parsed `package.json` of every project, by project name.
+pub(crate) type Manifests = BTreeMap<String, PackageJson>;
 
+/// [`project_graph`] with the manifests it was built from, so a caller that reads more of them (`vis list`) does
+/// not read and parse them again. `None` where [`project_graph`] delegates.
+pub(crate) fn project_graph_with_manifests(root: &Path) -> Option<(ProjectGraph, Manifests)> {
+    let packages = project_packages(root)?;
     let mut projects: Vec<(String, Manifest, String)> = Vec::new();
     let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut manifests = Manifests::new();
 
-    for directory in &directories {
-        let manifest = read_manifest(&root.join(directory).join("package.json"))?;
-        // The membership has refused an empty name and `__proto__` already (see `workspace::has_package_name`).
+    for (directory, package) in packages {
+        let manifest = Manifest::read(&package)?;
+        // The membership has refused an empty name and `__proto__` already (see `PackageJson::name`).
         let name = manifest.name.clone()?;
 
         // Node keeps the last project of a repeated name.
@@ -187,13 +194,14 @@ fn resolve(root: &Path) -> Option<GraphResult> {
             return None;
         }
 
-        projects.push((name, manifest, directory.clone()));
+        manifests.insert(name.clone(), package);
+        projects.push((name, manifest, directory));
     }
 
     let mut graph = BTreeMap::new();
 
     for (name, manifest, directory) in &projects {
-        let project_type = if manifest.bin.0 { ProjectType::Application } else { ProjectType::Library };
+        let project_type = if manifest.has_bin { ProjectType::Application } else { ProjectType::Library };
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut edges = Vec::new();
 
@@ -219,18 +227,12 @@ fn resolve(root: &Path) -> Option<GraphResult> {
 
     let order = projects.iter().map(|(name, _, _)| name.clone()).collect();
 
-    Some(GraphResult::Native(ProjectGraph { order, projects: graph }))
-}
-
-/// `None` when the file is missing, unreadable, or not a manifest this module reproduces.
-fn read_manifest(path: &Path) -> Option<Manifest> {
-    let text = fs::read_to_string(path).ok()?;
-
-    serde_json::from_str(&text).ok()
+    Some((ProjectGraph { order, projects: graph }, manifests))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use super::*;
@@ -264,7 +266,7 @@ mod tests {
     }
 
     fn manifest(text: &str) -> Option<Manifest> {
-        serde_json::from_str(text).ok()
+        Manifest::read(&serde_json::from_str(text).ok()?)
     }
 
     #[test]
@@ -319,8 +321,8 @@ mod tests {
 
     #[test]
     fn present_bin_null_is_an_application() {
-        assert!(manifest(r#"{"name":"a","bin":null}"#).expect("manifest").bin.0);
-        assert!(!manifest(r#"{"name":"a"}"#).expect("manifest").bin.0);
+        assert!(manifest(r#"{"name":"a","bin":null}"#).expect("manifest").has_bin);
+        assert!(!manifest(r#"{"name":"a"}"#).expect("manifest").has_bin);
     }
 
     #[test]

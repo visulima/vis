@@ -19,7 +19,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::graph::{project_graph, GraphResult, ProjectGraph};
+use crate::graph::{project_graph_with_manifests, ProjectGraph};
 use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::write_stdout;
 use crate::vis_config::{self, ConfigState};
@@ -499,13 +499,11 @@ fn answer(args: &[String]) -> Option<String> {
         return None;
     }
 
-    let GraphResult::Native(graph) = project_graph(&root) else {
-        return None;
-    };
+    let (graph, manifests) = project_graph_with_manifests(&root)?;
 
     // Every project must be free of the inference that could add inputs. The gate also leaves a
     // project at the root directory and a non-ASCII directory to Node.
-    if !crate::list::inference_free(&root, &graph) || reads_project_json(&root, &graph) {
+    if !crate::list::inference_free(&root, &graph, &manifests) || reads_project_json(&root, &graph) {
         return None;
     }
 
