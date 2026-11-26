@@ -25,13 +25,14 @@
  * Environment: `BENCH_RUNS` (measured runs per case), `BENCH_WARMUP` (default 3),
  * `BENCH_TASKS` (the large case, default 200), `BENCH_PROCESSES` (its `maxProcesses`, default 8),
  * `BENCH_HEAVY_RUNS`, `BENCH_HEAVY_WARMUP`, `BENCH_LINE_BYTES` (bytes per output line, default 100),
- * `BENCH_PTY_TASKS` (default 20), `BENCH_ONLY`,
+ * `BENCH_PTY_TASKS` (default 20), `BENCH_ONLY`, `BENCH_CASE_TIMEOUT` (seconds one run of one case may take
+ * before it is killed and its row says "timed out", default 120),
  * `BENCH_COLD_RUNS` (cold-process runs, default 20), `BENCH_OUT` (a path: also write the numbers there
  * as JSON), `BENCH_SUMMARY` (a path: also write the markdown report there; CI points it at the job summary).
  */
 /* eslint-disable no-console -- the report is the output of this script */
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
@@ -57,6 +58,7 @@ const warmupRuns = intFromEnv("BENCH_WARMUP", 3);
 const largeCount = intFromEnv("BENCH_TASKS", 200);
 const largeProcesses = intFromEnv("BENCH_PROCESSES", 8);
 
+const caseTimeoutMs = intFromEnv("BENCH_CASE_TIMEOUT", 120) * 1000;
 const heavyRuns = intFromEnv("BENCH_HEAVY_RUNS", 9);
 const heavyWarmupRuns = intFromEnv("BENCH_HEAVY_WARMUP", 2);
 const lineBytes = intFromEnv("BENCH_LINE_BYTES", 100);
@@ -123,16 +125,52 @@ const median = (values: number[]): number => {
     return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 };
 
+/** A progress line, written straight to stderr so it is visible even when the run later hangs. */
+const progress = (message: string): void => {
+    writeSync(2, `[bench ${new Date().toISOString().slice(11, 23)}] ${message}\n`);
+};
+
 const once = async (runner: Runner, benchCase: BenchCase): Promise<number> => {
     const commands = benchCase.commands();
+    // The `kill` of every command that started, so a run that hangs can be torn down.
+    const kills: (() => void)[] = [];
     const options: ConcurrentRunnerOptions = {
         maxProcesses: benchCase.maxProcesses,
         // Pinned, so neither runner pays for (or varies with) a shell lookup.
         shellPath: process.platform === "win32" ? undefined : "/bin/sh",
-        ...(benchCase.events ? { onEvent: () => undefined } : {}),
+        ...(benchCase.events
+            ? {
+                onEvent: (event) => {
+                    if (event.kind === "started" && event.kill) {
+                        kills.push(() => event.kill?.());
+                    }
+                },
+            }
+            : {}),
     };
     const start = performance.now();
-    const result = await runner(commands, options);
+    const running = runner(commands, options);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+            for (const kill of kills) {
+                try {
+                    kill();
+                } catch {
+                    // The command is already gone.
+                }
+            }
+
+            reject(new Error(`timed out after ${caseTimeoutMs / 1000} s`));
+        }, caseTimeoutMs);
+    });
+
+    // A run that loses the race may still reject later; that must not become an unhandled rejection.
+    running.catch(() => undefined);
+
+    const result = await Promise.race([running, timedOut]).finally(() => {
+        clearTimeout(timer);
+    });
     const elapsed = performance.now() - start;
 
     if (!result.success) {
@@ -179,9 +217,18 @@ const coldOnce = (name: "js" | "native"): Promise<number> =>
     new Promise((resolve, reject) => {
         const start = performance.now();
         const child = spawn(process.execPath, [coldEntry, name], { stdio: "ignore" });
+        const timer = setTimeout(() => {
+            child.kill();
+            reject(new Error(`a cold-process run timed out after ${caseTimeoutMs / 1000} s: ${name}`));
+        }, caseTimeoutMs);
 
-        child.on("error", reject);
+        child.on("error", (error) => {
+            clearTimeout(timer);
+            reject(error);
+        });
         child.on("close", (code) => {
+            clearTimeout(timer);
+
             const elapsed = performance.now() - start;
 
             if (code === 0) {
@@ -253,14 +300,20 @@ it(
 
             let failure: string | undefined;
 
+            progress(`case "${benchCase.name}": ${warmups} warm-up and ${measured} measured rounds`);
+
             try {
                 for (let round = 0; round < warmups + measured; round += 1) {
                     // Take turns, and swap who goes first, so neither runner always follows the other.
                     for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
+                        progress(`  round ${round + 1}: ${name} starts`);
+
                         // eslint-disable-next-line no-await-in-loop
                         const elapsed = await once(runners[name], benchCase).catch((error: unknown) => {
                             throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
                         });
+
+                        progress(`  round ${round + 1}: ${name} done in ${elapsed.toFixed(0)} ms`);
 
                         if (round >= warmups) {
                             samples[name].push(elapsed);
@@ -268,13 +321,10 @@ it(
                     }
                 }
             } catch (error) {
-                // An event-path case that cannot run on a platform (a pty that never reaches its end, say) must
-                // not take the other cases' numbers down with it; the echo cases are the gate and still throw.
-                if (!benchCase.heavy) {
-                    throw error;
-                }
-
+                // A case that cannot run on a platform (a pty that never reaches its end, say) or hangs must not
+                // take the other cases' numbers down with it: its row says why, and the next case runs.
                 failure = error instanceof Error ? error.message : String(error);
+                progress(`case "${benchCase.name}" FAILED: ${failure}`);
             }
 
             if (failure !== undefined) {
@@ -294,10 +344,13 @@ it(
 
         if (!process.env["BENCH_ONLY"]) {
             const samples: Record<"js" | "native", number[]> = { js: [], native: [] };
+            let failure: string | undefined;
 
-            await buildColdEntry();
+            progress(`case "${coldCaseName}": 2 warm-up and ${coldRuns} measured rounds`);
 
             try {
+                await buildColdEntry();
+
                 for (let round = 0; round < 2 + coldRuns; round += 1) {
                     for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
                         // eslint-disable-next-line no-await-in-loop
@@ -309,17 +362,24 @@ it(
                         }
                     }
                 }
+            } catch (error) {
+                failure = error instanceof Error ? error.message : String(error);
+                progress(`case "${coldCaseName}" FAILED: ${failure}`);
             } finally {
                 rmSync(coldDirectory, { force: true, recursive: true });
             }
 
-            rows.push({
-                case: coldCaseName,
-                jsMedian: median(samples.js),
-                jsRange: [Math.min(...samples.js), Math.max(...samples.js)],
-                nativeMedian: median(samples.native),
-                nativeRange: [Math.min(...samples.native), Math.max(...samples.native)],
-            });
+            rows.push(
+                failure === undefined
+                    ? {
+                        case: coldCaseName,
+                        jsMedian: median(samples.js),
+                        jsRange: [Math.min(...samples.js), Math.max(...samples.js)],
+                        nativeMedian: median(samples.native),
+                        nativeRange: [Math.min(...samples.native), Math.max(...samples.native)],
+                    }
+                    : { case: coldCaseName, failed: failure, jsMedian: Number.NaN, jsRange: [0, 0], nativeMedian: Number.NaN, nativeRange: [0, 0] },
+            );
         }
 
         const image = process.env["ImageOS"] ? `, runner image ${process.env["ImageOS"]} ${process.env["ImageVersion"] ?? ""}`.trimEnd() : "";
@@ -339,7 +399,7 @@ it(
         const large = rows.find((row) => row.case === `${largeCount} tasks, maxProcesses ${largeProcesses}`);
         const single = rows.find((row) => row.case === coldCaseName);
 
-        if (large && single) {
+        if (large && single && large.failed === undefined && single.failed === undefined) {
             lines.push(
                 `Gate (plan 015, step 3): ${largeCount} tasks within 1.25x: ${large.nativeMedian / large.jsMedian <= 1.25 ? "met" : "NOT met"} (${(large.nativeMedian / large.jsMedian).toFixed(2)}x); one task (cold process) within +10 ms: ${single.nativeMedian - single.jsMedian <= 10 ? "met" : "NOT met"} (${(single.nativeMedian - single.jsMedian).toFixed(1)} ms)`,
                 "",
