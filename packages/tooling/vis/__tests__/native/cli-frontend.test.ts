@@ -113,12 +113,12 @@ describe.skipIf(!binary)("vis CLI front-end (native binary + launcher)", () => {
     it("falls through to the in-process Node entry for non-native commands", () => {
         expect.assertions(2);
 
-        const result = spawnSync(process.execPath, [launcher, "status", "--json"], {
+        const result = spawnSync(process.execPath, [launcher, "ci", "--json"], {
             encoding: "utf8",
             env: launcherEnvironment(),
         });
 
-        expect(result.stdout).toContain("FALLBACK:status,--json");
+        expect(result.stdout).toContain("FALLBACK:ci,--json");
         expect(result.status).toBe(5);
     });
 
