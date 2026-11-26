@@ -313,7 +313,7 @@ const loadNativeBindings = (): NativeBindings | undefined => {
             && typeof loaded.hashTaskCommand === "function"
             && typeof loaded.hashGlobalInputs === "function"
             && typeof loaded.hashFile === "function"
-            && typeof loaded.runConcurrent === "function"
+            && typeof loaded.startConcurrent === "function"
         ) {
             nativeBindings = loaded;
         } else {

@@ -53,7 +53,6 @@ export type { CompoundSplit } from "./command-parser";
 export { expandArguments, expandShortcut, expandTokens, expandTokensInString, expandWildcard, parseCommands, splitCompoundCommand, stripQuotes } from "./command-parser";
 // Concurrent process runner
 export { runConcurrently } from "./concurrent";
-export { runConcurrentFallback } from "./concurrent-fallback";
 // Default task runner
 export { DEFAULT_UNTRACKED_ENV_PATTERNS, defaultTaskRunner } from "./default-task-runner";
 // Shell detection

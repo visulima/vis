@@ -11,7 +11,6 @@
 export type { ParseCommandsOptions, TokenContext } from "../command-parser";
 export { expandArguments, expandShortcut, expandTokens, expandTokensInString, expandWildcard, parseCommands, stripQuotes } from "../command-parser";
 export { runConcurrently } from "../concurrent";
-export { runConcurrentFallback } from "../concurrent-fallback";
 // Flow controllers (restart-with-backoff, stdin routing, timing, teardown).
 export type { InputHandlerOptions, RestartOptions, TeardownOptions } from "../flow-controllers";
 export { createInputHandler, formatTimingTable, logTimings, runTeardown, withRestart } from "../flow-controllers";

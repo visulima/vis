@@ -560,16 +560,6 @@ The native answer covers script-only JS workspaces without a `vis.config`, with 
 
 The binary keys and looks up the tasks side by side (at most four threads) and stops at the first task that is not a clean hit, so a run with a change is handed to Node after the first miss is found, not after the whole workspace has been keyed. How soon that is depends on where the changed project sits: the cost grows with the number of projects checked before it, and no order of the projects is tried first. A workspace with 1000 or more project directories is left to Node before any manifest is read, and a run of 1000 or more tasks before any task is keyed, because the printed layout of such a run is not reproduced.
 
-## Runner escape hatch
-
-`vis run` spawns every task on the native runner (including tasks with a TUI pty, piped stdin, retries and a clean environment). If a task behaves differently than it did on the previous release, set `VIS_CONCURRENT_RUNNER=js` to run on the previous TypeScript spawner while you report it:
-
-```bash
-VIS_CONCURRENT_RUNNER=js vis run build
-```
-
-Unset, empty or `native` selects the native runner; any other value is ignored with a warning. The variable is a one-release escape hatch: vis prints one line to stderr when it is used, and the variable and the TypeScript spawner are removed in the next release.
-
 ## How It Works
 
 1. **Parse selector** — Resolves `:target`, `~:target`, `#tag:target`, or `project:target`

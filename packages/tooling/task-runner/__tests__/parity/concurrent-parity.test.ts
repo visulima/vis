@@ -1,55 +1,53 @@
 /**
- * Parity suite: the same scenarios against both concurrent runners.
+ * Behaviour suite of the native concurrent runner (`runNativeConcurrent`), called directly with
+ * the same commands and options a caller passes to `runConcurrently`.
  *
- * `runConcurrentFallback` (the JS spawner) and `runNativeConcurrent` (the native addon) are
- * called directly, with identical commands and options, so the suite says nothing about which one
- * `runConcurrently` picks. For each scenario the two runs are reduced to what a caller can observe
- * and compared:
+ * Each scenario reduces its run to what a caller can observe and stores that in the snapshot file
+ * beside this one:
  *
  * - the result: `success` and the close events sorted by `index`, each as
  *   (`index`, `exitCode`, `killed`, `name`, `command`); `pid` and `durationMs` are dropped;
  * - the event stream per command index: it starts with `started`, ends with exactly one `close`,
- *   and carries the same `stdout` lines, the same `stderr` lines and the same `error` events.
- *   Order across commands, and between a command's two streams, is not stable on either runner
- *   and is not compared. A pty command's merged output arrives as raw chunks, so it is compared
- *   as one string with CRLF turned into LF.
+ *   and carries the `stdout` lines, the `stderr` lines and the `error` events. Order across
+ *   commands, and between a command's two streams, is not stable and is not compared. A pty
+ *   command's merged output arrives as raw chunks, so it is compared as one string with CRLF
+ *   turned into LF.
  *
- * ## Accepted differences
+ * The snapshots were recorded while the TypeScript spawner this runner replaced was still in the
+ * repository, from runs that matched it on every scenario except the accepted differences below.
+ * Paths of the machine, the Node binary and the probe script are replaced by names; strings over
+ * 200 characters are stored as their length. Update them with `vitest -u` only for a change in
+ * behaviour you mean to make.
  *
- * Where the runners differ, the last block of the file asserts BOTH values, so a change on either
- * side fails loudly. Each row is a difference plan 015 names, or one the owner has ruled on: fixes,
- * or things the JS spawner never did. The JS value is the one being retired.
+ * ## Behaviour that differs from the retired spawner
  *
- * | # | Scenario | JS spawner | Native runner |
- * | - | -------- | ---------- | ------------- |
- * | 1 | the command cannot be spawned (missing cwd or shell) | `started`, `error`, close code -2 (a negative libuv error; -2 on POSIX) | `started`, `error`, close code 1 (the event order is the same on both) |
- * | 2 | a UTF-8 character split across two reads, within the 100 ms flush window | one U+FFFD per stray byte (each chunk decoded alone) | the character, once |
- * | 3 | `killTimeout` | never read: a command that ignores the kill signal runs on | SIGKILL after the timeout (137 when the command leads its process group; a wrapper shell that dies from the SIGTERM first, as dash does on Linux, reports 143) |
- * | 4 | `killOthers` fires with commands still queued | the run never resolves | resolves; the queued commands have no close event |
- * | 5 | `successCondition: "command-MyApp"` for a command named `MyApp` | lowercases the condition, never matches | matches |
- * | 6 | an unknown `successCondition`, `killSignal` or `killOthers` value | silently the default | rejects, naming the value |
- * | 7 | a pty command killed by a signal | exit code 0, `killed` true (node-pty's `exitCode`) | `128 + signal`, `killed` true |
- * | 8 | a pty command that cannot start (missing cwd) | `started`, then close code 1, no `error`; on Linux node-pty's helper also writes `chdir(2) failed.: No such file or directory` to the terminal, so a `stdout` event sits between the two | `started`, `error`, then close code 1 |
+ * The last block of the file asserts each of these:
  *
- * ## Same on both (asserted equal in the scenarios, not differences)
+ * | # | Scenario | Native runner |
+ * | - | -------- | ------------- |
+ * | 1 | the command cannot be spawned (missing cwd or shell) | `started`, `error`, close code 1 |
+ * | 2 | a UTF-8 character split across two reads, within the 100 ms flush window | the character, once |
+ * | 3 | `killTimeout` | SIGKILL after the timeout (137 when the command leads its process group; a wrapper shell that dies from the SIGTERM first, as dash does on Linux, reports 143) |
+ * | 4 | `killOthers` fires with commands still queued | resolves; the queued commands have no close event |
+ * | 5 | `successCondition: "command-MyApp"` for a command named `MyApp` | matches |
+ * | 6 | an unknown `successCondition`, `killSignal` or `killOthers` value | rejects, naming the value |
+ * | 7 | a pty command killed by a signal | `128 + signal`, `killed` true |
+ * | 8 | a pty command that cannot start (missing cwd) | `started`, `error`, then close code 1 |
+ *
+ * ## Also asserted
  *
  * `killed` is true for a command ended by `killOthers`, an abort or its own `kill`; a signalled
- * shell reports `128 + signal`; neither runner listens for SIGHUP; both remove the listeners they
- * add for SIGINT, SIGTERM and exit when the run settles. The owner ruled that the native runner
- * matches the JS spawner on three more:
- *
- * - a pty command with `inheritEnv: false` gets only the caller's variables: no `SHELL` unless the
- *   caller passed one;
- * - a command that cannot be spawned reports `started` (without a pid) before `error` and `close`;
- * - a run aborted by SIGINT has its `close` event keep the raw exit code (143); only the result
- *   says 0 and `success`.
+ * shell reports `128 + signal`; the runner listens for no SIGHUP and removes the listeners it adds
+ * for SIGINT, SIGTERM and exit when the run settles; a pty command with `inheritEnv: false` gets
+ * only the caller's variables (no `SHELL` unless the caller passed one); a command that cannot be
+ * spawned reports `started` (without a pid) before `error` and `close`; a run aborted by SIGINT
+ * has its `close` event keep the raw exit code (143) while the result says 0 and `success`.
  *
  * ## Not covered here
  *
- * Only macOS ran locally. Linux and Windows are covered by CI only. The scenarios that need a
- * POSIX shell, a pty or signals are skipped on Windows; the rest run through the probe script and
- * `cmd.exe`.
- * A real SIGINT to a CLI process (rather than invoking the run's own listener) is step 3's Ctrl+C test.
+ * The scenarios that need a POSIX shell, a pty or signals are skipped on Windows; the rest run
+ * through the probe script and `cmd.exe`. A real SIGINT to a CLI process (rather than invoking the
+ * run's own listener) is `concurrent-ctrl-c.test.ts`.
  */
 
 import { spawnSync } from "node:child_process";
@@ -59,13 +57,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runConcurrentFallback } from "../../src/concurrent-fallback";
 import { runNativeConcurrent } from "../../src/concurrent-native";
 import type { ConcurrentCommandConfig, ConcurrentRunnerOptions, ConcurrentRunResult, ProcessEvent } from "../../src/types";
-
-type RunnerName = "js" | "native";
-
-const runners: Record<RunnerName, typeof runConcurrentFallback> = { js: runConcurrentFallback, native: runNativeConcurrent };
 
 const posix = process.platform !== "win32";
 /** The session probe reads `getsid` through Python. */
@@ -108,11 +101,11 @@ type Listener = () => void;
 
 const listenerSnapshot = (): Map<string, Listener[]> => new Map(listenerNames.map((name) => [name, process.listeners(name) as Listener[]]));
 
-const observe = async (runner: RunnerName, commands: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions = {}, react?: React): Promise<Observation> => {
+const observe = async (commands: ConcurrentCommandConfig[], options: ConcurrentRunnerOptions = {}, react?: React): Promise<Observation> => {
     const events: ProcessEvent[] = [];
     const started = new Map<number, ProcessEvent>();
     const startedAt = Date.now();
-    const result = await runners[runner](commands, {
+    const result = await runNativeConcurrent(commands, {
         ...options,
         onEvent: (event) => {
             events.push(event);
@@ -153,7 +146,6 @@ const framingOf = (events: ProcessEvent[]): string => {
         return `ends with ${events.at(-1)?.kind}, ${closes} close events`;
     }
 
-    // A command that could not be spawned has no `started` on the native runner (accepted difference 1).
     return events[0]?.kind === "started" ? "ok" : `begins with ${events[0]?.kind}`;
 };
 
@@ -204,11 +196,25 @@ const groupGone = async (pid: number): Promise<boolean> => {
     return false;
 };
 
-// ── scenarios that must be identical ────────────────────────────────────
+/** A value as it is stored in a snapshot: machine-specific paths named, long strings reduced to their length. */
+const snapshotOf = (value: unknown): unknown =>
+    JSON.parse(
+        JSON.stringify(value, (_key, item: unknown) => {
+            if (typeof item !== "string") {
+                return item;
+            }
+
+            const named = item.replaceAll(process.execPath, "<node>").replaceAll(probe, "<probe>").replaceAll(scratch, "<tmp>").replaceAll('"', "'");
+
+            return named.length > 200 ? `<${named.length} characters>` : named;
+        }),
+    );
+
+// ── scenarios ──────────────────────────────────────────────────────────
 
 interface Scenario {
     /** Extra check on one run, for what a plain comparison cannot see. */
-    check?: (observation: Observation, runner: RunnerName) => Promise<void> | void;
+    check?: (observation: Observation) => Promise<void> | void;
     commands: () => ConcurrentCommandConfig[];
     /** The commands' output is a terminal's: compare it as one string. */
     merged?: boolean;
@@ -218,8 +224,10 @@ interface Scenario {
     options?: ConcurrentRunnerOptions;
     /** Needs a POSIX shell, signals or a pty. */
     posixOnly?: boolean;
-    /** Builds the reaction anew for each runner, so state in it cannot leak from one run to the next. */
+    /** Builds the reaction anew for each run, so state in it cannot leak from one run to the next. */
     react?: () => React;
+    /** Skips the snapshot of the summary, for output too large to store (its `check` asserts it). */
+    unsnapshotted?: boolean;
 }
 
 /** One line of `probe.cjs numbered`, as a caller sees it: every 1000th is empty, every 10000th is 300 KB, every 777th had a CRLF. */
@@ -371,6 +379,7 @@ const scenarios: Scenario[] = [
         commands: () => [{ command: probeCommand("numbered", "a", "30000") }, { command: probeCommand("numbered", "b", "30000") }],
         name: "multi-megabyte output: every line once, in order, per command and stream",
         options: { maxProcesses: 2 },
+        unsnapshotted: true,
     },
     ...(directExecSafe ? [{ commands: () => [{ command: directCommand("out", "direct"), shell: false }], name: "shell: false" }] : []),
     ...(posix && existsSync("/bin/bash")
@@ -483,7 +492,7 @@ const sideEffectsOf = (before: Map<string, Listener[]>): void => {
     }
 };
 
-describe("both runners, the same scenarios", () => {
+describe("the native runner, scenario by scenario", () => {
     // A loop, not `it.each`: each scenario decides for itself whether the platform can run it.
     // eslint-disable-next-line vitest/prefer-each
     for (const scenario of scenarios) {
@@ -492,27 +501,22 @@ describe("both runners, the same scenarios", () => {
             async () => {
                 expect.hasAssertions();
 
-                const summaries: Partial<Record<RunnerName, Summary>> = {};
+                const before = listenerSnapshot();
+                const observation = await observe(scenario.commands(), scenario.options, scenario.react?.());
+                const summary = summarize(observation, { merged: scenario.merged });
 
-                for (const runner of ["js", "native"] as const) {
-                    const before = listenerSnapshot();
+                await scenario.check?.(observation);
 
-                    // eslint-disable-next-line no-await-in-loop
-                    const observation = await observe(runner, scenario.commands(), scenario.options, scenario.react?.());
-
-                    summaries[runner] = summarize(observation, { merged: scenario.merged });
-                    // eslint-disable-next-line no-await-in-loop
-                    await scenario.check?.(observation, runner);
-
-                    // Every command's events are framed the same way, and the run left no listener behind.
-                    for (const command of Object.values(summaries[runner].commands)) {
-                        expect(command.framing, `${runner}: ${scenario.name}`).toBe("ok");
-                    }
-
-                    sideEffectsOf(before);
+                // Every command's events are framed the same way, and the run left no listener behind.
+                for (const command of Object.values(summary.commands)) {
+                    expect(command.framing, scenario.name).toBe("ok");
                 }
 
-                expect(summaries.native).toStrictEqual(summaries.js);
+                sideEffectsOf(before);
+
+                if (!scenario.unsnapshotted) {
+                    expect(snapshotOf(summary)).toMatchSnapshot();
+                }
             },
             30_000,
         );
@@ -575,9 +579,8 @@ describe("the colour policy, with a mocked terminal", () => {
                 inheritEnv: parameters.inheritEnv,
             },
         ];
-        const seen = async (runner: RunnerName): Promise<string[]> => summarize(await observe(runner, commands())).commands[0]!.stdout;
 
-        await expect(seen("native")).resolves.toStrictEqual(await seen("js"));
+        expect(summarize(await observe(commands())).commands[0]!.stdout).toMatchSnapshot();
     });
 
     it.skipIf(!posix).each([
@@ -592,9 +595,8 @@ describe("the colour policy, with a mocked terminal", () => {
         setEnv("FORCE_COLOR", undefined);
 
         const commands = (): ConcurrentCommandConfig[] => [{ command: probeCommand("env", "FORCE_COLOR", "NO_COLOR", "TERM"), stdin: "pty" }];
-        const seen = async (runner: RunnerName): Promise<string[]> => summarize(await observe(runner, commands()), { merged: true }).commands[0]!.stdout;
 
-        await expect(seen("native")).resolves.toStrictEqual(await seen("js"));
+        expect(summarize(await observe(commands()), { merged: true }).commands[0]!.stdout).toMatchSnapshot();
     });
 });
 
@@ -612,48 +614,44 @@ describe("inheritEnv: false", () => {
     });
 
     it.each([false, true])("a parent variable does not reach the child (inheritEnv %s)", async (inheritEnv) => {
-        expect.assertions(3);
+        expect.assertions(2);
 
         process.env["PARITY_PARENT_ONLY"] = "from-parent";
 
         const commands = (): ConcurrentCommandConfig[] => [
             { command: probeCommand("env", "PARITY_PARENT_ONLY", "PARITY_OVERLAY"), env: { ...systemEnv(), PARITY_OVERLAY: "from-overlay" }, inheritEnv },
         ];
-        const seen = async (runner: RunnerName): Promise<unknown> => JSON.parse(summarize(await observe(runner, commands())).commands[0]!.stdout[0]!);
-        const native = await seen("native");
+        const native: unknown = JSON.parse(summarize(await observe(commands())).commands[0]!.stdout[0]!);
 
-        expect(native).toStrictEqual(await seen("js"));
         expect(native).toMatchObject({ PARITY_OVERLAY: "from-overlay" });
         expect(native).toMatchObject({ PARITY_PARENT_ONLY: inheritEnv ? "from-parent" : null });
     });
 
     it.skipIf(!posix).each(["pipe", "pty"] as const)("a parent variable does not reach a %s child either", async (stdin) => {
-        expect.assertions(2);
+        expect.assertions(1);
 
         process.env["PARITY_PARENT_ONLY"] = "from-parent";
 
         const commands = (): ConcurrentCommandConfig[] => [
             { command: probeCommand("env", "PARITY_PARENT_ONLY", "PARITY_OVERLAY"), env: { PARITY_OVERLAY: "from-overlay" }, inheritEnv: false, stdin },
         ];
-        const seen = async (runner: RunnerName): Promise<unknown> =>
-            JSON.parse(summarize(await observe(runner, commands()), { merged: true }).commands[0]!.stdout[0]!.trim());
+        const seen: unknown = JSON.parse(summarize(await observe(commands()), { merged: true }).commands[0]!.stdout[0]!.trim());
 
-        await expect(seen("native")).resolves.toStrictEqual({ PARITY_OVERLAY: "from-overlay", PARITY_PARENT_ONLY: null });
-        await expect(seen("js")).resolves.toStrictEqual({ PARITY_OVERLAY: "from-overlay", PARITY_PARENT_ONLY: null });
+        expect(seen).toStrictEqual({ PARITY_OVERLAY: "from-overlay", PARITY_PARENT_ONLY: null });
     });
 });
 
 describe("what every caller relies on", () => {
-    it.each(["js", "native"] as const)("%s: no commands resolve at once as a success", async (runner) => {
+    it("no commands resolve at once as a success", async () => {
         expect.assertions(1);
 
-        await expect(runners[runner]([], {})).resolves.toStrictEqual({ closeEvents: [], success: true });
+        await expect(runNativeConcurrent([], {})).resolves.toStrictEqual({ closeEvents: [], success: true });
     });
 
-    it.each(["js", "native"] as const)("%s: a close event carries the time the command ran, in the event and in the result", async (runner) => {
+    it("a close event carries the time the command ran, in the event and in the result", async () => {
         expect.assertions(3);
 
-        const { events, result } = await observe(runner, [{ command: probeCommand("exit-after", "150", "0") }]);
+        const { events, result } = await observe([{ command: probeCommand("exit-after", "150", "0") }]);
         const closeEvent = events.find((event) => event.kind === "close")!;
 
         expect(closeEvent.durationMs).toBeGreaterThanOrEqual(100);
@@ -662,14 +660,14 @@ describe("what every caller relies on", () => {
     });
 });
 
-describe("neither runner handles SIGHUP", () => {
-    it.skipIf(!posix).each(["js", "native"] as const)("%s adds no SIGHUP listener while it runs", async (runner) => {
+describe("sIGHUP", () => {
+    it.skipIf(!posix)("the runner adds no SIGHUP listener while it runs", async () => {
         expect.assertions(1);
 
         const before = process.listenerCount("SIGHUP");
         let during = -1;
 
-        await observe(runner, [{ command: probeCommand("exit", "0") }], {}, (event) => {
+        await observe([{ command: probeCommand("exit", "0") }], {}, (event) => {
             if (event.kind === "started") {
                 during = process.listenerCount("SIGHUP");
             }
@@ -679,131 +677,109 @@ describe("neither runner handles SIGHUP", () => {
     });
 });
 
-// ── accepted differences ───────────────────────────────────────────────
+// ── behaviour that differs from the retired spawner ────────────────────
 
-/** Run both runners and give back what each did, a rejection included. */
-const both = async (
-    commands: () => ConcurrentCommandConfig[],
-    options: ConcurrentRunnerOptions = {},
-    react?: () => React,
-    settleWithin = 20_000,
-): Promise<Record<RunnerName, { error?: string; observation?: Observation; pending?: true }>> => {
-    const out: Record<string, { error?: string; observation?: Observation; pending?: true }> = {};
+interface Outcome {
+    error?: string;
+    observation?: Observation;
+    pending?: true;
+}
 
-    for (const runner of ["js", "native"] as const) {
-        const before = listenerSnapshot();
-        const attempt = observe(runner, commands(), options, react?.()).then(
-            (observation) => { return { observation }; },
-            (error: unknown) => {
-                return { error: (error as Error).message };
-            },
-        );
-        // eslint-disable-next-line no-await-in-loop
-        const outcome = await Promise.race([
-            attempt,
-            new Promise<{ pending: true }>((resolve) => {
-                setTimeout(resolve, settleWithin, { pending: true }).unref();
-            }),
-        ]);
+/** Runs the native runner and gives back what it did, a rejection included, or `pending` when it has not settled in `settleWithin` ms. */
+const run = async (commands: () => ConcurrentCommandConfig[], options: ConcurrentRunnerOptions = {}, react?: () => React, settleWithin = 20_000): Promise<Outcome> => {
+    const before = listenerSnapshot();
+    const attempt = observe(commands(), options, react?.()).then(
+        (observation) => { return { observation }; },
+        (error: unknown) => {
+            return { error: (error as Error).message };
+        },
+    );
+    const outcome = await Promise.race([
+        attempt,
+        new Promise<{ pending: true }>((resolve) => {
+            setTimeout(resolve, settleWithin, { pending: true }).unref();
+        }),
+    ]);
 
-        out[runner] = outcome;
-
-        // A run that never settles keeps its listeners; take them off so they cannot catch a later signal.
-        for (const name of listenerNames) {
-            for (const listener of process.listeners(name) as Listener[]) {
-                if (!before.get(name)!.includes(listener)) {
-                    process.removeListener(name, listener);
-                }
+    // A run that never settles keeps its listeners; take them off so they cannot catch a later signal.
+    for (const name of listenerNames) {
+        for (const listener of process.listeners(name) as Listener[]) {
+            if (!before.get(name)!.includes(listener)) {
+                process.removeListener(name, listener);
             }
         }
     }
 
-    return out;
+    return outcome;
 };
 
-const closeOf = (outcome: { observation?: Observation }, index = 0) => outcome.observation!.result.closeEvents.find((event) => event.index === index)!;
-const kindsOf = (outcome: { observation?: Observation }, index = 0): string[] =>
-    outcome.observation!.events.filter((event) => event.index === index).map((event) => event.kind);
+const closeOf = (outcome: Outcome, index = 0) => outcome.observation!.result.closeEvents.find((event) => event.index === index)!;
+const kindsOf = (outcome: Outcome, index = 0): string[] => outcome.observation!.events.filter((event) => event.index === index).map((event) => event.kind);
 
-describe("accepted differences", () => {
-    it("1. a command that cannot be spawned: the exit code (the events are the same)", async () => {
-        expect.assertions(7);
+describe("behaviour that differs from the retired spawner", () => {
+    it("1. a command that cannot be spawned: `started` without a pid, `error`, then close code 1", async () => {
+        expect.assertions(4);
 
-        const { js, native } = await both(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory" }]);
+        const native = await run(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory" }]);
 
-        // `started` (without a pid) comes first on both, then `error` and `close`.
-        expect(kindsOf(js)).toStrictEqual(["started", "error", "close"]);
-        expect(kindsOf(native)).toStrictEqual(kindsOf(js));
+        expect(kindsOf(native)).toStrictEqual(["started", "error", "close"]);
         expect(native.observation!.events.find((event) => event.kind === "started")?.pid).toBeUndefined();
-        // The libuv error code: -2 (ENOENT) on POSIX, another negative number on Windows.
-        expect(closeOf(js).exitCode).toBeLessThan(0);
-        expect(js.observation!.events.find((event) => event.kind === "started")?.pid).toBeUndefined();
         expect(closeOf(native).exitCode).toBe(1);
         expect(native.observation!.result.success).toBe(false);
     });
 
-    it.skipIf(!posix)("1b. a missing shell is the same difference", async () => {
-        expect.assertions(4);
+    it.skipIf(!posix)("1b. a missing shell is the same", async () => {
+        expect.assertions(2);
 
-        const { js, native } = await both(() => [{ command: "echo hi" }], { shellPath: "/nonexistent/parity/sh" });
+        const native = await run(() => [{ command: "echo hi" }], { shellPath: "/nonexistent/parity/sh" });
 
-        expect(closeOf(js).exitCode).toBe(-2);
         expect(closeOf(native).exitCode).toBe(1);
-        expect(kindsOf(js)).toStrictEqual(["started", "error", "close"]);
         expect(kindsOf(native)).toStrictEqual(["started", "error", "close"]);
     });
 
-    it("2. a UTF-8 character split across two reads", async () => {
-        expect.assertions(2);
+    it("2. a UTF-8 character split across two reads arrives once", async () => {
+        expect.assertions(1);
 
         const euro = Buffer.from("€\n");
-        const { js, native } = await both(() => [{ command: probeCommand("chunks-fast", "out", base64(euro.subarray(0, 1)), base64(euro.subarray(1))) }]);
-        const stdout = (outcome: { observation?: Observation }) =>
-            outcome.observation!.events.filter((event) => event.kind === "stdout").map((event) => event.text);
+        const native = await run(() => [{ command: probeCommand("chunks-fast", "out", base64(euro.subarray(0, 1)), base64(euro.subarray(1))) }]);
 
-        expect(stdout(js)).toStrictEqual(["\uFFFD\uFFFD\uFFFD"]);
-        expect(stdout(native)).toStrictEqual(["€"]);
+        expect(native.observation!.events.filter((event) => event.kind === "stdout").map((event) => event.text)).toStrictEqual(["€"]);
     });
 
-    it.skipIf(!posix)("3. killTimeout: the native runner escalates to SIGKILL, the JS spawner never reads it", async () => {
-        expect.assertions(6);
+    it.skipIf(!posix)("3. killTimeout: the runner escalates to SIGKILL", async () => {
+        expect.assertions(3);
 
         // The second command ignores SIGTERM and leaves by itself after 1.6 s. It is `exec`ed so the
         // probe is the process group's leader on every shell: dash (Linux) keeps a wrapper shell
         // alive, which dies from the SIGTERM first and would be what the exit code reports (143).
         const commands = () => [{ command: probeCommand("exit-after", "150", "1") }, { command: `exec ${probeCommand("ignore-term", "1600")}` }];
-        const { js, native } = await both(commands, { killOthers: ["failure"], killTimeout: 300 });
+        const native = await run(commands, { killOthers: ["failure"], killTimeout: 300 });
 
         expect(closeOf(native, 1)).toMatchObject({ exitCode: 137, killed: true });
         expect(native.observation!.elapsedMs).toBeLessThan(1400);
-        expect(closeOf(js, 1)).toMatchObject({ exitCode: 0, killed: true });
-        expect(js.observation!.elapsedMs).toBeGreaterThan(1500);
         expect(native.observation!.result.success).toBe(false);
-        expect(js.observation!.result.success).toBe(false);
     });
 
-    it("4. killOthers with a command still queued: the native runner resolves, the JS spawner hangs", async () => {
-        expect.assertions(4);
+    it("4. killOthers with a command still queued: the run resolves and the queued command has no close event", async () => {
+        expect.assertions(3);
 
         const commands = () => [{ command: probeCommand("exit", "1") }, { command: probeCommand("out", "never") }];
-        const { js, native } = await both(commands, { killOthers: ["failure"], maxProcesses: 1 }, undefined, 2500);
+        const native = await run(commands, { killOthers: ["failure"], maxProcesses: 1 }, undefined, 2500);
 
-        expect(js.pending).toBe(true);
         expect(native.observation!.result.closeEvents.map((event) => event.index)).toStrictEqual([0]);
         expect(native.observation!.events.some((event) => event.index === 1)).toBe(false);
         expect(native.observation!.result.success).toBe(false);
     });
 
-    it("5. a mixed-case command name in successCondition", async () => {
-        expect.assertions(2);
+    it("5. a mixed-case command name matches in successCondition", async () => {
+        expect.assertions(1);
 
         const commands = () => [
             { command: probeCommand("exit", "0"), name: "MyApp" },
             { command: probeCommand("exit", "3"), name: "other" },
         ];
-        const { js, native } = await both(commands, { successCondition: "command-MyApp" });
+        const native = await run(commands, { successCondition: "command-MyApp" });
 
-        expect(js.observation!.result.success).toBe(false);
         expect(native.observation!.result.success).toBe(true);
     });
 
@@ -811,50 +787,42 @@ describe("accepted differences", () => {
         ["successCondition", { successCondition: "sometimes" }, "sometimes"],
         ["killSignal", { killSignal: "SIGBOGUS" }, "SIGBOGUS"],
         ["killOthers", { killOthers: ["maybe" as "failure"] }, "maybe"],
-    ])("6. an unknown %s: the native runner rejects naming the value, the JS spawner uses the default", async (_name, options, value) => {
-        expect.assertions(3);
+    ])("6. an unknown %s is rejected, naming the value", async (_name, options, value) => {
+        expect.assertions(2);
 
-        const { js, native } = await both(() => [{ command: probeCommand("exit", "0") }], options);
+        const native = await run(() => [{ command: probeCommand("exit", "0") }], options);
 
-        expect(js.observation!.result.success).toBe(true);
         expect(native.error).toContain(value);
         expect(native.observation).toBeUndefined();
     });
 
     describe.skipIf(!posix)("pty", () => {
         it("7b. a pty command killed through the started event", async () => {
-            expect.assertions(4);
+            expect.assertions(2);
 
-            const { js, native } = await both(() => [{ command: probeCommand("hang"), stdin: "pty" }], {}, callKill("hanging", "SIGKILL"));
+            const native = await run(() => [{ command: probeCommand("hang"), stdin: "pty" }], {}, callKill("hanging", "SIGKILL"));
 
-            expect(closeOf(js)).toMatchObject({ exitCode: 0, killed: true });
             expect(closeOf(native)).toMatchObject({ exitCode: 137, killed: true });
-            expect(js.observation!.result.success).toBe(true);
             expect(native.observation!.result.success).toBe(false);
         });
 
         it.each([
             ["SIGTERM", "kill -TERM $$", 143],
             ["SIGKILL", "kill -KILL $$", 137],
-        ])("7. a command killed by %s: 128 + signal natively, exit code 0 through node-pty", async (_name, command, native128) => {
-            expect.assertions(4);
+        ])("7. a command killed by %s reports 128 + signal", async (_name, command, code) => {
+            expect.assertions(2);
 
-            const { js, native } = await both(() => [{ command, stdin: "pty" }]);
+            const native = await run(() => [{ command, stdin: "pty" }]);
 
-            expect(closeOf(js)).toMatchObject({ exitCode: 0, killed: true });
-            expect(closeOf(native)).toMatchObject({ exitCode: native128, killed: true });
-            expect(js.observation!.result.success).toBe(true);
+            expect(closeOf(native)).toMatchObject({ exitCode: code, killed: true });
             expect(native.observation!.result.success).toBe(false);
         });
 
-        it("8. a command that cannot start: an `error` natively, only a failed close in the JS spawner", async () => {
-            expect.assertions(4);
+        it("8. a command that cannot start gives an `error`, then close code 1", async () => {
+            expect.assertions(2);
 
-            const { js, native } = await both(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory", stdin: "pty" }]);
+            const native = await run(() => [{ command: "echo hi", cwd: "/nonexistent/parity/directory", stdin: "pty" }]);
 
-            // node-pty's forked helper reports the failed chdir on the terminal on Linux; on macOS the spawn fails outright.
-            expect(kindsOf(js)).toStrictEqual(process.platform === "linux" ? ["started", "stdout", "close"] : ["started", "close"]);
-            expect(closeOf(js).exitCode).toBe(1);
             expect(kindsOf(native)).toStrictEqual(["started", "error", "close"]);
             expect(closeOf(native).exitCode).toBe(1);
         });
