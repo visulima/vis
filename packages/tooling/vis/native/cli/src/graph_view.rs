@@ -13,6 +13,7 @@
 //! - any workspace [`crate::graph::project_graph`] hands to Node, one whose project names JavaScript would not
 //!   keep in discovery order (all-digit names) or that are not ASCII, and a project at the workspace root.
 
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::path::Path;
@@ -20,8 +21,8 @@ use std::path::Path;
 use crate::graph::{project_graph, EdgeKind, GraphResult, ProjectGraph, ProjectType};
 use crate::js::is_index_like;
 use crate::json::{stringify, Json};
-use crate::node_context::{monorepo_root, quiet_context};
-use crate::output::{node_may_cut_short, write_stdout};
+use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
+use crate::output::{node_may_cut_short, write_stdout, STREAM_LIMIT};
 use crate::term::{piped_colour_level, Style};
 use crate::vis_config;
 
@@ -83,12 +84,9 @@ fn parse(args: &[String]) -> Option<Options> {
 
                 depth = Some(parse_depth(value)?);
             }
+            // `-f=json` lands here too: only the long names are split at an `=`, and cerebro does not read the short
+            // ones that way.
             _ => return None,
-        }
-
-        // `-f=json` is not a spelling cerebro reads the same way.
-        if inline.is_some() && !name.starts_with("--") {
-            return None;
         }
     }
 
@@ -189,6 +187,10 @@ struct Tree<'a> {
     style: Style,
     max_depth: u64,
     lines: Vec<String>,
+    /// The bytes of the text so far, a newline after every line.
+    size: usize,
+    /// The size Node still delivers whole on this stdout, when it is a pipe or a socket.
+    limit: Option<usize>,
 }
 
 impl Tree<'_> {
@@ -200,59 +202,78 @@ impl Tree<'_> {
         }
     }
 
-    fn dependency(&mut self, name: &str, prefix: &str, is_last: bool, printed: &mut Vec<String>, depth: u64) {
+    fn push(&mut self, line: String) {
+        self.size += line.len() + 1;
+        self.lines.push(line);
+    }
+
+    /// Whether the text is already one Node would cut short, so no more of it needs to be built.
+    fn too_long(&self) -> bool {
+        self.limit.is_some_and(|limit| self.size > limit)
+    }
+
+    fn dependency(&mut self, name: &str, prefix: &str, is_last: bool, printed: &mut HashSet<String>, depth: u64) {
         let connector = self.style.dim(if is_last { "└── " } else { "├── " });
-        let duplicate = printed.iter().any(|seen| seen == name);
+        let duplicate = printed.contains(name);
         let suffix = if duplicate { self.style.dim(" (*)") } else { String::new() };
 
-        self.lines.push(format!("{prefix}{connector}{}{suffix}", self.name(name)));
+        self.push(format!("{prefix}{connector}{}{suffix}", self.name(name)));
 
-        if duplicate {
+        if duplicate || self.too_long() {
             return;
         }
 
-        printed.push(name.to_owned());
+        printed.insert(name.to_owned());
 
         let edges = self.graph.edges(name);
         let child_prefix =
             if is_last { format!("{prefix}    ") } else { format!("{prefix}{}   ", self.style.dim("│")) };
 
         if depth >= self.max_depth && !edges.is_empty() {
-            self.lines.push(format!("{child_prefix}{}", self.style.dim(&format!("... {} more", edges.len()))));
+            self.push(format!("{child_prefix}{}", self.style.dim(&format!("... {} more", edges.len()))));
 
             return;
         }
 
         for (index, edge) in edges.iter().enumerate() {
             self.dependency(&edge.target, &child_prefix, index == edges.len() - 1, printed, depth + 1);
+
+            if self.too_long() {
+                return;
+            }
         }
     }
 
-    fn root(&mut self, name: &str, printed: &mut Vec<String>, indent: &str) {
-        self.lines.push(format!("{indent}{}", self.name(name)));
-        printed.push(name.to_owned());
+    fn root(&mut self, name: &str, printed: &mut HashSet<String>, indent: &str) {
+        self.push(format!("{indent}{}", self.name(name)));
+        printed.insert(name.to_owned());
 
         let edges = self.graph.edges(name);
 
         if edges.is_empty() {
-            self.lines.push(format!("{indent}  {}", self.style.dim("(no dependencies)")));
+            self.push(format!("{indent}  {}", self.style.dim("(no dependencies)")));
 
             return;
         }
 
         if self.max_depth == 0 {
-            self.lines.push(format!("{indent}  {}", self.style.dim(&format!("... {} dependencies", edges.len()))));
+            self.push(format!("{indent}  {}", self.style.dim(&format!("... {} dependencies", edges.len()))));
 
             return;
         }
 
         for (index, edge) in edges.iter().enumerate() {
             self.dependency(&edge.target, indent, index == edges.len() - 1, printed, 1);
+
+            if self.too_long() {
+                return;
+            }
         }
     }
 }
 
-fn to_ascii(graph: &Ordered, max_depth: u64, style: Style) -> String {
+/// The ASCII tree, or `None` as soon as it is longer than Node delivers whole on a pipe, without building the rest.
+fn to_ascii(graph: &Ordered, max_depth: u64, style: Style, limit: Option<usize>) -> Option<String> {
     let mut apps: Vec<&str> = Vec::new();
     let mut libraries: Vec<&str> = Vec::new();
 
@@ -268,25 +289,32 @@ fn to_ascii(graph: &Ordered, max_depth: u64, style: Style) -> String {
     libraries.sort_unstable();
 
     let total_dependencies: usize = graph.names().map(|name| graph.edges(name).len()).sum();
-    let mut tree = Tree { graph, style, max_depth, lines: vec![style.bold("Project Dependency Graph"), String::new()] };
+    let mut tree = Tree { graph, style, max_depth, lines: Vec::new(), size: 0, limit };
+
+    tree.push(style.bold("Project Dependency Graph"));
+    tree.push(String::new());
 
     for (group, label) in [(&apps, "Applications"), (&libraries, "Libraries")] {
         if group.is_empty() {
             continue;
         }
 
-        tree.lines.push(format!(" {}", style.bold(&style.cyan(&format!("{label} ({})", group.len())))));
-        tree.lines.push(String::new());
+        tree.push(format!(" {}", style.bold(&style.cyan(&format!("{label} ({})", group.len())))));
+        tree.push(String::new());
 
         for name in group {
-            tree.root(name, &mut Vec::new(), "  ");
-            tree.lines.push(String::new());
+            tree.root(name, &mut HashSet::new(), "  ");
+            tree.push(String::new());
+
+            if tree.too_long() {
+                return None;
+            }
         }
     }
 
     // `process.stdout.columns || 80`, capped at 60: stdout is not a terminal here, so it is 80.
-    tree.lines.push(style.dim(&"─".repeat(60)));
-    tree.lines.push(format!(
+    tree.push(style.dim(&"─".repeat(60)));
+    tree.push(format!(
         "{} packages {} {} dependencies {} {} apps{} {} libraries",
         style.bold(&(apps.len() + libraries.len()).to_string()),
         style.dim("·"),
@@ -297,23 +325,23 @@ fn to_ascii(graph: &Ordered, max_depth: u64, style: Style) -> String {
         style.bold(&libraries.len().to_string()),
     ));
 
-    let mut shown: Vec<&str> = Vec::new();
+    let mut shown: HashSet<&str> = HashSet::new();
     let mut has_duplicates = false;
 
     for name in apps.iter().chain(&libraries) {
         for edge in graph.edges(name) {
-            has_duplicates |= shown.contains(&edge.target.as_str());
-            shown.push(&edge.target);
+            has_duplicates |= !shown.insert(edge.target.as_str());
         }
 
-        shown.push(name);
+        shown.insert(*name);
     }
 
     if has_duplicates {
-        tree.lines.push(style.dim("(*) = already shown above"));
+        tree.push(style.dim("(*) = already shown above"));
     }
 
-    tree.lines.join("\n")
+    // The last line has no newline of its own: the text ends with the one `text_for` adds.
+    (!tree.too_long()).then(|| tree.lines.join("\n"))
 }
 
 /// Whether the names of `graph` are ones this module orders as Node does: ASCII, and none that JavaScript lists
@@ -332,7 +360,11 @@ fn answer(args: &[String]) -> Option<String> {
     let cwd = env::current_dir().ok()?;
     let root = monorepo_root(&cwd)?;
 
-    if !quiet_context(&cwd, &root) || vis_config::requires_node(&vis_config::read(&root)) {
+    // Node prints the graph through `logger.info`, which a configured log level silences or changes.
+    if !output_settings_are_default()
+        || !quiet_context(&cwd, &root)
+        || vis_config::requires_node(&vis_config::read(&root))
+    {
         return None;
     }
 
@@ -354,7 +386,9 @@ fn text_for(root: &Path, options: &Options, style: Style) -> Option<String> {
 
     let ordered = Ordered { graph: &graph };
     let mut text = match options.format {
-        Format::Ascii => to_ascii(&ordered, options.depth, style),
+        Format::Ascii => {
+            to_ascii(&ordered, options.depth, style, node_may_cut_short(usize::MAX).then_some(STREAM_LIMIT))?
+        }
         Format::Dot => to_dot(&ordered),
         Format::Json => to_json(&ordered),
     };
@@ -471,7 +505,7 @@ mod tests {
     #[test]
     fn ascii_marks_repeated_projects() {
         let graph = sample();
-        let text = to_ascii(&Ordered { graph: &graph }, u64::MAX, Style { colour: false });
+        let text = to_ascii(&Ordered { graph: &graph }, u64::MAX, Style { colour: false }, None).expect("short");
 
         assert!(text.contains("  app\n  ├── lib\n  │   └── util\n  └── util (*)"), "{text}");
         assert!(text.ends_with("(*) = already shown above"), "{text}");
@@ -479,10 +513,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tree_longer_than_the_limit_is_given_up_without_building_the_rest() {
+        let graph = sample();
+        let ordered = Ordered { graph: &graph };
+        let whole = to_ascii(&ordered, u64::MAX, Style { colour: false }, None).expect("whole");
+
+        // The whole text plus its newline fits exactly; one byte less does not.
+        assert_eq!(
+            to_ascii(&ordered, u64::MAX, Style { colour: false }, Some(whole.len() + 1)).as_deref(),
+            Some(whole.as_str())
+        );
+        assert_eq!(to_ascii(&ordered, u64::MAX, Style { colour: false }, Some(whole.len())), None);
+        assert_eq!(to_ascii(&ordered, u64::MAX, Style { colour: false }, Some(10)), None);
+    }
+
+    #[test]
     fn a_shallow_depth_summarises_what_it_cuts() {
         let graph = sample();
-        let flat = to_ascii(&Ordered { graph: &graph }, 0, Style { colour: false });
-        let one = to_ascii(&Ordered { graph: &graph }, 1, Style { colour: false });
+        let flat = to_ascii(&Ordered { graph: &graph }, 0, Style { colour: false }, None).expect("short");
+        let one = to_ascii(&Ordered { graph: &graph }, 1, Style { colour: false }, None).expect("short");
 
         assert!(flat.contains("  app\n    ... 2 dependencies"), "{flat}");
         assert!(one.contains("  ├── lib\n  │   ... 1 more"), "{one}");

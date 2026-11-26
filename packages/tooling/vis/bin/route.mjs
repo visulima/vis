@@ -430,61 +430,6 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
 const statusMayRunNatively = (platform, environment, args, interactive) =>
     platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
-// Whether `vis graph` can pass the binary's native gate (`parse` in `graph_view.rs`): the ASCII, DOT and JSON
-// graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal. `html`, `--output`
-// and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
-// would delegate anyway.
-const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
-const GRAPH_DEPTH = /^\d+$/;
-const GRAPH_FLAGS = new Map([
-    ["--depth", "depth"],
-    ["--format", "format"],
-    ["-d", "depth"],
-    ["-f", "format"],
-]);
-
-// The `[kind, value, next index]` of the graph option at `args[index]`, with its value after a space or an `=` (the
-// short names take a space only), or `undefined` when it is no graph option.
-const graphOption = (args, index) => {
-    const argument = args[index];
-    const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
-    const kind = GRAPH_FLAGS.get(equals === -1 ? argument : argument.slice(0, equals));
-
-    if (kind === undefined) {
-        return undefined;
-    }
-
-    return equals === -1 ? [kind, args[index + 1], index + 2] : [kind, argument.slice(equals + 1), index + 1];
-};
-
-const graphMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment)) {
-        return false;
-    }
-
-    const seen = new Set();
-    let index = 1;
-
-    while (index < args.length) {
-        const option = graphOption(args, index);
-
-        if (option === undefined) {
-            return false;
-        }
-
-        const [kind, value, next] = option;
-
-        if (seen.has(kind) || !(kind === "format" ? GRAPH_FORMATS.has(value) : GRAPH_DEPTH.test(value))) {
-            return false;
-        }
-
-        seen.add(kind);
-        index = next;
-    }
-
-    return true;
-};
-
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
 const optionValue = (args, index, name) => {
@@ -1071,6 +1016,62 @@ const outputSettingsAreDefault = (environment) =>
     && environment.DEBUG === undefined
     && environment.PAIL_LOG_LEVEL === undefined
     && !Object.keys(environment).some((key) => key.startsWith("CEREBRO_"));
+
+// Whether `vis graph` can pass the binary's native gate (`parse` in `graph_view.rs`): the ASCII, DOT and JSON
+// graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal with no output setting
+// (`NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`, `CEREBRO_*`) that changes what the logger prints. `html`, `--output`
+// and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
+// would delegate anyway.
+const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
+const GRAPH_DEPTH = /^\d+$/;
+const GRAPH_FLAGS = new Map([
+    ["--depth", "depth"],
+    ["--format", "format"],
+    ["-d", "depth"],
+    ["-f", "format"],
+]);
+
+// The `[kind, value, next index]` of the graph option at `args[index]`, with its value after a space or an `=` (the
+// short names take a space only), or `undefined` when it is no graph option.
+const graphOption = (args, index) => {
+    const argument = args[index];
+    const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
+    const kind = GRAPH_FLAGS.get(equals === -1 ? argument : argument.slice(0, equals));
+
+    if (kind === undefined) {
+        return undefined;
+    }
+
+    return equals === -1 ? [kind, args[index + 1], index + 2] : [kind, argument.slice(equals + 1), index + 1];
+};
+
+const graphMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+        return false;
+    }
+
+    const seen = new Set();
+    let index = 1;
+
+    while (index < args.length) {
+        const option = graphOption(args, index);
+
+        if (option === undefined) {
+            return false;
+        }
+
+        const [kind, value, next] = option;
+
+        if (seen.has(kind) || !(kind === "format" ? GRAPH_FORMATS.has(value) : GRAPH_DEPTH.test(value))) {
+            return false;
+        }
+
+        seen.add(kind);
+        index = next;
+    }
+
+    return true;
+};
 
 // The flags `vis optimize` takes natively (`parse` in `optimize/mod.rs`): the boolean ones and `--format table|json`, each at
 // most once (`-d` is `--dry-run`).

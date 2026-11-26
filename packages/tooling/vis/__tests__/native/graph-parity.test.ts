@@ -86,6 +86,11 @@ const contextEnvironment = (fixture: string, ci: boolean, colour: Record<string,
         VIS_NO_UPDATE_CHECK: "1",
     };
 
+    // The test runner sets `NODE_ENV=test`, and a developer may have the other output settings: each case adds its own.
+    for (const name of Object.keys(env).filter((key) => ["DEBUG", "NODE_ENV", "PAIL_LOG_LEVEL"].includes(key) || key.startsWith("CEREBRO_"))) {
+        delete env[name];
+    }
+
     delete env["CI"];
     delete env["CONTINUOUS_INTEGRATION"];
     delete env["VIS_FALLBACK_ENTRY"];
@@ -211,6 +216,25 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             const native = runNative(directory, [...args], true, paths.stub, dirname(directory), colour);
 
             expect(native.stdout).not.toContain(marker);
+            expect(native.stdout).toBe(node.stdout);
+            expect(native.stderr).toBe(node.stderr);
+            expect(native.status).toBe(node.status);
+        },
+    );
+
+    // Node prints the graph through the logger, so a configured level changes or silences it: the binary hands the run over.
+    it.each([{ NODE_ENV: "test" }, { NODE_ENV: "debug" }, { DEBUG: "vis" }, { PAIL_LOG_LEVEL: "error" }, { PAIL_LOG_LEVEL: "debug" }, { CEREBRO_OUTPUT_LEVEL: "16" }])(
+        "hands a run with the output setting %j to Node",
+        (setting) => {
+            expect.assertions(4);
+
+            const directory = join(paths.fixtures, "basic");
+            const node = runNode(directory, ["--format=json"], true, setting);
+
+            expect(runNative(directory, ["--format=json"], true, paths.stub, directory, setting).stdout).toContain(marker);
+
+            const native = runNative(directory, ["--format=json"], true, nodeEntry, directory, setting);
+
             expect(native.stdout).toBe(node.stdout);
             expect(native.stderr).toBe(node.stderr);
             expect(native.status).toBe(node.status);
