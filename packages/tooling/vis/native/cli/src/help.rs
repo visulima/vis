@@ -145,12 +145,26 @@ impl Section {
         Self { header: None, body }
     }
 
-    fn text(&self) -> String {
+    /// The section as cerebro prints it: its header, a blank line, the body and a closing
+    /// blank line are joined with the platform line ending (`os.EOL`). The table in the
+    /// body keeps the `\n` its renderer puts between rows.
+    fn text(&self, eol: &str) -> String {
         match &self.header {
-            Some(header) => format!("{header}\n\n{}\n", self.body),
-            None => format!("{}\n", self.body),
+            Some(header) => format!("{header}{eol}{eol}{}{eol}", self.body),
+            None => format!("{}{eol}", self.body),
         }
     }
+}
+
+/// The line ending cerebro joins a section's lines with: `os.EOL`, so CRLF on Windows.
+const PLATFORM_EOL: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+/// The banner, then the sections. The banner's newline, the blank line after it and the
+/// newline between sections are literal `\n` in cerebro, whatever the platform.
+fn join_sections(banner: &str, sections: &[Section], eol: &str) -> String {
+    let body = sections.iter().map(|section| section.text(eol)).collect::<Vec<_>>().join("\n");
+
+    format!("{banner}\n{body}\n")
 }
 
 pub struct Help<'a> {
@@ -166,9 +180,7 @@ impl Help<'_> {
     }
 
     fn finish(&self, sections: &[Section]) -> String {
-        let body = sections.iter().map(Section::text).collect::<Vec<_>>().join("\n");
-
-        format!("{}\n{body}\n", self.banner())
+        join_sections(&self.banner(), sections, PLATFORM_EOL)
     }
 
     fn name(&self) -> String {
@@ -459,5 +471,40 @@ fn capitalize(text: &str) -> String {
     match characters.next() {
         Some(first) => first.to_uppercase().chain(characters).collect(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sections() -> Vec<Section> {
+        vec![
+            Section::titled("Usage".to_string(), "    vis\n    <command>".to_string()),
+            Section::raw("Run it.".to_string()),
+        ]
+    }
+
+    #[test]
+    fn lf_joins_are_the_historic_output() {
+        assert_eq!(
+            join_sections("vis v1\n", &sections(), "\n"),
+            "vis v1\n\nUsage\n\n    vis\n    <command>\n\nRun it.\n\n"
+        );
+    }
+
+    #[test]
+    fn crlf_applies_only_to_the_joins_inside_a_section() {
+        // Header, blank line and the closing blank line use the line ending; the table rows
+        // in the body, the banner and the join between sections keep a literal `\n`.
+        assert_eq!(
+            join_sections("vis v1\n", &sections(), "\r\n"),
+            "vis v1\n\nUsage\r\n\r\n    vis\n    <command>\r\n\nRun it.\r\n\n"
+        );
+    }
+
+    #[test]
+    fn platform_eol_matches_the_target() {
+        assert_eq!(PLATFORM_EOL, if cfg!(windows) { "\r\n" } else { "\n" });
     }
 }
