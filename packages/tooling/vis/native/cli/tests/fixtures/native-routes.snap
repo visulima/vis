@@ -1750,6 +1750,7 @@
 ["inspect","express","--json","--only"] => inspect
 ["inspect","express","--json","--only","archivedRepo"] => inspect
 ["inspect","express","--json","--only","archivedRepo,author"] => inspect
+["inspect","express","--json","--only","archivedRepo,expiredDomains"] => inspect
 ["inspect","express","--json","--only","author","--only","newBin"] => inspect
 ["inspect","express","--json","--only","author,"] => inspect
 ["inspect","express","--json","--only","author,newBin"] => inspect

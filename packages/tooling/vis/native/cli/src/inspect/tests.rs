@@ -133,9 +133,14 @@ fn setup(registry: Option<&Registry>) -> Setup {
         context: Context {
             services: Services {
                 downloads: registry.map_or_else(
-                    || "http://127.0.0.1:1/downloads".to_owned(),
+                    || "http://127.0.0.1:49151/downloads".to_owned(),
                     |registry| format!("{}/downloads", registry.url()),
                 ),
+                github: registry.map_or_else(
+                    || "http://127.0.0.1:49151/github".to_owned(),
+                    |registry| format!("{}/github", registry.url()),
+                ),
+                github_token: None,
             },
             root,
             home: home.clone(),
@@ -893,6 +898,330 @@ mod downloads_marshall {
         let report: Value = serde_json::from_str(&plan.stdout).unwrap();
 
         assert_eq!(messages(&report, "errors"), ["[downloads] Only 5 downloads in the past month."]);
+        assert_eq!(plan.status, 1);
+    }
+}
+
+mod archived_repo_marshall {
+    use super::*;
+
+    fn with_github(answer: Option<(u16, &str)>) -> (Registry, Setup) {
+        let mut answers = answers(&calm());
+
+        if let Some((status, body)) = answer {
+            answers.insert("/github/o/r".to_owned(), (status, body.to_owned(), Vec::new()));
+        }
+
+        let registry = Registry::start(answers);
+        let setup = setup(Some(&registry));
+
+        (registry, setup)
+    }
+
+    fn only_archived(setup: &Setup) -> Result<Plan, String> {
+        plan(&flags(&["pkg", "--json"]), &[Marshall::ArchivedRepo], &setup.context, &client())
+    }
+
+    fn writes(plan: &Plan) -> Vec<String> {
+        plan.cache
+            .iter()
+            .filter_map(|action| match action {
+                CacheAction::Write { file, text } if file.to_string_lossy().contains("/archived-repo/") => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn warnings_of(plan: &Plan) -> Vec<String> {
+        messages(&serde_json::from_str::<Value>(&plan.stdout).unwrap(), "warnings")
+    }
+
+    #[test]
+    fn an_archived_repository_is_a_warning_and_is_cached() {
+        for (body, message, cached) in [
+            (
+                r#"{"archived":true,"archived_at":"2024-01-02T03:04:05Z"}"#,
+                "[archivedRepo] Source repo o/r is archived (since 2024-01-02T03:04:05Z).",
+                format!(
+                    r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":true,"archivedAt":"2024-01-02T03:04:05Z"}}"#
+                ),
+            ),
+            (
+                r#"{"archived":true,"archived_at":null}"#,
+                "[archivedRepo] Source repo o/r is archived.",
+                format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":true}}"#),
+            ),
+            (
+                r#"{"archived":true}"#,
+                "[archivedRepo] Source repo o/r is archived.",
+                format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":true}}"#),
+            ),
+        ] {
+            let (registry, setup) = with_github(Some((200, body)));
+            let plan = only_archived(&setup).unwrap();
+
+            assert_eq!(warnings_of(&plan), [message], "{body}");
+            assert_eq!(writes(&plan), [cached], "{body}");
+            // A warning alone does not fail the run.
+            assert_eq!(plan.status, 0);
+            assert_eq!(registry.requests.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[test]
+    fn a_repository_that_is_not_archived_is_no_finding_and_is_cached() {
+        for (body, cached) in [
+            (r#"{"archived":false}"#, r#"{"archived":false}"#),
+            (r#"{"archived":"yes"}"#, r#"{"archived":false}"#),
+            ("{}", r#"{"archived":false}"#),
+            ("[]", r#"{"archived":false}"#),
+            ("7", r#"{"archived":false}"#),
+            // `archived_at` is read whether or not the repository is archived.
+            (r#"{"archived":false,"archived_at":"x"}"#, r#"{"archived":false,"archivedAt":"x"}"#),
+        ] {
+            let (_registry, setup) = with_github(Some((200, body)));
+            let plan = only_archived(&setup).unwrap();
+
+            assert!(plan.stdout.contains("\"findings\": []"), "{body}");
+            assert_eq!(writes(&plan), [format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,{}"#, &cached[1..])], "{body}");
+        }
+    }
+
+    #[test]
+    fn a_missing_repository_is_a_warning_and_is_cached() {
+        let (_registry, setup) = with_github(Some((404, "{\"message\":\"Not Found\"}")));
+        let plan = only_archived(&setup).unwrap();
+
+        assert_eq!(warnings_of(&plan), ["[archivedRepo] Source repo o/r returned 404 from GitHub."]);
+        assert_eq!(
+            writes(&plan),
+            [format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":false,"missing":true}}"#)]
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_a_server_error_and_a_null_body_are_no_finding_and_nothing_is_cached() {
+        for (status, body) in [(403, "{}"), (429, "{}"), (500, "oops"), (304, ""), (200, "null")] {
+            let (_registry, setup) = with_github(Some((status, body)));
+            let plan = only_archived(&setup).unwrap();
+
+            assert!(plan.stdout.contains("\"findings\": []"), "{status}");
+            assert!(writes(&plan).is_empty(), "{status}");
+            assert_eq!(plan.status, 0);
+        }
+    }
+
+    #[test]
+    fn the_request_carries_the_headers_node_sends() {
+        let (registry, setup) = with_github(Some((200, "{}")));
+
+        only_archived(&setup).unwrap();
+
+        let head = registry.paths.lock().unwrap()[1].to_ascii_lowercase();
+
+        assert!(head.starts_with("get /github/o/r http/1.1"), "{head}");
+        assert!(head.contains("accept: application/vnd.github+json"), "{head}");
+        assert!(head.contains("user-agent: visulima-vis-marshall\r\n"), "{head}");
+        assert!(!head.contains("authorization"));
+
+        let (registry, mut setup) = with_github(Some((200, "{}")));
+
+        setup.context.services.github_token = Some("ghp_Token-1".into());
+        only_archived(&setup).unwrap();
+        assert!(registry.paths.lock().unwrap()[1].contains("authorization: Bearer ghp_Token-1\r\n"));
+
+        // An empty token is no token.
+        let (registry, mut setup) = with_github(Some((200, "{}")));
+
+        setup.context.services.github_token = Some("".into());
+        only_archived(&setup).unwrap();
+        assert!(!registry.paths.lock().unwrap()[1].to_ascii_lowercase().contains("authorization"));
+    }
+
+    #[test]
+    fn what_node_may_read_differently_is_handed_over() {
+        for (status, body) in [(200, "<html></html>"), (200, ""), (200, "\u{feff}{}")] {
+            let (_registry, setup) = with_github(Some((status, body)));
+
+            assert!(only_archived(&setup).is_err(), "{status} {body:?}");
+        }
+
+        // A redirect (a renamed repository).
+        let mut answers = answers(&calm());
+
+        answers.insert(
+            "/github/o/r".to_owned(),
+            (301, String::new(), vec![("location".to_owned(), "/github/o/s".to_owned())]),
+        );
+
+        let registry = Registry::start(answers);
+
+        assert!(only_archived(&setup(Some(&registry))).is_err());
+
+        // A request that never gets an answer.
+        let (_registry, mut setup) = with_github(None);
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+
+        setup.context.services.github = format!("http://127.0.0.1:{closed}/github");
+        assert!(only_archived(&setup).unwrap_err().contains("the GitHub request failed"));
+
+        // A token and an address that `fetch` may read differently.
+        setup.context.services.github_token = Some("a b".into());
+        assert!(only_archived(&setup).is_err());
+        setup.context.services.github = "http://127.0.0.1:80/github".to_owned();
+        assert!(only_archived(&setup).unwrap_err().contains("not a URL"));
+    }
+
+    #[test]
+    fn a_fresh_entry_answers_without_a_request() {
+        let (registry, setup) = with_github(None);
+        let file = setup.home.join(".vis/cache/archived-repo/o__r.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            &file,
+            format!(r#"{{"createdAt":{},"ttlMs":86400000,"archived":true,"archivedAt":"then"}}"#, NOW - 86_400_000),
+        )
+        .unwrap();
+
+        let plan = only_archived(&setup).unwrap();
+
+        assert_eq!(warnings_of(&plan), ["[archivedRepo] Source repo o/r is archived (since then)."]);
+        assert!(writes(&plan).is_empty());
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 1);
+
+        fs::write(&file, format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":false,"missing":true}}"#)).unwrap();
+
+        assert_eq!(
+            warnings_of(&only_archived(&setup).unwrap()),
+            ["[archivedRepo] Source repo o/r returned 404 from GitHub."]
+        );
+
+        // `missing` that is not `true` is read as a repository that exists.
+        fs::write(&file, format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":false,"missing":false}}"#))
+            .unwrap();
+        assert!(only_archived(&setup).unwrap().stdout.contains("\"findings\": []"));
+        // The packument is asked for by every run, as nothing commits its cache here; the repository never is.
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_stale_entry_is_removed_and_asked_again() {
+        let (registry, setup) = with_github(Some((200, r#"{"archived":false}"#)));
+        let file = setup.home.join(".vis/cache/archived-repo/o__r.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, r#"{"createdAt":1,"ttlMs":86400000,"archived":true}"#).unwrap();
+
+        let plan = only_archived(&setup).unwrap();
+
+        assert!(plan.stdout.contains("\"findings\": []"));
+        assert!(plan.cache.contains(&CacheAction::Remove(file.clone())));
+        assert_eq!(writes(&plan), [format!(r#"{{"createdAt":{NOW},"ttlMs":86400000,"archived":false}}"#)]);
+        assert_eq!(registry.requests.load(Ordering::SeqCst), 2);
+
+        // When GitHub then limits the rate, the stale file is still gone and nothing replaces it.
+        let (_registry, setup) = with_github(Some((403, "{}")));
+        let file = setup.home.join(".vis/cache/archived-repo/o__r.json");
+
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, r#"{"createdAt":1,"ttlMs":5,"archived":true}"#).unwrap();
+
+        let plan = only_archived(&setup).unwrap();
+
+        assert!(plan.cache.contains(&CacheAction::Remove(file)) && writes(&plan).is_empty());
+    }
+
+    #[test]
+    fn an_entry_that_is_not_what_node_writes_is_handed_over() {
+        for text in ["garbage", "{}", r#"{"createdAt":1,"ttlMs":9999999999999,"archived":true,"archivedAt":5}"#] {
+            let (_registry, setup) = with_github(None);
+            let file = setup.home.join(".vis/cache/archived-repo/o__r.json");
+
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, text).unwrap();
+            assert!(only_archived(&setup).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_repository_that_is_not_on_github_is_skipped() {
+        let other = |url: Value| {
+            let mut package = calm();
+
+            package["versions"]["1.2.0"]["repository"] = url;
+
+            let registry = Registry::start(answers(&package));
+            let setup = setup(Some(&registry));
+
+            (registry, setup)
+        };
+
+        for url in [
+            json!({ "url": "https://gitlab.com/o/r" }),
+            json!("o/r"),
+            json!({ "type": "git" }),
+            json!({ "url": 5 }),
+            json!(["https://github.com/o/r"]),
+            json!(null),
+            json!({ "url": "  " }),
+        ] {
+            let (registry, setup) = other(url.clone());
+            let plan = only_archived(&setup).unwrap();
+
+            assert!(plan.stdout.contains("\"findings\": []"), "{url}");
+            assert!(plan.cache.iter().all(|action| !matches!(action, CacheAction::Write { file, .. } if file.to_string_lossy().contains("archived"))));
+            assert_eq!(registry.requests.load(Ordering::SeqCst), 1, "{url}");
+        }
+
+        // A name the URL would rewrite is Node's.
+        let (_registry, setup) = other(json!({ "url": "https://github.com/o/r%20x" }));
+
+        assert!(only_archived(&setup).is_err());
+    }
+
+    #[test]
+    fn the_last_entry_stands_in_for_a_version_that_is_not_there() {
+        // `dist-tags.latest` names a version the packument does not hold: `versions[version]` is missing, and the
+        // marshall reads the last version's repository instead.
+        let mut package = calm();
+
+        package["dist-tags"]["latest"] = json!("9.9.9");
+        package["versions"]["1.2.0"]["repository"] = json!({ "url": "https://github.com/last/one" });
+
+        let mut answers = answers(&package);
+
+        answers.insert("/github/last/one".to_owned(), (200, r#"{"archived":true}"#.to_owned(), Vec::new()));
+
+        let registry = Registry::start(answers);
+        let setup = setup(Some(&registry));
+        let plan = plan(&flags(&["pkg", "--json"]), &[Marshall::ArchivedRepo], &setup.context, &client()).unwrap();
+
+        assert_eq!(warnings_of(&plan), ["[archivedRepo] Source repo last/one is archived."]);
+    }
+
+    #[test]
+    fn the_findings_follow_the_order_of_the_handler() {
+        let mut answers = answers(&calm());
+
+        answers.insert("/github/o/r".to_owned(), (404, "{}".to_owned(), Vec::new()));
+        answers.insert("/downloads/pkg".to_owned(), (200, "{\"downloads\":5}".to_owned(), Vec::new()));
+
+        let registry = Registry::start(answers);
+        let setup = setup(Some(&registry));
+        let run = [Marshall::Downloads, Marshall::ArchivedRepo];
+        let plan = plan(&flags(&["pkg", "--json"]), &run, &setup.context, &client()).unwrap();
+        let report: Value = serde_json::from_str(&plan.stdout).unwrap();
+
+        assert_eq!(
+            messages(&report, "findings"),
+            [
+                "[downloads] Only 5 downloads in the past month.",
+                "[archivedRepo] Source repo o/r returned 404 from GitHub."
+            ]
+        );
         assert_eq!(plan.status, 1);
     }
 }
