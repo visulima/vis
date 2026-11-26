@@ -218,7 +218,15 @@ it(
             );
         }
 
-        const rows: { case: string; jsMedian: number; jsRange: [number, number]; nativeMedian: number; nativeRange: [number, number] }[] = [];
+        const rows: {
+            case: string;
+            /** Why the case could not be measured, if it could not (a runner threw): the other cases still report. */
+            failed?: string;
+            jsMedian: number;
+            jsRange: [number, number];
+            nativeMedian: number;
+            nativeRange: [number, number];
+        }[] = [];
 
         if (process.platform === "win32") {
             mkdirSync(outputDirectory, { recursive: true });
@@ -243,16 +251,36 @@ it(
             const warmups = benchCase.heavy ? heavyWarmupRuns : warmupRuns;
             const measured = benchCase.heavy ? heavyRuns : measuredRuns;
 
-            for (let round = 0; round < warmups + measured; round += 1) {
-                // Take turns, and swap who goes first, so neither runner always follows the other.
-                for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
-                    // eslint-disable-next-line no-await-in-loop
-                    const elapsed = await once(runners[name], benchCase);
+            let failure: string | undefined;
 
-                    if (round >= warmups) {
-                        samples[name].push(elapsed);
+            try {
+                for (let round = 0; round < warmups + measured; round += 1) {
+                    // Take turns, and swap who goes first, so neither runner always follows the other.
+                    for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
+                        // eslint-disable-next-line no-await-in-loop
+                        const elapsed = await once(runners[name], benchCase).catch((error: unknown) => {
+                            throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+                        });
+
+                        if (round >= warmups) {
+                            samples[name].push(elapsed);
+                        }
                     }
                 }
+            } catch (error) {
+                // An event-path case that cannot run on a platform (a pty that never reaches its end, say) must
+                // not take the other cases' numbers down with it; the echo cases are the gate and still throw.
+                if (!benchCase.heavy) {
+                    throw error;
+                }
+
+                failure = error instanceof Error ? error.message : String(error);
+            }
+
+            if (failure !== undefined) {
+                rows.push({ case: benchCase.name, failed: failure, jsMedian: Number.NaN, jsRange: [0, 0], nativeMedian: Number.NaN, nativeRange: [0, 0] });
+
+                continue;
             }
 
             rows.push({
@@ -303,7 +331,7 @@ it(
             "| --- | --- | --- | --- | --- |",
             ...rows.map(
                 (row) =>
-                    `| ${row.case} | ${format(row.jsMedian)} (${row.jsRange[0].toFixed(0)}-${row.jsRange[1].toFixed(0)}) | ${format(row.nativeMedian)} (${row.nativeRange[0].toFixed(0)}-${row.nativeRange[1].toFixed(0)}) | ${(row.nativeMedian / row.jsMedian).toFixed(2)}x | ${(row.nativeMedian - row.jsMedian).toFixed(1)} ms |`,
+                    row.failed === undefined ? `| ${row.case} | ${format(row.jsMedian)} (${row.jsRange[0].toFixed(0)}-${row.jsRange[1].toFixed(0)}) | ${format(row.nativeMedian)} (${row.nativeRange[0].toFixed(0)}-${row.nativeRange[1].toFixed(0)}) | ${(row.nativeMedian / row.jsMedian).toFixed(2)}x | ${(row.nativeMedian - row.jsMedian).toFixed(1)} ms |` : `| ${row.case} | failed: ${row.failed.replaceAll("|", "/")} | | | |`,
             ),
             "",
         ];
@@ -322,7 +350,7 @@ it(
 
         if (heavyRows.length > 0) {
             lines.push(
-                `Event path (onEvent set, native within 1.25x of the JS spawner): ${heavyRows.map((row) => `${row.case} ${(row.nativeMedian / row.jsMedian).toFixed(2)}x ${row.nativeMedian / row.jsMedian <= 1.25 ? "met" : "NOT met"}`).join("; ")}`,
+                `Event path (onEvent set, native within 1.25x of the JS spawner): ${heavyRows.map((row) => (row.failed === undefined ? `${row.case} ${(row.nativeMedian / row.jsMedian).toFixed(2)}x ${row.nativeMedian / row.jsMedian <= 1.25 ? "met" : "NOT met"}` : `${row.case} FAILED`)).join("; ")}`,
                 "",
             );
         }

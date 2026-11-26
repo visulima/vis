@@ -356,8 +356,8 @@ fn exit_code_of(status: std::process::ExitStatus) -> (i32, bool) {
 /// Longest line the reader buffers before emitting it as its own event.
 const MAX_LINE_BYTES: usize = 1 << 20;
 
-/// Read size for a single `read()`; large enough to swallow most line
-/// bursts in one syscall without holding an oversized buffer per process.
+/// Read size for a single `read()`: the 64 KiB a Node stream reads at a time, so a burst of output
+/// is a few reads and a few wake-ups, not one per 8 KiB. The buffer lives on the heap, once per reader.
 const READ_CHUNK: usize = 65536;
 
 /// Strip a single trailing `\r` so Windows CRLF endings don't leak a

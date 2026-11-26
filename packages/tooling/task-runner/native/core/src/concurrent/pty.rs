@@ -324,6 +324,12 @@ fn start_terminal(builder: CommandBuilder, size: PtySize) -> Result<Terminal, st
 fn start_without_fork(builder: &CommandBuilder, size: PtySize) -> Option<(super::mac_pty::Master, u32)> {
     use std::os::unix::fs::PermissionsExt;
 
+    // `portable-pty` hands a variable that is not valid UTF-8 on as it is, which the lists below
+    // cannot hold: leave such an environment to it.
+    if std::env::vars_os().any(|(key, value)| key.to_str().is_none() || value.to_str().is_none()) {
+        return None;
+    }
+
     let argv = builder.get_argv();
     let program = Path::new(argv.first()?);
     let cwd = builder.get_cwd()?.to_str()?;

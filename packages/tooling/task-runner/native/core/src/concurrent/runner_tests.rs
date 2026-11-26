@@ -1428,6 +1428,51 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_a_pty_command_gets_the_same_environment_however_it_is_started() {
+        // An absolute shell path is started without a `fork` on macOS; a bare `sh` is looked up on
+        // `PATH` and goes through `portable-pty`. The command must not be able to tell.
+        let environment_of = |shell: &str| {
+            let options = ConcurrentRunnerOptions { shell_path: Some(shell.to_string()), ..default_options() };
+            let run = start(vec![pty_config("env | sort")], &options);
+
+            async move {
+                let (result, events) = run.finish().await;
+
+                assert!(result.success, "{result:?} {events:?}");
+
+                stdout_of(&events)
+                    .replace("\r\n", "\n")
+                    .lines()
+                    // `_` is the program that ran `env`, which a shell sets itself; the RUNNER_TEST_
+                    // variables are set and removed by other tests that run at the same time.
+                    .filter(|line| {
+                        !line.starts_with("_=") && !line.starts_with("SHLVL=") && !line.starts_with("RUNNER_TEST_")
+                    })
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        let absolute = environment_of("/bin/sh").await;
+        let searched = environment_of("sh").await;
+
+        assert!(absolute.iter().any(|line| line.starts_with("SHELL=")), "{absolute:?}");
+        assert!(absolute.iter().any(|line| line.starts_with("PWD=")), "{absolute:?}");
+        let only_in = |left: &[String], right: &[String]| {
+            left.iter().filter(|line| !right.contains(line)).cloned().collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            absolute,
+            searched,
+            "only absolute: {:?}; only searched: {:?}",
+            only_in(&absolute, &searched),
+            only_in(&searched, &absolute)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_a_pty_command_starts_at_the_requested_size() {
         let mut config = pty_config("stty size");
         config.pty_size = Some(crate::concurrent::types::PtySize { cols: 100, rows: 30 });

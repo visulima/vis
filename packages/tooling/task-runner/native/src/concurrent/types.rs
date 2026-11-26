@@ -255,6 +255,9 @@ impl From<core::ConcurrentRunResult> for ConcurrentRunResult {
 ///
 /// Every event of a run is delivered before the batch that carries `result` or `error`, so a
 /// caller that settles its promise from that batch has seen everything first.
+///
+/// Adjacent "stdout" or "stderr" lines of one command are folded into a single event with a
+/// `count` above 1 (see `ProcessEvent.count`), so a caller that wants lines splits `text` on `\n`.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct ProcessEventBatch {
