@@ -79,6 +79,7 @@ mod replay;
 mod route;
 mod run;
 mod run_summary;
+mod runtime_check;
 mod sbom;
 mod secrets;
 mod security_list;

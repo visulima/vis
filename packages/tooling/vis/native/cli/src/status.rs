@@ -4,9 +4,10 @@
 //!
 //! - projects and unique targets: [`crate::graph`] and the script targets [`crate::list`] reads, so the same
 //!   workspaces (no config, no inference detector, every project with scripts) are answered;
-//! - runtime issues: the findings compare the root `package.json` and `.nvmrc` with the running Node, which this
-//!   binary is not. A root with `engines`, `devEngines`, `packageManager` or a Node version file is Node's; any other
-//!   root has none;
+//! - runtime issues: [`crate::runtime_check`], which compares the root manifest and `.nvmrc` with the Node the run
+//!   would be handed to. That is the launcher's own Node (`VIS_NODE_VERSION`) when it started the binary, and
+//!   otherwise the answer of `node --version` for `VIS_NODE` or the `node` on `PATH`, asked once and only when a Node
+//!   pin exists. No `node`, or an answer that is not a clean `vX.Y.Z`, is Node's;
 //! - constraints: configured in `vis.config`, which the context gate already excludes, so there are none;
 //! - flaky tasks and the cache hit rate: the run summaries under `.vis/runs` (`loadRunSummaries`,
 //!   `analyzeFlakiness`). A summary file that is not strict JSON, or a field whose JavaScript behaviour depends on its
@@ -29,7 +30,9 @@ use crate::json::{stringify, Json};
 use crate::list::unique_target_count;
 use crate::node_context::{monorepo_root, quiet_context};
 use crate::output::write_stdout;
+use crate::runtime_check::count_findings;
 use crate::term::{piped_colour_level, Style};
+use crate::toolchain::{resolve_command, Versions};
 use crate::vis_config;
 
 /// Summaries the cache hit rate looks at, newest by file name.
@@ -40,6 +43,7 @@ struct Overview {
     cache_hit_rate: Option<String>,
     flaky_tasks: usize,
     projects: usize,
+    runtime_issues: usize,
     targets: usize,
 }
 
@@ -52,22 +56,28 @@ fn parse(args: &[String]) -> Option<bool> {
     }
 }
 
-/// Whether the root holds nothing the runtime findings would compare with the running Node.
-fn runtime_is_unpinned(root: &Path) -> bool {
-    if root.join(".nvmrc").exists() || root.join(".node-version").exists() {
-        return false;
+/// `X.Y.Z` of a `vX.Y.Z` version, which is `process.versions.node` for the Node that printed it. A pre-release
+/// or any other text is `None`.
+fn clean_node_version(text: &str) -> Option<String> {
+    let version = text.strip_prefix('v')?;
+    let mut parts = version.split('.');
+    let numbers = [parts.next()?, parts.next()?, parts.next()?];
+
+    (parts.next().is_none()
+        && numbers.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())))
+    .then(|| version.to_owned())
+}
+
+/// The version of the Node the run would be handed to: the launcher's, or what `node --version` prints.
+fn node_version() -> Option<String> {
+    if let Some(version) = env::var_os("VIS_NODE_VERSION") {
+        return clean_node_version(version.to_str()?);
     }
 
-    let Ok(text) = fs::read_to_string(root.join("package.json")) else {
-        // A missing manifest has no findings; an unreadable one is not guessed at.
-        return !root.join("package.json").exists();
-    };
+    let command = resolve_command(&crate::process::node_program().to_string_lossy())?;
+    let output = Versions::default().output(&command)?;
 
-    let Ok(Value::Object(manifest)) = serde_json::from_str::<Value>(&text) else {
-        return false;
-    };
-
-    !["engines", "devEngines", "packageManager"].iter().any(|key| manifest.contains_key(*key))
+    clean_node_version(output.strip_suffix('\n')?)
 }
 
 /// The `.json` files of `.vis/runs`, parsed, with their names; `Some(empty)` when the directory does not exist.
@@ -235,9 +245,13 @@ fn cache_hit_rate(summaries: &HashMap<String, Value>) -> Option<Option<String>> 
 }
 
 fn overview(root: &Path) -> Option<Overview> {
-    if !runtime_is_unpinned(root) {
-        return None;
-    }
+    let user_agent = env::var("npm_config_user_agent");
+    let user_agent = match &user_agent {
+        Ok(agent) => Some(agent.as_str()),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => return None,
+    };
+    let runtime_issues = count_findings(root, user_agent, &mut node_version)?;
 
     let GraphResult::Native(graph) = project_graph(root) else {
         return None;
@@ -248,7 +262,7 @@ fn overview(root: &Path) -> Option<Overview> {
     let flaky_tasks = flaky_count(&run_history(root, &summaries)?)?;
     let cache_hit_rate = cache_hit_rate(&summaries)?;
 
-    Some(Overview { cache_hit_rate, flaky_tasks, projects: graph.projects.len(), targets })
+    Some(Overview { cache_hit_rate, flaky_tasks, projects: graph.projects.len(), runtime_issues, targets })
 }
 
 fn render_json(overview: &Overview) -> String {
@@ -258,7 +272,7 @@ fn render_json(overview: &Overview) -> String {
         ("constraintViolations".to_owned(), Json::Int(0)),
         ("flakyTasks".to_owned(), count(overview.flaky_tasks)),
         ("projects".to_owned(), count(overview.projects)),
-        ("runtimeIssues".to_owned(), Json::Int(0)),
+        ("runtimeIssues".to_owned(), count(overview.runtime_issues)),
         ("targets".to_owned(), count(overview.targets)),
     ]);
 
@@ -267,6 +281,11 @@ fn render_json(overview: &Overview) -> String {
 
 fn render_text(overview: &Overview, style: Style) -> String {
     let icon = |ok: bool| if ok { style.green("✓") } else { style.red("✗") };
+    let runtime = if overview.runtime_issues == 0 {
+        style.green("OK")
+    } else {
+        style.yellow(&format!("{} issue(s)", overview.runtime_issues))
+    };
     let flaky =
         if overview.flaky_tasks == 0 { style.green("none") } else { style.yellow(&overview.flaky_tasks.to_string()) };
     let mut lines = vec![
@@ -274,7 +293,7 @@ fn render_text(overview: &Overview, style: Style) -> String {
         format!("  {}", style.dim("VIS STATUS")),
         String::new(),
         format!("  {} {} projects · {} unique targets", icon(true), overview.projects, overview.targets),
-        format!("  {} Runtime: {}", icon(true), style.green("OK")),
+        format!("  {} Runtime: {runtime}", icon(overview.runtime_issues == 0)),
         format!("  {} Constraints: {}", icon(true), style.green("OK")),
         format!("  {} Flaky tasks: {flaky}", icon(overview.flaky_tasks == 0)),
     ];
@@ -443,26 +462,48 @@ mod tests {
     }
 
     #[test]
+    fn only_a_clean_release_version_is_taken_from_node() {
+        assert_eq!(clean_node_version("v24.0.1").as_deref(), Some("24.0.1"));
+
+        for text in
+            ["24.0.1", "v24.0", "v24.0.1.2", "v24.0.1-nightly2025", "v24.0.x", "v", "", "v24..1", "node v24.0.1"]
+        {
+            assert_eq!(clean_node_version(text), None, "{text}");
+        }
+    }
+
+    #[test]
     fn the_json_view_keeps_the_key_order_and_null() {
-        let overview = Overview { cache_hit_rate: None, flaky_tasks: 0, projects: 3, targets: 4 };
+        let overview = Overview { cache_hit_rate: None, flaky_tasks: 0, projects: 3, runtime_issues: 2, targets: 4 };
 
         assert_eq!(
             render_json(&overview),
-            "{\n  \"cacheHitRate\": null,\n  \"constraintViolations\": 0,\n  \"flakyTasks\": 0,\n  \"projects\": 3,\n  \"runtimeIssues\": 0,\n  \"targets\": 4\n}\n"
+            "{\n  \"cacheHitRate\": null,\n  \"constraintViolations\": 0,\n  \"flakyTasks\": 0,\n  \"projects\": 3,\n  \"runtimeIssues\": 2,\n  \"targets\": 4\n}\n"
         );
     }
 
     #[test]
     fn the_text_view_lists_the_rate_only_when_there_is_one() {
         let plain = Style { colour: false };
-        let without = render_text(&Overview { cache_hit_rate: None, flaky_tasks: 2, projects: 1, targets: 1 }, plain);
+        let without = render_text(
+            &Overview { cache_hit_rate: None, flaky_tasks: 2, projects: 1, runtime_issues: 1, targets: 1 },
+            plain,
+        );
         let with = render_text(
-            &Overview { cache_hit_rate: Some("50%".to_owned()), flaky_tasks: 0, projects: 1, targets: 1 },
+            &Overview {
+                cache_hit_rate: Some("50%".to_owned()),
+                flaky_tasks: 0,
+                projects: 1,
+                runtime_issues: 0,
+                targets: 1,
+            },
             plain,
         );
 
+        assert!(without.contains("  ✗ Runtime: 1 issue(s)\n"), "{without}");
         assert!(without.contains("  ✗ Flaky tasks: 2\n"), "{without}");
         assert!(!without.contains("Cache hit rate"));
+        assert!(with.contains("  ✓ Runtime: OK\n"), "{with}");
         assert!(with.contains("  ✓ Flaky tasks: none\n  ✓ Cache hit rate: 50% (last 20 runs)\n\n"), "{with}");
     }
 }
