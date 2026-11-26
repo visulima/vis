@@ -3,7 +3,7 @@
 
 /// `Date.parse` of `YYYY-MM-DDTHH:MM:SS.sssZ` in milliseconds since the epoch. Any other text, and a field out of range,
 /// is `None`: `Date` reads many other forms (and the legacy parser reads more still), which this does not reproduce.
-pub(super) fn parse_date(text: &str) -> Option<f64> {
+pub(crate) fn parse_date(text: &str) -> Option<f64> {
     let bytes = text.as_bytes();
 
     if bytes.len() != 24

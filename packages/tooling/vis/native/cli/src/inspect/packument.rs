@@ -221,18 +221,18 @@ fn strip(raw: Js) -> Result<Js, String> {
 }
 
 /// A cut-down packument as the marshalls read it: its versions in JavaScript's order and by name, its tags and times.
-pub(super) struct View<'a> {
+pub(crate) struct View<'a> {
     versions: Vec<(&'a str, &'a Js)>,
     by_name: HashMap<&'a str, &'a Js>,
     dist_tags: Option<&'a Js>,
     time: HashMap<&'a str, &'a Js>,
-    pub readme: Option<&'a str>,
+    pub(crate) readme: Option<&'a str>,
     parsed: OnceCell<Result<Vec<(&'a str, Version)>, String>>,
 }
 
 impl<'a> View<'a> {
     /// The view of a cut-down packument, or the reason it is Node's.
-    pub(super) fn new(packument: &'a Js) -> Result<Self, String> {
+    pub(crate) fn new(packument: &'a Js) -> Result<Self, String> {
         let Js::Object(_) = packument else { return Err("the packument is not an object".to_owned()) };
         let versions_value = packument.member("versions").ok_or("the packument has no versions member")?;
 
@@ -269,25 +269,25 @@ impl<'a> View<'a> {
         })
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.versions.is_empty()
     }
 
     /// `Object.keys(versions).at(-1)`.
-    pub(super) fn last_version(&self) -> Option<&'a str> {
+    pub(crate) fn last_version(&self) -> Option<&'a str> {
         self.versions.last().map(|(name, _)| *name)
     }
 
-    pub(super) fn entry(&self, version: &str) -> Option<&'a Js> {
+    pub(crate) fn entry(&self, version: &str) -> Option<&'a Js> {
         self.by_name.get(version).copied()
     }
 
-    pub(super) fn versions(&self) -> &[(&'a str, &'a Js)] {
+    pub(crate) fn versions(&self) -> &[(&'a str, &'a Js)] {
         &self.versions
     }
 
     /// `dist-tags[tag]`: `Ok(None)` when it is missing, and the reason for a hand-off when it is not text.
-    pub(super) fn tag(&self, tag: &str) -> Result<Option<&'a str>, String> {
+    pub(crate) fn tag(&self, tag: &str) -> Result<Option<&'a str>, String> {
         match self.dist_tags.and_then(|tags| tags.member(tag)) {
             None => Ok(None),
             Some(Js::String(version)) => Ok(Some(version)),
@@ -296,7 +296,7 @@ impl<'a> View<'a> {
     }
 
     /// `time[version]`: `Ok(None)` when it is missing, and the reason for a hand-off when it is not text.
-    pub(super) fn time(&self, version: &str) -> Result<Option<&'a str>, String> {
+    pub(crate) fn time(&self, version: &str) -> Result<Option<&'a str>, String> {
         match self.time.get(version) {
             None => Ok(None),
             Some(Js::String(stamp)) => Ok(Some(stamp)),

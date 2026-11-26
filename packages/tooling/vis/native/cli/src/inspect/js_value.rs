@@ -5,14 +5,14 @@ use crate::keys_refresh::{array_index, Js};
 
 impl Js {
     /// The own member `key` of an object; `None` for another kind of value and for a missing member.
-    pub(super) fn member(&self, key: &str) -> Option<&Self> {
+    pub(crate) fn member(&self, key: &str) -> Option<&Self> {
         match self {
             Self::Object(entries) => entries.iter().find(|(name, _)| name == key).map(|(_, value)| value),
             _ => None,
         }
     }
 
-    pub(super) fn text(&self) -> Option<&str> {
+    pub(crate) fn text(&self) -> Option<&str> {
         match self {
             Self::String(text) => Some(text),
             _ => None,

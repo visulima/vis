@@ -76,6 +76,9 @@ ureq = { version = "3.5", default-features = false, features = [
   "rustls",
   "gzip"
 ] }
+# `vis attest verify`: the ECDSA P-256 check of the registry's signatures (src/attest/signature.rs). The crate `rustls`
+# already links as its crypto provider.
+ring = "0.17"
 # Already in the tree through `ureq`; named here to read its errors apart (src/http/error.rs) and, in the tests, to
 # serve TLS. Same features as `ureq` turns on.
 rustls = { version = "0.23", default-features = false, features = [

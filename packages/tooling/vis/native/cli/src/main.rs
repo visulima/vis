@@ -28,6 +28,7 @@ use std::process::exit;
 mod add;
 mod advisories;
 mod affected;
+mod attest;
 mod audit;
 mod cache;
 #[cfg(unix)]

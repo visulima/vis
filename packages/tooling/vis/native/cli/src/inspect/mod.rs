@@ -41,8 +41,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) use args::parse_package;
 use args::{Flags, Marshall};
+pub(crate) use js_format::parse_date;
+pub(crate) use marshalls::{has_provenance, prior_with_provenance};
 use marshalls::{Finding, Target};
-use packument::{Answer, Cached, View};
+pub(crate) use packument::View;
+use packument::{Answer, Cached};
 
 use crate::cache::dirs::vis_cache_dir;
 use crate::http::node_fetch::{fetch_config, network_environment_is_plain, url_is_plain};
@@ -176,6 +179,22 @@ impl Packuments {
     /// The packuments of a run from `root`, with the places, the clock and the client given.
     pub(crate) fn at(root: PathBuf, home: PathBuf, cache_dir: String, now_ms: u64, client: HttpClient) -> Self {
         Self { context: Context { root, home, cache_dir, now_ms, layout: None }, client }
+    }
+
+    /// What `getPackument` finds for a package, read through `read` with the view of it (`None` for a package the
+    /// registry does not know), and the cache change that goes with the lookup. The reason for a hand-off for a
+    /// request that fails and for a packument this module does not read as Node does.
+    pub(crate) fn read<T>(
+        &self,
+        name: &str,
+        read: impl FnOnce(Option<&View<'_>>) -> Result<T, String>,
+    ) -> Result<(T, Vec<CacheAction>), String> {
+        let (found, cache) = packument_of(name, &self.context, &self.client)?;
+
+        match found {
+            None => Ok((read(None)?, cache)),
+            Some(found) => Ok((read(Some(&View::new(&found)?))?, cache)),
+        }
     }
 
     /// `resolveVersionRange` for a package: its version and the cache change that goes with the lookup. `None` for a
