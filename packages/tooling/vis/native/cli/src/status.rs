@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::graph::{project_graph, GraphResult};
+use crate::graph::project_graph_with_manifests;
 use crate::json::{stringify, Json};
 use crate::list::unique_target_count;
 use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
@@ -252,11 +252,8 @@ fn overview(root: &Path) -> Option<Overview> {
         Err(env::VarError::NotUnicode(_)) => return None,
     };
 
-    let GraphResult::Native(graph) = project_graph(root) else {
-        return None;
-    };
-
-    let targets = unique_target_count(root, &graph)?;
+    let (graph, manifests) = project_graph_with_manifests(root)?;
+    let targets = unique_target_count(root, &graph, &manifests)?;
     let summaries = read_summaries(root)?;
     let flaky_tasks = flaky_count(&run_history(root, &summaries)?)?;
     let cache_hit_rate = cache_hit_rate(&summaries)?;

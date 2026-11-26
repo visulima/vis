@@ -18,7 +18,8 @@ use crate::js::PROTOTYPE_NAMES;
 use crate::workspace::{self, Membership};
 
 /// The config-file names and dependency names of the JS inference detectors, read from the same
-/// registry the Node side uses. `packages/tooling/vis/__tests__/native/` checks it for drift.
+/// registry the Node side uses. `packages/tooling/vis/__tests__/native/` checks it for drift. The non-JS detectors
+/// are `workspace::NON_JS_MARKERS` and `workspace::NON_JS_SUFFIXES`.
 const MARKERS_JSON: &str = include_str!("inference-markers.json");
 
 /// Dependency fields `hasDependency` consults.
@@ -89,16 +90,17 @@ fn project_targets(absolute: &Path, directory: String) -> Option<ProjectTargets>
     let manifest = manifest.as_object()?;
     let name = manifest.get("name")?.as_str().filter(|name| !name.is_empty())?.to_string();
 
-    // One listing of the directory serves both checks. A name that is not UTF-8 is a project Node answers
-    // (`has_non_js_marker` delegates on it), whatever the detectors say.
-    let mut names = Vec::new();
+    let names = directory_names(absolute)?;
 
-    for entry in fs::read_dir(absolute).ok()? {
-        names.push(entry.ok()?.file_name().into_string().ok()?);
+    if inference_applies(absolute, &names, &|name| declares_dependency(manifest, name))? {
+        return None;
     }
 
-    if inference_applies(absolute, &names, manifest)? || workspace::names_hold_non_js_marker(&names) {
-        return None;
+    // A dependency field that is present but not an object throws in Node.
+    for field in DEPENDENCY_FIELDS {
+        if manifest.get(field).is_some_and(|value| !value.is_object()) {
+            return None;
+        }
     }
 
     let mut targets = BTreeMap::new();
@@ -137,7 +139,11 @@ fn markers() -> Option<&'static Markers> {
             let strings = |key: &str| -> Option<Vec<String>> {
                 Some(markers.get(key)?.as_array()?.iter().filter_map(Value::as_str).map(str::to_owned).collect())
             };
-            let config_files = strings("configFiles")?;
+            // The non-JS manifests are exact names too, and `exists` matches them up to case on a case-insensitive
+            // volume, as the JS detectors' files are.
+            let mut config_files = strings("configFiles")?;
+
+            config_files.extend(workspace::NON_JS_MARKERS.iter().map(|name| (*name).to_owned()));
             let mut by_first_segment: HashMap<String, Vec<String>> = HashMap::new();
 
             for file in &config_files {
@@ -168,29 +174,40 @@ fn config_file_exists(absolute: &Path, names: &[String], markers: &Markers) -> b
         .any(|file| absolute.join(file).exists())
 }
 
-/// Whether any JS detector could match this project: a config file exists in it, or a detector's
-/// fallback dependency is declared. A matched detector can add or enrich targets, which the native
-/// path does not reproduce. A dependency field that is present but not an object throws in Node.
-fn inference_applies(absolute: &Path, names: &[String], manifest: &Map<String, Value>) -> Option<bool> {
+/// The entry names of a project directory, or `None` when it cannot be listed or a name is not UTF-8, which is a
+/// project Node answers.
+pub(crate) fn directory_names(absolute: &Path) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+
+    for entry in fs::read_dir(absolute).ok()? {
+        names.push(entry.ok()?.file_name().into_string().ok()?);
+    }
+
+    Some(names)
+}
+
+/// Whether any inference detector could match this project, given the names of its directory entries and whether
+/// a dependency is declared: a non-JS manifest (by exact entry name, or as a file `exists` finds up to case), a JS
+/// detector's config file, or a detector's fallback dependency. A matched detector can add or enrich targets, which
+/// the native path does not reproduce. `None` when the marker registry cannot be read.
+///
+/// This is the only check `list`, `affected`, `status` and `script_targets` share, so a project one of them hands to
+/// Node, all of them do.
+pub(crate) fn inference_applies(absolute: &Path, names: &[String], declares: &dyn Fn(&str) -> bool) -> Option<bool> {
     let markers = markers()?;
 
-    if config_file_exists(absolute, names, markers) {
-        return Some(true);
-    }
+    Some(
+        workspace::names_hold_non_js_marker(names)
+            || config_file_exists(absolute, names, markers)
+            || markers.dependencies.iter().any(|name| declares(name)),
+    )
+}
 
-    for field in DEPENDENCY_FIELDS {
-        let Some(value) = manifest.get(field) else {
-            continue;
-        };
-
-        let declared = value.as_object()?;
-
-        if markers.dependencies.iter().any(|name| declared.contains_key(name)) {
-            return Some(true);
-        }
-    }
-
-    Some(false)
+/// Whether a manifest declares a dependency under any of the fields `hasDependency` consults.
+fn declares_dependency(manifest: &Map<String, Value>, name: &str) -> bool {
+    DEPENDENCY_FIELDS.iter().any(|field| {
+        manifest.get(*field).and_then(Value::as_object).is_some_and(|declared| declared.contains_key(name))
+    })
 }
 
 #[cfg(test)]
@@ -216,6 +233,7 @@ mod tests {
             .expect("configFiles")
             .iter()
             .filter_map(Value::as_str)
+            .chain(workspace::NON_JS_MARKERS.iter().copied())
             .any(|file| absolute.join(file).exists())
     }
 
@@ -290,6 +308,69 @@ mod tests {
         fs::remove_file(directory.join("vite.config.ts")).expect("remove");
 
         assert_eq!(config_exists(&directory), reference_config_exists(&directory));
+    }
+
+    /// Whether `inference_applies` sends a project holding these entries (`->` a link to nowhere) to Node, with no
+    /// dependency declared.
+    fn applies(name: &str, entries: &[&str]) -> bool {
+        let directory = scratch(name);
+
+        for entry in entries {
+            if let Some((link, target)) = entry.split_once("->") {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(target, directory.join(link)).expect("link");
+            } else {
+                fs::write(directory.join(entry), "").expect("entry");
+            }
+        }
+
+        inference_applies(&directory, &directory_names(&directory).expect("listing"), &|_| false).expect("registry")
+    }
+
+    #[test]
+    fn the_one_registry_is_the_union_of_what_list_and_script_targets_checked() {
+        // Seen by `list` (its trigger file `inference-triggers.json`) and by `script_targets` alike.
+        for (index, entry) in
+            ["vite.config.ts", "Cargo.toml", "pyproject.toml", "go.mod", "x.csproj", "x.fsproj", "x.gemspec"]
+                .into_iter()
+                .enumerate()
+        {
+            assert!(applies(&format!("both-{index}"), &[entry]), "{entry}");
+        }
+
+        // Only the non-JS list of `workspace.rs` knew these five, so `list` answered a project that holds one.
+        for (index, entry) in
+            ["project.json", "go.work", "settings.gradle", "settings.gradle.kts", "build.zig"].into_iter().enumerate()
+        {
+            assert!(applies(&format!("workspace-only-{index}"), &[entry]), "{entry}");
+        }
+
+        // `script_targets` matched a non-JS name by its listing alone, so a link to nowhere counted. `list` asked `exists`.
+        #[cfg(unix)]
+        {
+            assert!(applies("dangling-non-js", &["go.mod->nowhere"]));
+            assert!(applies("dangling-non-js-file", &["Cargo.toml->nowhere"]));
+        }
+
+        // `list` asked `exists` for a non-JS manifest too, which finds `CARGO.TOML` where the volume ignores case.
+        let directory = scratch("case-fold");
+
+        fs::write(directory.join("CARGO.TOML"), "").expect("entry");
+
+        assert_eq!(
+            inference_applies(&directory, &directory_names(&directory).expect("listing"), &|_| false),
+            Some(directory.join("Cargo.toml").exists())
+        );
+
+        assert!(!applies("none", &["package.json", "index.ts", "README.md"]));
+    }
+
+    #[test]
+    fn a_declared_fallback_dependency_applies() {
+        let directory = scratch("dependency");
+
+        assert_eq!(inference_applies(&directory, &[], &|name| name == "vitest"), Some(true));
+        assert_eq!(inference_applies(&directory, &[], &|name| name == "left-pad"), Some(false));
     }
 
     #[test]

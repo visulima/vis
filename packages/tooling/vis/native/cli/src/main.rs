@@ -68,6 +68,7 @@ mod node_context;
 mod node_contract;
 mod optimize;
 mod output;
+mod package_json;
 mod pail;
 mod pm;
 mod pm_detect;

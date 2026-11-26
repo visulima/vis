@@ -10,6 +10,7 @@ use std::path::{Component, Path};
 
 use rayon::prelude::*;
 
+use crate::package_json::PackageJson;
 use crate::sort_package_json::gitignore::Rules;
 use crate::sort_package_json::segment_matches;
 use crate::vis_config::has_vis_config;
@@ -29,7 +30,7 @@ const CANDIDATE_MARKERS: [&str; 5] = ["package.json", "project.json", "Cargo.tom
 /// Root-level manifests of the non-JS ecosystems. Their resolvers claim directories the JS
 /// path would not, so any of them delegates. `*.gemspec`, `*.csproj` and `*.fsproj` are checked
 /// by suffix.
-const NON_JS_MARKERS: &[&str] = &[
+pub(crate) const NON_JS_MARKERS: &[&str] = &[
     "project.json",
     "Cargo.toml",
     "pyproject.toml",
@@ -65,20 +66,32 @@ pub(crate) const AUBE_WORKSPACE_YAML: &str = "aube-workspace.yaml";
 /// `Native` only when every gate passes: no config or overlay that applies, no non-JS
 /// marker, and only the pattern shapes this module reproduces.
 pub fn project_directories(root: &Path) -> Membership {
-    resolve(root, false, None).unwrap_or(Membership::Delegate)
+    membership(resolve(root, false, None))
+}
+
+/// [`project_directories`] with the manifest each directory was admitted on, so a caller that needs the manifest
+/// does not read it again. `None` where [`project_directories`] is `Delegate`.
+pub(crate) fn project_packages(root: &Path) -> Option<Vec<(String, PackageJson)>> {
+    resolve(root, false, None)
+}
+
+fn membership(found: Option<Vec<(String, PackageJson)>>) -> Membership {
+    found.map_or(Membership::Delegate, |found| {
+        Membership::Native(found.into_iter().map(|(directory, _)| directory).collect())
+    })
 }
 
 /// Like [`project_directories`], but a workspace with `limit` directories or more (the patterns' matches, before
 /// the `.gitignore` and the manifest checks) is Node's, and none of its manifests is read: a caller that could not
 /// answer such a workspace anyway does not pay for reading it.
 pub fn project_directories_below(root: &Path, limit: usize) -> Membership {
-    resolve(root, false, Some(limit)).unwrap_or(Membership::Delegate)
+    membership(resolve(root, false, Some(limit)))
 }
 
 /// Like [`project_directories`], but a `vis.config.*` at the root does not delegate. The caller
 /// has read that config and knows none of its keys can change which directories are projects.
 pub fn project_directories_vetted(root: &Path) -> Membership {
-    resolve(root, true, None).unwrap_or(Membership::Delegate)
+    membership(resolve(root, true, None))
 }
 
 /// Whether `root` is a path this module reads: absolute and UTF-8, off Windows.
@@ -88,7 +101,7 @@ fn root_is_readable(root: &Path) -> bool {
 
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
-fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Membership> {
+fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Vec<(String, PackageJson)>> {
     if !root_is_readable(root) {
         return None;
     }
@@ -109,7 +122,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
     let directories = expand_patterns(root, &patterns, &is_candidate)?;
 
     if directories.is_empty() {
-        return Some(Membership::Native(directories));
+        return Some(Vec::new());
     }
 
     let unique = unique(directories);
@@ -121,7 +134,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
     let rules = gitignore_rules(root)?;
     // Every directory is looked at on every core; one that sends the workspace to Node (`None`) does that whichever
     // directory it is, and the ones that stay keep the order they were discovered in.
-    let kept: Vec<Option<String>> = unique
+    let kept: Vec<Option<(String, PackageJson)>> = unique
         .into_par_iter()
         .map(|directory| {
             if !is_unignored(&rules, &directory)? {
@@ -132,19 +145,17 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Mem
 
             // Node names a project from its package.json (or project.json, which wins) and drops a directory
             // with no name, so a candidate that does not yield a name is left to Node.
-            if !has_package_name(&absolute)
-                || absolute.join("project.json").exists()
-                || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists())
-            {
+            let package = PackageJson::read(&absolute).filter(|package| package.name().is_some())?;
+
+            if absolute.join("project.json").exists() || OVERLAY_NAMES.iter().any(|name| absolute.join(name).exists()) {
                 return None;
             }
 
-            Some(Some(directory))
+            Some(Some((directory, package)))
         })
         .collect::<Option<Vec<_>>>()?;
-    let kept: Vec<String> = kept.into_iter().flatten().collect();
 
-    Some(Membership::Native(kept))
+    Some(kept.into_iter().flatten().collect())
 }
 
 /// The directories the workspace `patterns` name, in discovery order, each a candidate when `is_project` says
@@ -219,21 +230,6 @@ pub(crate) fn expand_patterns(
     }
 
     Some(directories)
-}
-
-/// Whether `directory/package.json` parses and has a non-empty string `name` other than `__proto__`.
-/// Node drops an empty name (`if (!projectName) continue`), and it stores projects on a plain object,
-/// where `__proto__` sets the prototype instead of adding a project.
-fn has_package_name(directory: &Path) -> bool {
-    fs::read_to_string(directory.join("package.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .is_some_and(|manifest| {
-            manifest
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|name| !name.is_empty() && name != "__proto__")
-        })
 }
 
 pub(crate) fn has_non_js_marker(root: &Path) -> Option<bool> {

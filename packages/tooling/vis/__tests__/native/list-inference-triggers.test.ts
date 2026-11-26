@@ -7,27 +7,38 @@ import { describe, expect, it } from "vitest";
 import { BUILT_IN_DETECTORS } from "../../src/inference";
 
 /**
- * `native/cli/src/inference-triggers.json` lists every file and dependency that can make an inference
- * detector run on a project. The native `vis list` delegates any project with one of them, because the
- * detector may enrich its script targets. This test rebuilds the list from `BUILT_IN_DETECTORS`, so
- * a new detector that is not in the file fails here.
+ * The native `vis list`, `affected`, `status` and script targets delegate any project that an inference detector
+ * could enrich. One check decides that (`inference_applies` in `native/cli/src/targets.rs`): the JS detectors'
+ * files and dependencies in `inference-markers.json` (checked by `script-targets-parity.test.ts`) and the non-JS
+ * manifests `NON_JS_MARKERS` and `NON_JS_SUFFIXES` in `workspace.rs`. This test checks that the non-JS list
+ * names every config file of every detector the markers do not, so a new detector fails here.
  */
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const triggersPath = join(packageRoot, "native", "cli", "src", "inference-triggers.json");
+const nativeSource = join(packageRoot, "native", "cli", "src");
 
-describe("native list inference triggers", () => {
-    it("match the built-in detectors", () => {
-        expect.assertions(1);
+const rustStrings = (source: string, constant: string): string[] => {
+    const body = new RegExp(String.raw`const ${constant}: &\[&str\] = &\[([^\]]*)\];`, "u").exec(source)?.[1] ?? "";
 
+    return [...body.matchAll(/"([^"]+)"/gu)].map((match) => match[1] as string);
+};
+
+describe("native inference registry", () => {
+    it("covers every config file of the built-in detectors", () => {
+        expect.assertions(3);
+
+        const markers = JSON.parse(readFileSync(join(nativeSource, "inference-markers.json"), "utf8")) as { configFiles: string[]; dependencies: string[] };
+        const workspace = readFileSync(join(nativeSource, "workspace.rs"), "utf8");
+        const nonJsFiles = new Set(rustStrings(workspace, "NON_JS_MARKERS"));
+        const nonJsSuffixes = rustStrings(workspace, "NON_JS_SUFFIXES");
+        const covered = (file: string): boolean =>
+            markers.configFiles.includes(file) || nonJsFiles.has(file) || nonJsSuffixes.some((suffix) => file.startsWith("*") && file.endsWith(suffix));
         const configFiles = [...new Set(BUILT_IN_DETECTORS.flatMap((detector) => [...detector.configFiles]))].toSorted();
-        const fallbackDependencies = [
-            ...new Set(BUILT_IN_DETECTORS.flatMap((detector) => (detector.fallbackDependency === undefined ? [] : [detector.fallbackDependency]))),
-        ].toSorted();
 
-        const expected = { configFiles, fallbackDependencies };
-        const actual = JSON.parse(readFileSync(triggersPath, "utf8")) as typeof expected;
+        const fallbackDependencies = BUILT_IN_DETECTORS.flatMap((detector) => (detector.fallbackDependency === undefined ? [] : [detector.fallbackDependency]));
 
-        expect(actual).toStrictEqual(expected);
+        expect(configFiles.filter((file) => !covered(file))).toStrictEqual([]);
+        expect(fallbackDependencies.filter((name) => !markers.dependencies.includes(name))).toStrictEqual([]);
+        expect(nonJsSuffixes.length).toBeGreaterThan(0);
     });
 });

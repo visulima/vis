@@ -7,27 +7,25 @@
 //! The root is the one `findMonorepoRootSync` picks for the working directory (see
 //! [`monorepo_root`]). The inherited `VIS_MONOREPO_ROOT` is not read, so it cannot change the answer. Target names
 //! come from `package.json` scripts alone. That is exact only when no inference detector applies to
-//! the project (`inference-triggers.json`, checked by `__tests__/native/list-inference-triggers.test.ts`)
-//! and no config changes the target set. Node prints tips and first-run notices to stderr outside CI,
-//! so the native path needs the same quiet context `advisories` uses.
+//! the project (`targets::inference_applies`, whose registry `__tests__/native/script-targets-parity.test.ts` and
+//! `list-inference-triggers.test.ts` check for drift) and no config changes the target set. Node prints tips and
+//! first-run notices to stderr outside CI, so the native path needs the same quiet context `advisories` uses.
 
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::path::Path;
 
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::graph::{project_graph, GraphResult, ProjectGraph};
+use crate::graph::{project_graph_with_manifests, Manifests, Project, ProjectGraph};
 use crate::js::RESERVED_NAMES;
 use crate::node_context::{monorepo_root, output_settings_are_default};
 use crate::output::write_stdout;
+use crate::package_json::{parse_field, PackageJson, LIST_FIELDS};
+use crate::targets::{directory_names, inference_applies};
 use crate::vis_config;
-
-/// Detector trigger files and dependency names, generated from `BUILT_IN_DETECTORS`.
-const TRIGGERS_JSON: &str = include_str!("inference-triggers.json");
 
 /// Targets listed before the table cell is shortened to `a, b, c, d… (n)`.
 const TABLE_TARGET_LIMIT: usize = 4;
@@ -150,21 +148,32 @@ impl<'de> Visitor<'de> for DepNamesVisitor {
 }
 
 /// The `package.json` fields the listing reads.
-#[derive(Deserialize)]
+#[derive(Default)]
 struct Manifest {
-    #[serde(default)]
     scripts: Scripts,
-    #[serde(default)]
     dependencies: DepNames,
-    #[serde(default, rename = "devDependencies")]
     dev_dependencies: DepNames,
-    #[serde(default, rename = "optionalDependencies")]
     optional_dependencies: DepNames,
-    #[serde(default, rename = "peerDependencies")]
     peer_dependencies: DepNames,
 }
 
 impl Manifest {
+    /// The listing's reading of a parsed manifest, or `None` for a shape left to Node: a repeated field, or a
+    /// `scripts` or dependency field that is not a map the rules above accept (`null` included).
+    fn read(package: &PackageJson) -> Option<Self> {
+        if package.repeats(LIST_FIELDS) {
+            return None;
+        }
+
+        Some(Self {
+            scripts: parse_field(package.scripts.as_deref())?,
+            dependencies: parse_field(package.dependencies.as_deref())?,
+            dev_dependencies: parse_field(package.dev_dependencies.as_deref())?,
+            optional_dependencies: parse_field(package.optional_dependencies.as_deref())?,
+            peer_dependencies: parse_field(package.peer_dependencies.as_deref())?,
+        })
+    }
+
     fn declares(&self, name: &str) -> bool {
         [&self.dependencies, &self.dev_dependencies, &self.optional_dependencies, &self.peer_dependencies]
             .iter()
@@ -172,93 +181,16 @@ impl Manifest {
     }
 }
 
-#[derive(Deserialize)]
-struct Triggers {
-    #[serde(rename = "configFiles")]
-    config_files: Vec<String>,
-    #[serde(rename = "fallbackDependencies")]
-    fallback_dependencies: Vec<String>,
-}
-
-/// The config-file triggers split by how a project directory is checked: one directory listing answers
-/// every top-level name and suffix pattern, and only a pattern whose first path segment is present in the
-/// listing is looked at on disk.
-struct Detectors<'a> {
-    /// `(pattern, lowercased first segment)` of each trigger without a wildcard.
-    files: Vec<(&'a str, String)>,
-    /// The lowercased first segments of `files`: the only entry names a listing has to remember.
-    first_segments: HashSet<Vec<u8>>,
-    /// The part after the `*` of each wildcard trigger.
-    suffixes: Vec<&'a [u8]>,
-    dependencies: &'a [String],
-}
-
-impl<'a> Detectors<'a> {
-    fn new(triggers: &'a Triggers) -> Self {
-        let mut files = Vec::new();
-        let mut suffixes = Vec::new();
-
-        for pattern in &triggers.config_files {
-            match pattern.strip_prefix('*') {
-                Some(suffix) => suffixes.push(suffix.as_bytes()),
-                None => {
-                    files.push((pattern.as_str(), pattern.split('/').next().unwrap_or_default().to_ascii_lowercase()))
-                }
-            }
-        }
-
-        let first_segments = files.iter().map(|(_, segment)| segment.as_bytes().to_vec()).collect();
-
-        Self { files, first_segments, suffixes, dependencies: &triggers.fallback_dependencies }
-    }
-}
-
-/// Whether any inference detector would run on this project directory. Node then may enrich
-/// the script targets with a `type`, so the native path hands the project to Node.
-fn detector_triggered(project: &Path, manifest: &Manifest, detectors: &Detectors) -> Option<bool> {
-    let mut names: HashSet<Vec<u8>> = HashSet::new();
-    let mut ascii = true;
-
-    for entry in fs::read_dir(project).ok()? {
-        let entry = entry.ok()?;
-        let name = entry.file_name();
-        let bytes = name.as_encoded_bytes();
-
-        if detectors.suffixes.iter().any(|suffix| bytes.ends_with(suffix)) {
-            return Some(true);
-        }
-
-        ascii &= bytes.is_ascii();
-
-        let folded = bytes.to_ascii_lowercase();
-
-        if detectors.first_segments.contains(&folded) {
-            names.insert(folded);
-        }
-    }
-
-    // `exists` follows links and, on a case-insensitive volume, ignores case, so a pattern is only ruled out
-    // when no entry could be it under ASCII case folding. A name outside ASCII could fold onto one on such a
-    // volume (the Kelvin sign onto `k`), so that directory takes every check.
-    for (pattern, first_segment) in &detectors.files {
-        if (!ascii || names.contains(first_segment.as_bytes())) && project.join(pattern).exists() {
-            return Some(true);
-        }
-    }
-
-    Some(detectors.dependencies.iter().any(|name| manifest.declares(name)))
-}
-
-/// Reads one project's script targets, or `None` when Node must answer for it.
-fn project_scripts(root: &Path, directory: &str, detectors: &Detectors) -> Option<Vec<(String, String)>> {
+/// One project's script targets, or `None` when Node must answer for it.
+fn project_scripts(root: &Path, directory: &str, package: &PackageJson) -> Option<Vec<(String, String)>> {
     if directory == "." || !directory.is_ascii() {
         return None;
     }
 
     let project = root.join(directory);
-    let manifest: Manifest = serde_json::from_str(&fs::read_to_string(project.join("package.json")).ok()?).ok()?;
+    let manifest = Manifest::read(package)?;
 
-    if detector_triggered(&project, &manifest, detectors)? {
+    if inference_applies(&project, &directory_names(&project)?, &|name| manifest.declares(name))? {
         return None;
     }
 
@@ -295,41 +227,37 @@ struct Listed {
     targets: Vec<(String, String)>,
 }
 
-fn collect(root: &Path, graph: &ProjectGraph) -> Option<Vec<Listed>> {
-    let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).ok()?;
-    let detectors = Detectors::new(&triggers);
-    let mut listed = Vec::new();
-
-    for (name, project) in &graph.projects {
-        if !name.is_ascii() {
-            return None;
-        }
-
-        let directory = &project.directory;
-        let targets = project_scripts(root, directory, &detectors)?;
-
-        listed.push(Listed {
-            directory: directory.clone(),
-            kind: project.project_type.as_str(),
-            name: name.clone(),
-            targets,
-        });
+/// One project as the listing shows it, or `None` when Node must answer for it: a non-ASCII name, or any of the
+/// reasons [`project_scripts`] gives.
+fn list_project(root: &Path, name: &str, project: &Project, manifests: &Manifests) -> Option<Listed> {
+    if !name.is_ascii() {
+        return None;
     }
 
-    Some(listed)
+    Some(Listed {
+        directory: project.directory.clone(),
+        kind: project.project_type.as_str(),
+        name: name.to_owned(),
+        targets: project_scripts(root, &project.directory, manifests.get(name)?)?,
+    })
+}
+
+fn collect(root: &Path, graph: &ProjectGraph, manifests: &Manifests) -> Option<Vec<Listed>> {
+    graph.projects.iter().map(|(name, project)| list_project(root, name, project, manifests)).collect()
 }
 
 /// Whether no inference detector applies to any project and every project has script targets, so
 /// that Node adds nothing (inputs, synthesized targets) beyond the `package.json` scripts.
-/// `affected` uses it to know no project declares an external input.
-pub(crate) fn inference_free(root: &Path, graph: &ProjectGraph) -> bool {
-    collect(root, graph).is_some()
+/// `affected` uses it to know no project declares an external input. It stops at the first project Node must answer
+/// for and keeps no listing.
+pub(crate) fn inference_free(root: &Path, graph: &ProjectGraph, manifests: &Manifests) -> bool {
+    graph.projects.iter().all(|(name, project)| list_project(root, name, project, manifests).is_some())
 }
 
 /// How many distinct target names the projects of `graph` hold, when [`inference_free`] holds: the script names
 /// across every project, which is what `vis status` counts.
-pub(crate) fn unique_target_count(root: &Path, graph: &ProjectGraph) -> Option<usize> {
-    let listed = collect(root, graph)?;
+pub(crate) fn unique_target_count(root: &Path, graph: &ProjectGraph, manifests: &Manifests) -> Option<usize> {
+    let listed = collect(root, graph, manifests)?;
     let names: HashSet<&str> =
         listed.iter().flat_map(|project| project.targets.iter().map(|(name, _)| name.as_str())).collect();
 
@@ -447,11 +375,8 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
             return None;
         }
 
-        let GraphResult::Native(graph) = project_graph(&root) else {
-            return None;
-        };
-
-        let listed = collect(&root, &graph)?;
+        let (graph, manifests) = project_graph_with_manifests(&root)?;
+        let listed = collect(&root, &graph, &manifests)?;
 
         Some(render(&listed, format))
     };
@@ -468,6 +393,8 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn argv(list: &[&str]) -> Vec<String> {
@@ -524,6 +451,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_manifest_shape_node_would_read_differently_is_left_to_it() {
+        let reads = |json: &str| Manifest::read(&serde_json::from_str(json).unwrap()).is_some();
+
+        assert!(reads(r#"{"name":"a","scripts":{"build":"tsc"},"dependencies":{"b":"1"}}"#));
+        assert!(reads(r#"{"scripts":{"build":"tsc"}}"#));
+        // The graph reads `null` dependencies as none, the listing does not.
+        assert!(!reads(r#"{"scripts":{"build":"tsc"},"dependencies":null}"#));
+        assert!(!reads(r#"{"scripts":null}"#));
+        assert!(!reads(r#"{"scripts":{"build":"tsc"},"optionalDependencies":{},"optionalDependencies":{}}"#));
+        assert!(!reads(r#"{"scripts":{"build":"a"},"scripts":{"build":"b"}}"#));
+        // A repeated `name` is the graph's concern only.
+        assert!(reads(r#"{"name":"a","name":"b","scripts":{"build":"tsc"}}"#));
+    }
+
     /// A project directory holding the given files (a `/` makes the parent directory), with no manifest fields.
     fn detector_project(label: &str, files: &[&str]) -> std::path::PathBuf {
         let project = env::temp_dir().join(format!("vis-list-detector-{}-{label}", std::process::id()));
@@ -542,10 +484,9 @@ mod tests {
     }
 
     fn triggered(label: &str, files: &[&str], manifest: &str) -> bool {
-        let triggers: Triggers = serde_json::from_str(TRIGGERS_JSON).unwrap();
         let project = detector_project(label, files);
-        let parsed: Manifest = serde_json::from_str(manifest).unwrap();
-        let answer = detector_triggered(&project, &parsed, &Detectors::new(&triggers));
+        let parsed = Manifest::read(&serde_json::from_str(manifest).unwrap()).unwrap();
+        let answer = inference_applies(&project, &directory_names(&project).unwrap(), &|name| parsed.declares(name));
 
         let _ = fs::remove_dir_all(&project);
 
