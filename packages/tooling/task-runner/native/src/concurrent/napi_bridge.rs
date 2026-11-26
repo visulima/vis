@@ -4,6 +4,7 @@ use napi_derive::napi;
 use tokio::sync::{mpsc, watch};
 
 use task_runner_core::concurrent::events::{event_channel, EventBatch};
+use task_runner_core::concurrent::grouping::group_output;
 use task_runner_core::concurrent::types::{ControlMessage, ProcessEvent as CoreProcessEvent};
 use task_runner_core::ConcurrentRunner;
 
@@ -13,10 +14,10 @@ use super::types::{
 
 /// How many output lines may be waiting for JavaScript at once, queued or being handled.
 /// A child that writes faster than the callback consumes blocks on its pipe past this.
-const OUTPUT_CREDITS: usize = 4096;
+const OUTPUT_CREDITS: usize = 16384;
 
 /// The most events handed to JavaScript in one call.
-const MAX_BATCH: usize = 512;
+const MAX_BATCH: usize = 2048;
 
 /// The callback of `startConcurrent`. `CalleeHandled = false`: JS receives the batch itself.
 type BatchCallback = ThreadsafeFunction<ProcessEventBatch, (), ProcessEventBatch, Status, false>;
@@ -129,13 +130,15 @@ pub async fn run_concurrent_batch(
 /// credits come back. Lines are left out unless `with_output`, and a batch with nothing left is
 /// not sent at all. False when there is no callback, or JavaScript can no longer be reached.
 async fn deliver(callback: Option<&BatchCallback>, mut batch: EventBatch, with_output: bool) -> bool {
-    let events: Vec<ProcessEvent> = std::mem::take(&mut batch.events)
+    // Adjacent lines of one stream travel as one object: building a JS object per line is what
+    // an output-heavy run spends its time on.
+    let wanted = std::mem::take(&mut batch.events)
         .into_iter()
         .filter(|event| {
             with_output || !matches!(event, CoreProcessEvent::Stdout { .. } | CoreProcessEvent::Stderr { .. })
         })
-        .map(Into::into)
         .collect();
+    let events: Vec<ProcessEvent> = group_output(wanted).into_iter().map(Into::into).collect();
 
     match callback {
         Some(callback) if !events.is_empty() => {

@@ -188,19 +188,11 @@ pub(crate) fn spawn_pty(
         builder.env(key, value);
     }
 
-    let pair = native_pty_system()
-        .openpty(portable_size(config.pty_size.unwrap_or_default()))
-        .map_err(std::io::Error::other)?;
-    let child = pair.slave.spawn_command(builder).map_err(std::io::Error::other)?;
+    let Terminal { master, child, pid } = start_terminal(builder, config.pty_size.unwrap_or_default())?;
     let start_time = Instant::now();
-    let pid = child.process_id();
 
-    // The command holds the slave end now; if this process kept it too, the terminal would
-    // never report the end of the output.
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().map_err(std::io::Error::other)?;
-    let writer = pair.master.take_writer().map_err(std::io::Error::other)?;
+    let reader = master.try_clone_reader().map_err(std::io::Error::other)?;
+    let writer = master.take_writer().map_err(std::io::Error::other)?;
 
     sink.send(ProcessEvent::Started { index, pid });
 
@@ -284,10 +276,79 @@ pub(crate) fn spawn_pty(
         pid,
         terminated: Arc::clone(&terminated),
         input: Some(InputHandle::from_sender(input_tx)),
-        pty: Some(PtyControl { master: Arc::new(Mutex::new(pair.master)), pid, terminated }),
+        pty: Some(PtyControl { master: Arc::new(Mutex::new(master)), pid, terminated }),
         #[cfg(windows)]
         job,
     })
+}
+
+/// A command running on a terminal: the master end, the child handle (when `portable-pty` started
+/// it), and the pid.
+struct Terminal {
+    master: Box<dyn MasterPty + Send>,
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    pid: Option<u32>,
+}
+
+/// Open a terminal and start `builder`'s command on it.
+fn start_terminal(builder: CommandBuilder, size: PtySize) -> Result<Terminal, std::io::Error> {
+    #[cfg(target_os = "macos")]
+    if let Some((master, pid)) = start_without_fork(&builder, size) {
+        return Ok(Terminal { master: Box::new(master), child: None, pid: Some(pid) });
+    }
+
+    let pair = native_pty_system().openpty(portable_size(size)).map_err(std::io::Error::other)?;
+    let child = pair.slave.spawn_command(builder).map_err(std::io::Error::other)?;
+    let pid = child.process_id();
+
+    // The command holds the slave end now; if this process kept it too, the terminal would
+    // never report the end of the output.
+    drop(pair.slave);
+
+    Ok(Terminal { master: pair.master, child: Some(child), pid })
+}
+
+/// On macOS, open the terminal and start the command on it without `portable-pty`.
+///
+/// `portable-pty` starts a terminal command through a `pre_exec` hook (new session, controlling
+/// terminal, signal and descriptor clean-up), which makes the standard library `fork` this whole
+/// process first: about 4 ms per command in a Node process, on the thread that starts them all,
+/// against well under a millisecond for `posix_spawn`. Its `openpty` costs another 1 to 3 ms (see
+/// `mac_pty`). The environment, directory and program are the ones `portable-pty` would use (they
+/// come from the same `CommandBuilder`).
+///
+/// `None` when this path does not apply (the program is not an absolute path to an executable)
+/// or something fails: the caller then does it the usual way, which also reports a failure the
+/// way it always has.
+#[cfg(target_os = "macos")]
+fn start_without_fork(builder: &CommandBuilder, size: PtySize) -> Option<(super::mac_pty::Master, u32)> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let argv = builder.get_argv();
+    let program = Path::new(argv.first()?);
+    let cwd = builder.get_cwd()?.to_str()?;
+    let arguments: Vec<String> =
+        argv.iter().map(|argument| argument.to_str().map(str::to_string)).collect::<Option<_>>()?;
+    let environment: Vec<(String, String)> =
+        builder.iter_full_env_as_str().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+
+    let executable = std::fs::metadata(program)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0);
+
+    if !program.is_absolute() || executable.is_none() {
+        return None;
+    }
+
+    let (master, slave, terminal) = super::mac_pty::open(portable_size(size)).ok()?;
+    let pid =
+        super::posix_spawn::spawn_on_terminal(program.to_str()?, &arguments, &environment, cwd, &terminal).ok()?;
+
+    // The command opened its own end; this process must not keep one, or the terminal would never
+    // report the end of the output.
+    drop(slave);
+
+    Some((master, pid))
 }
 
 /// Read the terminal until it ends, sending each chunk as an output event. Runs on its own thread.
@@ -337,7 +398,7 @@ fn write_input(mut writer: Box<dyn Write + Send>, mut input: mpsc::UnboundedRece
 
 /// Wait for the command to exit: its exit code, and whether a signal ended it (`128 + signal`).
 #[cfg(unix)]
-fn wait_for_exit(child: Box<dyn portable_pty::Child + Send + Sync>, pid: Option<u32>) -> (i32, bool) {
+fn wait_for_exit(child: Option<Box<dyn portable_pty::Child + Send + Sync>>, pid: Option<u32>) -> (i32, bool) {
     use nix::errno::Errno;
     use nix::sys::wait::{waitpid, WaitStatus};
     use nix::unistd::Pid;
@@ -362,7 +423,11 @@ fn wait_for_exit(child: Box<dyn portable_pty::Child + Send + Sync>, pid: Option<
 }
 
 #[cfg(windows)]
-fn wait_for_exit(mut child: Box<dyn portable_pty::Child + Send + Sync>, _pid: Option<u32>) -> (i32, bool) {
+fn wait_for_exit(child: Option<Box<dyn portable_pty::Child + Send + Sync>>, _pid: Option<u32>) -> (i32, bool) {
+    let Some(mut child) = child else {
+        return (-1, false);
+    };
+
     match child.wait() {
         Ok(status) => (status.exit_code() as i32, false),
         Err(_) => (-1, false),

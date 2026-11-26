@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
+use task_runner_core::concurrent::grouping::Delivered;
 use task_runner_core::concurrent::types as core;
 
 /// Configuration for a single command to run concurrently.
@@ -150,6 +151,29 @@ pub struct ProcessEvent {
     /// OS process id (for started events). `None` when the platform
     /// could not provide a pid for the freshly spawned child.
     pub pid: Option<u32>,
+    /// Number of lines in `text` (for stdout/stderr events): when present and above 1, `text`
+    /// holds that many lines joined with `\n`, and the host splits it. Absent means one line.
+    pub count: Option<u32>,
+}
+
+impl From<Delivered> for ProcessEvent {
+    fn from(item: Delivered) -> Self {
+        match item {
+            Delivered::Event(event) => event.into(),
+            Delivered::Lines { index, stderr, text, count } => Self {
+                kind: (if stderr { "stderr" } else { "stdout" }).to_string(),
+                index,
+                text: Some(text),
+                exit_code: None,
+                killed: None,
+                message: None,
+                command_name: None,
+                duration_ms: None,
+                pid: None,
+                count: Some(count),
+            },
+        }
+    }
 }
 
 impl From<core::ProcessEvent> for ProcessEvent {
@@ -165,6 +189,7 @@ impl From<core::ProcessEvent> for ProcessEvent {
             command_name: None,
             duration_ms: None,
             pid: None,
+            count: None,
         };
 
         match event {

@@ -1,5 +1,8 @@
 pub mod completion;
 pub mod events;
+pub mod grouping;
+#[cfg(target_os = "macos")]
+mod mac_pty;
 #[cfg(target_os = "macos")]
 mod posix_spawn;
 mod process;

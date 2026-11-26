@@ -358,7 +358,7 @@ const MAX_LINE_BYTES: usize = 1 << 20;
 
 /// Read size for a single `read()`; large enough to swallow most line
 /// bursts in one syscall without holding an oversized buffer per process.
-const READ_CHUNK: usize = 8192;
+const READ_CHUNK: usize = 65536;
 
 /// Strip a single trailing `\r` so Windows CRLF endings don't leak a
 /// carriage return into the emitted text. Matches the JS fallback's
@@ -366,7 +366,16 @@ const READ_CHUNK: usize = 8192;
 fn strip_trailing_cr(line: &[u8]) -> String {
     let end = if line.last() == Some(&b'\r') { line.len() - 1 } else { line.len() };
 
-    String::from_utf8_lossy(&line[..end]).into_owned()
+    lossy_string(&line[..end])
+}
+
+/// `bytes` as an owned string, invalid sequences replaced by U+FFFD. `from_utf8` checks a valid
+/// line (the usual case) far faster than the char-by-char walk `from_utf8_lossy` does.
+fn lossy_string(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+    }
 }
 
 /// Emit the longest valid-UTF-8 prefix of a line that reached the cap, keeping an
@@ -407,7 +416,7 @@ where
     };
 
     let mut pending: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; READ_CHUNK];
+    let mut chunk = vec![0u8; READ_CHUNK];
     // Lines completed by the last read, sent once it has been fully scanned.
     let mut lines: Vec<String> = Vec::new();
 
@@ -442,10 +451,15 @@ where
             Ok(n) => {
                 let mut rest = &chunk[..n];
 
-                while let Some(position) = rest.iter().position(|&byte| byte == b'\n') {
-                    append_capped(&mut pending, &rest[..position], &mut lines);
-                    lines.push(strip_trailing_cr(&pending));
-                    pending.clear();
+                while let Some(position) = memchr::memchr(b'\n', rest) {
+                    if pending.is_empty() && position <= MAX_LINE_BYTES {
+                        // The whole line is in this read: no need to stage it in `pending`.
+                        lines.push(strip_trailing_cr(&rest[..position]));
+                    } else {
+                        append_capped(&mut pending, &rest[..position], &mut lines);
+                        lines.push(strip_trailing_cr(&pending));
+                        pending.clear();
+                    }
 
                     rest = &rest[position + 1..];
                 }
@@ -464,13 +478,11 @@ where
 
 /// Send the completed lines in order. False when the stream was closed and the reader should stop.
 async fn send_lines(sink: &EventSink, lines: &mut Vec<String>, event: &impl Fn(String) -> ProcessEvent) -> bool {
-    for text in lines.drain(..) {
-        if !sink.send_output(event(text)).await {
-            return false;
-        }
+    if lines.is_empty() {
+        return true;
     }
 
-    true
+    sink.send_output_many(lines.drain(..).map(event).collect()).await
 }
 
 /// Append `bytes` to the pending line, completing the buffered part first whenever

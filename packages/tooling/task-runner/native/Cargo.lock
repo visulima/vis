@@ -887,7 +887,9 @@ dependencies = [
 name = "task-runner-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "codspeed-criterion-compat",
+ "memchr",
  "nix 0.31.3",
  "portable-pty",
  "rayon",

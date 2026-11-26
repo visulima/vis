@@ -35,6 +35,10 @@ use super::types::{ConcurrentCommandConfig, StdinMode};
 /// `POSIX_SPAWN_SETSID` (`<sys/spawn.h>`, macOS 10.15 and later); the `libc` crate does not export it.
 const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
 
+/// `POSIX_SPAWN_CLOEXEC_DEFAULT` (`<sys/spawn.h>`): every descriptor the file actions do not set up
+/// is closed in the child, whoever opened it and however.
+const POSIX_SPAWN_CLOEXEC_DEFAULT: libc::c_short = 0x4000;
+
 /// What `execvp` searches when the environment has no `PATH`.
 const DEFAULT_PATH: &str = "/usr/bin:/bin";
 
@@ -250,6 +254,59 @@ pub(crate) fn spawn(program: &str, args: &[String], config: &ConcurrentCommandCo
     Ok((child, pipes))
 }
 
+/// Start `program` (an absolute path) as the leader of a session of its own, on the terminal
+/// `terminal` (the slave side of a pty): its standard streams are that terminal, which, with no
+/// controlling terminal yet, it acquires by opening it. `environment` is the whole environment.
+///
+/// This is `pty::spawn_pty`'s spawn without the `fork` a `pre_exec` hook costs (see the module
+/// documentation). Returns the pid; collecting the exit status is the caller's job.
+pub(crate) fn spawn_on_terminal(
+    program: &str,
+    arguments: &[String],
+    environment: &[(String, String)],
+    cwd: &str,
+    terminal: &Path,
+) -> io::Result<u32> {
+    let program = cstring(program)?;
+    let argv = arguments.iter().map(|argument| cstring(argument)).collect::<io::Result<Vec<_>>>()?;
+    let envp = environment
+        .iter()
+        .map(|(key, value)| env_entry(OsStr::new(key), OsStr::new(value)))
+        .collect::<io::Result<Vec<_>>>()?;
+    let cwd = cstring(cwd)?;
+    let terminal = CString::new(terminal.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "nul byte found in provided data"))?;
+
+    let mut actions = FileActions::new()?;
+
+    actions.open_terminal(0, &terminal)?;
+    actions.dup2(0, 1)?;
+    actions.dup2(0, 2)?;
+    actions.chdir(&cwd)?;
+
+    let attributes = Attributes::for_terminal()?;
+    let pointers: Vec<*mut libc::c_char> =
+        argv.iter().map(|argument| argument.as_ptr().cast_mut()).chain(std::iter::once(ptr::null_mut())).collect();
+    let environment_pointers: Vec<*mut libc::c_char> =
+        envp.iter().map(|entry| entry.as_ptr().cast_mut()).chain(std::iter::once(ptr::null_mut())).collect();
+    let mut pid: libc::pid_t = 0;
+
+    // SAFETY: every pointer refers to a NUL-terminated string, or a NULL-terminated array of
+    // them, that outlives the call; the actions and attributes are initialised.
+    check(unsafe {
+        libc::posix_spawn(
+            &raw mut pid,
+            program.as_ptr(),
+            actions.as_ptr(),
+            attributes.as_ptr(),
+            pointers.as_ptr(),
+            environment_pointers.as_ptr(),
+        )
+    })?;
+
+    Ok(pid as u32)
+}
+
 fn cstring(value: &str) -> io::Result<CString> {
     CString::new(value).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "nul byte found in provided data"))
 }
@@ -404,6 +461,12 @@ impl FileActions {
         check(unsafe { libc::posix_spawn_file_actions_adddup2(&raw mut self.0, from, onto) })
     }
 
+    /// Open `path` read-write as descriptor `onto`.
+    fn open_terminal(&mut self, onto: RawFd, path: &CString) -> io::Result<()> {
+        // SAFETY: the actions are initialised and the path is NUL-terminated.
+        check(unsafe { libc::posix_spawn_file_actions_addopen(&raw mut self.0, onto, path.as_ptr(), libc::O_RDWR, 0) })
+    }
+
     fn open_null(&mut self, onto: RawFd) -> io::Result<()> {
         // SAFETY: the actions are initialised and the path is NUL-terminated.
         check(unsafe {
@@ -430,6 +493,33 @@ impl Drop for FileActions {
 struct Attributes(libc::posix_spawnattr_t);
 
 impl Attributes {
+    /// For a command on a terminal: as [`Self::new`], with the other signals a terminal program
+    /// expects at their defaults, and no descriptor inherited but the three the actions set up.
+    fn for_terminal() -> io::Result<Self> {
+        let mut attributes = Self::new()?;
+        let mut defaults = MaybeUninit::<libc::sigset_t>::uninit();
+
+        // SAFETY: the set is initialised by `sigemptyset` before use; the attributes by `new`.
+        unsafe {
+            libc::sigemptyset(defaults.as_mut_ptr());
+
+            for signal in
+                [libc::SIGPIPE, libc::SIGCHLD, libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM, libc::SIGALRM]
+            {
+                libc::sigaddset(defaults.as_mut_ptr(), signal);
+            }
+
+            check(libc::posix_spawnattr_setsigdefault(&raw mut attributes.0, defaults.as_ptr()))?;
+
+            let mut flags: libc::c_short = 0;
+
+            check(libc::posix_spawnattr_getflags(&raw const attributes.0, &raw mut flags))?;
+            check(libc::posix_spawnattr_setflags(&raw mut attributes.0, flags | POSIX_SPAWN_CLOEXEC_DEFAULT))?;
+        }
+
+        Ok(attributes)
+    }
+
     fn new() -> io::Result<Self> {
         let mut attributes = MaybeUninit::uninit();
 

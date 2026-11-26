@@ -14,6 +14,8 @@ crate-type = [ "rlib" ]
 
 [dependencies]
 rustc-hash = "2"
+# Newline search in the output readers: SIMD, where a byte-by-byte scan was the reader's top cost.
+memchr = "2"
 xxhash-rust = { version = "0.8", features = [ "xxh3" ] }
 walkdir = "2"
 rayon = "1"
@@ -33,6 +35,8 @@ tokio = { version = "1", features = [
 # pipes are tokio's unix pipe types.
 [target.'cfg(target_os = "macos")'.dependencies]
 tokio = { version = "1", features = [ "net" ] }
+# `concurrent/mac_pty.rs` implements `portable_pty::MasterPty`, whose methods return `anyhow::Error`.
+anyhow = "1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = [

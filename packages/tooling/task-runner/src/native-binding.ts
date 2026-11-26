@@ -66,6 +66,12 @@ interface NativeConcurrentRunnerOptions {
 
 interface NativeProcessEvent {
     commandName?: string;
+
+    /**
+     * stdout/stderr only: above 1, `text` holds that many lines joined with `\n` (the host splits
+     * it); absent means one line. A pty chunk is never folded.
+     */
+    count?: number;
     durationMs?: number;
     exitCode?: number;
     index: number;

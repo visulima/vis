@@ -1257,6 +1257,65 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_every_line_of_a_multi_megabyte_output_arrives_once_and_in_order_through_the_grouping() {
+        use crate::concurrent::grouping::{group_output, Delivered};
+
+        // Two commands, each 600,000 numbered lines (about 4 MB): stdout of one, stderr of the other.
+        let commands = vec![make_config("seq 1 600000", None), make_config("seq 1 600000 1>&2", None)];
+        let mut run = start_bounded(commands, 4096);
+        let mut next = [1_u32; 2];
+        let mut closed = [false; 2];
+        let mut grouped_items = 0;
+
+        while !closed.iter().all(|done| *done) {
+            let batch = tokio::time::timeout(std::time::Duration::from_secs(30), run.stream.next_batch(512))
+                .await
+                .expect("the run must keep producing while it is drained")
+                .expect("the stream stays open until both commands have closed");
+
+            for item in group_output(batch.events.clone()) {
+                let (index, text) = match item {
+                    Delivered::Event(ProcessEvent::Stdout { index, text }) => {
+                        assert_eq!(index, 0, "the stdout command is command 0");
+                        (index, vec![text])
+                    }
+                    Delivered::Event(ProcessEvent::Stderr { index, text }) => {
+                        assert_eq!(index, 1, "the stderr command is command 1");
+                        (index, vec![text])
+                    }
+                    Delivered::Lines { index, stderr, text, count } => {
+                        grouped_items += 1;
+                        assert_eq!(stderr, index == 1, "a group keeps its stream");
+
+                        let lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+
+                        assert_eq!(lines.len(), count as usize);
+                        (index, lines)
+                    }
+                    Delivered::Event(ProcessEvent::Close { index, exit_code, .. }) => {
+                        assert_eq!(exit_code, 0);
+                        assert_eq!(next[index as usize], 600_001, "the close comes after the last line");
+                        closed[index as usize] = true;
+
+                        continue;
+                    }
+                    Delivered::Event(_) => continue,
+                };
+
+                for line in text {
+                    assert_eq!(line, next[index as usize].to_string(), "command {index} lost or reordered a line");
+                    next[index as usize] += 1;
+                }
+            }
+        }
+
+        assert_eq!(next, [600_001, 600_001]);
+        assert!(grouped_items > 0, "a burst of lines must actually be folded");
+        assert!(run.result.await.unwrap().success);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_a_slow_consumer_does_not_lose_output_to_the_drain_grace() {
         // The command exits at once with more output than the channel holds. A consumer that waits
         // longer than the 2 s pipe-drain grace must still get every line: time spent waiting for a
@@ -1340,6 +1399,31 @@ mod tests {
         assert!(result.success, "{result:?} {events:?}");
         assert!(out.contains("tty"), "{out:?}");
         assert!(out.contains("24 80"), "{out:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_a_pty_command_has_the_terminal_as_its_controlling_terminal_and_no_stray_descriptors() {
+        // `/dev/tty` opens only for a process whose session has the terminal as its own, which is
+        // what makes a resize reach it (SIGWINCH) however the command was started.
+        let mut run = start(
+            vec![pty_config("(: </dev/tty) 2>/dev/null && echo ctty; echo fds=$(ls /dev/fd | wc -l | tr -d ' ')")],
+            &default_options(),
+        );
+
+        run.wait_for_started(1).await;
+
+        let (result, events) = run.finish().await;
+        let out = stdout_of(&events);
+
+        assert!(result.success, "{result:?} {events:?}");
+        assert!(out.contains("ctty"), "{out:?}");
+
+        // 0, 1 and 2, plus the one `ls` opens to read the directory itself.
+        let fds: usize =
+            out.split("fds=").nth(1).and_then(|rest| rest.trim().parse().ok()).expect("a descriptor count");
+
+        assert!(fds <= 5, "the command inherited stray descriptors: {out:?}");
     }
 
     #[cfg(unix)]
