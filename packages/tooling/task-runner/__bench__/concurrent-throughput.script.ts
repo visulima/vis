@@ -10,19 +10,24 @@
  * same commands, a pinned shell and no flow controllers, so the numbers are the spawners' own:
  * no `npm config` shell lookup, no restart or teardown wrapper.
  *
- * Each case is warmed up first, then measured `BENCH_RUNS` times (default 15) with the two runners
- * taking turns, so drift in the machine hits both alike. The report is the median, the spread,
+ * Each warm case is warmed up first, then measured `BENCH_RUNS` times (default 15) with the two
+ * runners taking turns, so drift in the machine hits both alike. The "cold process" case starts a
+ * fresh `node` per run (`BENCH_COLD_RUNS`, default 20), because that is what one `vis run` costs:
+ * loading the addon and starting its runtime are part of the first task. The report is the median, the spread,
  * and the ratio native / JS, next to the bar plan 015 sets for making the native runner the
  * default: within 1.25x of the JS spawner on 200 tasks, and within +10 ms on one task.
  *
  * Environment: `BENCH_RUNS` (measured runs per case), `BENCH_WARMUP` (default 3),
  * `BENCH_TASKS` (the large case, default 200), `BENCH_PROCESSES` (its `maxProcesses`, default 8),
- * `BENCH_OUT` (a path: also write the numbers there as JSON).
+ * `BENCH_COLD_RUNS` (cold-process runs, default 20), `BENCH_OUT` (a path: also write the numbers there
+ * as JSON), `BENCH_SUMMARY` (a path: also write the markdown report there; CI points it at the job summary).
  */
 /* eslint-disable no-console -- the report is the output of this script */
-import { statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { build } from "esbuild";
 import { expect, it } from "vitest";
 
 import { runConcurrentFallback } from "../src/concurrent-fallback";
@@ -40,6 +45,7 @@ const intFromEnv = (name: string, fallback: number): number => {
 };
 
 const measuredRuns = intFromEnv("BENCH_RUNS", 15);
+const coldRuns = intFromEnv("BENCH_COLD_RUNS", 20);
 const warmupRuns = intFromEnv("BENCH_WARMUP", 3);
 const largeCount = intFromEnv("BENCH_TASKS", 200);
 const largeProcesses = intFromEnv("BENCH_PROCESSES", 8);
@@ -87,6 +93,56 @@ const once = async (runner: Runner, benchCase: BenchCase): Promise<number> => {
     return elapsed;
 };
 
+const coldCaseName = "1 task, cold process";
+const coldDirectory = fileURLToPath(new URL(".cold/", import.meta.url));
+const coldEntry = `${coldDirectory}entry.mjs`;
+
+/**
+ * Bundles the two runners behind a tiny entry point that runs one `echo` task and exits, so each
+ * measured run can be a fresh process. It is built inside `__bench__/` because the addon loader
+ * walks up from the bundle to the package root to find `index.js`; the bundle is deleted afterwards.
+ */
+const buildColdEntry = async (): Promise<void> => {
+    mkdirSync(coldDirectory, { recursive: true });
+
+    const entrySource = [
+        "const name = process.argv[2];",
+        'const load = name === "js" ? import("../../src/concurrent-fallback") : import("../../src/concurrent-native");',
+        'const run = await load.then((module) => (name === "js" ? module.runConcurrentFallback : module.runNativeConcurrent));',
+        'const result = await run([{ command: "echo task" }], { maxProcesses: 1, shellPath: process.platform === "win32" ? undefined : "/bin/sh" });',
+        "process.exit(result.success ? 0 : 1);",
+    ].join("\n");
+
+    await build({
+        bundle: true,
+        external: ["@lydell/node-pty"],
+        format: "esm",
+        logLevel: "error",
+        outfile: coldEntry,
+        platform: "node",
+        stdin: { contents: entrySource, resolveDir: coldDirectory, sourcefile: "entry.ts" },
+        target: "node22",
+    });
+};
+
+/** Wall time of one fresh `node` that runs the cold entry with `name`'s runner. */
+const coldOnce = (name: "js" | "native"): Promise<number> =>
+    new Promise((resolve, reject) => {
+        const start = performance.now();
+        const child = spawn(process.execPath, [coldEntry, name], { stdio: "ignore" });
+
+        child.on("error", reject);
+        child.on("close", (code) => {
+            const elapsed = performance.now() - start;
+
+            if (code === 0) {
+                resolve(elapsed);
+            } else {
+                reject(new Error(`a cold-process run failed: ${name} exited with ${code}`));
+            }
+        });
+    });
+
 const addonSize = (): number | undefined => {
     try {
         const suffix = `${process.platform}-${process.arch}`;
@@ -99,68 +155,109 @@ const addonSize = (): number | undefined => {
 
 const format = (milliseconds: number): string => `${milliseconds.toFixed(1)} ms`;
 
-it("measures both runners", async () => {
-    expect.hasAssertions();
+it(
+    "measures both runners",
+    async () => {
+        expect.hasAssertions();
 
-    const size = addonSize();
+        const size = addonSize();
 
-    // A debug addon is several times larger than a release one and spawns slower: the numbers would mislead.
-    if (size !== undefined && size > 4 * 1024 * 1024) {
-        console.warn(`WARNING: the addon is ${(size / 1024 / 1024).toFixed(1)} MB, which looks like a debug build. Build it with \`pnpm build:native\` before reading these numbers.`);
-    }
-
-    const rows: { case: string; jsMedian: number; jsRange: [number, number]; nativeMedian: number; nativeRange: [number, number] }[] = [];
-
-    for (const benchCase of cases) {
-        const samples: Record<"js" | "native", number[]> = { js: [], native: [] };
-
-        for (let round = 0; round < warmupRuns + measuredRuns; round += 1) {
-            // Take turns, and swap who goes first, so neither runner always follows the other.
-            for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
-                // eslint-disable-next-line no-await-in-loop
-                const elapsed = await once(runners[name], benchCase);
-
-                if (round >= warmupRuns) {
-                    samples[name].push(elapsed);
-                }
-            }
+        // A debug addon is several times larger than a release one and spawns slower: the numbers would mislead.
+        if (size !== undefined && size > 4 * 1024 * 1024) {
+            console.warn(
+                `WARNING: the addon is ${(size / 1024 / 1024).toFixed(1)} MB, which looks like a debug build. Build it with \`pnpm build:native\` before reading these numbers.`,
+            );
         }
 
-        rows.push({
-            case: benchCase.name,
-            jsMedian: median(samples.js),
-            jsRange: [Math.min(...samples.js), Math.max(...samples.js)],
-            nativeMedian: median(samples.native),
-            nativeRange: [Math.min(...samples.native), Math.max(...samples.native)],
-        });
-    }
+        const rows: { case: string; jsMedian: number; jsRange: [number, number]; nativeMedian: number; nativeRange: [number, number] }[] = [];
 
-    const lines = [
-        "",
-        `Concurrent runner throughput, ${process.platform}-${process.arch}, node ${process.version}, median of ${measuredRuns} after ${warmupRuns} warm-up runs`,
-        "",
-        "| case | JS spawner | native | native / JS | native - JS |",
-        "| --- | --- | --- | --- | --- |",
-        ...rows.map(
-            (row) =>
-                `| ${row.case} | ${format(row.jsMedian)} (${row.jsRange[0].toFixed(0)}-${row.jsRange[1].toFixed(0)}) | ${format(row.nativeMedian)} (${row.nativeRange[0].toFixed(0)}-${row.nativeRange[1].toFixed(0)}) | ${(row.nativeMedian / row.jsMedian).toFixed(2)}x | ${(row.nativeMedian - row.jsMedian).toFixed(1)} ms |`,
-        ),
-        "",
-    ];
+        for (const benchCase of cases) {
+            const samples: Record<"js" | "native", number[]> = { js: [], native: [] };
 
-    const large = rows.find((row) => row.case === `${largeCount} tasks, maxProcesses ${largeProcesses}`)!;
-    const single = rows.find((row) => row.case === "1 task")!;
+            for (let round = 0; round < warmupRuns + measuredRuns; round += 1) {
+                // Take turns, and swap who goes first, so neither runner always follows the other.
+                for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
+                    // eslint-disable-next-line no-await-in-loop
+                    const elapsed = await once(runners[name], benchCase);
 
-    lines.push(
-        `Gate (plan 015, step 3): ${largeCount} tasks within 1.25x: ${large.nativeMedian / large.jsMedian <= 1.25 ? "met" : "NOT met"} (${(large.nativeMedian / large.jsMedian).toFixed(2)}x); one task within +10 ms: ${single.nativeMedian - single.jsMedian <= 10 ? "met" : "NOT met"} (${(single.nativeMedian - single.jsMedian).toFixed(1)} ms)`,
-        "",
-    );
+                    if (round >= warmupRuns) {
+                        samples[name].push(elapsed);
+                    }
+                }
+            }
 
-    console.log(lines.join("\n"));
+            rows.push({
+                case: benchCase.name,
+                jsMedian: median(samples.js),
+                jsRange: [Math.min(...samples.js), Math.max(...samples.js)],
+                nativeMedian: median(samples.native),
+                nativeRange: [Math.min(...samples.native), Math.max(...samples.native)],
+            });
+        }
 
-    expect(rows).toHaveLength(cases.length);
+        {
+            const samples: Record<"js" | "native", number[]> = { js: [], native: [] };
 
-    if (process.env["BENCH_OUT"]) {
-        writeFileSync(process.env["BENCH_OUT"], `${JSON.stringify({ addonBytes: size, measuredRuns, rows, warmupRuns }, null, 2)}\n`);
-    }
-}, 30 * 60_000);
+            await buildColdEntry();
+
+            try {
+                for (let round = 0; round < 2 + coldRuns; round += 1) {
+                    for (const name of round % 2 === 0 ? (["js", "native"] as const) : (["native", "js"] as const)) {
+                        // eslint-disable-next-line no-await-in-loop
+                        const elapsed = await coldOnce(name);
+
+                        // Two throw-away rounds fill the page cache for the binary and the bundle.
+                        if (round >= 2) {
+                            samples[name].push(elapsed);
+                        }
+                    }
+                }
+            } finally {
+                rmSync(coldDirectory, { force: true, recursive: true });
+            }
+
+            rows.push({
+                case: coldCaseName,
+                jsMedian: median(samples.js),
+                jsRange: [Math.min(...samples.js), Math.max(...samples.js)],
+                nativeMedian: median(samples.native),
+                nativeRange: [Math.min(...samples.native), Math.max(...samples.native)],
+            });
+        }
+
+        const image = process.env["ImageOS"] ? `, runner image ${process.env["ImageOS"]} ${process.env["ImageVersion"] ?? ""}`.trimEnd() : "";
+        const lines = [
+            "",
+            `Concurrent runner throughput, ${process.platform}-${process.arch}, node ${process.version}${image}, median of ${measuredRuns} runs after ${warmupRuns} warm-up runs (cold process: ${coldRuns} runs)`,
+            "",
+            "| case | JS spawner | native | native / JS | native - JS |",
+            "| --- | --- | --- | --- | --- |",
+            ...rows.map(
+                (row) =>
+                    `| ${row.case} | ${format(row.jsMedian)} (${row.jsRange[0].toFixed(0)}-${row.jsRange[1].toFixed(0)}) | ${format(row.nativeMedian)} (${row.nativeRange[0].toFixed(0)}-${row.nativeRange[1].toFixed(0)}) | ${(row.nativeMedian / row.jsMedian).toFixed(2)}x | ${(row.nativeMedian - row.jsMedian).toFixed(1)} ms |`,
+            ),
+            "",
+        ];
+
+        const large = rows.find((row) => row.case === `${largeCount} tasks, maxProcesses ${largeProcesses}`)!;
+        const single = rows.find((row) => row.case === coldCaseName)!;
+
+        lines.push(
+            `Gate (plan 015, step 3): ${largeCount} tasks within 1.25x: ${large.nativeMedian / large.jsMedian <= 1.25 ? "met" : "NOT met"} (${(large.nativeMedian / large.jsMedian).toFixed(2)}x); one task (cold process) within +10 ms: ${single.nativeMedian - single.jsMedian <= 10 ? "met" : "NOT met"} (${(single.nativeMedian - single.jsMedian).toFixed(1)} ms)`,
+            "",
+        );
+
+        console.log(lines.join("\n"));
+
+        if (process.env["BENCH_SUMMARY"]) {
+            appendFileSync(process.env["BENCH_SUMMARY"], `${lines.join("\n")}\n`);
+        }
+
+        expect(rows).toHaveLength(cases.length + 1);
+
+        if (process.env["BENCH_OUT"]) {
+            writeFileSync(process.env["BENCH_OUT"], `${JSON.stringify({ addonBytes: size, measuredRuns, rows, warmupRuns }, null, 2)}\n`);
+        }
+    },
+    30 * 60_000,
+);
