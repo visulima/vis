@@ -1216,17 +1216,14 @@ const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive
 // Whether `vis inspect` can pass the binary's native gate (`parse` in `inspect/args.rs`, `answer` in `inspect/mod.rs`): one package
 // in the plain shape of a registry name and spec, `--json`, and `--strict` and `--only <list>` at most once, for a pnpm workspace
 // whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node option in the environment.
-// The marshalls the run executes (those `--only` names, or all but `signatures`, less the ones `MARSHALL_DISABLE_*` turns off) must
-// be among the eight the binary has (`INSPECT_NATIVE_MARSHALLS`: the five that read the packument alone, `downloads`, which asks the
-// registry's download API, `archivedRepo`, which asks GitHub, and `signatures`, which reads the registry's keys and verifies with
-// ECDSA): `expiredDomains` looks up DNS records, so a plain `vis inspect <package> --json` stays in Node. The binary re-checks
-// everything, including the registry and the packument.
-const INSPECT_MARSHALLS = ["author", "provenance", "s1ngularity", "newBin", "metadata", "downloads", "expiredDomains", "signatures", "archivedRepo"];
-const INSPECT_NATIVE_MARSHALLS = new Set(["archivedRepo", "author", "downloads", "metadata", "newBin", "provenance", "s1ngularity", "signatures"]);
+// Every marshall is the binary's (`author`, `provenance`, `s1ngularity`, `newBin` and `metadata` read the packument, `downloads` asks the
+// registry's download API, `archivedRepo` asks GitHub, `signatures` verifies the registry's signatures and `expiredDomains` asks a DNS
+// resolver), so which ones a run executes (`--only`, or all but `signatures`, less the ones `MARSHALL_DISABLE_*` turns off) is for the
+// binary to read. It re-checks everything, including the registry and the packument, and hands to Node a run it cannot reproduce.
+const INSPECT_MARSHALLS = new Set(["archivedRepo", "author", "downloads", "expiredDomains", "metadata", "newBin", "provenance", "s1ngularity", "signatures"]);
 const INSPECT_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const INSPECT_SPEC = /^[\w.+-]*$/;
 const INSPECT_ONLY = /^[\da-z,]+$/i;
-const CAPITAL_LETTER = /([A-Z])/g;
 
 const inspectPackageIsNative = (token) => {
     const separator = token.indexOf("@", 1);
@@ -1236,7 +1233,7 @@ const inspectPackageIsNative = (token) => {
     return INSPECT_NAME.test(name) && INSPECT_SPEC.test(spec);
 };
 
-const inspectOnlyIsNative = (value) => value !== undefined && INSPECT_ONLY.test(value) && value.split(",").every((entry) => INSPECT_MARSHALLS.includes(entry));
+const inspectOnlyIsNative = (value) => value !== undefined && INSPECT_ONLY.test(value) && value.split(",").every((entry) => INSPECT_MARSHALLS.has(entry));
 
 // `--only <list>` once and valid, or not at all; the arguments without it.
 const inspectWithoutOnly = (rest) => {
@@ -1260,21 +1257,10 @@ const inspectFlagsAreNative = (others) => {
     return packages.length === 1 && inspectPackageIsNative(packages[0]) && flags.includes("--json") && new Set(flags).size === flags.length && flags.every((flag) => flag === "--json" || flag === "--strict");
 };
 
-const isTruthyEnv = (value) => value !== undefined && !["", "0", "false", "no"].includes(value.trim().toLowerCase());
-
-const inspectMarshallIsOff = (environment, name) =>
-    isTruthyEnv(environment.MARSHALL_DISABLE_ALL) || isTruthyEnv(environment[`MARSHALL_DISABLE_${name.replaceAll(CAPITAL_LETTER, "_$1").toUpperCase()}`]);
-
-const inspectArgsAreNative = (args, environment) => {
+const inspectArgsAreNative = (args) => {
     const parsed = inspectWithoutOnly(args.slice(1));
 
-    if (parsed === undefined || !inspectFlagsAreNative(parsed.others)) {
-        return false;
-    }
-
-    const requested = parsed.list ?? INSPECT_MARSHALLS.filter((name) => name !== "signatures");
-
-    return requested.every((name) => INSPECT_NATIVE_MARSHALLS.has(name) || inspectMarshallIsOff(environment, name));
+    return parsed !== undefined && inspectFlagsAreNative(parsed.others);
 };
 
 const inspectMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
@@ -1282,7 +1268,7 @@ const inspectMayRunNatively = (platform, environment, args, cwd, interactive, ho
         return false;
     }
 
-    return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && inspectArgsAreNative(args, environment);
+    return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && inspectArgsAreNative(args);
 };
 
 // The flags `vis audit` takes natively (`parse` in `native/cli/src/audit/mod.rs`): `--format json` and `--policies none` (the
@@ -1563,7 +1549,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
-    // The JSON report of the marshalls the binary has: those that read the packument, `downloads`, `archivedRepo` and `signatures` (`--only`, or the others turned off with `MARSHALL_DISABLE_*`).
+    // The JSON report of the marshalls `--only` names, or the default set less the ones `MARSHALL_DISABLE_*` turns off.
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],

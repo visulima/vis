@@ -1,0 +1,16 @@
+[
+  { "name": "ns records", "rcode": 0, "answers": [{ "type": "NS", "target": "ns1.example.net" }], "expected": "registered" },
+  { "name": "two ns records", "rcode": 0, "answers": [{ "type": "NS", "target": "ns1.example.net" }, { "type": "NS", "target": "ns2.example.net" }], "expected": "registered" },
+  { "name": "nxdomain", "rcode": 3, "answers": [], "expected": "lapsed" },
+  { "name": "nxdomain that carries an answer", "rcode": 3, "answers": [{ "type": "NS", "target": "ns1.example.net" }], "expected": "lapsed" },
+  { "name": "nodata", "rcode": 0, "answers": [], "expected": "lapsed" },
+  { "name": "ns only in the authority section", "rcode": 0, "answers": [], "authority": [{ "type": "NS", "target": "ns1.example.net" }], "expected": "lapsed" },
+  { "name": "cname only", "rcode": 0, "answers": [{ "type": "CNAME", "target": "other.example.net" }], "expected": "lapsed", "native": "decline" },
+  { "name": "address record only", "rcode": 0, "answers": [{ "type": "A", "address": [192, 0, 2, 1] }], "expected": "lapsed", "native": "decline" },
+  { "name": "servfail", "rcode": 2, "answers": [], "expected": "unresolved", "native": "decline" },
+  { "name": "refused", "rcode": 5, "answers": [], "expected": "unresolved", "native": "decline" },
+  { "name": "format error", "rcode": 1, "answers": [], "expected": "unresolved", "native": "decline" },
+  { "name": "not implemented", "rcode": 4, "answers": [], "expected": "unresolved", "native": "decline" },
+  { "name": "truncated", "rcode": 0, "tc": true, "answers": [], "expected": "unresolved", "native": "decline" },
+  { "name": "no answer", "silent": true, "expected": "unresolved", "native": "decline" }
+]
