@@ -9,21 +9,24 @@
 //! The walk is the one the Node scan makes (`readNodeModulesManifests`): the top-level directories of
 //! `node_modules` (symbolic links are skipped), scope directories, pnpm's `.pnpm/<entry>/node_modules` store, and
 //! the `node_modules` nested inside a package. It is a superset of what Node acts on: it looks at every package
-//! under `node_modules`, where Node looks at those the lockfile lists, and a `package.json` that merely contains
-//! the key (even as `false` or an empty list) and a vendored directory with any subdirectory both count.
+//! under `node_modules`, where Node looks at those the lockfile lists, and a `package.json` that merely has the key
+//! (even as `false` or an empty list), one this crate cannot parse, and a vendored directory with any
+//! subdirectory all count.
 
 use std::fs;
 use std::path::Path;
 
+use serde_json::Value;
+
 /// The two spellings of the key npm reads.
-const BUNDLE_KEYS: [&[u8]; 2] = [b"\"bundleDependencies\"", b"\"bundledDependencies\""];
+const BUNDLE_KEYS: [&str; 2] = ["bundleDependencies", "bundledDependencies"];
 
 /// Directories, relative to a package, that vendor copies of other packages.
 const VENDORED: [&str; 2] = ["dist/compiled", "compiled"];
 
 const BUNDLES: &str = "a package under node_modules ships other packages inside itself (bundleDependencies)";
 const VENDORS: &str = "a package under node_modules ships a vendored tree of packages (dist/compiled)";
-const ESCAPED: &str = "a package.json under node_modules holds a unicode escape this check cannot read";
+const UNREADABLE: &str = "a package.json under node_modules is not JSON this crate reads";
 
 /// The reason Node would scan more than the lockfile for `root`, or `None` when it would not (no `node_modules`
 /// counts: Node reads nothing from disk then either).
@@ -95,15 +98,12 @@ fn scan_store(store: &Path) -> Option<&'static str> {
 
 fn scan_package(package: &Path) -> Option<&'static str> {
     if let Ok(manifest) = fs::read(package.join("package.json")) {
-        let holds = |needle: &[u8]| manifest.windows(needle.len()).any(|window| window == needle);
-
-        if BUNDLE_KEYS.iter().any(|key| holds(key)) {
-            return Some(BUNDLES);
-        }
-
-        // A key can be spelled with a unicode escape, which JSON.parse reads and a text search does not.
-        if holds(b"\\u") {
-            return Some(ESCAPED);
+        match serde_json::from_slice::<Value>(&manifest) {
+            Ok(Value::Object(fields)) if BUNDLE_KEYS.iter().any(|key| fields.contains_key(*key)) => {
+                return Some(BUNDLES)
+            }
+            Ok(_) => {}
+            Err(_) => return Some(UNREADABLE),
         }
     }
 

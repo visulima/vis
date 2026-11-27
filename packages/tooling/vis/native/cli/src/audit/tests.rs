@@ -501,3 +501,15 @@ fn nothing_is_read_without_a_node_modules_directory() {
 
     assert!(super::bundled::decline(&root).is_none());
 }
+
+#[test]
+fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_json_does() {
+    let accents =
+        installed("accents", &[("node_modules/plain/package.json", r#"{"name":"plain","author":"J\u00e9r\u00f4me"}"#)]);
+
+    assert!(super::bundled::decline(&accents).is_none());
+
+    let broken = installed("broken-json", &[("node_modules/plain/package.json", "{ not json")]);
+
+    assert!(super::bundled::decline(&broken).is_some());
+}
