@@ -47,9 +47,12 @@ nix = { version = "0.31", features = [
 # Process-tree termination on Windows (job objects, console control events). The
 # file-access tracker's injection features stay with the addon crate.
 [target.'cfg(windows)'.dependencies]
+# `concurrent/win_pty.rs` implements `portable_pty::MasterPty`, whose methods return `anyhow::Error`.
+anyhow = "1"
 windows-sys = { version = "0.61", features = [
   "Win32_System_Console",
   "Win32_System_JobObjects",
+  "Win32_System_Pipes",
   "Win32_System_Threading",
   "Win32_Foundation",
   "Win32_Security",

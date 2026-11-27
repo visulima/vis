@@ -10,6 +10,8 @@ mod process_group;
 mod pty;
 pub(crate) mod runner;
 pub mod types;
+#[cfg(windows)]
+mod win_pty;
 
 #[cfg(test)]
 mod runner_tests;

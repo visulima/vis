@@ -914,6 +914,43 @@ mod tests {
         panic!("the abort left grandchildren running: {pids:?}");
     }
 
+    /// The same for a command on a terminal: it starts suspended on the ConPTY too, so the job
+    /// holds it before it can start anything.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_abort_kills_a_grandchild_a_terminal_command_started_immediately() {
+        let command = "start /b ping -n 7311 127.0.0.1 > nul & ping -n 7312 127.0.0.1 > nul";
+        let mut run = start(vec![pty_config(command)], &default_options());
+
+        run.wait_for_started(1).await;
+
+        let mut pids = Vec::new();
+        for _ in 0..50 {
+            pids = pings_with("-n 731");
+            if pids.len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        assert!(pids.len() >= 2, "both pings should be running, found {pids:?}");
+
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+        run.finish().await;
+
+        for _ in 0..50 {
+            pids = pings_with("-n 731");
+            if pids.is_empty() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        for pid in &pids {
+            let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
+        }
+        panic!("the abort left grandchildren running: {pids:?}");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn test_graceful_abort_reports_zero_and_spawns_no_queued_command() {
@@ -1453,7 +1490,6 @@ mod tests {
 
     // ── pty ─────────────────────────────────────────────────────────────────────
 
-    #[cfg(unix)]
     fn pty_config(command: &str) -> ConcurrentCommandConfig {
         let mut config = make_config(command, None);
         config.stdin = StdinMode::Pty;
