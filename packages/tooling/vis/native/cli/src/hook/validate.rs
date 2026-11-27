@@ -19,6 +19,7 @@ use std::process::{exit, Command, Stdio};
 
 use serde_json::Value;
 
+use super::checkout::{checkout_roots, expected_hooks_path, git, Git};
 use super::common::{parse, STAGES};
 use super::config;
 use crate::node_context::context_is_native;
@@ -26,67 +27,6 @@ use crate::output::write_stdout;
 
 /// Entries of the hooks directory that are neither stage scripts nor an issue.
 const IGNORED_ENTRIES: [&str; 3] = ["_", "config.json", "README.md"];
-
-/// What `git <args>` printed in `directory`.
-enum Git {
-    /// It exited non-zero or did not start: the handler falls back to a default or reports an issue.
-    Failed,
-    /// Its trimmed standard output.
-    Text(String),
-}
-
-/// Runs `git <args>` in `directory`. `None` when it printed text that is not ASCII, which the handler reads as UTF-8 and
-/// this module does not reproduce.
-fn git(directory: &Path, args: &[&str]) -> Option<Git> {
-    let Ok(output) = Command::new("git").args(args).current_dir(directory).stderr(Stdio::null()).output() else {
-        return Some(Git::Failed);
-    };
-
-    if !output.status.success() {
-        return Some(Git::Failed);
-    }
-
-    if !output.stdout.is_ascii() {
-        return None;
-    }
-
-    Some(Git::Text(String::from_utf8(output.stdout).ok()?.trim().to_owned()))
-}
-
-/// A `core.hooksPath` that names the hooks directory's dispatcher the way the handler expects, as a plain relative
-/// path (no empty, `.` or `..` segment, which `join` would normalise).
-fn expected_hooks_path(configured: &str, hooks_directory: &str) -> bool {
-    let expected = format!("{hooks_directory}/_");
-
-    (configured == expected || configured.ends_with(&format!("/{expected}")))
-        && configured.split('/').all(|segment| !segment.is_empty() && segment != "." && segment != "..")
-}
-
-/// `checkoutRoots` (`src/commands/hook/install.ts`): the checkouts of the repository that exist, or `top_level`.
-fn checkout_roots(top_level: &Path) -> Option<Vec<PathBuf>> {
-    let mut roots: Vec<String> = Vec::new();
-
-    if let Git::Text(listing) = git(top_level, &["worktree", "list", "--porcelain"])? {
-        let mut current: Option<String> = None;
-
-        for line in listing.split('\n') {
-            if let Some(path) = line.strip_prefix("worktree ") {
-                current = Some(path.trim().to_owned()).filter(|path| !path.is_empty());
-            } else if line == "bare" || line == "locked" || line.starts_with("locked ") || line.starts_with("prunable")
-            {
-                current = None;
-            } else if line.is_empty() {
-                roots.extend(current.take());
-            }
-        }
-
-        roots.extend(current);
-    }
-
-    let present: Vec<PathBuf> = roots.into_iter().map(PathBuf::from).filter(|root| root.exists()).collect();
-
-    Some(if present.is_empty() { vec![top_level.to_path_buf()] } else { present })
-}
 
 /// Whether `sh -n` accepts the script.
 fn shell_accepts(script: &Path) -> bool {
@@ -188,20 +128,4 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     write_stdout("hook", "the hook validation", &text);
 
     exit(0);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_hooks_path_must_name_the_dispatcher_of_the_hooks_directory() {
-        assert!(expected_hooks_path(".vis/hooks/_", ".vis/hooks"));
-        assert!(expected_hooks_path("packages/app/.vis/hooks/_", ".vis/hooks"));
-        assert!(!expected_hooks_path(".githooks/_", ".vis/hooks"));
-        assert!(!expected_hooks_path("x.vis/hooks/_", ".vis/hooks"));
-        assert!(!expected_hooks_path("/abs/.vis/hooks/_", ".vis/hooks"));
-        assert!(!expected_hooks_path("a/../.vis/hooks/_", ".vis/hooks"));
-        assert!(!expected_hooks_path("./.vis/hooks/_", ".vis/hooks"));
-    }
 }

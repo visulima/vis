@@ -32,10 +32,14 @@
 //! table of scenarios through both runners and compares them.
 
 mod builtins;
+#[cfg(unix)]
+mod checkout;
 mod common;
 mod config;
 mod exec;
 mod filter;
+#[cfg(unix)]
+pub mod install;
 pub mod list;
 #[cfg(unix)]
 pub mod validate;

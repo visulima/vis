@@ -61,6 +61,7 @@
 ["--color","heal"] => surface
 ["--color","help"] => surface
 ["--color","hook"] => surface
+["--color","hook","install"] => surface
 ["--color","hook","list"] => surface
 ["--color","hook","run"] => surface
 ["--color","hook","validate"] => surface
@@ -224,6 +225,7 @@
 ["--no-color","heal"] => surface
 ["--no-color","help"] => surface
 ["--no-color","hook"] => surface
+["--no-color","hook","install"] => surface
 ["--no-color","hook","list"] => surface
 ["--no-color","hook","run"] => surface
 ["--no-color","hook","validate"] => surface
@@ -379,6 +381,7 @@
 ["--quiet","heal"] => surface
 ["--quiet","help"] => surface
 ["--quiet","hook"] => surface
+["--quiet","hook","install"] => surface
 ["--quiet","hook","list"] => surface
 ["--quiet","hook","run"] => surface
 ["--quiet","hook","validate"] => surface
@@ -1550,7 +1553,32 @@
 ["hook","-h"] => surface
 ["hook","bloom","status"] => surface
 ["hook","bloom","status","--help"] => surface
-["hook","install"] => surface
+["hook","install"] => hook install
+["hook","install","--"] => hook install
+["hook","install","--","--help"] => hook install
+["hook","install","--force"] => hook install
+["hook","install","--format","json"] => hook install
+["hook","install","--help"] => surface
+["hook","install","--hooks-dir"] => hook install
+["hook","install","--hooks-dir",".githooks"] => hook install
+["hook","install","--hooks-dir","/abs"] => hook install
+["hook","install","--hooks-dir","123"] => hook install
+["hook","install","--hooks-dir","a..b"] => hook install
+["hook","install","--hooks-dir","a/../b"] => hook install
+["hook","install","--hooks-dir=ci/hooks"] => hook install
+["hook","install","--json"] => hook install
+["hook","install","--no-color","-h"] => surface
+["hook","install","--version"] => hook install
+["hook","install","--version","--help"] => surface
+["hook","install","-h"] => surface
+["hook","install","bloom","status"] => hook install
+["hook","install","bloom","status","--help"] => surface
+["hook","install","extra"] => hook install
+["hook","install","list"] => hook install
+["hook","install","status","--help"] => surface
+["hook","install","target"] => hook install
+["hook","install","target","--help"] => surface
+["hook","install","target","other"] => hook install
 ["hook","list"] => hook list
 ["hook","list","--"] => hook list
 ["hook","list","--","--help"] => hook list
