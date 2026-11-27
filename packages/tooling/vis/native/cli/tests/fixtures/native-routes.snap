@@ -2954,6 +2954,8 @@
 ["task-why","a:build","--json"] => task-why
 ["task-why","a:build","a:test"] => task-why
 ["task-why","a:build:ci"] => task-why
+["task-why","a:check"] => task-why
+["task-why","a:missing"] => task-why
 ["task-why","a:test"] => task-why
 ["task-why","b:build"] => task-why
 ["task-why","bloom","status"] => task-why
