@@ -1155,6 +1155,19 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
 
+// Whether `vis approve-builds` can pass the binary's native gate (`answer` in `approve_builds.rs`): `--scan` and nothing else, for a
+// pnpm workspace whose root is the working directory, in a CI context off a terminal with a pail layout the environment decides. Without
+// `--scan` a pnpm workspace gets `pnpm approve-builds`, a prompt; `--write` and `--sync-native` write files; both stay in Node. The binary
+// re-checks everything, including the config, every manifest under `node_modules` and a report with stale allowlist entries (which it
+// hands over before printing anything); this only skips the extra process when it would delegate anyway. It stays in Node on Windows.
+const approveBuildsMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && args.length === 2 && args[1] === "--scan";
+};
+
 // Whether `vis security tripwire` can pass the binary's native gate (`parse` and `answer` in `security_tripwire.rs`): `--status`,
 // `--remove` or no flag, for a pnpm workspace whose root is the working directory, in a CI context off a terminal with a pail
 // layout the environment decides. The run only reads `package.json`: the binary hands to Node every run that would install the
@@ -1607,6 +1620,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
+    // `approve-builds --scan`, the read-only report; the pnpm prompt and the writing flags are Node's.
+    ["approve-builds", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => approveBuildsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `attest <subject>` for a run with no OIDC token (Node skips signing) and `attest verify` (JSON, NDJSON, and a table of no findings).
     ["attest", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => attestMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `audit --format json`, answered only when the scan finds nothing.
