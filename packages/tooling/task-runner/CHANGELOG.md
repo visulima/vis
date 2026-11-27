@@ -1,3 +1,17 @@
+## @visulima/task-runner [4.0.0-next.3](https://github.com/visulima/vis/compare/@visulima/task-runner@4.0.0-next.2...@visulima/task-runner@4.0.0-next.3) (2026-11-27)
+
+### Features
+
+* **task-runner:** compute run keys natively on Windows ([efee6f2](https://github.com/visulima/vis/commit/efee6f2fca46239262e5a3ce52cd408e2f14cf6b))
+
+### Code Refactoring
+
+* **task-runner:** reuse the run key test helpers for the root tests ([95a4589](https://github.com/visulima/vis/commit/95a4589d4ffdff2e4ba17b0011cfb13b90d80692))
+
+### Tests
+
+* **task-runner:** fix the lint errors in the run key parity test ([234b61f](https://github.com/visulima/vis/commit/234b61f9f8c7cd1e0b83fca476574554c761dbc5))
+
 ## @visulima/task-runner [4.0.0-next.2](https://github.com/visulima/vis/compare/@visulima/task-runner@4.0.0-next.1...@visulima/task-runner@4.0.0-next.2) (2026-11-27)
 
 ### Bug Fixes
