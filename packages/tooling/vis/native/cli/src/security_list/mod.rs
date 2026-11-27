@@ -8,9 +8,9 @@
 //! data (see [`config`]); everything it cannot read exactly goes to Node before anything is printed:
 //!
 //! - the text form, every other flag, `--cwd` and `--config`, and every other `security` subcommand (`sync` is
-//!   answered by [`crate::security_sync`], which reads the same `security` block through [`sync_input`];
-//!   `tripwire` and `verify-lockfile` have modules of their own for the runs that only read, and `approve-builds --scan`
-//!   prints this module's [`triage`] in its own words; `run` executes scripts, the rest use the network);
+//!   answered by [`crate::security_sync`], which reads the same `security` block through [`sync_input`]; the passing
+//!   `verify-lockfile --offline` run has a module of its own; `run` and `tripwire` write files, the rest use the
+//!   network);
 //! - a config Node must evaluate, one that sets a key only Node handles (`extends`, `runtime`, ...), and an
 //!   `allow` or `allowBins` map whose shape or key order JavaScript would treat differently;
 //! - a `package.json` under `node_modules` that is not strict JSON, a tree too deep to walk, and a `localeCompare`

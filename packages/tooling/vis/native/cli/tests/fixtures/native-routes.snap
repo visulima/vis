@@ -112,7 +112,6 @@
 ["--color","security","keys-refresh"] => surface
 ["--color","security","list"] => surface
 ["--color","security","sync"] => surface
-["--color","security","tripwire"] => surface
 ["--color","security","verify-lockfile"] => surface
 ["--color","self"] => surface
 ["--color","self-update"] => surface
@@ -277,7 +276,6 @@
 ["--no-color","security","keys-refresh"] => surface
 ["--no-color","security","list"] => surface
 ["--no-color","security","sync"] => surface
-["--no-color","security","tripwire"] => surface
 ["--no-color","security","verify-lockfile"] => surface
 ["--no-color","self"] => surface
 ["--no-color","self-update"] => surface
@@ -434,7 +432,6 @@
 ["--quiet","security","keys-refresh"] => surface
 ["--quiet","security","list"] => surface
 ["--quiet","security","sync"] => surface
-["--quiet","security","tripwire"] => surface
 ["--quiet","security","verify-lockfile"] => surface
 ["--quiet","self"] => surface
 ["--quiet","self-update"] => surface
@@ -780,6 +777,7 @@
 ["approve-builds","--format","json"] => surface
 ["approve-builds","--help"] => surface
 ["approve-builds","--no-color","-h"] => surface
+["approve-builds","--scan"] => surface
 ["approve-builds","--version"] => surface
 ["approve-builds","--version","--help"] => surface
 ["approve-builds","-h"] => surface
@@ -2544,30 +2542,7 @@
 ["security","target"] => surface
 ["security","target","--help"] => surface
 ["security","target","other"] => surface
-["security","tripwire"] => security tripwire
-["security","tripwire","--"] => security tripwire
-["security","tripwire","--","--help"] => security tripwire
-["security","tripwire","--cwd","."] => security tripwire
-["security","tripwire","--format","json"] => security tripwire
-["security","tripwire","--help"] => surface
-["security","tripwire","--no-color","-h"] => surface
-["security","tripwire","--remove"] => security tripwire
-["security","tripwire","--status"] => security tripwire
-["security","tripwire","--status","--no-color"] => security tripwire
-["security","tripwire","--status","--remove"] => security tripwire
-["security","tripwire","--status","--status"] => security tripwire
-["security","tripwire","--status=true"] => security tripwire
-["security","tripwire","--version"] => security tripwire
-["security","tripwire","--version","--help"] => surface
-["security","tripwire","-h"] => surface
-["security","tripwire","bloom","status"] => security tripwire
-["security","tripwire","bloom","status","--help"] => surface
-["security","tripwire","extra"] => security tripwire
-["security","tripwire","list"] => security tripwire
-["security","tripwire","status","--help"] => surface
-["security","tripwire","target"] => security tripwire
-["security","tripwire","target","--help"] => surface
-["security","tripwire","target","other"] => security tripwire
+["security","tripwire","--status"] => surface
 ["security","verify-lockfile"] => security verify-lockfile
 ["security","verify-lockfile","--"] => security verify-lockfile
 ["security","verify-lockfile","--","--help"] => security verify-lockfile

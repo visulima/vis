@@ -82,8 +82,6 @@ vis security tripwire --remove    # delete the tripwire entry from package.json
 
 The installer uses the detected PM's idiomatic `add -D` invocation (pnpm `add -D -w`, bun `add -d`, npm `install --save-dev`, yarn `add -D`). `--remove` only edits `package.json` — run your PM's install afterwards to clean `node_modules`.
 
-**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace whose `vis.config` the binary can read as data, the Rust binary answers the runs that only read `package.json` without starting Node: `--status`, the bare command when the tripwire is already listed, and `--remove` when neither `dependencies` nor `devDependencies` lists it. It reads the file the way the Node command does (a UTF-8 decode that drops a byte-order mark, then a strict JSON parse; a failed read counts as "not installed") and judges the entry by JavaScript truthiness. The binary hands the run to Node before anything is printed or written for: a run that would install the package, a `--remove` that would rewrite `package.json` (the file is written with JavaScript's serializer), a `package.json` that is not UTF-8 or that `JSON.parse` may read differently from the binary's parser (a lone surrogate escape, a number outside a double), any other argument, and Windows.
-
 #### Per-PM targets
 
 | PM   | `allowBuilds` target                                                   | `minimumReleaseAge` target                                   | Excludes target                      |
