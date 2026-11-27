@@ -261,7 +261,8 @@ fn append_quoted(argument: &OsStr, command_line: &mut Vec<u16>) {
 }
 
 /// The environment as `CreateProcessW` takes it: `KEY=value` entries, each ended by a NUL, sorted by
-/// key without regard to case, and one more NUL at the end.
+/// key without regard to case, and one more NUL at the end. An empty environment is two NULs: a single
+/// one would read as the end of an entry that is not there.
 fn environment_block(builder: &CommandBuilder) -> Vec<u16> {
     let mut entries: Vec<(String, &str, &str)> =
         builder.iter_full_env_as_str().map(|(key, value)| (key.to_uppercase(), key, value)).collect();
@@ -274,6 +275,10 @@ fn environment_block(builder: &CommandBuilder) -> Vec<u16> {
         block.extend(OsStr::new(key).encode_wide());
         block.push(u16::from(b'='));
         block.extend(OsStr::new(value).encode_wide());
+        block.push(0);
+    }
+
+    if block.is_empty() {
         block.push(0);
     }
 
@@ -474,5 +479,34 @@ impl Child for WinChild {
 
     fn as_raw_handle(&self) -> Option<RawHandle> {
         Some(self.process.as_raw_handle())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(block: &[u16]) -> String {
+        String::from_utf16_lossy(block).replace('\0', "|")
+    }
+
+    #[test]
+    fn the_environment_block_is_sorted_and_ended_by_a_second_nul() {
+        let mut builder = CommandBuilder::new("cmd.exe");
+
+        builder.env_clear();
+        builder.env("b", "2");
+        builder.env("A", "1");
+
+        assert_eq!(text(&environment_block(&builder)), "A=1|b=2||");
+    }
+
+    #[test]
+    fn an_empty_environment_is_two_nuls() {
+        let mut builder = CommandBuilder::new("cmd.exe");
+
+        builder.env_clear();
+
+        assert_eq!(environment_block(&builder), [0, 0]);
     }
 }
