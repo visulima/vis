@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { tree } from "./destructive-parity-harness";
 import type { Result } from "./workspace-parity-harness";
-import { Harness } from "./workspace-parity-harness";
+import { Harness, nodeEntry } from "./workspace-parity-harness";
 
 /**
  * What the hook parity suites (`hook-install-parity.test.ts`, `hook-uninstall-parity.test.ts`) share: a repository per
@@ -16,6 +16,9 @@ import { Harness } from "./workspace-parity-harness";
  * the suite runs on cannot change which path the commands take.
  */
 export const ISOLATED_GIT = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+
+/** What lets a run the binary declines reach the Node CLI. */
+export const NODE_FALLBACK = { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath };
 
 export const git = (cwd: string, ...args: string[]): string =>
     execFileSync("git", args, { cwd, encoding: "utf8", env: { ...Harness.environment(), ...ISOLATED_GIT }, stdio: ["ignore", "pipe", "ignore"] });

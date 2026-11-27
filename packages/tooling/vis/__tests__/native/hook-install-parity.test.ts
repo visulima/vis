@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
 import type { Setup } from "./hook-git-harness";
-import { commitAll, git, hookOutcome, hooksPath, ISOLATED_GIT, modeOf, prepare, state } from "./hook-git-harness";
+import { commitAll, git, hookOutcome, hooksPath, ISOLATED_GIT, modeOf, NODE_FALLBACK, prepare, state } from "./hook-git-harness";
 import type { Files } from "./workspace-parity-harness";
 import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-harness";
 
@@ -62,7 +62,7 @@ const run = (files: Files, args: string[], setup: Case, environment: Record<stri
         }
     }
 
-    const native = harness.runNative(args, nativeRoot, delegated ? { ...env, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath } : env);
+    const native = harness.runNative(args, nativeRoot, delegated ? { ...env, ...NODE_FALLBACK } : env);
 
     if (!delegated) {
         expect(native.status, `native stderr: ${native.stderr}`).not.toBe(70);
@@ -268,7 +268,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(declined.status).toBe(70);
 
-            const native = harness.runNative([], nativeCwd, { ...ISOLATED_GIT, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
+            const native = harness.runNative([], nativeCwd, { ...ISOLATED_GIT, ...NODE_FALLBACK });
 
             expect({ status: native.status, stderr: Harness.normalize(native.stderr, nativeRoot), stdout: Harness.normalize(native.stdout, nativeRoot) }).toStrictEqual({
                 status: node.status,
@@ -295,7 +295,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             expect(harness.runNative([], nativeRoot, ISOLATED_GIT).status).toBe(70);
 
-            const native = harness.runNative([], nativeRoot, { ...ISOLATED_GIT, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
+            const native = harness.runNative([], nativeRoot, { ...ISOLATED_GIT, ...NODE_FALLBACK });
 
             expect(Harness.normalize(native.stdout, nativeRoot)).toBe(Harness.normalize(node.stdout, nodeRoot));
             expect(existsSync(join(`${nativeRoot}-wt`, ".vis/hooks/_/h"))).toBe(true);
@@ -337,7 +337,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             try {
                 const node = harness.runNode([], nodeRoot, ISOLATED_GIT);
-                const native = harness.runNative([], nativeRoot, { ...ISOLATED_GIT, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
+                const native = harness.runNative([], nativeRoot, { ...ISOLATED_GIT, ...NODE_FALLBACK });
 
                 expect(node.status).toBe(1);
                 expect(hookOutcome(native, nativeRoot)).toStrictEqual(hookOutcome(node, nodeRoot));
