@@ -270,7 +270,7 @@ mod tests {
     use crate::file_hasher::hash_bytes;
     use crate::run_graph::{DependencyKind, ProjectDependency};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     /// `xxh3_128` of the parts joined without a separator, the `__global__` layout.
     fn concat_hash(parts: &[&str]) -> String {
@@ -499,43 +499,6 @@ mod tests {
             ));
         }
     }
-}
-
-#[cfg(test)]
-mod root_tests {
-    use super::*;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
-    fn workspace(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("run-key-root-{name}-{}", std::process::id()));
-
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-
-        // A canonical Windows path is verbatim (`\\?\C:\…`), a root the keyer refuses; see `windows_root`.
-        if cfg!(windows) {
-            root
-        } else {
-            root.canonicalize().unwrap()
-        }
-    }
-
-    fn write(root: &Path, relative: &str, content: &[u8]) {
-        let path = root.join(relative);
-
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, content).unwrap();
-    }
-
-    fn project(name: &str) -> RunProject {
-        RunProject {
-            name: name.to_owned(),
-            root: format!("packages/{name}"),
-            script: Some("tsc".to_owned()),
-            ..Default::default()
-        }
-    }
 
     #[test]
     fn a_posix_root_is_absolute_without_glob_magic_and_loses_its_trailing_slashes() {
@@ -602,7 +565,7 @@ mod root_tests {
         let root = if cfg!(windows) { r"\\?\C:\ws" } else { "relative" };
 
         assert_eq!(
-            compute_task_keys(root, "build", &[project("a")], DependsOn::Nothing).unwrap_err(),
+            compute_task_keys(root, "build", &[project("a", "tsc", &[])], DependsOn::Nothing).unwrap_err(),
             NotReproducible::UnsafeWorkspaceRoot(root.to_owned())
         );
     }
@@ -612,11 +575,11 @@ mod root_tests {
     fn fixed_workspace(name: &str) -> PathBuf {
         let root = workspace(name);
 
-        write(&root, "packages/a/package.json", br#"{"name":"a","scripts":{"build":"tsc"}}"#);
-        write(&root, "packages/a/src/index.ts", b"export const a = 1;\n");
-        write(&root, "packages/a/src/crlf.txt", b"one\r\ntwo\r\n");
-        write(&root, "packages/a/src/nested/deep/last.ts", b"export {};\n");
-        write(&root, "tsconfig.json", b"{\r\n}\r\n");
+        write(&root, "packages/a/package.json", r#"{"name":"a","scripts":{"build":"tsc"}}"#);
+        write(&root, "packages/a/src/index.ts", "export const a = 1;\n");
+        write(&root, "packages/a/src/crlf.txt", "one\r\ntwo\r\n");
+        write(&root, "packages/a/src/nested/deep/last.ts", "export {};\n");
+        write(&root, "tsconfig.json", "{\r\n}\r\n");
 
         root
     }
@@ -628,7 +591,8 @@ mod root_tests {
     #[test]
     fn a_fixed_workspace_has_the_key_node_computes() {
         let root = fixed_workspace("fixed");
-        let keys = compute_task_keys(root.to_str().unwrap(), "build", &[project("a")], DependsOn::Nothing).unwrap();
+        let keys = compute_task_keys(root.to_str().unwrap(), "build", &[project("a", "tsc", &[])], DependsOn::Nothing)
+            .unwrap();
 
         assert_eq!(keys.key("a:build").unwrap().hash, FIXED_KEY);
     }
@@ -638,7 +602,7 @@ mod root_tests {
     fn the_key_does_not_depend_on_how_a_windows_root_is_spelt() {
         let root = fixed_workspace("spelling");
         let native = root.to_str().unwrap().to_owned();
-        let projects = [project("a")];
+        let projects = [project("a", "tsc", &[])];
         let key = |root: &str| {
             compute_task_keys(root, "build", &projects, DependsOn::Nothing).map(|keys| keys.keys[0].hash.clone())
         };
@@ -670,7 +634,7 @@ mod root_tests {
     #[test]
     fn a_keyer_takes_a_drive_letter_root() {
         let root = fixed_workspace("keyer");
-        let keyer = TaskKeyer::new(root.to_str().unwrap(), "build", &[project("a")]).unwrap();
+        let keyer = TaskKeyer::new(root.to_str().unwrap(), "build", &[project("a", "tsc", &[])]).unwrap();
 
         assert_eq!(keyer.key(0).unwrap().hash, FIXED_KEY);
     }
