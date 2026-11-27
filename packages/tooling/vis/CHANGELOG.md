@@ -1,3 +1,45 @@
+## @visulima/vis [8.0.0-next.1](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.14...@visulima/vis@8.0.0-next.1) (2026-11-27)
+
+### ⚠ BREAKING CHANGES
+
+* **task-runner:** `runConcurrentFallback` is no longer exported from
+`@visulima/task-runner`, and `VIS_CONCURRENT_RUNNER=js` no longer selects
+another runner.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Bug Fixes
+
+* **vis:** hand output-setting runs to Node for the native commands that skipped the check ([593ee9d](https://github.com/visulima/vis/commit/593ee9d27611ae2907c940487add019472e91df4))
+* **vis:** join the lines of a native help section with the platform line ending ([c27a9b7](https://github.com/visulima/vis/commit/c27a9b7722f85df9223243e73c38b5e9332f6354))
+
+### Performance Improvements
+
+* **task-runner:** make the native event path as fast as the JS spawner for output and pty runs ([158867f](https://github.com/visulima/vis/commit/158867ff89164f86ab9c6bb31754971abdc0cb08))
+
+### Code Refactoring
+
+* **task-runner:** remove the TypeScript spawner and the VIS_CONCURRENT_RUNNER switch ([4bf89db](https://github.com/visulima/vis/commit/4bf89db679ab6fdf61b0bd76de12f730be530734))
+* **vis:** check inference detectors in one place for list, affected, status and script targets ([1f4506a](https://github.com/visulima/vis/commit/1f4506a70c479c173cc7a19409c947253253bb71))
+* **vis:** drop the repeated comment on the output-settings guards ([7b10632](https://github.com/visulima/vis/commit/7b106324d19f2656177489b3388f813f7dad10d9))
+* **vis:** match workspace .gitignore rules with the shared matcher ([aea3c97](https://github.com/visulima/vis/commit/aea3c977473cc8c0e2d7b5fdb7c82b1b3fe3f9ab))
+* **vis:** read and parse each project's package.json once in the native listing ([e4ee3ba](https://github.com/visulima/vis/commit/e4ee3bab0322afcb2949c75546df29d5e1062450))
+* **vis:** share one root search between the config lookup, the root gate and the install check ([f4a04d8](https://github.com/visulima/vis/commit/f4a04d8983fd4eb4aa8b1f6e8c714e6c542d068c))
+
+### Tests
+
+* **vis:** cover link and outdated, and keep inherited output settings out of the native parity suites ([3154169](https://github.com/visulima/vis/commit/31541698a5e0fb3c47eb4a62097b0c13d2763e19))
+* **vis:** drop the test that restates the line-ending constant ([d00668c](https://github.com/visulima/vis/commit/d00668c678287658ac3f42d1e932448fa1b711f8))
+* **vis:** ignore the random tip line when comparing a Node run outside CI ([0d6cbdb](https://github.com/visulima/vis/commit/0d6cbdbdec6640616f686c67325dceb39d5ef248))
+* **vis:** match the tip line without a control character in the pattern ([44c0d3d](https://github.com/visulima/vis/commit/44c0d3d6847cac811f89713517afefedc4a460b0))
+* **vis:** point the optimize decline test at gitignore shapes that are still declined ([02a2f5d](https://github.com/visulima/vis/commit/02a2f5daff15d858851afa727bd677535138df22))
+* **vis:** satisfy the lint rules in the two workspace test files ([21ec288](https://github.com/visulima/vis/commit/21ec28890d29e9a5e975b79a4e5ed6c849d3f7d4))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 4.0.0-next.1
+
 ## @visulima/vis [7.1.0-next.14](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.13...@visulima/vis@7.1.0-next.14) (2026-11-26)
 
 ### Features
