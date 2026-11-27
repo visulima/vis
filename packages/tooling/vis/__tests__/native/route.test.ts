@@ -722,7 +722,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         describe("the read-only commands that answer natively on Windows too", () => {
             const ci = { CI: "1" };
             // The one directory with a root marker: the binary's root is the working directory.
-            const root = "C:\\work\\app";
+            const root = String.raw`C:\work\app`;
             const holdsMarker = (directory: string) => directory === root;
             const commands = [
                 ["list"],
