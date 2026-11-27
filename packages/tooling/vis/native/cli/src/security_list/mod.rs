@@ -126,43 +126,6 @@ fn report() -> Option<String> {
     Some(format!("{}\n", stringify(&report, "  ")))
 }
 
-/// An installed package with lifecycle scripts that `security.policies.installScripts.allow` does not cover.
-pub(crate) struct Unapproved {
-    pub(crate) name: String,
-    pub(crate) version: Option<String>,
-    pub(crate) hooks: Vec<String>,
-}
-
-/// What `scanBuildScriptStatus` finds, for the commands that print it in their own words (`vis approve-builds --scan`).
-pub(crate) struct Triage {
-    pub(crate) unapproved: Vec<Unapproved>,
-    /// Allowlist entries that match no installed package.
-    pub(crate) has_excess: bool,
-    /// Allowlist entries pinned to an outdated version.
-    pub(crate) has_version_drift: bool,
-    pub(crate) pin_versions: bool,
-}
-
-/// The build-script triage of the pnpm workspace at `cwd` (the caller has checked the context and the package manager),
-/// or `None` when the config or the `node_modules` tree is one only Node reads exactly (the cases `security list` hands over).
-pub(crate) fn triage(cwd: &Path) -> Option<Triage> {
-    let config = config(cwd)?;
-    let found = scan::walk(cwd)?;
-    let triage = status(&found.packages, &config.allow, config.pin_versions);
-    let unapproved = triage
-        .unapproved
-        .into_iter()
-        .map(|entry| Unapproved { name: entry.name, version: entry.version, hooks: entry.hooks })
-        .collect();
-
-    Some(Triage {
-        unapproved,
-        has_excess: !triage.excess.is_empty(),
-        has_version_drift: !triage.version_drift.is_empty(),
-        pin_versions: config.pin_versions,
-    })
-}
-
 fn text(value: &str) -> Json {
     Json::Str(value.to_owned())
 }

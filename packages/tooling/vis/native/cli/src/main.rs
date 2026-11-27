@@ -28,7 +28,6 @@ use std::process::exit;
 mod add;
 mod advisories;
 mod affected;
-mod approve_builds;
 mod attest;
 mod audit;
 mod cache;
