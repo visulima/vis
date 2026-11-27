@@ -544,8 +544,8 @@ describe("what the native run does not reproduce", () => {
 
 /**
  * The key Node computes for the fixture below, on macOS, Linux and Windows alike: it has to be one value, because the
- * key reads workspace-relative `/` paths and file bytes only. The Rust test `a_fixed_workspace_has_the_key_node_computes`
- * (`run_key.rs`) writes the same bytes and pins the same value, so the native run's key cannot move on any platform.
+ * key reads workspace-relative `/` paths and file bytes only. A Rust test in `run_key.rs` writes the same bytes and
+ * pins the same value, so the native run's key cannot move on any platform.
  */
 const FIXED_KEY = "c9bceef8fcb8fd885b8f8f3f5d57deb4";
 
@@ -596,8 +596,9 @@ describe.skipIf(!isWindows)("a Windows workspace root", () => {
 
         // Node keyed from the spelling too: the hasher gets the root as given.
         const node = await expectParity(spelt, specs, false);
+        const reference = await runNode(root, specs, false);
 
-        expect(node.hashes).toStrictEqual((await runNode(root, specs, false)).hashes);
+        expect(node.hashes).toStrictEqual(reference.hashes);
     });
 
     it.each([
@@ -607,7 +608,7 @@ describe.skipIf(!isWindows)("a Windows workspace root", () => {
         ["a device root", (root: string) => `\\\\.\\${root}`],
         ["a drive-relative root", (root: string) => `${root.slice(0, 2)}${root.slice(3)}`],
         ["a root with no drive", (root: string) => root.slice(2)],
-        ["a drive root", (root: string) => `${root.slice(0, 3)}`],
+        ["a drive root", (root: string) => root.slice(0, 3)],
     ])("does not key %s", (_name, spell) => {
         expect.hasAssertions();
 
