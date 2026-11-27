@@ -12,6 +12,7 @@ pub mod js;
 mod key_parts;
 mod run_graph;
 mod run_key;
+mod task_config;
 mod task_hasher;
 mod worktree;
 
@@ -32,5 +33,9 @@ pub use run_graph::{
     RunTask, RunTaskGraph,
 };
 pub use run_key::{compute_task_keys, TaskKey, TaskKeyer, TaskKeys};
+pub use task_config::{
+    build_configured_graph, project_targets, Assumptions, ConfigProject, ConfiguredTask, ConfiguredTaskGraph,
+    DependsOnEntry, GraphRefusal, GraphWarning, InferenceState, OutputEntry, Seeds, TargetDefaults, TaskConfig,
+};
 pub use task_hasher::{compute_task_hash, hash_command, hash_env_var, TaskHashDetails};
 pub use worktree::{get_main_worktree_root, is_linked_worktree, reset_worktree_cache};

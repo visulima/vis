@@ -2,6 +2,7 @@ mod concurrent;
 mod file_hasher;
 mod graph;
 mod native_run;
+mod native_task_graph;
 mod task_hasher;
 mod worktree;
 
@@ -27,6 +28,7 @@ pub use concurrent::*;
 pub use file_hasher::*;
 pub use graph::*;
 pub use native_run::*;
+pub use native_task_graph::*;
 pub use task_hasher::*;
 pub use worktree::*;
 
