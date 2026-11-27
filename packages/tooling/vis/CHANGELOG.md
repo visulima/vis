@@ -1,3 +1,28 @@
+## @visulima/vis [8.0.0-next.3](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.2...@visulima/vis@8.0.0-next.3) (2026-11-27)
+
+### Features
+
+* **task-runner:** compute run keys natively on Windows ([efee6f2](https://github.com/visulima/vis/commit/efee6f2fca46239262e5a3ce52cd408e2f14cf6b))
+* **vis:** answer deps, task-why and hook list natively on Windows ([4b10311](https://github.com/visulima/vis/commit/4b10311b2d04735066879222af89d79d8ce75fb9))
+* **vis:** answer list, graph and status natively on Windows ([023afb8](https://github.com/visulima/vis/commit/023afb83bf79bee1f2d51b4dcbe6f0fef2a444b9))
+* **vis:** print help natively on Windows ([ffe5713](https://github.com/visulima/vis/commit/ffe5713794280e41000648acffe930727f3be7a4))
+* **vis:** read a workspace's projects natively on a Windows drive path ([25bf61b](https://github.com/visulima/vis/commit/25bf61b52fb569bd1399cd6788220e7d0f57a8ce))
+
+### Styles
+
+* **vis:** format the Windows root test with rustfmt ([3feddb1](https://github.com/visulima/vis/commit/3feddb10ad80e46174ceaab96b7e3d6f5c315f58))
+
+### Tests
+
+* **vis:** build the vis-cli tests without warnings on Windows ([93d9933](https://github.com/visulima/vis/commit/93d9933e5e41ce4dd4260f6218d1ad85ec4ed6f9))
+* **vis:** run the workspace, graph, targets and optimize tests on Windows ([79e8adb](https://github.com/visulima/vis/commit/79e8adb480e06771a8680b8e144e814aa467f10e))
+* **vis:** write the Windows root of the routing test as a raw string ([fd0f3b3](https://github.com/visulima/vis/commit/fd0f3b32c23a00bfecb4b0747fa55b9e8d6556a0))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 4.0.0-next.3
+
 ## @visulima/vis [8.0.0-next.2](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.1...@visulima/vis@8.0.0-next.2) (2026-11-27)
 
 ### Miscellaneous Chores
