@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -16,6 +18,17 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
  */
 
 const harness = new Harness(["security", "tripwire"]);
+
+/** A directory with a `pnpm` that does nothing and succeeds: a run that reaches the installer must not reach Corepack or the registry. */
+let stubs: string;
+
+/** `extra` with the stub package manager first on `PATH`. */
+const stubbed = (extra: Record<string, string> = {}): Record<string, string> => {
+    return { ...extra, PATH: `${stubs}:${process.env["PATH"] ?? ""}` };
+};
+
+/** The binary declines, and the run it hands over prints what Node prints, with the package manager stubbed on both sides. */
+const delegated = (files: Files, args: string[], extra: Record<string, string> = {}, ci = true): ReturnType<Harness["expectDelegation"]> => harness.expectDelegation(files, args, stubbed(extra), ci);
 
 const PACKAGE = "@lavamoat/preinstall-always-fail";
 
@@ -42,10 +55,14 @@ const both = (files: Files, args: string[], extra: Record<string, string> = {}):
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis security tripwire: native vs Node", () => {
     beforeAll(() => {
         harness.setup("vis-security-tripwire-parity-");
+        stubs = mkdtempSync(join(tmpdir(), "vis-tripwire-stubs-"));
+        writeFileSync(join(stubs, "pnpm"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(stubs, "pnpm"), 0o755);
     });
 
     afterAll(() => {
         harness.teardown();
+        rmSync(stubs, { force: true, recursive: true });
     });
 
     describe("--status", () => {
@@ -195,27 +212,27 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it.each(DELEGATED_COLOUR_ENVIRONMENTS)("hands the run to Node under %j", (extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ["--status"], extra);
+            delegated(files(), ["--status"], extra);
         });
 
         it("hands a run outside CI to Node", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ["--status"], {}, false);
+            delegated(files(), ["--status"], {}, false);
         });
 
         it.each([{ NODE_ENV: "test" }, { DEBUG: "1" }, { PAIL_LOG_LEVEL: "error" }])("hands the run to Node under %j", (extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ["--status"], extra);
+            delegated(files(), ["--status"], extra);
         });
     });
 
     describe("what the native path leaves to Node", () => {
-        it.each([[["--status", "--remove"]], [["--status", "--status"]], [["--status=true"]], [["--no-status"]], [["extra"]], [["--"]]])("declines the arguments %j", (args) => {
+        it.each([[["--status", "--remove"]], [["--status", "--status"]], [["--status=true"]], [["--no-status"]], [["extra"]], [["--"]], [["--cwd", "."]]])("declines the arguments %j", (args) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles(manifest()), args);
+            delegated(workspaceFiles(manifest()), args);
         });
 
         it("declines a run that would install the package, before anything is printed or written", () => {
@@ -239,7 +256,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ] as [string, Record<string, unknown>][])("declines --remove for %s, which rewrites package.json", (_name, extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles(manifest(extra)), ["--remove"]);
+            delegated(workspaceFiles(manifest(extra)), ["--remove"]);
         });
 
         it.each([
@@ -249,7 +266,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ] as [string, Files][])("declines %s", (_name, extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles({ ...manifest(), ...extra }), ["--status"]);
+            delegated(workspaceFiles({ ...manifest(), ...extra }), ["--status"]);
         });
 
         it.each([
@@ -261,7 +278,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ] as [string, Buffer | string][])("declines a package.json with %s, which Node may read", (_name, content) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles(raw(content)), ["--status"]);
+            delegated(workspaceFiles(raw(content)), ["--status"]);
         });
 
         it("declines a workspace that is not pnpm", () => {
@@ -271,7 +288,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
             delete files["pnpm-workspace.yaml"];
             delete files["pnpm-lock.yaml"];
-            harness.expectDelegation({ ...files, "package-lock.json": "{}\n" }, ["--status"]);
+            delegated({ ...files, "package-lock.json": "{}\n" }, ["--status"]);
         });
     });
 });

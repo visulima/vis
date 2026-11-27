@@ -82,7 +82,7 @@ const both = (files: Files, args: string[] = ["--offline"], extra: Record<string
 };
 
 /** The binary declines before printing or writing anything, and the delegated run prints what Node prints. */
-const handedOver = (files: Files, args: string[] = ["--offline"], extra: Record<string, string> = {}, ci = true): void => {
+const handedOver = (files: Files, args: string[] = ["--offline"], extra: Record<string, string> = {}, ci = true): Result => {
     const [nodeRoot, nativeRoot] = harness.pair(files);
     const node = harness.runNode(args, nodeRoot, extra, ci);
     const probe = harness.materialize("native", files);
@@ -97,6 +97,8 @@ const handedOver = (files: Files, args: string[] = ["--offline"], extra: Record<
     const delegated = harness.runNative(args, nativeRoot, { ...extra, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }, ci);
 
     expect(outcomeOf(delegated, nativeRoot)).toStrictEqual(outcomeOf(node, nodeRoot));
+
+    return delegated;
 };
 
 /** Only the binary's half, for a shape whose Node run would ask the registry. */
@@ -187,7 +189,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it("counts a large lockfile", () => {
             expect.hasAssertions();
 
-            const packages = Array.from({ length: 1500 }, (_, index) => ({ name: `pkg-${String(index)}`, version: `1.${String(index)}.0` }));
+            const packages = Array.from({ length: 1500 }, (_, index) => {
+                return { name: `pkg-${String(index)}`, version: `1.${String(index)}.0` };
+            });
             const result = both(withLock(lock(packages)), ["--offline", "--json"]);
 
             expect(result.stdout).toContain('"entryCount": 1500');
@@ -207,7 +211,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             ["an empty security block", config({})],
             ["policies without the two that decide", config({ policies: { installScripts: { allow: { esbuild: true } } } })],
             ["a null policies block", config({ policies: null })],
-            ["other security settings", config({ pinVersions: true, allowBins: { vite: true } })],
+            ["other security settings", config({ allowBins: { vite: true }, pinVersions: true })],
         ] as [string, Files][])("answers for %s", (_name, extra) => {
             expect.hasAssertions();
 
@@ -298,8 +302,25 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ] as [string, Pkg][])("hands a run with %s to Node, which fails and lists it", (_name, pkg) => {
             expect.hasAssertions();
 
-            handedOver(withLock(lock([...BASIC, pkg])));
-            handedOver(withLock(lock([...BASIC, pkg])), ["--offline", "--json"]);
+            // Node fails the run and lists the edge: a native "pass" here would be a false attestation.
+            expect(handedOver(withLock(lock([...BASIC, pkg]))).status).toBe(1);
+            expect(handedOver(withLock(lock([...BASIC, pkg])), ["--offline", "--json"]).status).toBe(1);
+        });
+
+        // Two snapshot keys that differ only by a peer suffix read as one `name@version`, whichever lists the exotic edge.
+        it.each([
+            ["the clean variant first", false],
+            ["the exotic variant first", true],
+        ] as [string, boolean][])("never passes a lockfile whose peer-suffixed variants hide an exotic edge, with %s", (_name, exoticFirst) => {
+            expect.hasAssertions();
+
+            const clean = "  a@1.0.0(peer@1.0.0):\n    dependencies:\n      left-pad: 1.3.0\n";
+            const exotic = "  a@1.0.0(peer@2.0.0):\n    dependencies:\n      foo: github:owner/foo\n";
+            const snapshots = exoticFirst ? `${exotic}\n${clean}` : `${clean}\n${exotic}`;
+            const text = `lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n\npackages:\n\n  a@1.0.0:\n    resolution: {integrity: sha512-aGVsbG8=}\n\n  left-pad@1.3.0:\n    resolution: {integrity: sha512-aGVsbG8=}\n\nsnapshots:\n\n${snapshots}\n  left-pad@1.3.0: {}\n`;
+
+            // Node reads both variants as one entry and fails the run; the binary hands the run over rather than print a pass.
+            expect(handedOver(withLock(text)).status).toBe(1);
         });
 
         it("hands a lockfile with no package to Node", () => {
@@ -319,8 +340,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         it.each([
             ["windows line ends", lock(BASIC).replaceAll("\n", "\r\n")],
-            ["a byte-order mark", `﻿${lock(BASIC)}`],
-            ["a non-breaking space", lock(BASIC).replace("autoInstallPeers", "autoInstallPeers ")],
+            ["a byte-order mark", `\uFEFF${lock(BASIC)}`],
+            ["a non-breaking space", lock(BASIC).replace("autoInstallPeers", "autoInstallPeers\u00A0")],
         ] as [string, string][])("hands a lockfile with %s to Node", (_name, text) => {
             expect.hasAssertions();
 

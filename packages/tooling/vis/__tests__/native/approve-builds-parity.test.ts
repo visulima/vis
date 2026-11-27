@@ -1,5 +1,7 @@
-/* eslint-disable perfectionist/sort-objects, @stylistic/quote-props -- the key order of the fixtures is what the tests are about */
-import { existsSync } from "node:fs";
+/* eslint-disable perfectionist/sort-objects -- the key order of the fixtures is what the tests are about */
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -18,6 +20,15 @@ import { binary, Harness, json, nodeEntry, workspaceFiles } from "./workspace-pa
 
 const harness = new Harness(["approve-builds"]);
 const ARGS = ["--scan"];
+
+/** A directory with a `pnpm` that does nothing and succeeds: the run without `--scan` hands a pnpm workspace to `pnpm approve-builds`. */
+let stubs: string;
+
+const stubbed = (extra: Record<string, string> = {}): Record<string, string> => {
+    return { ...extra, PATH: `${stubs}:${process.env["PATH"] ?? ""}` };
+};
+
+const delegated = (files: Files, args: string[], extra: Record<string, string> = {}, ci = true): ReturnType<Harness["expectDelegation"]> => harness.expectDelegation(files, args, stubbed(extra), ci);
 
 /** A flat `node_modules` package: its `package.json`, and the extra files given. */
 const pkg = (path: string, manifest: unknown, extra: Files = {}): Files => {
@@ -66,10 +77,14 @@ const both = (files: Files, extra: Record<string, string> = {}): ReturnType<Harn
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis approve-builds --scan: native vs Node", () => {
     beforeAll(() => {
         harness.setup("vis-approve-builds-parity-");
+        stubs = mkdtempSync(join(tmpdir(), "vis-approve-builds-stubs-"));
+        writeFileSync(join(stubs, "pnpm"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(stubs, "pnpm"), 0o755);
     });
 
     afterAll(() => {
         harness.teardown();
+        rmSync(stubs, { force: true, recursive: true });
     });
 
     describe("the report", () => {
@@ -154,19 +169,19 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it.each(DELEGATED_COLOUR_ENVIRONMENTS)("hands the run to Node under %j", (extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ARGS, extra);
+            delegated(files(), ARGS, extra);
         });
 
         it("hands a run outside CI to Node", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ARGS, {}, false);
+            delegated(files(), ARGS, {}, false);
         });
 
         it.each([{ NODE_ENV: "test" }, { DEBUG: "1" }, { PAIL_LOG_LEVEL: "error" }])("hands the run to Node under %j", (extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), ARGS, extra);
+            delegated(files(), ARGS, extra);
         });
     });
 
@@ -174,7 +189,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const files = (): Files => workspaceFiles(tree());
 
         // The run without `--scan` hands a pnpm workspace to `pnpm approve-builds`, which prompts: only the binary's half runs.
-        it.each([[[]], [["--all"]], [["--write"]], [["--sync-native"]]])("declines the arguments %j, which do not scan", (args) => {
+        it.each([[[]], [["--all"]], [["--write"]], [["--sync-native"]], [["--no-scan"]]])("declines the arguments %j, which do not scan", (args) => {
             expect.hasAssertions();
 
             const probe = harness.materialize("native", files());
@@ -186,16 +201,16 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(Harness.snapshot(probe)).toStrictEqual(before);
         });
 
-        it.each([[["--scan", "--all"]], [["--scan", "--scan"]], [["--scan=true"]], [["--no-scan"]], [["--scan", "--sync-native"]], [["--scan", "--write"]]])("declines the arguments %j", (args) => {
+        it.each([[["--scan", "--all"]], [["--scan", "--scan"]], [["--scan=true"]], [["--scan", "--sync-native"]], [["--scan", "--write"]]])("declines the arguments %j", (args) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(files(), args);
+            delegated(files(), args);
         });
 
         it("declines `--scan --write`, which edits vis.config.ts, and leaves the edit to Node", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...workspaceFiles(tree()), "vis.config.ts": "export default { security: {} };\n" }, ["--scan", "--write"]);
+            delegated({ ...workspaceFiles(tree()), "vis.config.ts": "export default { security: {} };\n" }, ["--scan", "--write"]);
         });
 
         it.each([
@@ -207,29 +222,29 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ] as [string, Files][])("declines %s", (_name, extra) => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles({ ...tree(), ...extra }), ARGS);
+            delegated(workspaceFiles({ ...tree(), ...extra }), ARGS);
         });
 
         it("declines a package name outside ASCII", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles({ ...tree(), ...pkg("café", { name: "café", version: "1.0.0", scripts: { install: "x" } }) }), ARGS);
+            delegated(workspaceFiles({ ...tree(), ...pkg("café", { name: "café", version: "1.0.0", scripts: { install: "x" } }) }), ARGS);
         });
 
         it("declines a package.json under node_modules that is not strict JSON", () => {
             expect.hasAssertions();
 
-            harness.expectDelegation(workspaceFiles({ ...tree(), ...pkg("odd", "{ not json") }), ARGS);
+            delegated(workspaceFiles({ ...tree(), ...pkg("odd", "{ not json") }), ARGS);
         });
 
         it("declines a workspace that is not pnpm", () => {
             expect.hasAssertions();
 
-            const files = workspaceFiles(tree());
+            const npm = workspaceFiles(tree());
 
-            delete files["pnpm-workspace.yaml"];
-            delete files["pnpm-lock.yaml"];
-            harness.expectDelegation({ ...files, "package-lock.json": "{}\n" }, ARGS);
+            delete npm["pnpm-workspace.yaml"];
+            delete npm["pnpm-lock.yaml"];
+            delegated({ ...npm, "package-lock.json": "{}\n" }, ARGS);
         });
     });
 });

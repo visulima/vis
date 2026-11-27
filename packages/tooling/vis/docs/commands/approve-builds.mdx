@@ -53,6 +53,10 @@ When run with the vis scanner (i.e. for any non-pnpm PM, or pnpm with `--scan`),
 
 When `security.pinVersions: true`, suggested allowlist keys are emitted as `"<name>@<version>": true,` so a copy-paste covers the exact installed version.
 
+## Native fast path
+
+`vis approve-builds --scan` only reads: it triages the installed packages against `security.policies.installScripts.allow` and prints the report. In a CI context with no terminal, at the root of a pnpm workspace whose `vis.config` the binary can read as data, the Rust binary prints that report without starting Node, from the same triage as `vis security list --json`. The warning goes to stderr and the other lines to stdout. The binary hands the run to Node before anything is printed or written for: every other argument (the run without `--scan` is `pnpm approve-builds`, a prompt; `--write` and `--sync-native` write files), a report with stale allowlist entries or version drift, a package name, version or hook outside printable ASCII, a `node_modules` tree or `package.json` the binary does not read exactly, and Windows.
+
 ## Related
 
 - `vis security list` — same triage report, also available as `--json` for tooling integration.

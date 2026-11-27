@@ -82,6 +82,8 @@ vis security tripwire --remove    # delete the tripwire entry from package.json
 
 The installer uses the detected PM's idiomatic `add -D` invocation (pnpm `add -D -w`, bun `add -d`, npm `install --save-dev`, yarn `add -D`). `--remove` only edits `package.json` — run your PM's install afterwards to clean `node_modules`.
 
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace whose `vis.config` the binary can read as data, the Rust binary answers the runs that only read `package.json` without starting Node: `--status`, the bare command when the tripwire is already listed, and `--remove` when neither `dependencies` nor `devDependencies` lists it. It reads the file the way the Node command does (a UTF-8 decode that drops a byte-order mark, then a strict JSON parse; a failed read counts as "not installed") and judges the entry by JavaScript truthiness. The binary hands the run to Node before anything is printed or written for: a run that would install the package, a `--remove` that would rewrite `package.json` (the file is written with JavaScript's serializer), a `package.json` that is not UTF-8 or that `JSON.parse` may read differently from the binary's parser (a lone surrogate escape, a number outside a double), any other argument, and Windows.
+
 #### Per-PM targets
 
 | PM   | `allowBuilds` target                                                   | `minimumReleaseAge` target                                   | Excludes target                      |
@@ -131,6 +133,8 @@ When none of the three is configured the run is **skipped** (exit 0). A **missin
   [firstSeen] evil@1.0.0 was published 30 min ago — below the 1440 min firstSeen cooldown.
   [blockExoticSubdeps] git-dep pulled from exotic source by prod-pkg@1.0.0: github:attacker/evil#deadbeef
 ```
+
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace, the Rust binary prints the passing run of `vis security verify-lockfile --offline` (alone or with `--json`, in either order) without starting Node. With `--offline` both network policies are skipped, so the answer is the number of locked packages and whether any transitive dependency edge comes from a git repository, a hosting shorthand, a bare `owner/repo` or a remote archive. The elapsed time in the headline and in `durationMs` is the wall clock of the run. The binary hands the run to Node before anything is printed for: every run without `--offline` (the policies read the registry), a failing run, a missing or empty lockfile, a lockfile the binary does not read exactly, a `packageManager` pin, a `vis.config` that sets `blockExoticSubdeps`, `exoticSubdepsAllow`, or a `firstSeen` or `publisherChange` policy, a dependency specifier outside ASCII, a text headline that would not fit one log line, and Windows.
 
 ## Options
 
