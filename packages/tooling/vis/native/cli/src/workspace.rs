@@ -660,6 +660,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn fixtures_match_their_expected_membership() {
         let mut checked = 0;
 
@@ -706,6 +707,7 @@ mod gitignore_fixture_tests {
     /// Built at test time: a fixture-local `.gitignore` would make git drop the directories it
     /// names, so this case cannot live in the committed fixtures.
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn root_gitignore_drops_literal_matches() {
         let root = std::env::temp_dir().join(format!("vis-workspace-gitignore-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -741,6 +743,7 @@ mod gitignore_fixture_tests {
     /// The same files and the same list as the wildcard case of `workspace-membership.test.ts`, whose Node run is the
     /// reference: `*` and `?` in the root `.gitignore` are matched here, not left to Node.
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn root_gitignore_drops_wildcard_matches() {
         let root = std::env::temp_dir().join(format!("vis-workspace-gitignore-wildcard-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -779,6 +782,7 @@ mod gitignore_fixture_tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn a_workspace_at_the_limit_is_left_to_node_and_below_it_is_not() {
         let root = std::env::temp_dir().join(format!("vis-workspace-limit-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);

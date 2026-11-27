@@ -345,7 +345,7 @@ fn a_whole_run_prints_what_node_printed_in_every_colour_and_terminal() {
         let (url, _seen) = serve(Box::leak(json_reply("200 OK", CLEAN).into_boxed_str()));
         let (printed, row) = scan_workspace(&root, &url, style, linux, "2026-01-02T03:04:05.678Z").unwrap();
 
-        assert_eq!(printed, STDOUT.replace("{root}", root.to_str().unwrap()));
+        assert_eq!(printed, STDOUT.replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\")));
         assert_eq!(timing.replace(&row, "· <TIME>"), stderr);
     }
 }

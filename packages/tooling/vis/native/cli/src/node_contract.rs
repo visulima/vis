@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(
             owned_env(&layout, None, false),
             [
-                ("VIS_FALLBACK_ENTRY", Some(root.join("dist/bin.js").into_os_string())),
+                ("VIS_FALLBACK_ENTRY", Some(root.join("dist").join("bin.js").into_os_string())),
                 ("VIS_VERSION", Some(OsString::from("1.2.3"))),
                 ("VIS_LAUNCHER", Some(OsString::from("native"))),
                 ("VIS_FALLBACK_ENTRY_OVERRIDE", None),
