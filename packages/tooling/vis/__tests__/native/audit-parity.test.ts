@@ -66,8 +66,9 @@ const NATIVE_ARGS = ["--format", "json", "--policies", "none"];
 
 /** An outcome with the values that differ between runs by design masked. */
 const masked = (outcome: Outcome): Outcome => {
-    // The progress row ends in `· 12ms`; the table form says `Scan completed in 12ms`.
-    const timing = (text: string): string => text.replaceAll(/(?<=[·n]) \d+(?:\.\d)?m?s/g, " <TIME>");
+    // The progress row ends in `· 12ms`; the table form says `Scan completed in 12ms`. The row is padded to a fixed
+    // width that includes the duration, so a duration of another length moves the spaces before the dash: collapse them.
+    const timing = (text: string): string => text.replaceAll(/(?<=[·n]) \d+(?:\.\d)?m?s/g, " <TIME>").replaceAll(/ {2,}(?=— )/g, " ");
 
     return {
         ...outcome,
