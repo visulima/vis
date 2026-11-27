@@ -792,14 +792,14 @@ mod tests {
     }
 
     /// A run driven on its own task, with handles to steer and observe it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     struct LiveRun {
         events: mpsc::UnboundedReceiver<ProcessEvent>,
         control: mpsc::UnboundedSender<ControlMessage>,
         result: tokio::task::JoinHandle<ConcurrentRunResult>,
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn start(commands: Vec<ConcurrentCommandConfig>, options: &ConcurrentRunnerOptions) -> LiveRun {
         let runner = ConcurrentRunner::new(commands, options);
         let (event_tx, events) = mpsc::unbounded_channel();
@@ -809,7 +809,7 @@ mod tests {
         LiveRun { events, control, result }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     impl LiveRun {
         /// Wait until `count` commands have started; returns their pids by index.
         async fn wait_for_started(&mut self, count: usize) -> Vec<(u32, u32)> {
@@ -858,6 +858,60 @@ mod tests {
         }
 
         panic!("process group {pid} is still alive");
+    }
+
+    /// Pids of the `ping.exe` processes whose command line carries `marker`.
+    #[cfg(windows)]
+    fn pings_with(marker: &str) -> Vec<u32> {
+        let script = format!(
+            "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'PING.EXE' -and $_.CommandLine -like '*{marker}*' }} | ForEach-Object {{ $_.ProcessId }}"
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .expect("powershell must run");
+
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|line| line.trim().parse().ok()).collect()
+    }
+
+    /// A wrapper that starts a long-lived grandchild right away must not leave it behind when the
+    /// run is aborted: the child has to be in its Job Object before it can start anything. The
+    /// window this closes is a race, so the test can pass on a build without the fix; the
+    /// deterministic check of the suspended start is in `process.rs`.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_abort_kills_a_grandchild_the_wrapper_started_immediately() {
+        // Unique counts tell these pings from any other. They would run for hours if leaked.
+        let command = "start /b ping -n 7301 127.0.0.1 > nul & ping -n 7302 127.0.0.1 > nul";
+        let mut run = start(vec![make_config(command, None)], &default_options());
+
+        run.wait_for_started(1).await;
+
+        let mut pids = Vec::new();
+        for _ in 0..50 {
+            pids = pings_with("-n 730");
+            if pids.len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        assert!(pids.len() >= 2, "both pings should be running, found {pids:?}");
+
+        run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
+        run.finish().await;
+
+        for _ in 0..50 {
+            pids = pings_with("-n 730");
+            if pids.is_empty() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        for pid in &pids {
+            let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
+        }
+        panic!("the abort left grandchildren running: {pids:?}");
     }
 
     #[cfg(unix)]
