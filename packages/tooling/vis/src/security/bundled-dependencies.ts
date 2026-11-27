@@ -97,22 +97,8 @@ const listInstalledNames = (nodeModules: string): string[] => {
     return names;
 };
 
-/** The `@scope/name` form of a directory under a vendored tree, or its entries when it is a scope directory. */
-const vendoredPackageDirectories = (root: string): string[] => {
-    const directories: string[] = [];
-
-    for (const entry of listDirectories(root)) {
-        if (entry.startsWith("@")) {
-            for (const inner of listDirectories(join(root, entry))) {
-                directories.push(join(root, entry, inner));
-            }
-        } else {
-            directories.push(join(root, entry));
-        }
-    }
-
-    return directories;
-};
+/** The package directories of a vendored tree, with a scope directory expanded to its entries. */
+const vendoredPackageDirectories = (root: string): string[] => listInstalledNames(root).map((name) => join(root, name));
 
 /** `host > bundled`: the chain a finding reports as where the package lives. */
 export const formatBundledPath = (chain: ReadonlyArray<BundledHost>, name: string, version: string): string =>
