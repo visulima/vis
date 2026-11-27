@@ -173,7 +173,7 @@ fn read_profile(path: &str) -> Option<Option<Profile>> {
 
 /// Whether `directory` is a real directory whose whole tree this process may remove: its parent and every
 /// directory below it can be written and searched, and read.
-fn removable_directory(directory: &Path, parent: &Path) -> bool {
+pub(crate) fn removable_directory(directory: &Path, parent: &Path) -> bool {
     let Ok(metadata) = fs::symlink_metadata(directory) else {
         return false;
     };

@@ -42,6 +42,8 @@ mod filter;
 pub mod install;
 pub mod list;
 #[cfg(unix)]
+pub mod uninstall;
+#[cfg(unix)]
 pub mod validate;
 
 use std::env;

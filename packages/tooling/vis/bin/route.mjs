@@ -1413,7 +1413,7 @@ const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return outputSettingsAreDefault(environment) && args.length === 2 && taskWhyIdIsNative(args[1]);
 };
 
-// Whether `vis hook list`, `validate` and `install` can pass the binary's native gate (`parse` and `answer` in `hook/{list,validate,install}.rs`): the
+// Whether `vis hook list`, `validate`, `install` and `uninstall` can pass the binary's native gate (`parse` and `answer` in `hook/{list,validate,install,uninstall}.rs`): the
 // plain command, or one `--hooks-dir` that is a relative path of plain segments the argument parser keeps as a string (`install --force` is Node's), at the root of a pnpm
 // workspace in a CI context off a terminal. The binary re-checks everything, including the files of the hooks directory and the repository, so this
 // only skips the extra process when it would delegate anyway. Only `hook list` answers on Windows.
@@ -1599,13 +1599,13 @@ const NATIVE_SHAPE_GATES = new Map([
     ["dlx", ({ args, environment, platform }) => helpOrNative(args, () => dlxMayRunNatively(platform, environment, args))],
     // The ASCII, DOT and JSON graph; `html`, `--output` and the interactive viewer stay in Node.
     ["graph", ({ args, environment, interactive, platform }) => helpOrNative(args, () => graphMayRunNatively(platform, environment, args, interactive))],
-    // `hook list`, `hook validate` (which the binary answers only when it has nothing to report) and `hook install` (one checkout, nothing else
+    // `hook list`, `hook validate` (which the binary answers only when it has nothing to report), `hook install` and `hook uninstall` (one checkout, nothing else
     // claiming the hooks; the binary hands the rest to Node before it writes anything); `hook run` is native for every shape (`alwaysNative`) and the other `hook`
     // subcommands are Node's.
     [
         "hook",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
-            if (subcommand !== "list" && subcommand !== "validate" && subcommand !== "install") {
+            if (subcommand !== "list" && subcommand !== "validate" && subcommand !== "install" && subcommand !== "uninstall") {
                 return undefined;
             }
 

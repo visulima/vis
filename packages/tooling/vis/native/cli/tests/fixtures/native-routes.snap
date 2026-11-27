@@ -64,6 +64,7 @@
 ["--color","hook","install"] => surface
 ["--color","hook","list"] => surface
 ["--color","hook","run"] => surface
+["--color","hook","uninstall"] => surface
 ["--color","hook","validate"] => surface
 ["--color","i"] => surface
 ["--color","ignore"] => surface
@@ -228,6 +229,7 @@
 ["--no-color","hook","install"] => surface
 ["--no-color","hook","list"] => surface
 ["--no-color","hook","run"] => surface
+["--no-color","hook","uninstall"] => surface
 ["--no-color","hook","validate"] => surface
 ["--no-color","i"] => surface
 ["--no-color","ignore"] => surface
@@ -384,6 +386,7 @@
 ["--quiet","hook","install"] => surface
 ["--quiet","hook","list"] => surface
 ["--quiet","hook","run"] => surface
+["--quiet","hook","uninstall"] => surface
 ["--quiet","hook","validate"] => surface
 ["--quiet","i"] => surface
 ["--quiet","ignore"] => surface
@@ -1626,6 +1629,30 @@
 ["hook","target"] => surface
 ["hook","target","--help"] => surface
 ["hook","target","other"] => surface
+["hook","uninstall"] => hook uninstall
+["hook","uninstall","--"] => hook uninstall
+["hook","uninstall","--","--help"] => hook uninstall
+["hook","uninstall","--format","json"] => hook uninstall
+["hook","uninstall","--help"] => surface
+["hook","uninstall","--hooks-dir"] => hook uninstall
+["hook","uninstall","--hooks-dir",".githooks"] => hook uninstall
+["hook","uninstall","--hooks-dir","/abs"] => hook uninstall
+["hook","uninstall","--hooks-dir","123"] => hook uninstall
+["hook","uninstall","--hooks-dir","a/../b"] => hook uninstall
+["hook","uninstall","--hooks-dir=ci/hooks"] => hook uninstall
+["hook","uninstall","--json"] => hook uninstall
+["hook","uninstall","--no-color","-h"] => surface
+["hook","uninstall","--version"] => hook uninstall
+["hook","uninstall","--version","--help"] => surface
+["hook","uninstall","-h"] => surface
+["hook","uninstall","bloom","status"] => hook uninstall
+["hook","uninstall","bloom","status","--help"] => surface
+["hook","uninstall","extra"] => hook uninstall
+["hook","uninstall","list"] => hook uninstall
+["hook","uninstall","status","--help"] => surface
+["hook","uninstall","target"] => hook uninstall
+["hook","uninstall","target","--help"] => surface
+["hook","uninstall","target","other"] => hook uninstall
 ["hook","validate"] => hook validate
 ["hook","validate","--"] => hook validate
 ["hook","validate","--","--help"] => hook validate
