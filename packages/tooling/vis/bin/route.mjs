@@ -1235,21 +1235,8 @@ const attestEmitShapeIsNative = (environment, rest) => {
         && environment.SIGSTORE_ID_TOKEN === undefined;
 };
 
-// Whether `vis attest verify` can pass the binary's native gate (`answer` in `attest/verify.rs`): no `--prod-only`, no word, no
-// `MARSHALL_*` or `VIS_NPM_KEYS_URL`. The binary re-checks everything, including the lockfile, the registry and the keys.
-const attestVerifyShapeIsNative = (environment, rest) => {
-    const shape = attestShape(rest, ["format", "fail-on", "allowlist"], []);
-
-    return shape !== undefined
-        && shape.words.length === 0
-        && [undefined, ...ATTEST_FORMATS].includes(shape.values.get("format"))
-        && ["error", undefined, "warning"].includes(shape.values.get("fail-on"))
-        && environment.VIS_NPM_KEYS_URL === undefined
-        && !Object.keys(environment).some((key) => key.startsWith("MARSHALL_"));
-};
-
-// `vis attest <subject>` and `vis attest verify`, in a CI context off a terminal at the root of a pnpm workspace, with no proxy,
-// CA or Node option in the environment.
+// `vis attest <subject>`, in a CI context off a terminal at the root of a pnpm workspace, with no proxy, CA or Node option in
+// the environment. `vis attest verify` is not here: attestation verification has one implementation, the Node one.
 const attestMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
     if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
         return false;
@@ -1259,7 +1246,7 @@ const attestMayRunNatively = (platform, environment, args, cwd, interactive, hol
         return false;
     }
 
-    return args[1] === "verify" ? attestVerifyShapeIsNative(environment, args.slice(2)) : attestEmitShapeIsNative(environment, args.slice(1));
+    return attestEmitShapeIsNative(environment, args.slice(1));
 };
 
 const keysRefreshMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
@@ -1577,7 +1564,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["add", ({ args, environment, interactive, platform }) => helpOrNative(args, () => addMayRunNatively(platform, environment, args, interactive))],
     // `affected <target> --sparse-checkout`.
     ["affected", ({ args, environment, interactive, platform }) => helpOrNative(args, () => affectedMayRunNatively(platform, environment, args, interactive))],
-    // `attest <subject>` for a run with no OIDC token (Node skips signing) and `attest verify` (JSON, NDJSON, and a table of no findings).
+    // `attest <subject>` for a run with no OIDC token (Node skips signing); `attest verify` stays in Node.
     ["attest", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => attestMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `audit --format json`, answered only when the scan finds nothing.
     ["audit", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => auditMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],

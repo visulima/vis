@@ -52,7 +52,7 @@ fn answer(args: &[String]) -> Result<Outcome, String> {
         .ok_or("not the plain flags of `attest <subject>`")?;
     let [subject] = parsed.words.as_slice() else { return Err("not exactly one subject".to_owned()) };
 
-    // Node reads this word as the `verify` leaf wherever it stands.
+    // Node reads this word as the `verify` leaf wherever it stands, and `verify` is Node's.
     if subject == "verify" {
         return Err("the subject is named like the `verify` leaf".to_owned());
     }

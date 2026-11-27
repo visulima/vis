@@ -205,7 +205,7 @@ pub(super) fn author(view: &View, target: &Target, now_ms: f64) -> Result<Vec<Fi
 }
 
 /// `entry.dist?.attestations?.provenance !== undefined`.
-pub(crate) fn has_provenance(entry: Option<&Js>) -> Result<bool, String> {
+fn has_provenance(entry: Option<&Js>) -> Result<bool, String> {
     let Some(entry) = entry else { return Ok(false) };
 
     match entry.member("dist") {
@@ -238,7 +238,7 @@ fn newest_before<'a>(
 
 /// `findNewestPriorWithAttestations` for a version that has no provenance itself: the newest earlier release (no
 /// prerelease) that has some.
-pub(crate) fn prior_with_provenance<'a>(view: &View<'a>, version: &str) -> Result<Option<&'a str>, String> {
+fn prior_with_provenance<'a>(view: &View<'a>, version: &str) -> Result<Option<&'a str>, String> {
     let parsed = Version::parse(version).ok_or_else(|| format!("the version {version} is not strict semver"))?;
 
     newest_before(view, &parsed, &|name, other| Ok(!other.is_prerelease() && has_provenance(view.entry(name))?))
