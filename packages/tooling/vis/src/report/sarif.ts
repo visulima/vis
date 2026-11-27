@@ -19,11 +19,15 @@ import { join, relative } from "node:path";
 
 import type { SecurityVulnerability } from "../security/advisories";
 import type { PolicyDecision } from "../security/policies";
+import type { UnauditableEntry } from "../security/unauditable";
+import { describeUnauditable } from "../security/unauditable";
 import type { SarifLevel } from "./finding";
 import { advisoryUri, securitySeverityString, severityLabel, severityToSarifLevel } from "./finding";
 
 export interface SarifFinding {
     acknowledged: boolean;
+    /** Where a copy shipped inside another package (bundled or vendored) lives, as `host > package` paths; named in the message. */
+    bundledIn?: string[];
     packageName: string;
     packageVersion: string;
     vulnerability: SecurityVulnerability;
@@ -41,6 +45,9 @@ export interface SarifEmitOptions {
      */
     policyDecisions?: PolicyDecision[];
     tool: { informationUri: string; name: string; version: string };
+
+    /** Packages the scan found and could not check; each becomes a `note` in the run's invocation. */
+    unauditable?: UnauditableEntry[];
     workspaceRoot: string;
 }
 
@@ -51,6 +58,8 @@ export interface SarifLog {
 }
 
 interface SarifRun {
+    /** Present only when something was not scanned: SARIF's place for run-level notes. */
+    invocations?: { executionSuccessful: true; toolExecutionNotifications: { level: "note"; message: { text: string } }[] }[];
     results: SarifResult[];
     tool: {
         driver: {
@@ -107,7 +116,7 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
     const lockfileUri = options.artifactUri ?? (relative(options.workspaceRoot, join(options.workspaceRoot, "package.json")) || "package.json");
 
     for (const finding of options.findings) {
-        const { acknowledged, packageName, packageVersion, vulnerability: vuln } = finding;
+        const { acknowledged, bundledIn, packageName, packageVersion, vulnerability: vuln } = finding;
         const level = severityToSarifLevel(vuln.severity);
         const label = severityLabel(vuln.severity);
 
@@ -141,7 +150,7 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
             message: {
                 text: `${vuln.id}: ${packageName}@${packageVersion} — ${vuln.summary || "no summary"}${
                     vuln.fixedVersions.length > 0 ? ` (fix: ${vuln.fixedVersions.join(", ")})` : ""
-                }`,
+                }${bundledIn && bundledIn.length > 0 ? ` (shipped inside ${bundledIn.join("; ")})` : ""}`,
             },
             partialFingerprints: {
                 advisoryId: vuln.id,
@@ -230,6 +239,18 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
         $schema: "https://json.schemastore.org/sarif-2.1.0.json",
         runs: [
             {
+                ...(options.unauditable && options.unauditable.length > 0
+                    ? {
+                        invocations: [
+                            {
+                                executionSuccessful: true as const,
+                                toolExecutionNotifications: options.unauditable.map((entry) => {
+                                    return { level: "note" as const, message: { text: `Not scanned: ${describeUnauditable(entry)}` } };
+                                }),
+                            },
+                        ],
+                    }
+                    : {}),
                 results,
                 tool: {
                     driver: {

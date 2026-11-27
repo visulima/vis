@@ -40,6 +40,34 @@ describe(buildAuditReport, () => {
         expect(report.generatedAt).toBe("2026-05-11T12:00:00.000Z");
     });
 
+    it("should end the report with an unauditable list that is empty when nothing was left unscanned", () => {
+        expect.assertions(3);
+
+        const report = buildAuditReport(baseInput);
+
+        expect(report.unauditable).toStrictEqual([]);
+        expect(Object.keys(report).at(-1)).toBe("unauditable");
+        expect(report.schemaVersion).toBe("1.1");
+    });
+
+    it("should carry the unauditable entries with a stable key order", () => {
+        expect.assertions(2);
+
+        const report = buildAuditReport({
+            ...baseInput,
+            unauditable: [
+                { count: 126, host: "next@16.3.8", kind: "vendored", location: "dist/compiled" },
+                { count: 2, host: "npm@11.0.0", kind: "bundled-unreadable", location: "node_modules", names: ["a", "b"] },
+            ],
+        });
+
+        expect(report.unauditable.map((entry) => Object.keys(entry))).toStrictEqual([
+            ["count", "host", "kind", "location"],
+            ["count", "host", "kind", "location", "names"],
+        ]);
+        expect(report.unauditable[1]?.names).toStrictEqual(["a", "b"]);
+    });
+
     it("should produce zero summary counts for an empty input", () => {
         expect.assertions(1);
 

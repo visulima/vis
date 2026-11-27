@@ -22,6 +22,7 @@ import { coerce, diff } from "semver";
 import type { SecurityVulnerability } from "../../security/advisories";
 import type { PolicyDecision } from "../../security/policies";
 import { compareFindingsForDisplay } from "../../security/severity";
+import { describeUnauditable } from "../../security/unauditable";
 import ANOLILAB_LOGO from "../assets/anolilab-text.svg?raw";
 import type { Severity } from "../finding";
 import { advisoryUri, SEVERITY_ORDER } from "../finding";
@@ -252,6 +253,10 @@ export const emitAuditHtml = (options: AuditHtmlEmitOptions): string => {
     const rows = sortedFindings.map((f) => renderRow(f)).join("\n");
 
     const clean = sortedFindings.length === 0;
+    // Packages the scan knew were there and could not check. A report with none left is not "clean": it
+    // says nothing was found in what was scanned, and names what was not.
+    const unauditable = options.report?.unauditable ?? [];
+    const cleanWord = unauditable.length > 0 ? "NO KNOWN ISSUES" : "CLEAN";
 
     const sevChips = SEVERITY_ORDER.filter((s) => counts[s] > 0).map(
         (s) =>
@@ -277,7 +282,7 @@ export const emitAuditHtml = (options: AuditHtmlEmitOptions): string => {
         sevChips.length > 0 ? `<span class="flex-auto"></span>` : "",
         ...sevChips,
         clean
-            ? `<div class="dseg dseg-ok"><span class="dot inline-block size-[7px] self-center"></span><span class="dk text-[10px] font-medium uppercase">status</span><span class="dv text-[22px]">CLEAN</span></div>`
+            ? `<div class="dseg dseg-ok"><span class="dot inline-block size-[7px] self-center"></span><span class="dk text-[10px] font-medium uppercase">status</span><span class="dv text-[22px]">${cleanWord}</span></div>`
             : "",
     ].join("");
 
@@ -359,10 +364,19 @@ ${
         }</span></section>`
 }
 <div class="debugbar flex flex-wrap items-stretch gap-0 pt-7 pb-1">${metricSegments}</div>
+${
+    unauditable.length > 0
+        ? `<section class="notscanned pt-6"><div class="intel-tag text-[10px] font-bold uppercase">[ NOT SCANNED ]</div><ul class="mt-2 text-[12px]">${unauditable
+            .map((entry) => `<li><code>${escapeHtml(describeUnauditable(entry))}</code></li>`)
+            .join("")}</ul></section>`
+        : ""
+}
 <div class="pt-8">
 ${
     clean
-        ? `<div class="clean px-6 text-center"><div class="big font-light">CLEAN</div><div class="sub mt-6 text-[12px] uppercase">No security issues found.</div></div>`
+        ? `<div class="clean px-6 text-center"><div class="big font-light">${cleanWord}</div><div class="sub mt-6 text-[12px] uppercase">${
+            unauditable.length > 0 ? "No known issues in the scanned packages." : "No security issues found."
+        }</div></div>`
         : `
 <div class="mb-6 flex flex-wrap items-center gap-0">
   <label class="field flex flex-[1_1_280px] items-center"><span class="prompt pr-3 text-[10px] uppercase select-none">filter:</span><input id="filter" type="search" class="w-full border-0 bg-transparent py-2.5 pr-0 pl-0 text-[13px] outline-0" placeholder="package or advisory id…" aria-label="Filter findings" /></label>

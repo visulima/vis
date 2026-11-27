@@ -1,0 +1,353 @@
+import { mkdirSync, mkdtempSync, promises as fsPromises, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { pail } from "../../../src/io/logger";
+
+// Real lock file, real reader, real handler, a real `node_modules` tree. Only the OSV querybatch endpoint (global
+// `fetch`) and the output sinks are stubbed. The lock file lists `host` alone; `host` ships `bundled-dep` inside itself
+// (`bundleDependencies`), so the dependency is known only from disk, and the advisory source reports a finding for it.
+
+const OSV_URL = "https://api.osv.dev/v1/querybatch";
+
+interface Report {
+    packages: number;
+    results: { dependencyPaths: { name: string; version: string }[][]; name: string; version: string; vulnerabilities: { id: string }[] }[];
+    unauditable: { count: number; host: string; kind: string; location: string }[];
+}
+
+let workspaceRoot: string;
+let stdoutChunks: string[];
+let queried: string[];
+
+const write = (relative: string, content: unknown): void => {
+    mkdirSync(dirname(join(workspaceRoot, relative)), { recursive: true });
+    writeFileSync(join(workspaceRoot, relative), typeof content === "string" ? content : JSON.stringify(content));
+};
+
+const layout = (dependencyField: "dependencies" | "devDependencies" = "dependencies"): void => {
+    const other = dependencyField === "dependencies" ? "devDependencies" : "dependencies";
+
+    // `plain` keeps one production package in the scan when `host` is dev-only.
+    write("package.json", { [dependencyField]: { host: "1.0.0" }, name: "bundled-app", [other]: { plain: "1.0.0" }, version: "1.0.0", workspaces: ["packages/*"] });
+    write("package-lock.json", {
+        lockfileVersion: 3,
+        packages: { "": { name: "bundled-app", version: "1.0.0" }, "node_modules/host": { version: "1.0.0" }, "node_modules/plain": { version: "1.0.0" } },
+    });
+    write("node_modules/plain/package.json", { name: "plain", version: "1.0.0" });
+    write("node_modules/host/package.json", { bundleDependencies: ["bundled-dep"], name: "host", version: "1.0.0" });
+    write("node_modules/host/node_modules/bundled-dep/package.json", { name: "bundled-dep", version: "2.5.0" });
+};
+
+const stubOsv = (): void => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: { body: string }) => {
+            if (url !== OSV_URL) {
+                throw new Error(`unexpected network call: ${url}`);
+            }
+
+            const { queries } = JSON.parse(init.body) as { queries: { package: { name: string }; version: string }[] };
+
+            queried = queries.map((query) => `${query.package.name}@${query.version}`);
+
+            return Response.json({
+                results: queries.map((query) =>
+                    (query.package.name === "bundled-dep"
+                        ? {
+                            vulns: [
+                                {
+                                    affected: [{ package: { ecosystem: "npm", name: "bundled-dep" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "2.6.0" }], type: "SEMVER" }] }],
+                                    database_specific: { severity: "HIGH" },
+                                    id: "GHSA-bundled-0001",
+                                    summary: "prototype pollution",
+                                },
+                            ],
+                        }
+                        : {}),
+                ),
+            });
+        }),
+    );
+};
+
+/** Everything the handler tells the user through pail, at any level. */
+const captureMessages = (): string[] => {
+    const messages: string[] = [];
+
+    for (const level of ["error", "info", "notice", "success", "warn"] as const) {
+        vi.spyOn(pail, level).mockImplementation((...parts: unknown[]) => {
+            messages.push(parts.map(String).join(" "));
+        });
+    }
+
+    return messages;
+};
+
+const execAudit = async (options: Record<string, unknown>, visConfig?: Record<string, unknown>): Promise<void> => {
+    const { default: execute } = await import("../../../src/commands/audit/handler");
+
+    await execute({
+        fs: fsPromises,
+        logger: console,
+        options: { backend: "vis", ...options },
+        visConfig,
+        workspaceRoot,
+    } as unknown as Parameters<typeof execute>[0]);
+};
+
+const runAudit = async (options: Record<string, unknown> = {}): Promise<Report> => {
+    await execAudit({ format: "json", ...options });
+
+    return JSON.parse(stdoutChunks.join(""));
+};
+
+const setUp = (): void => {
+    workspaceRoot = mkdtempSync(join(tmpdir(), "vis-audit-bundled-"));
+    stdoutChunks = [];
+    queried = [];
+    process.exitCode = undefined;
+    stubOsv();
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+        stdoutChunks.push(String(chunk));
+
+        return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+};
+
+const tearDown = (): void => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+    rmSync(workspaceRoot, { force: true, recursive: true });
+};
+
+describe("vis audit with a package that bundles a dependency", () => {
+    beforeEach(() => {
+        setUp();
+        layout();
+    });
+
+    afterEach(() => {
+        tearDown();
+    });
+
+    it("asks the advisory source about the bundled package and counts it as scanned", async () => {
+        expect.assertions(2);
+
+        const report = await runAudit();
+
+        expect(queried.toSorted()).toStrictEqual(["bundled-dep@2.5.0", "host@1.0.0", "plain@1.0.0"]);
+        expect(report.packages).toBe(3);
+    });
+
+    it("lists a finding in the bundled package with the host in its path", async () => {
+        expect.assertions(1);
+
+        const report = await runAudit();
+
+        expect(report.results.map((entry) => [entry.name, entry.version, entry.vulnerabilities.map((v) => v.id), entry.dependencyPaths])).toStrictEqual([
+            [
+                "bundled-dep",
+                "2.5.0",
+                ["GHSA-bundled-0001"],
+                [
+                    [
+                        { name: "host", version: "1.0.0" },
+                        { name: "bundled-dep", version: "2.5.0" },
+                    ],
+                ],
+            ],
+        ]);
+    });
+
+    it("fails --exit-code on a finding in a bundled package like on any other", async () => {
+        expect.assertions(1);
+
+        await runAudit({ exitCode: true });
+
+        expect(process.exitCode).toBe(1);
+    });
+
+    it("leaves the bundled copies of a dev-only host out under --prod-only", async () => {
+        expect.assertions(3);
+
+        layout("devDependencies");
+
+        const report = await runAudit({ prodOnly: true });
+
+        expect(queried).toStrictEqual(["plain@1.0.0"]);
+        expect(report.results).toStrictEqual([]);
+        expect(report.packages).toBe(1);
+    });
+
+    it("says where the copy lives in the table, and points --show-fixes at the host", async () => {
+        expect.assertions(3);
+
+        const messages = captureMessages();
+
+        await execAudit({ showFixes: true });
+
+        const text = messages.join("\n");
+
+        expect(text).toContain("bundled-dep@2.5.0");
+        expect(text).toContain("Shipped inside: host@1.0.0 > bundled-dep@2.5.0");
+        expect(text).toContain("Fix: upgrade host@1.0.0 to a release that ships bundled-dep@2.6.0 or later");
+    });
+
+    it("gates --fail-on on a finding in a bundled package, in JSON and in another format", async () => {
+        expect.assertions(3);
+
+        await execAudit({ failOn: "high", format: "json" });
+
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = undefined;
+        stdoutChunks = [];
+
+        await execAudit({ failOn: "high", format: "sarif" });
+
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = undefined;
+
+        await execAudit({ failOn: "critical", format: "json" });
+
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("gates the configured vulnerability floor on a bundled finding, even one --severity hides", async () => {
+        expect.assertions(3);
+
+        const config = { security: { policies: { vulnerability: { failOn: "high" } } } };
+
+        await execAudit({ format: "json", severity: "critical" }, config);
+
+        expect(process.exitCode).toBe(1);
+
+        const report = JSON.parse(stdoutChunks.join("")) as Report & { policies: { packageName: string; policy: string; severity: string }[] };
+
+        expect(report.results).toStrictEqual([]);
+        expect(report.policies.map((decision) => [decision.policy, decision.packageName, decision.severity])).toStrictEqual([["vulnerability", "bundled-dep", "block"]]);
+    });
+
+    it("under --usage keeps a bundled finding when the workspace imports the host, not the bundled name", async () => {
+        expect.assertions(2);
+
+        // `host` is a transitive package here: the reachability scan also counts every name a package.json declares.
+        write("package.json", { name: "bundled-app", version: "1.0.0", workspaces: ["packages/*"] });
+        write("src/index.js", 'import "host";\n');
+
+        const imported = await runAudit({ usage: true });
+
+        expect(imported.results.map((entry) => entry.name)).toStrictEqual(["bundled-dep"]);
+
+        stdoutChunks = [];
+        write("src/index.js", "export {};\n");
+
+        const unused = await runAudit({ usage: true });
+
+        expect(unused.results).toStrictEqual([]);
+    });
+
+    it("leaves a bundled finding out of --fix and says why", async () => {
+        expect.assertions(2);
+
+        const messages = captureMessages();
+
+        await execAudit({ fix: true, format: "json", yes: true });
+
+        const text = messages.join("\n");
+
+        expect(text).toContain("shipped inside other packages");
+        expect(text).toContain("Upgrade the package that ships it: host@1.0.0");
+    });
+
+    it("names the host in SARIF and JUnit text", async () => {
+        expect.assertions(2);
+
+        await execAudit({ format: "sarif" });
+
+        const sarif = JSON.parse(stdoutChunks.join("")) as { runs: { results: { message: { text: string } }[] }[] };
+
+        expect(sarif.runs[0]?.results[0]?.message.text).toContain("(shipped inside host@1.0.0 > bundled-dep@2.5.0)");
+
+        stdoutChunks = [];
+
+        await execAudit({ format: "junit" });
+
+        expect(stdoutChunks.join("")).toContain("Shipped inside: host@1.0.0 > bundled-dep@2.5.0");
+    });
+
+    it("adds the bundled package to the CycloneDX BOM so the VEX reference resolves", async () => {
+        expect.assertions(3);
+
+        await execAudit({ format: "cyclonedx-vex" });
+
+        const vex = JSON.parse(stdoutChunks.join("")) as {
+            components: { "bom-ref": string }[];
+            dependencies: { dependsOn?: string[]; ref: string }[];
+            vulnerabilities: { affects: { ref: string }[] }[];
+        };
+        const refs = new Set(vex.components.map((component) => component["bom-ref"]));
+        const affected = vex.vulnerabilities.flatMap((vulnerability) => vulnerability.affects.map((affect) => affect.ref));
+
+        expect(affected).toStrictEqual(["pkg:npm/bundled-dep@2.5.0"]);
+        expect(affected.every((ref) => refs.has(ref))).toBe(true);
+        expect(vex.dependencies.find((dependency) => dependency.ref === "pkg:npm/host@1.0.0")?.dependsOn).toContain("pkg:npm/bundled-dep@2.5.0");
+    });
+});
+
+describe("vis audit with a package that vendors copies without versions", () => {
+    beforeEach(() => {
+        setUp();
+        write("package.json", { dependencies: { vend: "1.0.0" }, name: "vendor-app", version: "1.0.0", workspaces: ["packages/*"] });
+        write("package-lock.json", { lockfileVersion: 3, packages: { "": { name: "vendor-app", version: "1.0.0" }, "node_modules/vend": { version: "1.0.0" } } });
+        write("node_modules/vend/package.json", { name: "vend", version: "1.0.0" });
+        write("node_modules/vend/dist/compiled/alpha/package.json", { name: "alpha" });
+        write("node_modules/vend/dist/compiled/beta/index.js", "module.exports = 1;");
+    });
+
+    afterEach(() => {
+        tearDown();
+    });
+
+    it("reports them in the JSON as unauditable, as the last key, and scans only what has a version", async () => {
+        expect.assertions(4);
+
+        const report = await runAudit();
+
+        expect(report.unauditable).toStrictEqual([{ count: 2, host: "vend@1.0.0", kind: "vendored", location: "dist/compiled" }]);
+        expect(Object.keys(report).at(-1)).toBe("unauditable");
+        expect(report.packages).toBe(1);
+        expect(queried).toStrictEqual(["vend@1.0.0"]);
+    });
+
+    it("says nothing was found in the scanned packages, names what was not scanned, and exits zero", async () => {
+        expect.assertions(4);
+
+        const messages = captureMessages();
+
+        await execAudit({ exitCode: true, failOn: "low" });
+
+        const text = messages.join("\n");
+
+        expect(text).toContain("No known issues in the scanned packages (1)");
+        expect(text).toContain("Not scanned: vend@1.0.0 vendors 2 packages without versions (dist/compiled)");
+        expect(text).not.toContain("No security issues found");
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("keeps the JSON unauditable list empty for a workspace with nothing vendored", async () => {
+        expect.assertions(1);
+
+        rmSync(join(workspaceRoot, "node_modules/vend/dist"), { force: true, recursive: true });
+
+        const report = await runAudit();
+
+        expect(report.unauditable).toStrictEqual([]);
+    });
+});

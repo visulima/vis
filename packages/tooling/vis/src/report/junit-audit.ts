@@ -16,6 +16,8 @@ import { severityLabel } from "./finding";
 
 export interface JUnitAuditFinding {
     acknowledged: boolean;
+    /** Where a copy shipped inside another package (bundled or vendored) lives, as `host > package` paths; named in the failure text. */
+    bundledIn?: string[];
     packageName: string;
     packageVersion: string;
     vulnerability: SecurityVulnerability;
@@ -94,13 +96,14 @@ export const emitJUnitAudit = (options: JUnitAuditEmitOptions): string => {
     const suiteName = options.suiteName ?? "vis-audit";
 
     const vulnCases: TestCase[] = options.findings.map((finding) => {
-        const { acknowledged, packageName, packageVersion, vulnerability: vuln } = finding;
+        const { acknowledged, bundledIn, packageName, packageVersion, vulnerability: vuln } = finding;
         const fixHint = vuln.fixedVersions.length > 0 ? ` (fix: ${vuln.fixedVersions.join(", ")})` : "";
+        const bundledHint = bundledIn && bundledIn.length > 0 ? `\nShipped inside: ${bundledIn.join("; ")}` : "";
 
         return {
             classname: `${packageName}@${packageVersion}`,
             failureMessage: `${severityLabel(vuln.severity).toUpperCase()} ${vuln.id} — ${vuln.summary.split("\n")[0]?.slice(0, 200) ?? vuln.id}`,
-            failureText: `${vuln.id}: ${packageName}@${packageVersion}\n${vuln.summary || `Advisory ${vuln.id}`}${fixHint}`,
+            failureText: `${vuln.id}: ${packageName}@${packageVersion}\n${vuln.summary || `Advisory ${vuln.id}`}${fixHint}${bundledHint}`,
             failureType: severityLabel(vuln.severity).toUpperCase(),
             name: vuln.id,
             status: acknowledged ? "skipped" : "failure",

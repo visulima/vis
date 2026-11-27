@@ -13,7 +13,21 @@ import { join } from "@visulima/path";
 import { readPnpmWorkspacePatterns, resolveWorkspacePatterns } from "../config/workspace";
 import type { DependencyPathNode, LockfileGraph } from "./dependency-paths";
 
+/** A package that ships other packages inside itself. */
+export interface BundledHost {
+    name: string;
+    version: string;
+}
+
 export interface InstalledPackage {
+    /**
+     * Where a copy of this package ships inside another package (bundled or vendored), one chain per
+     * place, outermost host first. A package the lockfile lists can also ship somewhere else; this
+     * records that too.
+     */
+    bundledIn?: BundledHost[][];
+    /** Set when the lockfile does not list this package: it is known only from the package that ships it. */
+    bundledOnly?: boolean;
     isDev: boolean;
     name: string;
     version: string;

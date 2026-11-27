@@ -5,7 +5,7 @@ description: "Audit installed packages for known vulnerabilities and supply-chai
 
 # vis audit
 
-`vis audit` scans every installed package (resolved from the lockfile) against the OSV vulnerability database and, when configured, one or more supply-chain intelligence providers — [Socket.dev](https://socket.dev) and [Google deps.dev](https://deps.dev) (the latter ships OpenSSF Scorecard signals + GHSA advisories and needs no API token).
+`vis audit` scans every installed package (resolved from the lockfile, plus the packages some of them ship bundled inside themselves — see [What is scanned](#what-is-scanned)) against the OSV vulnerability database and, when configured, one or more supply-chain intelligence providers — [Socket.dev](https://socket.dev) and [Google deps.dev](https://deps.dev) (the latter ships OpenSSF Scorecard signals + GHSA advisories and needs no API token).
 
 It defaults to the local **offline OSV cache** populated by [`vis advisories sync`](./advisories.mdx) — no network access required at scan time. Falls back to the live OSV API when no cache is present.
 
@@ -58,6 +58,62 @@ vis audit --policies license,vulnerability  # narrow to a subset for this run
 vis audit --policies none                   # skip the policy engine entirely
 ```
 
+## What is scanned
+
+The scan starts from the lockfile: every package it lists, once per `name@version`. A lockfile never lists some packages, though, and `vis audit` reads those from `node_modules`, so install first. In a checkout with no `node_modules` (lockfile only) there is nothing to read, and only the lockfile is scanned; the output does not say so.
+
+### Bundled dependencies
+
+A package can declare `bundleDependencies` (or `bundledDependencies`) in its `package.json`. Its package manager then installs those dependencies inside it, at `node_modules/<package>/node_modules/<dependency>`, and no lockfile lists them. `vis audit` reads them for every locked package that is installed, with no option to turn it on:
+
+- the declaration is an array of names, or `true`, which means every entry of `dependencies`;
+- a package that declares bundling ships its whole `node_modules`: the names it declares are only the top of the tree its package manager packs, so every package installed under it is scanned, nested copies included (the installed `npm` declares 65 names and ships 143 packages);
+- a package that declares no bundling keeps its nested copies out of this, since those are the lockfile's;
+- under pnpm the package is read from its real directory in `node_modules/.pnpm`, whatever the directory is called;
+- a copy the lockfile also lists is scanned once, and a finding in it still names the host that ships it;
+- `--prod-only` leaves out the bundled copies of a package it leaves out, since they only exist because of that package.
+
+A finding in a bundled copy counts like any other: it is listed, it follows `--severity`, `--fail-on` and `--exit-code` (and the `failOn` floor of the `vulnerability` policy), and an accepted risk for `name@version` covers it. The table says where the copy lives under the finding (`Shipped inside: some-tool@4.2.0 > bundled-dep@2.5.0`), and the dependency path of the finding runs from your workspace through the package that ships the copy:
+
+```text
+my-app > some-tool@4.2.0 > bundled-dep@2.5.0
+```
+
+Three flags treat a copy shipped inside another package differently, because it is not a dependency you declared:
+
+- `--usage` asks whether your workspace uses the package that ships it (the top-level host), since nothing imports the bundled name.
+- `--fix` and `--fix-transitive` leave it out of their plans and say so: an override does not replace a copy a package ships inside itself. Upgrade the package that ships it. `--show-fixes` names the host to upgrade instead of the copy.
+- The policy engine (`--policies`) judges only the packages the lockfile lists, except the `vulnerability` policy, which also judges the copies found inside other packages: a known vulnerability is one wherever the copy lives. An allow-list, a licence rule or a publisher check does not apply to a package you did not choose.
+
+### Vendored copies: what is not scanned
+
+Some packages ship copies of other packages with no declaration, in a tree such as `dist/compiled`. When such a directory has a `package.json` with a name and a version, `vis audit` scans it like a bundled copy: a finding in it is listed, with the host it ships in, and counts toward the exit code like any other. When it has no version, or no `package.json`, there is nothing to match an advisory against, and the version is never guessed. These are reported as **not scanned**, never as having no issues.
+
+`vis audit` looks in `dist/compiled` and `compiled` of each installed package. Every other place a package can hide code (a bundled `dist` file, a Git submodule, a binary) is outside what it can see.
+
+A bundled dependency whose manifest cannot be read (no file, or no name or no version) is reported the same way.
+
+### Reading the "not scanned" lines
+
+```text
+Not scanned: next@16.3.8 vendors 126 packages without versions (dist/compiled)
+Not scanned: some-tool@4.2.0 bundles 2 packages whose manifest cannot be read (a, b)
+```
+
+One line per host and place. They tell you that the result is about the packages that were scanned, not about everything the project ships, so a run with such a line says `No known issues in the scanned packages` instead of `No security issues found`. They are a notice only: they never change the exit code.
+
+To act on one, check the advisories of the host package directly, or upgrade it: a newer release may ship versioned copies or fixed ones.
+
+| Format           | Where the information is                                                                                                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| table            | The lines above, under the scan summary; the clean message changes as described.                                                                                                                                     |
+| `json`           | A new last key, `unauditable`: an array of `{ count, host, kind, location }` (`kind` is `vendored` or `bundled-unreadable`; the latter also has `names`). Empty when nothing was left out. `schemaVersion` is `1.1`. |
+| `--report` HTML  | A "Not scanned" list under the summary, the same `unauditable` array in the embedded JSON, and `No known issues in the scanned packages` in the clean state.                                                         |
+| `sarif`          | One `note` per line in `runs[0].invocations[0].toolExecutionNotifications`; a finding in a bundled copy says `(shipped inside host > package)` in its message.                                                       |
+| `junit`          | A finding in a bundled copy says `Shipped inside: host > package` in its failure text. The lines are not part of the report.                                                                                         |
+| `cyclonedx-vex`  | A bundled package that no lockfile lists is added to the BOM as a component, with the host that ships it depending on it, so every `affects` reference resolves. The lines are not part of the report.               |
+| `csaf`, `gitlab` | A finding in a bundled copy is listed as plain `name@version`; these schemas have no place for the host or for the lines, and are unchanged.                                                                         |
+
 ## Options
 
 ### Filtering and scope
@@ -65,8 +121,8 @@ vis audit --policies none                   # skip the policy engine entirely
 | Option               | Default | Description                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--severity <level>` | `low`   | Minimum severity to report: `low`, `medium`, `high`, `critical`.                                                                                                                                                                                                                                                                                                                |
-| `--prod-only`        | `false` | Skip devDependencies — scan production graph only.                                                                                                                                                                                                                                                                                                                              |
-| `--usage`            | `false` | Reachability filter — only report packages that are statically imported.                                                                                                                                                                                                                                                                                                        |
+| `--prod-only`        | `false` | Skip devDependencies — scan production graph only (also the packages they bundle).                                                                                                                                                                                                                                                                                              |
+| `--usage`            | `false` | Reachability filter — only report packages that are statically imported (for a bundled copy: whose host is).                                                                                                                                                                                                                                                                    |
 | `--no-usage`         | `false` | Disable the reachability filter even if enabled in config.                                                                                                                                                                                                                                                                                                                      |
 | `--ecosystem <list>` | `npm`   | Comma-separated ecosystems: `npm`, `pypi`, `crates.io` (or `cargo`), `maven` (or `gradle`), `go`, `rubygems`, `packagist` (or `composer`), `hex`, `nuget`, `pub` (or `dart`), `swift` (or `swifturl`). Non-npm ecosystems require `--offline` (the online OSV path is npm-only). `zig` is refused; see [Ecosystems that cannot be audited](#ecosystems-that-cannot-be-audited). |
 | `--show-accepted`    | `false` | Include findings already on the workspace's accepted-risk list.                                                                                                                                                                                                                                                                                                                 |
@@ -92,7 +148,7 @@ With `--offline`, each ecosystem named in `--ecosystem` must have its lock file 
 | `--format junit`         | Surefire-flavoured JUnit XML — parsed by GitLab, GitHub Actions test-reporter, Jenkins, etc., without a plugin.                                                     |
 | `--report <path>`        | Write a self-contained HTML report to `<path>`. Auto-opens in a TTY when not in CI.                                                                                 |
 
-**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, the Rust binary answers `vis audit --format json --policies none` (with at most one each of `--severity <level>`, `--fail-on <level>` and `--exit-code`) without starting Node, but only for a scan that finds nothing: OSV lists no vulnerability, or answers with a status outside 2xx (which the Node scan also reads as "no findings"). It prints the same report and the same `none found` row on stderr as Node, over its own HTTPS client with the same 10 second limit. The binary hands the run to Node before anything is printed for: every other format and flag (without `--policies none` the default `publisherChange` policy asks the registry for every package, which the binary does not do), an answer that lists a finding or that is not the JSON object Node reads the same way, a request that fails or is redirected, a proxy, CA or Node option in the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_OPTIONS`), `VIS_AUDIT_BACKEND` or `VIS_INSTALLER` in the environment, a `packageManager` pin, an `auditConfig` in `pnpm-workspace.yaml`, a lock file with no package, and a lock file or package name it does not read exactly. Node then asks OSV itself.
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace without a `vis.config`, the Rust binary answers `vis audit --format json --policies none` (with at most one each of `--severity <level>`, `--fail-on <level>` and `--exit-code`) without starting Node, but only for a scan that finds nothing: OSV lists no vulnerability, or answers with a status outside 2xx (which the Node scan also reads as "no findings"). It prints the same report and the same `none found` row on stderr as Node, over its own HTTPS client with the same 10 second limit. The binary hands the run to Node before anything is printed for: every other format and flag (without `--policies none` the default `publisherChange` policy asks the registry for every package, which the binary does not do), an answer that lists a finding or that is not the JSON object Node reads the same way, a request that fails or is redirected, a proxy, CA or Node option in the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NODE_USE_ENV_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_OPTIONS`), `VIS_AUDIT_BACKEND` or `VIS_INSTALLER` in the environment, a `packageManager` pin, an `auditConfig` in `pnpm-workspace.yaml`, a lock file with no package, a lock file or package name it does not read exactly, and an installed package that [bundles dependencies or vendors a tree of packages](#what-is-scanned) (any package under `node_modules` that declares `bundleDependencies`, has a `dist/compiled` or `compiled` directory with a subdirectory, or has a `package.json` the binary cannot parse). The binary reads the lockfile only, so it leaves that scan to Node rather than print a report that counts fewer packages. A workspace with none of these is still answered natively. Node then asks OSV itself.
 
 ### Offline cache
 

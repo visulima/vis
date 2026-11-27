@@ -28,8 +28,10 @@ import { startScanProgress } from "../../scan/scan-progress";
 import { AdvisoryDbNotFoundError, advisoryDbSchemaError, advisoryKey, queryAdvisories, resolveAdvisoryDbPath } from "../../security/advisories";
 import type { DirectApplyPlan } from "../../security/apply-direct";
 import { buildDirectApplyPlan, formatDirectApplyPlan } from "../../security/apply-direct";
+import { bundledDependencyPaths, formatBundledPath, scanBundledDependencies } from "../../security/bundled-dependencies";
 import type { DependencyPath } from "../../security/dependency-paths";
 import { buildDependencyPaths } from "../../security/dependency-paths";
+import type { BundledHost } from "../../security/dependency-scan";
 import { findDuplicateDependencies, loadLockfileGraph, lockedPackages, resolveLockfile } from "../../security/dependency-scan";
 import { readNodeModulesManifests } from "../../security/manifests";
 import { isMarshallDisabled } from "../../security/marshalls/registry";
@@ -44,12 +46,17 @@ import { compareFindingsForDisplay, severityPassesFilter } from "../../security/
 import type { AcceptedRisk, PackageReportData } from "../../security/socket-security";
 import { DEFAULT_LOW_SCORE_THRESHOLD, findAcceptedRisk, getFullPackageName, scoreLabel } from "../../security/socket-security";
 import { applyOverridePlan, buildOverridePlanFromFindings, planOverrideWrite } from "../../security/transitive-fix";
+import { describeUnauditable } from "../../security/unauditable";
 import type { SecurityVulnerability } from "../../util/catalog";
 import { fetchVulnerabilities } from "../../util/catalog";
 import type { AuditOptions } from "./index";
 
 interface AuditEntry {
     acceptedRisk?: AcceptedRisk;
+    /** The packages that ship a copy of this one inside themselves (bundled or vendored), outermost host first. */
+    bundledIn?: BundledHost[][];
+    /** The lockfile does not list this package; it is known only from the package that ships it. */
+    bundledOnly?: boolean;
     name: string;
     socketReport?: PackageReportData;
     version: string;
@@ -517,7 +524,12 @@ const executeAudit = async (
     // packages via the lockedPackages includeDev flag in Phase 1.7.
     // Offline runs read the JavaScript lockfile only when npm was requested. Other lockfiles are read
     // here too, so a run with no npm entries (a Dart or NuGet repository) still scans them.
-    const installed = !isOffline || npmRequested(ecosystems.all) ? lockedPackages(workspaceRoot, pm.name, { includeDev: !prodOnly }) : [];
+    // `lockedInstalled` is what the lockfile lists: the policy engine judges that set, since a package
+    // shipped inside another one is not a dependency the workspace chose. `installed` adds the packages
+    // found inside other packages, so the vulnerability scan covers them too.
+    const lockedInstalled = !isOffline || npmRequested(ecosystems.all) ? lockedPackages(workspaceRoot, pm.name, { includeDev: !prodOnly }) : [];
+    const bundledScan = scanBundledDependencies(workspaceRoot, lockedInstalled);
+    const { installed, unauditable } = bundledScan;
     const offlineNonNpm = isOffline
         ? offlineNonNpmEcosystems(ecosystems.all)
             .map((ecosystem) => { return { ecosystem, packages: lockedPackagesForEcosystem(workspaceRoot, ecosystem) }; })
@@ -549,7 +561,9 @@ const executeAudit = async (
     if (!quietHeader && installed.length > 0) {
         const scope = prodOnly ? "production-only packages" : "installed packages";
 
-        pail.info(`Scanning ${String(installed.length)} ${scope}${isOffline ? " (offline)" : ""}…`);
+        const bundledNote = bundledScan.bundledCount > 0 ? ` (${String(bundledScan.bundledCount)} of them shipped inside other packages)` : "";
+
+        pail.info(`Scanning ${String(installed.length)} ${scope}${bundledNote}${isOffline ? " (offline)" : ""}…`);
     }
 
     // 2. Fetch vulnerability and security data in parallel
@@ -813,6 +827,8 @@ const executeAudit = async (
         if (hasVulns || hasLowScore || hasAlerts) {
             entries.push({
                 acceptedRisk: accepted,
+                ...(pkg.bundledIn ? { bundledIn: pkg.bundledIn } : {}),
+                ...(pkg.bundledOnly ? { bundledOnly: true } : {}),
                 name: pkg.name,
                 socketReport: report,
                 version: pkg.version,
@@ -909,19 +925,32 @@ const executeAudit = async (
         const licenseEnabled = enabledPolicies === undefined || enabledPolicies.has("license");
         const manifestData = licenseConfigured && licenseEnabled ? readNodeModulesManifests(workspaceRoot) : undefined;
 
-        return evaluatePolicies(
-            {
-                manifestData,
-                offline: isOffline,
-                osvFindings: vulnMap,
-                packageManager: pm.name,
-                packages: installed,
-                socketReports,
-                workspaceRoot,
-            },
-            "audit",
-            { enabledPolicies, visConfig: visConfig ?? {} },
-        );
+        const policyInput = {
+            manifestData,
+            offline: isOffline,
+            osvFindings: vulnMap,
+            packageManager: pm.name,
+            packages: lockedInstalled,
+            socketReports,
+            workspaceRoot,
+        };
+        const decisions = await evaluatePolicies(policyInput, "audit", { enabledPolicies, visConfig: visConfig ?? {} });
+
+        // The lockfile set is what the other policies judge: a package shipped inside another one is not a
+        // dependency the workspace chose, so an allow-list, a licence rule or a publisher check does not apply to
+        // it. A known vulnerability is a vulnerability wherever the copy lives, so `vulnerability` judges those too
+        // (its `failOn` floor then gates them like any other finding, even one `--severity` hides).
+        const shippedInside = installed.filter((pkg) => pkg.bundledOnly);
+        const vulnerabilityRuns = enabledPolicies === undefined ? visConfig?.security?.policies?.vulnerability !== undefined : enabledPolicies.has("vulnerability");
+
+        if (shippedInside.length === 0 || !vulnerabilityRuns) {
+            return decisions;
+        }
+
+        return [
+            ...decisions,
+            ...(await evaluatePolicies({ ...policyInput, packages: shippedInside }, "audit", { enabledPolicies: new Set(["vulnerability"]), visConfig: visConfig ?? {} })),
+        ];
     })();
 
     // 4b. Reachability filter (`--usage` / `security.audit.usage.enabled`).
@@ -929,12 +958,18 @@ const executeAudit = async (
     // in the workspace. `alwaysAssumeUsed` is the escape hatch for build-time
     // loaders that the regex scan can't see.
     if (usageEnabled) {
-        const vulnerableNames = new Set(filtered.filter((e) => e.vulnerabilities.length > 0).map((e) => e.name));
+        const vulnerableEntries = filtered.filter((e) => e.vulnerabilities.length > 0);
+        const vulnerableNames = new Set(vulnerableEntries.map((e) => e.name));
+        // A package found only inside another one is never imported by name; it runs when its host does.
+        // So its reachability is the reachability of the top-level package that ships it.
+        const hostNames = new Set(vulnerableEntries.filter((e) => e.bundledOnly).flatMap((e) => (e.bundledIn ?? []).map((chain) => chain[0]?.name ?? "")));
         const reachResult = computeReachableVulnerablePackages({
             alwaysAssumeUsed: usageConfig?.alwaysAssumeUsed,
-            vulnerablePackages: vulnerableNames,
+            vulnerablePackages: new Set([...vulnerableNames, ...hostNames]),
             workspaceRoot,
         });
+        const isReachable = (entry: AuditEntry): boolean =>
+            (entry.bundledOnly ? (entry.bundledIn ?? []).some((chain) => reachResult.reachable.has(chain[0]?.name ?? "")) : reachResult.reachable.has(entry.name));
 
         filtered = filtered.filter((entry) => {
             // Keep socket-only entries — reachability is a vulnerability-scoped filter.
@@ -942,13 +977,15 @@ const executeAudit = async (
                 return true;
             }
 
-            return reachResult.reachable.has(entry.name);
+            return isReachable(entry);
         });
 
         if (!quietHeader) {
+            const reachableCount = new Set(vulnerableEntries.filter((entry) => isReachable(entry)).map((entry) => entry.name)).size;
+
             pail.info(
                 dim(
-                    `Reachability filter: ${String(reachResult.reachable.size)}/${String(vulnerableNames.size)} vulnerable packages reachable (${String(reachResult.filesScanned)} files scanned).`,
+                    `Reachability filter: ${String(reachableCount)}/${String(vulnerableNames.size)} vulnerable packages reachable (${String(reachResult.filesScanned)} files scanned).`,
                 ),
             );
         }
@@ -960,34 +997,49 @@ const executeAudit = async (
     // audit run. Threaded through `findingsForReport` so every downstream
     // surface (SARIF, CSAF, VEX, HTML, JSON) sees the same paths.
     const lockfileGraph = loadLockfileGraph(workspaceRoot, pm.name);
-    const filteredWithPaths = lockfileGraph
-        ? filtered.map((entry) => {
-            const paths: DependencyPath[] = buildDependencyPaths(lockfileGraph, { name: entry.name, version: entry.version });
+    const hostPaths = new Map<string, DependencyPath[]>();
+    const pathsToHost = (host: BundledHost): DependencyPath[] => {
+        const key = `${host.name}@${host.version}`;
+        let paths = hostPaths.get(key);
 
-            return { ...entry, dependencyPaths: paths };
-        })
-        : filtered.map((entry) => {
-            return { ...entry, dependencyPaths: [] as DependencyPath[] };
-        });
+        if (!paths) {
+            paths = lockfileGraph ? buildDependencyPaths(lockfileGraph, host) : [];
+            hostPaths.set(key, paths);
+        }
+
+        return paths;
+    };
+    const filteredWithPaths = filtered.map((entry) => {
+        const lockfilePaths: DependencyPath[] = entry.bundledOnly || !lockfileGraph ? [] : buildDependencyPaths(lockfileGraph, { name: entry.name, version: entry.version });
+
+        // A copy shipped inside another package reports where it lives: the paths to its host, then the copy.
+        return { ...entry, dependencyPaths: bundledDependencyPaths(entry, lockfilePaths, pathsToHost) };
+    });
 
     const findingsForReport = (): {
         acknowledged: boolean;
+        bundledIn: string[];
+        bundledOnly: boolean;
         dependencyPaths: DependencyPath[];
         packageName: string;
         packageVersion: string;
         vulnerability: SecurityVulnerability;
     }[] =>
-        filteredWithPaths.flatMap((entry) =>
-            entry.vulnerabilities.map((vuln) => {
+        filteredWithPaths.flatMap((entry) => {
+            const bundledIn = (entry.bundledIn ?? []).map((chain) => formatBundledPath(chain, entry.name, entry.version));
+
+            return entry.vulnerabilities.map((vuln) => {
                 return {
                     acknowledged: Boolean(entry.acceptedRisk) || isAdvisoryExcluded(vuln.id, nativeExclusions, vuln.aliases),
+                    bundledIn,
+                    bundledOnly: Boolean(entry.bundledOnly),
                     dependencyPaths: entry.dependencyPaths,
                     packageName: entry.name,
                     packageVersion: entry.version,
                     vulnerability: vuln,
                 };
-            }),
-        );
+            });
+        });
 
     const wantsFix = Boolean(options.fix);
     const wantsFixTransitive = Boolean(options.fixTransitive);
@@ -997,7 +1049,20 @@ const executeAudit = async (
     if (wantsFix || wantsFixTransitive) {
         // Strip acknowledged findings before planning — accepted risks
         // should not silently auto-bump or override.
-        const actionableFindings = findingsForReport().filter((f) => !f.acknowledged);
+        const unacknowledged = findingsForReport().filter((f) => !f.acknowledged);
+        // A copy shipped inside another package is not a dependency the workspace declares, and an override
+        // does not replace it: the only fix is a release of the package that ships it.
+        const actionableFindings = unacknowledged.filter((f) => !f.bundledOnly);
+        const insideOthers = unacknowledged.filter((f) => f.bundledOnly);
+
+        if (insideOthers.length > 0) {
+            const hosts = [...new Set(insideOthers.flatMap((f) => f.bundledIn.map((path) => path.split(" > ")[0] ?? path)))].toSorted();
+
+            pail.warn(
+                `${String(insideOthers.length)} finding${insideOthers.length === 1 ? "" : "s"} in packages shipped inside other packages ${insideOthers.length === 1 ? "is" : "are"} left out of --fix and --fix-transitive: `
+                + `an override does not replace a copy a package ships inside itself. Upgrade the package that ships it: ${hosts.join(", ")}.`,
+            );
+        }
 
         if (wantsFix) {
             const directExit = await runApplyDirect({
@@ -1076,6 +1141,7 @@ const executeAudit = async (
             findings: findingsForReport(),
             policyDecisions,
             tool: { informationUri: "https://github.com/visulima/visulima", name: "vis-audit", version: "alpha" },
+            unauditable,
             workspaceRoot,
         });
 
@@ -1115,7 +1181,7 @@ const executeAudit = async (
             workspaceRoot,
         });
 
-        const vex = emitCycloneDxVex({ bom, findings: findingsForReport() });
+        const vex = emitCycloneDxVex({ bom, bundled: installed.filter((pkg) => pkg.bundledOnly), findings: findingsForReport() });
 
         process.stdout.write(`${JSON.stringify(vex, undefined, 2)}\n`);
 
@@ -1166,6 +1232,7 @@ const executeAudit = async (
         packagesScanned: installed.length,
         policyDecisions,
         tool: auditReportTool,
+        unauditable,
         unknownPolicyTokens,
         workspaceRoot,
     });
@@ -1210,11 +1277,29 @@ const executeAudit = async (
     }
 
     // 6. Human-readable output
+    // Packages the scan knew were there and could not check. Their line is a notice only: it never changes the exit code.
+    const printNotScanned = (indent: string): void => {
+        for (const entry of unauditable) {
+            pail.warn(`${indent}Not scanned: ${describeUnauditable(entry)}`);
+        }
+    };
+
     if (filtered.length === 0) {
-        pail.success(`No security issues found across ${String(installed.length)} packages.`);
+        // A clean result for the scanned packages is not a clean result for the project when some could not be scanned.
+        pail.success(unauditable.length > 0 ? `No known issues in the scanned packages (${String(installed.length)}).` : `No security issues found across ${String(installed.length)} packages.`);
+        printNotScanned("");
 
         return;
     }
+
+    // Where a copy shipped inside another package lives: the table lists `name@version` alone otherwise.
+    const printShippedInside = (entry: AuditEntry): void => {
+        if (entry.bundledIn && entry.bundledIn.length > 0) {
+            pail.info(dim(`    Shipped inside: ${entry.bundledIn.map((chain) => formatBundledPath(chain, entry.name, entry.version)).join("; ")}`));
+        }
+    };
+    const hostsOf = (entry: AuditEntry): string =>
+        [...new Set((entry.bundledIn ?? []).map((chain) => `${chain[0]?.name ?? ""}@${chain[0]?.version ?? ""}`))].join(", ");
 
     // Group vulnerabilities by severity
     const vulnsBySeverity: Record<string, { entry: AuditEntry; vuln: SecurityVulnerability }[]> = {
@@ -1260,9 +1345,15 @@ const executeAudit = async (
 
             totalVulns++;
             pail.info(formatVulnLine(entry.name, entry.version, vuln, isExcluded));
+            printShippedInside(entry);
 
             if (showFixes && (vuln.fixedVersions ?? []).length > 0) {
-                pail.notice(`    Fix: update to ${vuln.fixedVersions.at(-1)}`);
+                // A copy shipped inside another package cannot be updated on its own: the host has to ship a fixed one.
+                pail.notice(
+                    entry.bundledOnly
+                        ? `    Fix: upgrade ${hostsOf(entry)} to a release that ships ${entry.name}@${vuln.fixedVersions.at(-1)} or later`
+                        : `    Fix: update to ${vuln.fixedVersions.at(-1)}`,
+                );
             }
 
             const explanation = explanations.get(explainKey({ packageName: entry.name, packageVersion: entry.version, vulnerability: vuln }));
@@ -1293,6 +1384,7 @@ const executeAudit = async (
             }
 
             pail.info(formatSocketLine(entry.socketReport, isExcluded));
+            printShippedInside(entry);
 
             for (const alert of entry.socketReport.alerts) {
                 const alertColorFunction = SOCKET_ALERT_COLORS[alert.severity] ?? dim;
@@ -1369,6 +1461,7 @@ const executeAudit = async (
     pail.info("");
     pail.info(`─ Audit Summary`);
     pail.info(`  ${String(installed.length)} packages scanned`);
+    printNotScanned("  ");
 
     if (nativeExclusions.ignoredAdvisories.length > 0) {
         pail.info(
@@ -1390,7 +1483,7 @@ const executeAudit = async (
             pail.warn(`    ${String(highCount)} high`);
         }
     } else {
-        pail.success("  No vulnerabilities found");
+        pail.success(unauditable.length > 0 ? "  No known vulnerabilities in the scanned packages" : "  No vulnerabilities found");
     }
 
     if (socketIssues.length > 0) {

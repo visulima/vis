@@ -81,7 +81,7 @@ fn the_report_of_a_clean_scan_is_json_stringify_with_two_spaces() {
   "packages": 3,
   "policies": [],
   "results": [],
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "summary": {
     "accepted": 0,
     "duplicatePackages": 0,
@@ -96,7 +96,8 @@ fn the_report_of_a_clean_scan_is_json_stringify_with_two_spaces() {
     "version": "alpha"
   },
   "warnings": [],
-  "workspaceRoot": "/work/app"
+  "workspaceRoot": "/work/app",
+  "unauditable": []
 }
 "#
     );
@@ -373,4 +374,142 @@ fn a_lockfile_without_a_package_is_node_s() {
     std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
 
     assert!(scan_workspace(&root, "http://127.0.0.1:9/", Style { colour: false }, false, "T").is_err());
+}
+
+/// A workspace whose lockfile is the recorded one and whose `node_modules` holds `files` (relative to the root).
+fn installed(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = workspace(name);
+
+    for (path, content) in files {
+        let target = root.join(path);
+
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, content).unwrap();
+    }
+
+    root
+}
+
+const PLAIN: &str = r#"{"name":"plain","version":"1.0.0","dependencies":{"x":"1.0.0"}}"#;
+
+#[test]
+fn a_workspace_without_bundling_or_a_vendored_tree_is_still_answered_and_prints_what_node_printed() {
+    let root = installed(
+        "plain-modules",
+        &[
+            ("node_modules/plain/package.json", PLAIN),
+            ("node_modules/@scope/pkg/package.json", PLAIN),
+            ("node_modules/plain/node_modules/inner/package.json", PLAIN),
+            ("node_modules/.pnpm/store@1.0.0/node_modules/store/package.json", PLAIN),
+            // A directory called `compiled` that holds only files vendors no package.
+            ("node_modules/plain/compiled/bundle.js", "module.exports = 1;"),
+        ],
+    );
+    let (url, _seen) = serve(Box::leak(json_reply("200 OK", CLEAN).into_boxed_str()));
+    let (printed, _row) =
+        scan_workspace(&root, &url, Style { colour: false }, false, "2026-01-02T03:04:05.678Z").unwrap();
+
+    assert_eq!(printed, STDOUT.replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\")));
+    assert!(printed.ends_with("\"unauditable\": []\n}\n"));
+}
+
+#[test]
+fn a_package_that_ships_dependencies_inside_itself_is_node_s_in_every_place_node_looks() {
+    for (name, path, manifest) in [
+        (
+            "hoisted",
+            "node_modules/host/package.json",
+            r#"{"name":"host","version":"1.0.0","bundleDependencies":["dep"]}"#,
+        ),
+        (
+            "spelled-out",
+            "node_modules/host/package.json",
+            r#"{"name":"host","version":"1.0.0","bundledDependencies":true}"#,
+        ),
+        (
+            "scoped",
+            "node_modules/@s/host/package.json",
+            r#"{"name":"@s/host","version":"1.0.0","bundleDependencies":["dep"]}"#,
+        ),
+        (
+            "in-store",
+            "node_modules/.pnpm/host@1.0.0_peer@2.0.0/node_modules/host/package.json",
+            r#"{"name":"host","version":"1.0.0","bundleDependencies":["dep"]}"#,
+        ),
+        (
+            "nested",
+            "node_modules/plain/node_modules/host/package.json",
+            r#"{"name":"host","version":"1.0.0","bundledDependencies":["dep"]}"#,
+        ),
+        (
+            "escaped-key",
+            "node_modules/host/package.json",
+            r#"{"name":"host","version":"1.0.0","bundle\u0044ependencies":["dep"]}"#,
+        ),
+    ] {
+        let root =
+            installed(&format!("bundles-{name}"), &[("node_modules/plain/package.json", PLAIN), (path, manifest)]);
+        let outcome = scan_workspace(&root, "http://127.0.0.1:9/", Style { colour: false }, false, "T");
+
+        assert!(outcome.is_err(), "{name}: {outcome:?}");
+    }
+}
+
+#[test]
+fn the_reason_names_what_node_would_scan() {
+    let root = installed("bundles-reason", &[("node_modules/host/package.json", r#"{"bundleDependencies":["dep"]}"#)]);
+    let reason = scan_workspace(&root, "http://127.0.0.1:9/", Style { colour: false }, false, "T").unwrap_err();
+
+    assert!(reason.contains("ships other packages inside itself"), "{reason}");
+}
+
+#[test]
+fn a_vendored_tree_is_node_s() {
+    for (name, path) in [
+        ("dist-compiled", "node_modules/host/dist/compiled/semver/package.json"),
+        ("compiled", "node_modules/host/compiled/thing/index.js"),
+        ("scoped-host", "node_modules/@s/host/dist/compiled/x/index.js"),
+        ("nested-host", "node_modules/plain/node_modules/host/dist/compiled/x/index.js"),
+        ("in-store", "node_modules/.pnpm/host@1.0.0/node_modules/host/dist/compiled/x/index.js"),
+    ] {
+        let root = installed(
+            &format!("vendors-{name}"),
+            &[("node_modules/plain/package.json", PLAIN), ("node_modules/host/package.json", PLAIN), (path, "{}")],
+        );
+        let reason = scan_workspace(&root, "http://127.0.0.1:9/", Style { colour: false }, false, "T").unwrap_err();
+
+        assert!(reason.contains("vendored tree"), "{name}: {reason}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_package_is_not_read_as_an_installed_copy() {
+    let root = installed(
+        "linked",
+        &[("node_modules/plain/package.json", PLAIN), ("elsewhere/package.json", r#"{"bundleDependencies":["dep"]}"#)],
+    );
+
+    std::os::unix::fs::symlink(root.join("elsewhere"), root.join("node_modules/linked")).unwrap();
+
+    assert!(super::bundled::decline(&root).is_none());
+}
+
+#[test]
+fn nothing_is_read_without_a_node_modules_directory() {
+    let root = workspace("no-modules");
+
+    assert!(super::bundled::decline(&root).is_none());
+}
+
+#[test]
+fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_json_does() {
+    let accents =
+        installed("accents", &[("node_modules/plain/package.json", r#"{"name":"plain","author":"J\u00e9r\u00f4me"}"#)]);
+
+    assert!(super::bundled::decline(&accents).is_none());
+
+    let broken = installed("broken-json", &[("node_modules/plain/package.json", "{ not json")]);
+
+    assert!(super::bundled::decline(&broken).is_some());
 }
