@@ -5,8 +5,9 @@
 //! and its output is delivered as raw chunks (`Stdout` events), not lines: escape sequences and
 //! carriage returns reach the consumer exactly as written, for a terminal emulator to interpret.
 //!
-//! The terminal itself comes from `portable-pty` (openpty on Unix, ConPTY on Windows). It only
-//! offers blocking reads, writes and waits, so each runs on a thread of its own and reports back
+//! The terminal itself comes from `portable-pty` (openpty on Unix) or, on Windows, from `win_pty`, which
+//! opens a ConPTY so that the command can start suspended. Both only
+//! offer blocking reads, writes and waits, so each runs on a thread of its own and reports back
 //! through channels the async runner can wait on; the runner's loop never blocks on a terminal.
 
 use std::io::{Read, Write};
@@ -15,7 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty};
+#[cfg(not(windows))]
+use portable_pty::native_pty_system;
+use portable_pty::{CommandBuilder, MasterPty};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
@@ -197,7 +200,17 @@ pub(crate) fn spawn_pty(
         builder.env(key, value);
     }
 
-    let Terminal { master, child, pid } = start_terminal(builder, config.pty_size.unwrap_or_default())?;
+    // Windows: the Job Object is what a kill takes down, as for a pipe command. The command starts
+    // suspended and is assigned to it before it runs, so a grandchild cannot start outside it.
+    #[cfg(windows)]
+    let job = process_group::JobObject::new().ok();
+
+    let Terminal { master, child, pid } = start_terminal(
+        builder,
+        config.pty_size.unwrap_or_default(),
+        #[cfg(windows)]
+        job.as_ref(),
+    )?;
     let start_time = Instant::now();
 
     let reader = master.try_clone_reader().map_err(std::io::Error::other)?;
@@ -278,26 +291,6 @@ pub(crate) fn spawn_pty(
         let _ = completion_tx.send(CompletionMessage { index, close_event });
     });
 
-    // Windows: the Job Object is what a kill takes down, as for a pipe command.
-    //
-    // KNOWN LIMITATION: unlike a pipe command, which is created suspended and assigned before it
-    // runs, the child here is already running when it is assigned. `portable-pty` creates it with a
-    // fixed `EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT` and exposes neither the
-    // creation flags nor the primary thread handle, so it cannot be started suspended. A
-    // wrapper that starts a grandchild in the instant before the assignment leaves that
-    // grandchild outside the job. Closing the window means replacing `portable-pty`'s ConPTY
-    // spawn with our own `CreateProcessW(CREATE_SUSPENDED)` call.
-    #[cfg(windows)]
-    let job = {
-        let job = process_group::JobObject::new().ok();
-
-        if let (Some(job), Some(pid)) = (&job, pid) {
-            let _ = job.assign_process_by_pid(pid);
-        }
-
-        job
-    };
-
     Ok(ProcessInfo {
         index,
         pid,
@@ -318,6 +311,21 @@ struct Terminal {
 }
 
 /// Open a terminal and start `builder`'s command on it.
+///
+/// On Windows the command starts suspended and is assigned to `job` before it runs (see `win_pty`).
+#[cfg(windows)]
+fn start_terminal(
+    builder: CommandBuilder,
+    size: PtySize,
+    job: Option<&process_group::JobObject>,
+) -> Result<Terminal, std::io::Error> {
+    let super::win_pty::Started { master, child, pid } = super::win_pty::start(&builder, portable_size(size), job)?;
+
+    Ok(Terminal { master, child: Some(child), pid: Some(pid) })
+}
+
+/// Open a terminal and start `builder`'s command on it.
+#[cfg(not(windows))]
 fn start_terminal(builder: CommandBuilder, size: PtySize) -> Result<Terminal, std::io::Error> {
     #[cfg(target_os = "macos")]
     if let Some((master, pid)) = start_without_fork(&builder, size) {
@@ -441,8 +449,8 @@ async fn close_terminal(
     }
 }
 
-/// What a ConPTY writes when it starts a command: a request for the cursor position. `portable-pty`
-/// always asks ConPTY to inherit the cursor, and the command does not start until the request is
+/// What a ConPTY writes when it starts a command: a request for the cursor position. The pseudo console
+/// is always created asking ConPTY to inherit the cursor, and the command does not start until the request is
 /// answered, so a host that does not answer runs nothing.
 #[cfg(any(windows, test))]
 const CURSOR_REQUEST: &str = "\x1b[6n";

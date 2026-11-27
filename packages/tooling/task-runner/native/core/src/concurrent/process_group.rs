@@ -149,27 +149,6 @@ mod windows {
             Ok(Self { handle })
         }
 
-        /// Assign a process to this Job Object by PID.
-        /// Opens the process handle, assigns it, then closes the handle.
-        pub(crate) fn assign_process_by_pid(&self, pid: u32) -> io::Result<()> {
-            // Minimum permissions needed for Job Object assignment + termination
-            let process_handle = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
-            // OpenProcess returns NULL on failure per MSDN, not
-            // INVALID_HANDLE_VALUE — the redundant comparison the
-            // previous code carried was harmless but misleading.
-            if process_handle.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-
-            let result = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
-            unsafe { CloseHandle(process_handle) };
-
-            if result == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        }
-
         pub(crate) fn terminate(&self, exit_code: u32) -> io::Result<()> {
             let result = unsafe { TerminateJobObject(self.handle, exit_code) };
             if result == 0 {
