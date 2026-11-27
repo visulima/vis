@@ -4,4 +4,5 @@
 
 # The native tests compare byte for byte against these: a Windows checkout must keep LF.
 /packages/tooling/vis/native/cli/tests/fixtures/** text eol=lf
+/packages/tooling/vis/native/cli/tests/golden/** text eol=lf
 /packages/tooling/vis/__tests__/util/__snapshots__/*.yml text eol=lf
