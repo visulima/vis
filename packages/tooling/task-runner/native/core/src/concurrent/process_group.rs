@@ -86,7 +86,9 @@ mod windows {
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
         TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE,
+    };
 
     /// Send `CTRL_BREAK_EVENT` to the process group rooted at `pid`.
     ///
@@ -161,6 +163,29 @@ mod windows {
             Ok(())
         }
 
+        /// How many processes have ever been in the job, the ones that already exited included.
+        #[cfg(test)]
+        pub(crate) fn total_processes(&self) -> io::Result<u32> {
+            use windows_sys::Win32::System::JobObjects::{
+                JobObjectBasicAccountingInformation, QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            };
+
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                QueryInformationJobObject(
+                    self.handle,
+                    JobObjectBasicAccountingInformation,
+                    &mut info as *mut _ as *mut _,
+                    std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            if result == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.TotalProcesses)
+        }
+
         pub(crate) fn terminate(&self, exit_code: u32) -> io::Result<()> {
             let result = unsafe { TerminateJobObject(self.handle, exit_code) };
             if result == 0 {
@@ -174,6 +199,31 @@ mod windows {
         fn drop(&mut self) {
             unsafe { CloseHandle(self.handle) };
         }
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtResumeProcess(process: HANDLE) -> i32;
+    }
+
+    /// Let a process that was created with `CREATE_SUSPENDED` run.
+    ///
+    /// The standard library does not hand out the primary thread, so the whole process is
+    /// resumed by pid instead. A child that is never resumed never starts, so the caller must
+    /// call this whatever happened to the Job Object assignment.
+    pub(crate) fn resume_process(pid: u32) -> io::Result<()> {
+        let process_handle = unsafe { OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid) };
+        if process_handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+
+        let status = unsafe { NtResumeProcess(process_handle) };
+        unsafe { CloseHandle(process_handle) };
+
+        if status < 0 {
+            return Err(io::Error::other(format!("NtResumeProcess failed with status {status:#x}")));
+        }
+        Ok(())
     }
 
     // SAFETY: The Job Object handle is thread-safe in Windows.
@@ -206,4 +256,46 @@ pub(crate) fn kill_tree(pid: u32, signal: KillSignal) -> std::io::Result<()> {
 pub(crate) use unix::pre_exec_setsid;
 
 #[cfg(windows)]
-pub(crate) use windows::{graceful_shutdown, JobObject};
+pub(crate) use windows::{graceful_shutdown, resume_process, JobObject};
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED};
+
+    use super::{resume_process, JobObject};
+
+    /// A wrapper that starts a grandchild at once, as `cmd.exe /s /c` does, must have the
+    /// grandchild in the job: the child is put in the job before it runs.
+    #[test]
+    fn a_child_started_suspended_and_resumed_after_the_assignment_brings_its_grandchild_into_the_job() {
+        let mut child = Command::new("cmd.exe")
+            .args(["/d", "/s", "/c", "ping -n 30 127.0.0.1 >nul"])
+            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED)
+            .spawn()
+            .expect("cmd.exe starts");
+
+        let job = JobObject::new().expect("a job object");
+
+        job.assign_process_by_pid(child.id()).expect("the suspended child joins the job");
+        assert_eq!(job.total_processes().unwrap(), 1, "only the child is in the job before it runs");
+
+        resume_process(child.id()).expect("the child resumes");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        while job.total_processes().unwrap() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let total = job.total_processes().unwrap();
+
+        job.terminate(1).expect("the job terminates");
+        let _ = child.wait();
+
+        assert!(total >= 2, "the grandchild must have joined the job, but the job saw {total} process(es)");
+    }
+}

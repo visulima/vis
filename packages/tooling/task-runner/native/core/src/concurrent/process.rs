@@ -40,6 +40,26 @@ pub(crate) fn spawn_process(
 
     let pid = child.id();
 
+    // Windows: the child was created suspended (see `start`). Put it in a Job Object, which a
+    // kill takes down with every descendant, and only then let it run: a wrapper such as
+    // `cmd.exe /s /c` forks its grandchild at once, and one forked before the assignment would
+    // stay outside the job. The child is resumed whether or not the job could be made, or it
+    // would never start.
+    #[cfg(windows)]
+    let job = {
+        let job = process_group::JobObject::new().ok();
+
+        if let (Some(job), Some(pid)) = (&job, pid) {
+            let _ = job.assign_process_by_pid(pid);
+        }
+
+        if let Some(pid) = pid {
+            process_group::resume_process(pid)?;
+        }
+
+        job
+    };
+
     // Surface the pid to the consumer before any output streams,
     // so JS-side signal handlers can register the child for cleanup
     // before it has a chance to emit anything.
@@ -130,30 +150,6 @@ pub(crate) fn spawn_process(
         let _ = completion_tx.send(CompletionMessage { index, close_event });
     });
 
-    // Windows: create Job Object and assign the child process for tree killing.
-    //
-    // KNOWN LIMITATION: the child is already running by the time we
-    // create + assign the Job Object. A wrapper that immediately
-    // re-`exec`s another binary (very common with `cmd.exe /s /c`)
-    // can fork a grandchild *before* AssignProcessToJobObject runs;
-    // that grandchild is outside the Job and so isn't terminated by
-    // `TerminateJobObject` or by `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
-    // The correct fix is `CreateProcessW(CREATE_SUSPENDED)` → assign
-    // → `ResumeThread`, which requires bypassing tokio's `Command`
-    // and using raw Win32 (tokio doesn't expose the primary thread
-    // handle). Deferred until we have a Windows test runtime to
-    // validate against; the `kill_on_drop(true)` + Job Object combo
-    // covers the common case, and the wider blast radius is bounded
-    // by Job Object cleanup on process exit.
-    #[cfg(windows)]
-    let job = {
-        let job = process_group::JobObject::new().ok();
-        if let (Some(ref j), Some(p)) = (&job, pid) {
-            let _ = j.assign_process_by_pid(p);
-        }
-        job
-    };
-
     Ok(ProcessInfo {
         index,
         pid,
@@ -224,6 +220,15 @@ fn start(config: &ConcurrentCommandConfig, shell_path: Option<&str>) -> Result<(
     // OS-level process running as an orphan re-parented to PID 1. Force-killing
     // on drop ensures the JS side can never abandon spawned children.
     cmd.kill_on_drop(true);
+
+    // Windows: the child starts suspended so `spawn_process` can put it in its Job Object before
+    // it runs a single instruction. It resumes the child right after.
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED};
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
+    }
+
     let mut child = cmd.spawn()?;
     let streams = Streams {
         stdin: child.stdin.take().map(|stdin| Box::new(stdin) as Box<dyn AsyncWrite + Send + Unpin>),
