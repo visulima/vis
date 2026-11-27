@@ -253,6 +253,55 @@ export declare function hashTaskCommand(
  */
 export declare function isLinkedWorktree(workspaceRoot: string): boolean;
 
+/** A workspace project: its scripts in file order and the edges of the project graph from it. */
+export interface NativeConfigProject {
+    name: string;
+    root: string;
+    scripts: Array<NativeConfigScript>;
+    dependencies: Array<NativeRunDependency>;
+}
+
+/** A `package.json` script of a project. */
+export interface NativeConfigScript {
+    name: string;
+    command: string;
+}
+
+/** One task of the graph. `outputs` is the JSON text of the list: strings and `{ "auto": true }`. */
+export interface NativeConfiguredTask {
+    id: string;
+    project: string;
+    target: string;
+    root: string;
+    command: string;
+    cache?: boolean;
+    outputs: string;
+    declaresInputs: boolean;
+    dependencies: Array<string>;
+}
+
+/**
+ * Builds the task graph of a workspace. `config` is the JSON text of the config and `task_order` the keys of
+ * its `tasks` in the order they are written. `seed_target` selects the tasks of `run <target>`; none selects
+ * every target of every project. `inference` is `disabled`, `nothing-to-infer` or anything else for unchecked.
+ */
+export declare function nativeConfiguredTaskGraph(
+    config: string,
+    taskOrder: Array<string>,
+    projects: Array<NativeConfigProject>,
+    seedTarget: string | undefined | null,
+    inference: string,
+    noProjectFiles: boolean,
+): NativeConfiguredTaskGraph;
+
+/** The graph, or why it cannot be built here. `warnings` are the unmatched `dependsOn.projects` selectors. */
+export interface NativeConfiguredTaskGraph {
+    tasks: Array<NativeConfiguredTask>;
+    roots: Array<string>;
+    warnings: Array<string>;
+    refusal?: string;
+}
+
 /** The answer of a cache lookup: `status` is `hit`, `miss` or `not-reproducible`. */
 export interface NativeRunCacheLookup {
     status: string;
