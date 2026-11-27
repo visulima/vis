@@ -26,7 +26,7 @@ import { advisoryUri, securitySeverityString, severityLabel, severityToSarifLeve
 
 export interface SarifFinding {
     acknowledged: boolean;
-    /** Where a copy shipped inside another package lives, as `host > package` paths; named in the message. */
+    /** Where a copy shipped inside another package (bundled or vendored) lives, as `host > package` paths; named in the message. */
     bundledIn?: string[];
     packageName: string;
     packageVersion: string;
@@ -150,7 +150,7 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
             message: {
                 text: `${vuln.id}: ${packageName}@${packageVersion} — ${vuln.summary || "no summary"}${
                     vuln.fixedVersions.length > 0 ? ` (fix: ${vuln.fixedVersions.join(", ")})` : ""
-                }${bundledIn && bundledIn.length > 0 ? ` (bundled in ${bundledIn.join("; ")})` : ""}`,
+                }${bundledIn && bundledIn.length > 0 ? ` (shipped inside ${bundledIn.join("; ")})` : ""}`,
             },
             partialFingerprints: {
                 advisoryId: vuln.id,

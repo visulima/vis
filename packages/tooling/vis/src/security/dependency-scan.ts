@@ -21,8 +21,9 @@ export interface BundledHost {
 
 export interface InstalledPackage {
     /**
-     * Where a copy of this package ships inside another package, one chain per place, outermost host
-     * first. A package the lockfile lists can also be bundled somewhere else; this records that too.
+     * Where a copy of this package ships inside another package (bundled or vendored), one chain per
+     * place, outermost host first. A package the lockfile lists can also ship somewhere else; this
+     * records that too.
      */
     bundledIn?: BundledHost[][];
     /** Set when the lockfile does not list this package: it is known only from the package that ships it. */

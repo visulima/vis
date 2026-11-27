@@ -16,7 +16,7 @@ import { severityLabel } from "./finding";
 
 export interface JUnitAuditFinding {
     acknowledged: boolean;
-    /** Where a copy shipped inside another package lives, as `host > package` paths; named in the failure text. */
+    /** Where a copy shipped inside another package (bundled or vendored) lives, as `host > package` paths; named in the failure text. */
     bundledIn?: string[];
     packageName: string;
     packageVersion: string;
@@ -98,7 +98,7 @@ export const emitJUnitAudit = (options: JUnitAuditEmitOptions): string => {
     const vulnCases: TestCase[] = options.findings.map((finding) => {
         const { acknowledged, bundledIn, packageName, packageVersion, vulnerability: vuln } = finding;
         const fixHint = vuln.fixedVersions.length > 0 ? ` (fix: ${vuln.fixedVersions.join(", ")})` : "";
-        const bundledHint = bundledIn && bundledIn.length > 0 ? `\nBundled in: ${bundledIn.join("; ")}` : "";
+        const bundledHint = bundledIn && bundledIn.length > 0 ? `\nShipped inside: ${bundledIn.join("; ")}` : "";
 
         return {
             classname: `${packageName}@${packageVersion}`,

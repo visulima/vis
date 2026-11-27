@@ -238,7 +238,7 @@ describe(emitSarif, () => {
             workspaceRoot: "/repo",
         });
 
-        expect(log.runs[0]?.results[0]?.message.text).toContain("(bundled in host@1.0.0 > dep@2.0.0)");
+        expect(log.runs[0]?.results[0]?.message.text).toContain("(shipped inside host@1.0.0 > dep@2.0.0)");
         expect(log.runs[0]?.invocations?.[0]?.toolExecutionNotifications).toStrictEqual([
             { level: "note", message: { text: "Not scanned: next@16.3.8 vendors 126 packages without versions (dist/compiled)" } },
         ]);

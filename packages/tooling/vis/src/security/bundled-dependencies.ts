@@ -6,8 +6,10 @@
  * the lockfile never sees them. This module reads them from disk instead.
  *
  * A host is any package of the lockfile that is present under `node_modules` (the same walk `manifests.ts` does,
- * which also finds the real directory under pnpm's `.pnpm/` store). Each bundled name is read from
- * `&lt;host>/node_modules/&lt;name>/package.json`, and a bundled package that itself bundles is followed.
+ * which also finds the real directory under pnpm's `.pnpm/` store). A host that declares bundling ships its whole
+ * `node_modules`: the names it declares are only the top of the tree a package manager packs, so every package
+ * installed under it is read from `&lt;host>/node_modules/&lt;name>/package.json`, nested copies included. A package
+ * that declares nothing keeps its own nested `node_modules` out of this: those are the lockfile's.
  *
  * Some packages ship vendored copies of other packages with no declaration at all, in a `dist/compiled`-style
  * tree. A vendored directory whose manifest has a name and a version is scanned like a bundled copy. One with no
@@ -71,10 +73,28 @@ const listDirectories = (directory: string): string[] => {
     try {
         return readdirSync(directory, { withFileTypes: true })
             .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-            .map((entry) => entry.name);
+            .map((entry) => entry.name)
+            .toSorted();
     } catch {
         return [];
     }
+};
+
+/** The packages installed in a `node_modules` directory, as `name` or `@scope/name`. Links and dot-directories (`.bin`) are left out. */
+const listInstalledNames = (nodeModules: string): string[] => {
+    const names: string[] = [];
+
+    for (const entry of listDirectories(nodeModules)) {
+        if (entry.startsWith("@")) {
+            for (const inner of listDirectories(join(nodeModules, entry))) {
+                names.push(`${entry}/${inner}`);
+            }
+        } else {
+            names.push(entry);
+        }
+    }
+
+    return names;
 };
 
 /** The `@scope/name` form of a directory under a vendored tree, or its entries when it is a scope directory. */
@@ -148,7 +168,10 @@ export const scanBundledDependencies = (workspaceRoot: string, locked: Installed
         }
     };
 
-    const visit = (host: { directory: string; isDev: boolean; name: string; version: string }, chain: BundledHost[], bundled: string[] | undefined, depth: number): void => {
+    // `bundled` is what the host declares. `everything` is set for a host that declares any, and for every copy
+    // found inside one: a package manager packs the whole tree of a bundled dependency into the tarball, and only
+    // the top-level names are declared, so the packages under `node_modules` that nothing declares are read too.
+    const visit = (host: { directory: string; isDev: boolean; name: string; version: string }, chain: BundledHost[], bundled: string[] | undefined, depth: number, everything: boolean): void => {
         if (depth > MAX_DEPTH) {
             return;
         }
@@ -156,8 +179,15 @@ export const scanBundledDependencies = (workspaceRoot: string, locked: Installed
         const hostKey = `${host.name}@${host.version}`;
         const below = [...chain, { name: host.name, version: host.version }];
         const unreadable: string[] = [];
+        const names = new Set(bundled);
 
-        for (const declared of bundled ?? []) {
+        if (everything) {
+            for (const installedName of listInstalledNames(join(host.directory, "node_modules"))) {
+                names.add(installedName);
+            }
+        }
+
+        for (const declared of names) {
             const directory = join(host.directory, "node_modules", declared);
             const child = SAFE_NAME.test(declared) ? readManifest(directory) : undefined;
 
@@ -168,7 +198,7 @@ export const scanBundledDependencies = (workspaceRoot: string, locked: Installed
             }
 
             record(child.name, child.version, below, host.isDev);
-            visit({ directory, isDev: host.isDev, name: child.name, version: child.version }, below, child.bundled, depth + 1);
+            visit({ directory, isDev: host.isDev, name: child.name, version: child.version }, below, child.bundled, depth + 1, true);
         }
 
         if (unreadable.length > 0) {
@@ -198,7 +228,7 @@ export const scanBundledDependencies = (workspaceRoot: string, locked: Installed
         const manifest = manifests.get(`${pkg.name}@${pkg.version}`);
 
         if (manifest) {
-            visit({ directory: manifest.directory, isDev: pkg.isDev, name: pkg.name, version: pkg.version }, [], manifest.bundledDependencies, 0);
+            visit({ directory: manifest.directory, isDev: pkg.isDev, name: pkg.name, version: pkg.version }, [], manifest.bundledDependencies, 0, manifest.bundledDependencies !== undefined);
         }
     }
 

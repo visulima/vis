@@ -73,6 +73,57 @@ describe(scanBundledDependencies, () => {
         expect(scan.installed[1]?.bundledIn).toStrictEqual([[{ name: "host", version: "1.0.0" }]]);
     });
 
+    it("reads the packages under a bundling host that nothing declares, nested ones included", () => {
+        expect.assertions(3);
+
+        // A package manager packs the whole tree of a bundled dependency; only its top-level names are declared.
+        install("host", { bundleDependencies: ["declared"], name: "host", version: "1.0.0" });
+        install("host/node_modules/declared", { name: "declared", version: "1.0.0" });
+        install("host/node_modules/transitive", { name: "transitive", version: "2.0.0" });
+        install("host/node_modules/@scope/also", { name: "@scope/also", version: "3.0.0" });
+        install("host/node_modules/declared/node_modules/deep", { name: "deep", version: "4.0.0" });
+        write("node_modules/host/node_modules/.bin/tool", "#!/bin/sh\n");
+
+        const scan = scanBundledDependencies(root, locked(["host", "1.0.0"]));
+
+        expect(summary(scan.installed)).toStrictEqual([
+            "host@1.0.0",
+            "declared@1.0.0 (bundled only)",
+            "deep@4.0.0 (bundled only)",
+            "@scope/also@3.0.0 (bundled only)",
+            "transitive@2.0.0 (bundled only)",
+        ]);
+        expect(scan.installed.find((pkg) => pkg.name === "deep")?.bundledIn).toStrictEqual([
+            [
+                { name: "host", version: "1.0.0" },
+                { name: "declared", version: "1.0.0" },
+            ],
+        ]);
+        expect(scan.unauditable).toStrictEqual([]);
+    });
+
+    it("counts a directory under a bundling host that has no manifest", () => {
+        expect.assertions(2);
+
+        install("host", { bundleDependencies: ["a"], name: "host", version: "1.0.0" });
+        install("host/node_modules/a", { name: "a", version: "1.0.0" });
+        write("node_modules/host/node_modules/leftover/readme.md", "x");
+
+        const scan = scanBundledDependencies(root, locked(["host", "1.0.0"]));
+
+        expect(summary(scan.installed)).toStrictEqual(["host@1.0.0", "a@1.0.0 (bundled only)"]);
+        expect(scan.unauditable).toStrictEqual([{ count: 1, host: "host@1.0.0", kind: "bundled-unreadable", location: "node_modules", names: ["leftover"] }]);
+    });
+
+    it("leaves the nested copies of a package that declares no bundling to the lockfile", () => {
+        expect.assertions(1);
+
+        install("plain", { name: "plain", version: "1.0.0" });
+        install("plain/node_modules/nested", { name: "nested", version: "9.0.0" });
+
+        expect(summary(scanBundledDependencies(root, locked(["plain", "1.0.0"])).installed)).toStrictEqual(["plain@1.0.0"]);
+    });
+
     it("treats `bundleDependencies: true` as every declared dependency", () => {
         expect.assertions(1);
 

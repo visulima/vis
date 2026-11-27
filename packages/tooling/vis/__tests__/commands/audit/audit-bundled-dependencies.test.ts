@@ -55,7 +55,18 @@ const stubOsv = (): void => {
 
             return Response.json({
                 results: queries.map((query) =>
-                    (query.package.name === "bundled-dep" ? { vulns: [{ database_specific: { severity: "HIGH" }, id: "GHSA-bundled-0001", summary: "prototype pollution" }] } : {}),
+                    (query.package.name === "bundled-dep"
+                        ? {
+                            vulns: [
+                                {
+                                    affected: [{ package: { ecosystem: "npm", name: "bundled-dep" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "2.6.0" }], type: "SEMVER" }] }],
+                                    database_specific: { severity: "HIGH" },
+                                    id: "GHSA-bundled-0001",
+                                    summary: "prototype pollution",
+                                },
+                            ],
+                        }
+                        : {}),
                 ),
             });
         }),
@@ -75,14 +86,14 @@ const captureMessages = (): string[] => {
     return messages;
 };
 
-const execAudit = async (options: Record<string, unknown>): Promise<void> => {
+const execAudit = async (options: Record<string, unknown>, visConfig?: Record<string, unknown>): Promise<void> => {
     const { default: execute } = await import("../../../src/commands/audit/handler");
 
     await execute({
         fs: fsPromises,
         logger: console,
         options: { backend: "vis", ...options },
-        visConfig: undefined,
+        visConfig,
         workspaceRoot,
     } as unknown as Parameters<typeof execute>[0]);
 };
@@ -173,6 +184,56 @@ describe("vis audit with a package that bundles a dependency", () => {
         expect(report.packages).toBe(1);
     });
 
+    it("says where the copy lives in the table, and points --show-fixes at the host", async () => {
+        expect.assertions(3);
+
+        const messages = captureMessages();
+
+        await execAudit({ showFixes: true });
+
+        const text = messages.join("\n");
+
+        expect(text).toContain("bundled-dep@2.5.0");
+        expect(text).toContain("Shipped inside: host@1.0.0 > bundled-dep@2.5.0");
+        expect(text).toContain("Fix: upgrade host@1.0.0 to a release that ships bundled-dep@2.6.0 or later");
+    });
+
+    it("gates --fail-on on a finding in a bundled package, in JSON and in another format", async () => {
+        expect.assertions(3);
+
+        await execAudit({ failOn: "high", format: "json" });
+
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = undefined;
+        stdoutChunks = [];
+
+        await execAudit({ failOn: "high", format: "sarif" });
+
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = undefined;
+
+        await execAudit({ failOn: "critical", format: "json" });
+
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("gates the configured vulnerability floor on a bundled finding, even one --severity hides", async () => {
+        expect.assertions(3);
+
+        const config = { security: { policies: { vulnerability: { failOn: "high" } } } };
+
+        await execAudit({ format: "json", severity: "critical" }, config);
+
+        expect(process.exitCode).toBe(1);
+
+        const report = JSON.parse(stdoutChunks.join("")) as Report & { policies: { packageName: string; policy: string; severity: string }[] };
+
+        expect(report.results).toStrictEqual([]);
+        expect(report.policies.map((decision) => [decision.policy, decision.packageName, decision.severity])).toStrictEqual([["vulnerability", "bundled-dep", "block"]]);
+    });
+
     it("under --usage keeps a bundled finding when the workspace imports the host, not the bundled name", async () => {
         expect.assertions(2);
 
@@ -201,7 +262,7 @@ describe("vis audit with a package that bundles a dependency", () => {
 
         const text = messages.join("\n");
 
-        expect(text).toContain("bundled inside other packages");
+        expect(text).toContain("shipped inside other packages");
         expect(text).toContain("Upgrade the package that ships it: host@1.0.0");
     });
 
@@ -212,13 +273,13 @@ describe("vis audit with a package that bundles a dependency", () => {
 
         const sarif = JSON.parse(stdoutChunks.join("")) as { runs: { results: { message: { text: string } }[] }[] };
 
-        expect(sarif.runs[0]?.results[0]?.message.text).toContain("(bundled in host@1.0.0 > bundled-dep@2.5.0)");
+        expect(sarif.runs[0]?.results[0]?.message.text).toContain("(shipped inside host@1.0.0 > bundled-dep@2.5.0)");
 
         stdoutChunks = [];
 
         await execAudit({ format: "junit" });
 
-        expect(stdoutChunks.join("")).toContain("Bundled in: host@1.0.0 > bundled-dep@2.5.0");
+        expect(stdoutChunks.join("")).toContain("Shipped inside: host@1.0.0 > bundled-dep@2.5.0");
     });
 
     it("adds the bundled package to the CycloneDX BOM so the VEX reference resolves", async () => {

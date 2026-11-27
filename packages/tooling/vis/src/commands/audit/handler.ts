@@ -53,7 +53,7 @@ import type { AuditOptions } from "./index";
 
 interface AuditEntry {
     acceptedRisk?: AcceptedRisk;
-    /** The packages that ship a copy of this one inside themselves, outermost host first. */
+    /** The packages that ship a copy of this one inside themselves (bundled or vendored), outermost host first. */
     bundledIn?: BundledHost[][];
     /** The lockfile does not list this package; it is known only from the package that ships it. */
     bundledOnly?: boolean;
@@ -561,7 +561,7 @@ const executeAudit = async (
     if (!quietHeader && installed.length > 0) {
         const scope = prodOnly ? "production-only packages" : "installed packages";
 
-        const bundledNote = bundledScan.bundledCount > 0 ? ` (${String(bundledScan.bundledCount)} of them bundled inside other packages)` : "";
+        const bundledNote = bundledScan.bundledCount > 0 ? ` (${String(bundledScan.bundledCount)} of them shipped inside other packages)` : "";
 
         pail.info(`Scanning ${String(installed.length)} ${scope}${bundledNote}${isOffline ? " (offline)" : ""}…`);
     }
@@ -925,19 +925,32 @@ const executeAudit = async (
         const licenseEnabled = enabledPolicies === undefined || enabledPolicies.has("license");
         const manifestData = licenseConfigured && licenseEnabled ? readNodeModulesManifests(workspaceRoot) : undefined;
 
-        return evaluatePolicies(
-            {
-                manifestData,
-                offline: isOffline,
-                osvFindings: vulnMap,
-                packageManager: pm.name,
-                packages: lockedInstalled,
-                socketReports,
-                workspaceRoot,
-            },
-            "audit",
-            { enabledPolicies, visConfig: visConfig ?? {} },
-        );
+        const policyInput = {
+            manifestData,
+            offline: isOffline,
+            osvFindings: vulnMap,
+            packageManager: pm.name,
+            packages: lockedInstalled,
+            socketReports,
+            workspaceRoot,
+        };
+        const decisions = await evaluatePolicies(policyInput, "audit", { enabledPolicies, visConfig: visConfig ?? {} });
+
+        // The lockfile set is what the other policies judge: a package shipped inside another one is not a
+        // dependency the workspace chose, so an allow-list, a licence rule or a publisher check does not apply to
+        // it. A known vulnerability is a vulnerability wherever the copy lives, so `vulnerability` judges those too
+        // (its `failOn` floor then gates them like any other finding, even one `--severity` hides).
+        const shippedInside = installed.filter((pkg) => pkg.bundledOnly);
+        const vulnerabilityRuns = enabledPolicies === undefined ? visConfig?.security?.policies?.vulnerability !== undefined : enabledPolicies.has("vulnerability");
+
+        if (shippedInside.length === 0 || !vulnerabilityRuns) {
+            return decisions;
+        }
+
+        return [
+            ...decisions,
+            ...(await evaluatePolicies({ ...policyInput, packages: shippedInside }, "audit", { enabledPolicies: new Set(["vulnerability"]), visConfig: visConfig ?? {} })),
+        ];
     })();
 
     // 4b. Reachability filter (`--usage` / `security.audit.usage.enabled`).
@@ -1046,7 +1059,7 @@ const executeAudit = async (
             const hosts = [...new Set(insideOthers.flatMap((f) => f.bundledIn.map((path) => path.split(" > ")[0] ?? path)))].toSorted();
 
             pail.warn(
-                `${String(insideOthers.length)} finding${insideOthers.length === 1 ? "" : "s"} in packages bundled inside other packages ${insideOthers.length === 1 ? "is" : "are"} left out of --fix and --fix-transitive: `
+                `${String(insideOthers.length)} finding${insideOthers.length === 1 ? "" : "s"} in packages shipped inside other packages ${insideOthers.length === 1 ? "is" : "are"} left out of --fix and --fix-transitive: `
                 + `an override does not replace a copy a package ships inside itself. Upgrade the package that ships it: ${hosts.join(", ")}.`,
             );
         }
@@ -1279,6 +1292,15 @@ const executeAudit = async (
         return;
     }
 
+    // Where a copy shipped inside another package lives: the table lists `name@version` alone otherwise.
+    const printShippedInside = (entry: AuditEntry): void => {
+        if (entry.bundledIn && entry.bundledIn.length > 0) {
+            pail.info(dim(`    Shipped inside: ${entry.bundledIn.map((chain) => formatBundledPath(chain, entry.name, entry.version)).join("; ")}`));
+        }
+    };
+    const hostsOf = (entry: AuditEntry): string =>
+        [...new Set((entry.bundledIn ?? []).map((chain) => `${chain[0]?.name ?? ""}@${chain[0]?.version ?? ""}`))].join(", ");
+
     // Group vulnerabilities by severity
     const vulnsBySeverity: Record<string, { entry: AuditEntry; vuln: SecurityVulnerability }[]> = {
         CRITICAL: [],
@@ -1323,9 +1345,15 @@ const executeAudit = async (
 
             totalVulns++;
             pail.info(formatVulnLine(entry.name, entry.version, vuln, isExcluded));
+            printShippedInside(entry);
 
             if (showFixes && (vuln.fixedVersions ?? []).length > 0) {
-                pail.notice(`    Fix: update to ${vuln.fixedVersions.at(-1)}`);
+                // A copy shipped inside another package cannot be updated on its own: the host has to ship a fixed one.
+                pail.notice(
+                    entry.bundledOnly
+                        ? `    Fix: upgrade ${hostsOf(entry)} to a release that ships ${entry.name}@${vuln.fixedVersions.at(-1)} or later`
+                        : `    Fix: update to ${vuln.fixedVersions.at(-1)}`,
+                );
             }
 
             const explanation = explanations.get(explainKey({ packageName: entry.name, packageVersion: entry.version, vulnerability: vuln }));
@@ -1356,6 +1384,7 @@ const executeAudit = async (
             }
 
             pail.info(formatSocketLine(entry.socketReport, isExcluded));
+            printShippedInside(entry);
 
             for (const alert of entry.socketReport.alerts) {
                 const alertColorFunction = SOCKET_ALERT_COLORS[alert.severity] ?? dim;
