@@ -28,7 +28,7 @@ if (typeof nativeRunTaskKeys !== "function" || typeof nativeRunLookupEntry !== "
     throw new TypeError("the loaded addon has no nativeRunTaskKeys / nativeRunLookupEntry: rebuild it with `pnpm build:native:debug`");
 }
 
-// The native run answers POSIX workspaces only; Windows is handed to Node.
+// Windows cannot create a symlink without a privilege, nor a directory named `a*b` or `a?b`; everything else runs there.
 const isWindows = process.platform === "win32";
 
 const TARGET = "build";
@@ -246,7 +246,7 @@ const diamond: ProjectSpec[] = [
     { name: "a", script: "node build.js" },
 ];
 
-describe.skipIf(isWindows)("native run task keys equal the orchestrator's keys", () => {
+describe("native run task keys equal the orchestrator's keys", () => {
     it.each([
         ["chain", chain],
         ["diamond", diamond],
@@ -367,14 +367,17 @@ describe.skipIf(isWindows)("native run task keys equal the orchestrator's keys",
         put(root, "packages/a/docs/dist", "a file named dist");
         put(root, "packages/a/docs/coverage", "a file named coverage");
         put(root, "packages/a/docs/.cache", "a hidden file named .cache");
-        symlinkSync(join(root, "packages/a/src/with space.ts"), join(root, "packages/a/link-to-file.ts"));
-        symlinkSync(join(root, "packages/a/src"), join(root, "packages/a/link-to-dir"));
-        symlinkSync(join(root, "packages/a/missing"), join(root, "packages/a/dangling"));
+
+        if (!isWindows) {
+            symlinkSync(join(root, "packages/a/src/with space.ts"), join(root, "packages/a/link-to-file.ts"));
+            symlinkSync(join(root, "packages/a/src"), join(root, "packages/a/link-to-dir"));
+            symlinkSync(join(root, "packages/a/missing"), join(root, "packages/a/dangling"));
+        }
 
         await expectParity(root, specs, false);
     });
 
-    it("hashes the same files behind symlinks: a link out of the project, a cycle and a dangling link", async () => {
+    it.skipIf(isWindows)("hashes the same files behind symlinks: a link out of the project, a cycle and a dangling link", async () => {
         expect.hasAssertions();
 
         const specs: ProjectSpec[] = [{ name: "a", script: "tsc" }];
@@ -474,7 +477,7 @@ describe.skipIf(isWindows)("native run task keys equal the orchestrator's keys",
     });
 });
 
-describe.skipIf(isWindows)("what the native run does not reproduce", () => {
+describe("what the native run does not reproduce", () => {
     it.each([
         ["a task that disables the cache", [{ cache: false, name: "a", script: "tsc" }], /disables the cache/],
         ["a task with declared outputs", [{ name: "a", outputs: ["{projectRoot}/dist"], script: "tsc" }], /declares outputs/],
@@ -520,7 +523,7 @@ describe.skipIf(isWindows)("what the native run does not reproduce", () => {
         expect(rustKeys(root, specs, false).notReproducible).toBeUndefined();
     });
 
-    it.each(["[x]", "{a,b}", "a*b", "a?b", "(x)", "a!b"])("a workspace path with %s", (fragment) => {
+    it.each(isWindows ? ["[x]", "{a,b}", "(x)", "a!b"] : ["[x]", "{a,b}", "a*b", "a?b", "(x)", "a!b"])("a workspace path with %s", (fragment) => {
         expect.hasAssertions();
 
         const specs: ProjectSpec[] = [{ name: "a", script: "tsc" }];
@@ -536,6 +539,81 @@ describe.skipIf(isWindows)("what the native run does not reproduce", () => {
         const root = createWorkspace(specs);
 
         expect(nativeRunTaskKeys(root, "app:build", toNativeProjects(specs), false).notReproducible).toMatch(/not a plain target name/);
+    });
+});
+
+/**
+ * The key Node computes for the fixture below, on macOS, Linux and Windows alike: it has to be one value, because the
+ * key reads workspace-relative `/` paths and file bytes only. The Rust test `a_fixed_workspace_has_the_key_node_computes`
+ * (`run_key.rs`) writes the same bytes and pins the same value, so the native run's key cannot move on any platform.
+ */
+const FIXED_KEY = "c9bceef8fcb8fd885b8f8f3f5d57deb4";
+
+/** The bytes of the fixed workspace: a project with a CRLF file and nested sources, and CRLF global inputs. */
+const createFixedWorkspace = (): { root: string; specs: ProjectSpec[] } => {
+    const specs: ProjectSpec[] = [{ name: "a", script: "tsc" }];
+    const root = createWorkspace(specs, { lockfile: false });
+
+    put(root, "packages/a/src/crlf.txt", "one\r\ntwo\r\n");
+    put(root, "packages/a/src/nested/deep/last.ts", "export {};\n");
+    put(root, "tsconfig.json", "{\r\n}\r\n");
+
+    return { root, specs };
+};
+
+describe("a fixed workspace", () => {
+    it("has the one key Node computes on every platform, and the native run gives it", async () => {
+        expect.hasAssertions();
+
+        const { root, specs } = createFixedWorkspace();
+        const node = await expectParity(root, specs, false);
+
+        expect(node.hashes["a:build"]).toBe(FIXED_KEY);
+    });
+});
+
+describe.skipIf(!isWindows)("a Windows workspace root", () => {
+    const specs: ProjectSpec[] = [
+        { name: "a", script: "tsc" },
+        { name: "b", script: "tsc" },
+    ];
+
+    it.each([
+        ["a lowercase drive letter", (root: string) => root.replace(/^[A-Z]:/, (drive) => drive.toLowerCase())],
+        ["forward slashes", (root: string) => root.replaceAll("\\", "/")],
+        ["a trailing separator", (root: string) => `${root}\\`],
+        ["a trailing forward slash", (root: string) => `${root.replaceAll("\\", "/")}/`],
+    ])("keys %s the way Node does", async (_name, spell) => {
+        expect.hasAssertions();
+
+        const root = createWorkspace(specs);
+
+        put(root, "tsconfig.json", "{}\r\n");
+
+        const spelt = spell(root);
+
+        expect(spelt).not.toBe(root);
+
+        // Node keyed from the spelling too: the hasher gets the root as given.
+        const node = await expectParity(spelt, specs, false);
+
+        expect(node.hashes).toStrictEqual((await runNode(root, specs, false)).hashes);
+    });
+
+    it.each([
+        ["a verbatim root", (root: string) => `\\\\?\\${root}`],
+        ["a verbatim UNC root", (root: string) => `\\\\?\\UNC\\localhost\\${root.replace(":", "$")}`],
+        ["a network root", (root: string) => `\\\\localhost\\${root.replace(":", "$")}`],
+        ["a device root", (root: string) => `\\\\.\\${root}`],
+        ["a drive-relative root", (root: string) => `${root.slice(0, 2)}${root.slice(3)}`],
+        ["a root with no drive", (root: string) => root.slice(2)],
+        ["a drive root", (root: string) => `${root.slice(0, 3)}`],
+    ])("does not key %s", (_name, spell) => {
+        expect.hasAssertions();
+
+        const root = createWorkspace(specs);
+
+        expect(rustKeys(spell(root), specs, false).notReproducible).toMatch(/not a plain absolute path/);
     });
 });
 

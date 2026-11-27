@@ -367,7 +367,13 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).expect("scratch directory");
 
-        directory.canonicalize().expect("canonical")
+        // A canonical Windows path is verbatim (`\\?\C:\…`), a root the keyer leaves to Node on purpose; the temp
+        // directory is already an absolute drive-letter path there.
+        if cfg!(windows) {
+            directory
+        } else {
+            directory.canonicalize().expect("canonical")
+        }
     }
 
     /// A workspace of `count` projects with one source file each, and a cache holding an entry for every task.
@@ -412,7 +418,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the run keys are not computed on Windows: `TaskKeyer` returns `UnsupportedPlatform`")]
     fn every_hit_is_listed_in_project_order_with_its_own_output() {
         let (root, cache, projects) = cached_workspace("order", 60);
         let hits = look_up(&root, &cache, &projects).expect("every task hits");
@@ -427,7 +432,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the run keys are not computed on Windows: `TaskKeyer` returns `UnsupportedPlatform`")]
     fn one_task_that_is_not_a_clean_hit_gives_no_answer_wherever_it_is() {
         for position in [0, 1, 30, 58, 59] {
             let (root, cache, projects) = cached_workspace(&format!("miss-{position}"), 60);
@@ -465,7 +469,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the run keys are not computed on Windows: `TaskKeyer` returns `UnsupportedPlatform`")]
     fn a_project_without_input_files_gives_no_answer() {
         let (root, cache, projects) = cached_workspace("no-files", 8);
 
@@ -477,7 +480,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the run keys are not computed on Windows: `TaskKeyer` returns `UnsupportedPlatform`")]
     fn the_lookup_times_run_in_start_order_along_project_order() {
         let (root, cache, projects) = cached_workspace("times", 40);
         let mut hits = look_up(&root, &cache, &projects).expect("every task hits");
@@ -502,7 +504,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the run keys are not computed on Windows: `TaskKeyer` returns `UnsupportedPlatform`")]
     fn the_summary_is_written_like_json_stringify_with_the_hits_in_project_order() {
         let (root, cache, projects) = cached_workspace("summary", 3);
         let hits = look_up(&root, &cache, &projects).expect("every task hits");
