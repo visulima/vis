@@ -1,3 +1,36 @@
+## @visulima/task-runner [4.0.0-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.3...@visulima/task-runner@4.0.0-next.1) (2026-11-27)
+
+### ⚠ BREAKING CHANGES
+
+* **task-runner:** `runConcurrentFallback` is no longer exported from
+`@visulima/task-runner`, and `VIS_CONCURRENT_RUNNER=js` no longer selects
+another runner.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Bug Fixes
+
+* **task-runner:** answer the cursor position request ConPTY starts a command with ([9e9e83d](https://github.com/visulima/vis/commit/9e9e83dad25b5a22288d5622f277ca0d8e730b9b))
+* **task-runner:** end a Windows pty command's output by closing its terminal ([9d55009](https://github.com/visulima/vis/commit/9d550090bd7be3440a7bf1d46df15ce58126a80b))
+* **task-runner:** start Windows pipe commands suspended so no descendant escapes the job ([4b3bb26](https://github.com/visulima/vis/commit/4b3bb26a2f49b9d31e6bdef339dc8d9a4e900d42))
+
+### Performance Improvements
+
+* **task-runner:** build the lines of a read into groups in the reader, with one idle timer ([3e80e8d](https://github.com/visulima/vis/commit/3e80e8d5bd1238d27eae482f6cd7a902b4b84bad))
+* **task-runner:** make the native event path as fast as the JS spawner for output and pty runs ([158867f](https://github.com/visulima/vis/commit/158867ff89164f86ab9c6bb31754971abdc0cb08))
+* **task-runner:** queue event batches without waiting for each one to be handled ([d11b260](https://github.com/visulima/vis/commit/d11b260b104e6a54d3f90c74195a31e8e2672b00))
+
+### Code Refactoring
+
+* **task-runner:** remove the TypeScript spawner and the VIS_CONCURRENT_RUNNER switch ([4bf89db](https://github.com/visulima/vis/commit/4bf89db679ab6fdf61b0bd76de12f730be530734))
+* **task-runner:** simplify the line grouping fold and a redundant rebinding ([df392f0](https://github.com/visulima/vis/commit/df392f02f756c9f1a0c3a2d231f91d395779d2b2))
+* **task-runner:** tighten comments and drop a weak assertion in the suspended-start change ([5bdc933](https://github.com/visulima/vis/commit/5bdc933a96af350cf977e9d027168130921b0f17))
+
+### Tests
+
+* **task-runner:** bound every bench run and log progress so a hang is a row, not a lost job ([0ea4542](https://github.com/visulima/vis/commit/0ea4542a94a0f93d3d5887694bc375a89e8cc321))
+* **task-runner:** measure output-heavy and pty runs in the runner throughput harness ([15dd941](https://github.com/visulima/vis/commit/15dd94108a6d3c6779d5bf5e4a44f2340e392da4))
+
 ## @visulima/task-runner [3.1.0-next.3](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.2...@visulima/task-runner@3.1.0-next.3) (2026-11-26)
 
 ### Features
