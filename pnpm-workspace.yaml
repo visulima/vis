@@ -14,6 +14,7 @@ packages:
   - "!packages/tooling/vis/native/cli/tests/fixtures/clean/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/cache-hash/**"
   - "!packages/tooling/vis/native/cli/tests/fixtures/list/**"
+  - "!packages/tooling/vis/native/cli/tests/fixtures/windows-node/**"
 
 allowBuilds:
   '@firebase/util': false

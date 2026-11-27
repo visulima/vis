@@ -1,0 +1,8 @@
+digraph ProjectGraph {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor="#87CEEB", fontname="monospace"];
+  "alpha" [fillcolor="#87CEEB"];
+  "beta-cli" [fillcolor="#FFD700"];
+  "gamma" [fillcolor="#87CEEB"];
+  "gamma" -> "alpha" [style=solid];
+}

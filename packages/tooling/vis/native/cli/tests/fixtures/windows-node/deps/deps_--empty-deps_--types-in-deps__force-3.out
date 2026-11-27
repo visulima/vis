@@ -1,0 +1,6 @@
+[33m[1mFound 1 empty dependency block[22m[39m
+  [1mb[22m [2m(packages/b/package.json)[22m
+    [2mdependencies[22m: [31m{}[39m
+[2m  Run with --fix to drop empty blocks.[22m
+
+[32m✓ types-in-deps: no @types/* in dependencies of private packages[39m

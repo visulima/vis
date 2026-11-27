@@ -289,7 +289,7 @@ const LIST_NATIVE_SHAPES = [[], ["--json"], ["--format", "json"], ["--format", "
 // is native: no flags, `--json`, or one `--format` value. The binary re-checks the CI context and
 // every other shape, so this only skips the extra process when it would delegate anyway.
 const listMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+    if (interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -439,7 +439,7 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
 // `--json`, in a CI context off a terminal. The binary re-checks everything, including whether it can learn the Node
 // version a pin needs, so this only skips the extra process when it would delegate anyway.
 const statusMayRunNatively = (platform, environment, args, interactive) =>
-    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
+    !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
@@ -1047,7 +1047,7 @@ const graphOption = (args, index) => {
 };
 
 const graphMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+    if (interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -1392,7 +1392,7 @@ const auditMayRunNatively = (platform, environment, args, cwd, interactive, hold
 // longer id), in printable ASCII and not starting with `-`, for a pnpm workspace whose root is the working directory, in a
 // CI context off a terminal. The output is the same in every colour environment, but the Node runtime's own colour warning
 // is not. The binary re-checks everything, including the config, the project and its target (an error prints a stack
-// trace, which stays in Node); this only skips the extra process when it would delegate anyway. Windows stays in Node.
+// trace, which stays in Node); this only skips the extra process when it would delegate anyway. The text holds no path and no colour, so Windows answers it too.
 const TASK_WHY_ID = /^[\u0021-\u007E]+$/;
 
 const taskWhyIdIsNative = (id) => {
@@ -1406,7 +1406,7 @@ const taskWhyIdIsNative = (id) => {
 };
 
 const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+    if (interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
         return false;
     }
 
@@ -1416,7 +1416,7 @@ const taskWhyMayRunNatively = (platform, environment, args, cwd, interactive, ho
 // Whether `vis hook list` and `vis hook validate` can pass the binary's native gate (`parse` and `answer` in `hook/list.rs` and `hook/validate.rs`): the plain command, or
 // one `--hooks-dir` that is a relative path of plain segments the argument parser keeps as a string, at the root of a pnpm
 // workspace in a CI context off a terminal. The binary re-checks everything, including the files of the hooks directory, so this
-// only skips the extra process when it would delegate anyway. Windows stays in Node.
+// only skips the extra process when it would delegate anyway. Only `hook list` answers on Windows.
 const HOOKS_DIRECTORY_START = /^(?:[A-Z_]|\.[A-Z_])/i;
 const HOOKS_DIRECTORY_SEGMENT = /^[\w.-]+$/;
 const HOOKS_DIRECTORY_RESERVED = new Set(["false", "infinity", "nan", "null", "true", "undefined"]);
@@ -1442,7 +1442,8 @@ const hookShapeIsNative = (args) => {
 };
 
 const hookMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+    // `hook validate` runs `sh -n` and reads file modes, which the binary only does on unix.
+    if ((platform === "win32" && args[1] !== "list") || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
         return false;
     }
 
@@ -1526,9 +1527,9 @@ const depsShape = (flags) => {
 // Whether `vis deps` can pass the binary's native gate (`parse` and `answer` in `deps/mod.rs`): the lint selectors, `--quiet` and `--format`,
 // at the root of a pnpm workspace in a CI context off a terminal, with a colour the binary can tell when it prints the human format. The binary
 // re-checks everything, including the manifests and any drift between packages, so this only skips the extra process when it would delegate
-// anyway. `--fix` and every flag that takes a policy stay in Node. Windows stays in Node.
+// anyway. `--fix` and every flag that takes a policy stay in Node.
 const depsMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+    if (interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
         return false;
     }
 

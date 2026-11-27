@@ -23,7 +23,7 @@ use crate::js::is_index_like;
 use crate::json::{stringify, Json};
 use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::{node_may_cut_short, write_stdout, STREAM_LIMIT};
-use crate::term::{piped_colour_level, Style};
+use crate::term::{piped_stdout_colour_level, Style};
 use crate::vis_config;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -370,7 +370,7 @@ fn answer(args: &[String]) -> Option<String> {
 
     // Pail's level for a run with neither stream on a terminal; `None` for a terminal, a colour flag and the
     // cases only Node can tell.
-    let colour = piped_colour_level(args)? > 0;
+    let colour = piped_stdout_colour_level(args)? > 0;
 
     text_for(&root, &options, Style { colour })
 }

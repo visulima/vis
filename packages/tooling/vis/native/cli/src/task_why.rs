@@ -16,13 +16,14 @@
 //! - a project the workspace holds, with a script of that name; every error (an unknown project or target, a task
 //!   that is not in the graph) prints a stack trace on stderr, which Node alone can reproduce;
 //! - the workspace root as the working directory, in a CI context off a terminal (`native_context`), without the
-//!   settings that change what Node prints (`output_settings_are_default`), on a Unix system;
+//!   settings that change what Node prints (`output_settings_are_default`); the output holds no path and no colour,
+//!   so it is the same on every platform;
 //! - not the root project (`.`): Node drops its scripts that only forward to another project.
 
 use std::ffi::OsString;
 
 use crate::js::PROTOTYPE_NAMES;
-use crate::node_context::context_is_native;
+use crate::node_context::portable_context_is_native;
 use crate::output::write_stdout;
 use crate::targets::{script_targets, Targets};
 use crate::text::is_ascii_graphic;
@@ -51,7 +52,7 @@ fn answer(args: &[String]) -> Option<String> {
     let (id, project, target) = parse(args)?;
 
     // `workspace.projects[name]` finds an inherited member of `Object.prototype` for these names in Node.
-    if PROTOTYPE_NAMES.contains(&project) || !context_is_native() {
+    if PROTOTYPE_NAMES.contains(&project) || !portable_context_is_native() {
         return None;
     }
 

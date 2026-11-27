@@ -1,0 +1,12 @@
+{
+    "$comment": "Captured from the Node CLI on Windows by ../capture.mjs; tests/windows_node_parity.rs runs the same commands against the native binary. `workspace` is a directory below tests/fixtures.",
+    "workspace": "windows-node/workspaces/deps",
+    "commands": [
+        ["deps"],
+        ["deps", "--format", "json"],
+        ["deps", "--format", "minimal"],
+        ["deps", "--quiet"],
+        ["deps", "--empty-deps", "--types-in-deps"],
+        ["deps", "--dead-workspace-patterns", "--format", "json"]
+    ]
+}

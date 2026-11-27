@@ -1,0 +1,36 @@
+[33m[1mFound 1 workspace-protocol violation[22m[39m
+  [1ma[22m [2m(packages/a/package.json)[22m
+    [2mdependencies[22m b: [31m^1.0.0[39m [33m→[39m [32mworkspace:*[39m
+[2m  Run with --fix to rewrite specifiers in place.[22m
+
+[32m✓ redefine-root: no violations[39m
+
+[32m✓ workspace-versions: no drift[39m
+
+[32m✓ custom-types: no engines / packageManager / volta drift[39m
+
+[32m✓ banned-deps: no violations[39m
+
+[33m[1mFound 1 empty dependency block[22m[39m
+  [1mb[22m [2m(packages/b/package.json)[22m
+    [2mdependencies[22m: [31m{}[39m
+[2m  Run with --fix to drop empty blocks.[22m
+
+[32m✓ root-private: root package.json is "private": true[39m
+
+[31m[1mMissing packageManager on root [2m(package.json)[1m[22m[39m
+[2m    no canonical specifier configured (set policy.rootPackageManager.suggested to enable --fix)[22m
+[2m  e.g. "packageManager": "pnpm@10.32.1"[22m
+
+[32m✓ root-deps: no runtime dependencies on private root[39m
+
+[32m✓ missing-package-json: every workspace dir has a package.json[39m
+
+[33m[1mFound 1 unmatched workspace pattern[22m[39m
+  [1mpnpm-workspace.yaml[22m
+    [31mapps/*[39m
+[2m  Run with --fix to drop dead patterns.[22m
+
+[32m✓ types-in-deps: no @types/* in dependencies of private packages[39m
+
+[32m✓ similar-deps: every related dep family is in sync[39m

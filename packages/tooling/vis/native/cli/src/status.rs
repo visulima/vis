@@ -14,7 +14,7 @@
 //!   type (`retryAttempts`, `stats.total`), is left to Node, because Node would skip, coerce or throw there.
 //!
 //! The text view is coloured by `@visulima/colorize`; the colour comes from the same detection as pail's
-//! ([`crate::term::piped_colour_level`]), and a run that cannot tell is Node's.
+//! ([`crate::term::piped_stdout_colour_level`]), and a run that cannot tell is Node's.
 
 use std::collections::HashMap;
 use std::env;
@@ -31,7 +31,7 @@ use crate::list::unique_target_count;
 use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::write_stdout;
 use crate::runtime_check::count_findings;
-use crate::term::{piped_colour_level, Style};
+use crate::term::{piped_stdout_colour_level, Style};
 use crate::toolchain::{resolve_command, Versions};
 use crate::vis_config;
 
@@ -322,7 +322,7 @@ fn answer(args: &[String]) -> Option<String> {
 
     // The text view is painted by the colour library: its level, or Node's answer when this cannot tell. The JSON
     // carries no colour.
-    let style = if json { Style { colour: false } } else { Style { colour: piped_colour_level(args)? > 0 } };
+    let style = if json { Style { colour: false } } else { Style { colour: piped_stdout_colour_level(args)? > 0 } };
     let overview = overview(&root)?;
 
     Some(if json { render_json(&overview) } else { render_text(&overview, style) })

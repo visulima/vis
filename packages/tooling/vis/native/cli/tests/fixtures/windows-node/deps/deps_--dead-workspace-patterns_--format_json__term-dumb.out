@@ -1,0 +1,24 @@
+{
+  "fixed": {
+    "catalogProposals": false,
+    "customTypes": false,
+    "deadWorkspacePatterns": false,
+    "emptyDeps": false,
+    "rootDeps": false,
+    "rootPackageManager": false,
+    "rootPrivate": false,
+    "typesInDeps": false,
+    "workspaceProtocol": false,
+    "workspaceVersions": false
+  },
+  "deadWorkspacePatterns": {
+    "issues": [
+      {
+        "pattern": "apps/*",
+        "source": "pnpm-workspace.yaml",
+        "sourcePath": "{workspace}/pnpm-workspace.yaml"
+      }
+    ],
+    "total": 1
+  }
+}

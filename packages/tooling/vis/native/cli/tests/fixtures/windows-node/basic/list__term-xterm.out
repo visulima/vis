@@ -1,0 +1,7 @@
+Project   Type         Layer  Tags  Targets                          
+─────────────────────────────────────────────────────────────────────
+alpha     library      —      —     build, test, lint, typecheck… (6)
+beta-cli  application  —      —     start                            
+gamma     library      —      —     build                            
+
+3 project(s)

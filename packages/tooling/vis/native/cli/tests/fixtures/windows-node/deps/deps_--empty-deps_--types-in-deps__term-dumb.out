@@ -1,0 +1,6 @@
+Found 1 empty dependency block
+  b (packages/b/package.json)
+    dependencies: {}
+  Run with --fix to drop empty blocks.
+
+✓ types-in-deps: no @types/* in dependencies of private packages

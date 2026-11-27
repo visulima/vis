@@ -1,0 +1,93 @@
+{
+  "fixed": {
+    "catalogProposals": false,
+    "customTypes": false,
+    "deadWorkspacePatterns": false,
+    "emptyDeps": false,
+    "rootDeps": false,
+    "rootPackageManager": false,
+    "rootPrivate": false,
+    "typesInDeps": false,
+    "workspaceProtocol": false,
+    "workspaceVersions": false
+  },
+  "workspaceProtocol": {
+    "issues": [
+      {
+        "depName": "b",
+        "depType": "dependencies",
+        "fix": "workspace:*",
+        "packageDir": "packages/a",
+        "packageJsonPath": "packages/a/package.json",
+        "packageName": "a",
+        "specifier": "^1.0.0"
+      }
+    ],
+    "total": 1
+  },
+  "redefineRoot": {
+    "issues": [],
+    "total": 0
+  },
+  "workspaceVersions": {
+    "issues": [],
+    "total": 0
+  },
+  "customTypes": {
+    "issues": [],
+    "total": 0
+  },
+  "bannedDeps": {
+    "issues": [],
+    "total": 0
+  },
+  "emptyDeps": {
+    "issues": [
+      {
+        "depType": "dependencies",
+        "packageDir": "packages/b",
+        "packageJsonPath": "packages/b/package.json",
+        "packageName": "b"
+      }
+    ],
+    "total": 1
+  },
+  "rootPrivate": {
+    "issues": [],
+    "total": 0
+  },
+  "rootPackageManager": {
+    "issues": [
+      {
+        "packageJsonPath": "package.json"
+      }
+    ],
+    "total": 1
+  },
+  "rootDeps": {
+    "issues": [],
+    "total": 0
+  },
+  "missingPackageJson": {
+    "issues": [],
+    "total": 0
+  },
+  "deadWorkspacePatterns": {
+    "issues": [
+      {
+        "pattern": "apps/*",
+        "source": "pnpm-workspace.yaml",
+        "sourcePath": "{workspace}/pnpm-workspace.yaml"
+      }
+    ],
+    "total": 1
+  },
+  "typesInDeps": {
+    "issues": [],
+    "total": 0
+  },
+  "similarDeps": {
+    "issues": [],
+    "total": 0
+  }
+}

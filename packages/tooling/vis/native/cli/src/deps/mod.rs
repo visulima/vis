@@ -8,8 +8,9 @@
 //! - an argument other than the lint selectors, `--quiet` and `--format human|json|minimal` (each at most once), so
 //!   `--fix`, `--ban`, `--pin`, `--dep`, `--resolve`, `--fix-specifier` and `--propose-min` stay in Node (they write
 //!   files or take a policy), and `--banned-deps` without `--quiet` (Node warns that there is no policy to check);
-//! - the context of the other read-only commands (`context_is_native`: a CI context off a terminal at the root of a
-//!   pnpm workspace, no `vis.config`) and, for the human format, a colour level the binary can tell;
+//! - the context of the other read-only commands (`portable_context_is_native`: a CI context off a terminal at the root
+//!   of a pnpm workspace, no `vis.config`; the same on Windows, where the paths in the JSON go through
+//!   `printed_path`) and, for the human format, a colour level the binary can tell;
 //! - a workspace Node reads differently: `package.json#workspaces`, `overrides` in the workspace YAML, a manifest
 //!   that is not strict JSON, a dependency block that is an array, a pattern outside the shapes of `workspace.rs`;
 //! - a drift between packages (`workspace-versions`, `custom-types`): the canonical specifier comes from a semver
@@ -24,7 +25,7 @@ use std::process::exit;
 
 use lint::Report;
 
-use crate::node_context::context_is_native;
+use crate::node_context::portable_context_is_native;
 
 use crate::output::write_stdout;
 
@@ -218,13 +219,14 @@ fn parse(args: &[String]) -> Option<Options> {
 fn answer(args: &[String]) -> Option<(String, i32)> {
     let options = parse(args)?;
 
-    if !context_is_native() {
+    if !portable_context_is_native() {
         return None;
     }
 
-    // Only the human format is coloured; its escape codes depend on the detection the binary shares with Node.
+    // Only the human format is coloured; its escape codes depend on the detection the binary shares with Node. It
+    // prints no pail header, so no clock: the detection holds on Windows too.
     let colour = if options.format == Format::Human && !options.quiet {
-        crate::term::piped_colour_level(args)? > 0
+        crate::term::piped_stdout_colour_level(args)? > 0
     } else {
         false
     };
@@ -241,7 +243,7 @@ fn answer(args: &[String]) -> Option<(String, i32)> {
 
     let text = match options.format {
         Format::Human => print::human(&workspace, &report, selection, colour),
-        Format::Json => print::json(&workspace, &report, selection),
+        Format::Json => print::json(&workspace, &report, selection)?,
         Format::Minimal => print::minimal(&workspace.packages, &report, selection),
     };
 

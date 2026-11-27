@@ -1,0 +1,13 @@
+{
+    "$comment": "Captured from the Node CLI on Windows by ../capture.mjs; tests/windows_node_parity.rs runs the same commands against the native binary. `workspace` is a directory below tests/fixtures.",
+    "workspace": "list/basic",
+    "commands": [
+        ["list"],
+        ["list", "--json"],
+        ["graph"],
+        ["graph", "--format", "json"],
+        ["graph", "--format", "dot"],
+        ["status"],
+        ["status", "--json"]
+    ]
+}
