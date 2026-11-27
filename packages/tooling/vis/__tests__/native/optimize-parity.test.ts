@@ -298,7 +298,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.hasAssertions();
 
             harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": 'packages:\n  - "packages/{a,b}"\n' }, []);
-            harness.expectDelegation({ ...rich(), ".gitignore": "*.log\n" }, []);
+            harness.expectDelegation({ ...rich(), ".gitignore": "!kept\n" }, []);
+            harness.expectDelegation({ ...rich(), ".gitignore": "**/dist\n" }, []);
         });
 
         it("a workspace that is not rooted at the working directory is declined", () => {
