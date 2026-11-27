@@ -1155,6 +1155,19 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
 
+// Whether `vis security tripwire` can pass the binary's native gate (`parse` and `answer` in `security_tripwire.rs`): `--status`,
+// `--remove` or no flag, for a pnpm workspace whose root is the working directory, in a CI context off a terminal with a pail
+// layout the environment decides. The run only reads `package.json`: the binary hands to Node every run that would install the
+// package or rewrite the file, and re-checks everything else, including the config; this only skips the extra process when it
+// would delegate anyway. It stays in Node on Windows.
+const securityTripwireMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && (args.length === 2 || (args.length === 3 && (args[2] === "--status" || args[2] === "--remove")));
+};
+
 // Whether `vis security keys-refresh` can pass the binary's native gate (`parse` and `answer` in `keys_refresh.rs`): `--json`,
 // alone or with `--clear` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
 // terminal, with no proxy, CA or Node option in the environment. The command prints no pail line in this form, so the colour
@@ -1631,7 +1644,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
-    // `security list --json`, `security keys-refresh --json` and `security sync`; the other `security` subcommands use the network or run scripts, and follow the help rule below.
+    // `security list --json`, `security keys-refresh --json`, `security sync` and the read-only runs of `security tripwire`; the other `security` subcommands use the network or run scripts, and follow the help rule below.
     [
         "security",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
@@ -1645,6 +1658,10 @@ const NATIVE_SHAPE_GATES = new Map([
 
             if (subcommand === "sync") {
                 return helpOrNative(args, () => securitySyncMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            }
+
+            if (subcommand === "tripwire") {
+                return helpOrNative(args, () => securityTripwireMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
             }
 
             return undefined;
