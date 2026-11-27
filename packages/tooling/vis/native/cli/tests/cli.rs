@@ -21,8 +21,53 @@ fn binary() -> Command {
     command
 }
 
+/// A directory made for one test: it holds a `package.json`, and a `tput.exe` when `tput` is given, so it is also the
+/// whole `PATH` of a run whose width lookup must or must not find `tput`.
+#[cfg(windows)]
+fn tool_directory(tag: &str, tput: bool) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!("vis-help-{}-{tag}", std::process::id()));
+
+    std::fs::create_dir_all(&directory).expect("create the directory");
+    std::fs::write(directory.join("package.json"), "{\"name\":\"t\"}").expect("write package.json");
+
+    if tput {
+        std::fs::write(directory.join("tput.exe"), "").expect("write the stand-in for tput");
+    }
+
+    directory
+}
+
+/// The binary as a piped CI job runs it on Windows, with nothing in its environment that tells a size or a colour
+/// level: the working directory and the `PATH` are `directory`, which decides whether a `tput` is on offer.
+#[cfg(windows)]
+fn bare_binary(directory: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vis"));
+
+    command
+        .env_clear()
+        .env("SystemRoot", std::env::var_os("SystemRoot").unwrap_or_default())
+        .env("PATH", directory)
+        .env("VIS_VERSION", "6.6.0")
+        .env("VIS_NO_UPDATE_CHECK", "1")
+        .env("VIS_NO_SPONSOR", "1")
+        .env("VIS_NO_MCP_PROMOTE", "1")
+        .env("NO_UPDATE_NOTIFIER", "1")
+        .current_dir(directory);
+
+    command
+}
+
+/// What Node prints for `vis --help` on Windows with `NO_COLOR` set and stdout a pipe or a file, in a project with no
+/// `tput` on the path: 80 columns, and the `\r\n` that `os.EOL` puts between the sections (tables keep their `\n`).
+///
+/// `VIS_UPDATE_GOLDEN` does not refresh this file, because it only knows the Linux capture. When a command or a
+/// description changes the root help, recapture it on Windows from the Node CLI (`VIS_VERSION=6.6.0`, `NO_COLOR=1`,
+/// no `COLUMNS` or `LINES`, no `tput` on `PATH`, stdout a pipe) and keep the file byte for byte: `.gitattributes`
+/// marks it `-text`. Its text with `\r\n` turned into `\n` must equal `help-plain-80.txt`.
+#[cfg(windows)]
+const WINDOWS_PLAIN_HELP: &[u8] = include_bytes!("golden/help-plain-80.windows.txt");
+
 /// `text` without its SGR colour sequences (`ESC [ ... m`).
-#[cfg(unix)]
 fn without_colour(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -63,10 +108,6 @@ fn version_prints_bare_injected_semver() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
-)]
 fn help_wins_over_the_version() {
     for args in [&["--version", "--help"][..], &["-V", "-h"]] {
         let output = binary().args(args).env("VIS_VERSION", "1.2.3").output().expect("run binary");
@@ -80,17 +121,107 @@ fn help_wins_over_the_version() {
 #[test]
 fn a_width_only_node_can_look_up_is_handed_to_it_before_any_output() {
     // `COLUMNS` without `LINES` is the `tput` step of the Node lookup, which this binary does not run.
-    let output = binary()
+    let mut command = binary();
+
+    command
         .arg("--help")
         .env_remove("LINES")
         .env_remove("CEREBRO_TERMINAL_WIDTH")
         .env_remove("VIS_FALLBACK_ENTRY")
-        .env("VIS_NODE", "/nonexistent-node")
-        .output()
-        .expect("run binary");
+        .env("VIS_NODE", "/nonexistent-node");
+
+    // Windows has the step only when a `tput` is on the path (Git's tools bring one), so this run offers one.
+    #[cfg(windows)]
+    {
+        let directory = tool_directory("tput", true);
+
+        command.env("PATH", &directory).current_dir(&directory);
+    }
+
+    let output = command.output().expect("run binary");
 
     assert_eq!(output.status.code(), Some(70), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     assert!(output.stdout.is_empty(), "nothing may be printed before the hand-off");
+}
+
+#[cfg(windows)]
+#[test]
+fn help_to_a_pipe_on_windows_is_what_node_prints() {
+    let directory = tool_directory("pipe", false);
+    let output = bare_binary(&directory).arg("--help").env("NO_COLOR", "1").output().expect("run binary");
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(WINDOWS_PLAIN_HELP));
+    assert_eq!(output.stdout, WINDOWS_PLAIN_HELP);
+}
+
+#[cfg(windows)]
+#[test]
+fn help_to_a_file_on_windows_is_what_node_prints() {
+    let directory = tool_directory("file", false);
+    let target = directory.join("help.txt");
+    let file = std::fs::File::create(&target).expect("create the file");
+    // A console on stderr would be asked for its size once stdout is no console, so stderr goes nowhere.
+    let status = bare_binary(&directory)
+        .arg("--help")
+        .env("NO_COLOR", "1")
+        .stdout(file)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("run binary");
+
+    assert!(status.success());
+    assert_eq!(std::fs::read(&target).expect("read the file"), WINDOWS_PLAIN_HELP);
+}
+
+#[cfg(windows)]
+#[test]
+fn help_on_windows_is_coloured_unless_told_otherwise_and_wraps_like_the_plain_text() {
+    let directory = tool_directory("colour", false);
+    let output = bare_binary(&directory).arg("--help").output().expect("run binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    // The Windows rule colours a pipe too, as Node's detection does.
+    assert!(stdout.contains('\u{1b}'), "no colour codes in: {stdout}");
+    assert_eq!(without_colour(&stdout).as_bytes(), WINDOWS_PLAIN_HELP);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_columns_variable_alone_is_not_a_width_on_windows_without_tput() {
+    // No terminal and no `tput` to read `COLUMNS`, so Node's lookup ends at its default of 80 columns.
+    let directory = tool_directory("columns", false);
+    let output =
+        bare_binary(&directory).arg("--help").env("NO_COLOR", "1").env("COLUMNS", "132").output().expect("run");
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, WINDOWS_PLAIN_HELP);
+}
+
+#[cfg(windows)]
+#[test]
+fn columns_with_lines_and_the_width_variable_still_set_the_width_on_windows() {
+    let directory = tool_directory("sized", false);
+    let sized = bare_binary(&directory)
+        .arg("--help")
+        .env("NO_COLOR", "1")
+        .env("COLUMNS", "132")
+        .env("LINES", "40")
+        .output()
+        .unwrap();
+    let override_width = bare_binary(&directory)
+        .arg("--help")
+        .env("NO_COLOR", "1")
+        .env("COLUMNS", "132")
+        .env("LINES", "40")
+        .env("CEREBRO_TERMINAL_WIDTH", "80")
+        .output()
+        .unwrap();
+
+    assert!(sized.status.success() && override_width.status.success());
+    assert_ne!(sized.stdout, WINDOWS_PLAIN_HELP, "a 132-column help is not the 80-column one");
+    assert_eq!(override_width.stdout, WINDOWS_PLAIN_HELP);
 }
 
 #[test]
@@ -585,10 +716,6 @@ fn no_color_flag_beats_force_color_in_help() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
-)]
 fn help_for_an_unknown_command_reports_on_stderr_and_exits_zero() {
     let output = binary().args(["help", "frobnicate"]).env("VIS_VERSION", "1.2.3").output().expect("run binary");
 
@@ -598,10 +725,6 @@ fn help_for_an_unknown_command_reports_on_stderr_and_exits_zero() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
-)]
 fn help_group_filter_lists_only_that_group() {
     let output = binary().args(["help", "--group", "Git Hooks"]).env("COLUMNS", "100").output().expect("run binary");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -673,10 +796,6 @@ fn package_manager_commands_answer_help_without_running_the_manager() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
-)]
 fn command_help_is_answered_natively_without_a_node_fallback() {
     // `hook run --help` used to be handed to Node; the manifest renders it now, so it
     // works even when no fallback entry exists.
@@ -757,10 +876,6 @@ fn command_groups_and_bare_migrate_still_reach_node() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
-)]
 fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
     // Only `dlx` as the first argument takes the lean entry; `-v dlx` runs the full CLI.
     let lean = binary().args(["dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");

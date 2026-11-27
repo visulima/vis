@@ -112,6 +112,9 @@ fn capture_streams(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Pat
 
     if color {
         command.env("FORCE_COLOR", "1");
+    } else if cfg!(windows) {
+        // Windows colours help for a pipe unless told not to, where Unix needs a CI or terminal hint to do it.
+        command.env("NO_COLOR", "1");
     }
 
     let output = command.output().unwrap_or_else(|error| panic!("run {}: {error}", exe.display()));
@@ -172,11 +175,6 @@ fn help_output_matches_goldens() {
     let mut failures = Vec::new();
 
     for case in CASES {
-        // Without colour the help is Node's on Windows: it cannot tell which colour level pail would print.
-        if cfg!(windows) && !case.color && !update {
-            continue;
-        }
-
         for width in WIDTHS {
             let path = golden_path(case, width);
 
