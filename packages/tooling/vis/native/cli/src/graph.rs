@@ -326,7 +326,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn fixtures_match_their_expected_graph() {
         let mut checked = 0;
 
