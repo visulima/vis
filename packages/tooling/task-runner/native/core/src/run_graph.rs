@@ -12,9 +12,8 @@ use crate::graph::{topological_sort, TaskGraph};
 /// supported shape; the Node implementation handles all of them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NotReproducible {
-    /// The platform's path rules are not modelled (Windows).
-    UnsupportedPlatform,
-    /// The workspace root is not a plain absolute path.
+    /// The workspace root is not a plain absolute path: on Windows that is a drive-letter path, so a verbatim
+    /// (`\\?\`), network (UNC) or device root is not one.
     UnsafeWorkspaceRoot(String),
     /// A project root is not a plain workspace-relative path (root project, `..`, glob characters).
     UnsafeProjectRoot { project: String, root: String },
@@ -53,7 +52,6 @@ pub enum NotReproducible {
 impl fmt::Display for NotReproducible {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedPlatform => f.write_str("the platform's path rules are not supported"),
             Self::UnsafeWorkspaceRoot(root) => write!(f, "workspace root {root:?} is not a plain absolute path"),
             Self::UnsafeProjectRoot { project, root } => {
                 write!(f, "root {root:?} of project {project} is not a plain workspace-relative path")

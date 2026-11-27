@@ -87,6 +87,9 @@ fn project_nodes(workspace_root: &str, task: &RunTask) -> Result<Vec<Vec<String>
             return Err(NotReproducible::NonUtf8Path(path));
         }
 
+        // The walk joins each entry to the directory with the platform's separator, so on Windows a path is
+        // `C:/ws/packages/a\src\index.ts`; no file name holds a `\` there. On Unix a `\` is part of a name.
+        let path = if cfg!(windows) { path.replace('\\', "/") } else { path };
         let Some(relative) = path.strip_prefix(&prefix) else { continue };
 
         if relative.split('/').all(|segment| !segment.starts_with('.')) {
@@ -126,20 +129,39 @@ fn prepare(
     projects: &[RunProject],
     depends_on: DependsOn,
 ) -> Result<Prepared, NotReproducible> {
-    if cfg!(windows) {
-        return Err(NotReproducible::UnsupportedPlatform);
-    }
+    let root = if cfg!(windows) { windows_root(workspace_root) } else { posix_root(workspace_root) }
+        .ok_or_else(|| NotReproducible::UnsafeWorkspaceRoot(workspace_root.to_owned()))?;
+    let graph = build_task_graph(target, projects, depends_on)?;
+    let global = global_hash(&root)?;
 
+    Ok(Prepared { root, graph, global })
+}
+
+/// The workspace root as every path below it is built from: absolute, no trailing `/`, no glob magic. `None` for a
+/// root that is not one.
+fn posix_root(workspace_root: &str) -> Option<String> {
     let root = workspace_root.trim_end_matches('/');
 
-    if !root.starts_with('/') || has_glob_magic(root) {
-        return Err(NotReproducible::UnsafeWorkspaceRoot(workspace_root.to_owned()));
-    }
+    (root.starts_with('/') && !has_glob_magic(root)).then(|| root.to_owned())
+}
 
-    let graph = build_task_graph(target, projects, depends_on)?;
-    let global = global_hash(root)?;
+/// The workspace root of a Windows run: a drive-letter path (`C:\ws`, `c:/ws`, `C:\ws\`), spelt with `/` from here on
+/// so every path built below it has one separator and the walk's prefix matches. `None` for every other spelling,
+/// which Node resolves in its own way and which therefore stays Node's: a verbatim root (`\\?\C:\ws`, what
+/// `canonicalize` returns), a network root (`\\server\share`), a device root (`\\.\C:`), a drive-relative one
+/// (`C:ws`), a root with no drive (`\ws`, `/ws`) and a drive root with nothing below it (`C:\`).
+///
+/// The drive letter's case is kept: the key reads workspace-relative paths only, so it does not depend on it.
+fn windows_root(workspace_root: &str) -> Option<String> {
+    let root = workspace_root.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    let mut chars = root.chars();
+    let (Some(drive), Some(':'), Some('/')) = (chars.next(), chars.next(), chars.next()) else { return None };
+    let below = chars.as_str();
 
-    Ok(Prepared { root: root.to_owned(), graph, global })
+    // A `:` past the drive is a stream name, not a directory.
+    (drive.is_ascii_alphabetic() && !below.is_empty() && !below.contains(':') && !has_glob_magic(root))
+        .then(|| root.to_owned())
 }
 
 /// What a task's key hashes: the global inputs, the keys of the tasks it depends on (already in `hashes`), the
@@ -168,10 +190,10 @@ fn task_details(
     })
 }
 
-/// Computes the key of every task of `run <target>`. Windows is not reproduced.
+/// Computes the key of every task of `run <target>`.
 ///
-/// `workspace_root` is the absolute workspace directory, `projects` the workspace
-/// in project order. See [`build_task_graph`] for the supported shape and
+/// `workspace_root` is the absolute workspace directory (on Windows a drive-letter path, spelt with either
+/// separator), `projects` the workspace in project order. See [`build_task_graph`] for the supported shape and
 /// [`NotReproducible`] for everything outside it.
 pub fn compute_task_keys(
     workspace_root: &str,
@@ -242,13 +264,13 @@ impl TaskKeyer {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::file_hasher::hash_bytes;
     use crate::run_graph::{DependencyKind, ProjectDependency};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     /// `xxh3_128` of the parts joined without a separator, the `__global__` layout.
     fn concat_hash(parts: &[&str]) -> String {
@@ -268,7 +290,13 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
-        root.canonicalize().unwrap()
+        // `canonicalize` gives a verbatim `\\?\C:\…` root on Windows, which the keyer leaves to Node on purpose; the
+        // temp directory is already an absolute drive-letter path there.
+        if cfg!(windows) {
+            root
+        } else {
+            root.canonicalize().unwrap()
+        }
     }
 
     fn project(name: &str, script: &str, dependencies: &[&str]) -> RunProject {
@@ -471,17 +499,143 @@ mod tests {
             ));
         }
     }
-}
-
-#[cfg(all(test, windows))]
-mod windows_tests {
-    use super::*;
 
     #[test]
-    fn windows_is_handed_to_node() {
+    fn a_posix_root_is_absolute_without_glob_magic_and_loses_its_trailing_slashes() {
+        assert_eq!(posix_root("/ws"), Some("/ws".to_owned()));
+        assert_eq!(posix_root("/ws//"), Some("/ws".to_owned()));
+        assert_eq!(posix_root("/a b/c.d"), Some("/a b/c.d".to_owned()));
+
+        for root in
+            ["", "/", "relative", "./ws", "C:/ws", "/ws/a*b", "/ws/[x]", "/ws/{a,b}", "/ws/(x)", "/ws/a!b", r"/ws\a"]
+        {
+            assert_eq!(posix_root(root), None, "{root}");
+        }
+    }
+
+    #[test]
+    fn a_drive_letter_root_is_taken_with_either_separator_and_spelt_with_slashes() {
+        for (root, expected) in [
+            (r"C:\ws", "C:/ws"),
+            ("C:/ws", "C:/ws"),
+            (r"c:\ws", "c:/ws"),
+            (r"C:\ws\", "C:/ws"),
+            (r"C:\ws\\", "C:/ws"),
+            ("C:/ws/", "C:/ws"),
+            (r"D:\a b\c.d", "D:/a b/c.d"),
+            (r"C:\Users\vis\AppData\Local\Temp\run-key-1", "C:/Users/vis/AppData/Local/Temp/run-key-1"),
+        ] {
+            assert_eq!(windows_root(root), Some(expected.to_owned()), "{root}");
+        }
+    }
+
+    #[test]
+    fn every_other_windows_root_is_left_to_node() {
+        for root in [
+            // What `canonicalize` returns, and the other prefixes Node resolves differently.
+            r"\\?\C:\ws",
+            r"\\?\UNC\server\share\ws",
+            r"\\server\share\ws",
+            r"\\.\C:\ws",
+            "//?/C:/ws",
+            "//server/share/ws",
+            // No drive, or no absolute path below it.
+            "C:ws",
+            r"\ws",
+            "/ws",
+            "ws",
+            "",
+            "C:",
+            "C:/",
+            r"C:\",
+            "1:/ws",
+            // A stream name, and the characters that are glob magic to the matcher Node filters files with.
+            r"C:\ws:stream",
+            r"C:\ws\a[b]",
+            r"C:\ws\a{b}",
+            r"C:\ws\a(b)",
+            r"C:\ws\a!b",
+        ] {
+            assert_eq!(windows_root(root), None, "{root}");
+        }
+    }
+
+    #[test]
+    fn a_refused_root_is_reported_as_given() {
+        let root = if cfg!(windows) { r"\\?\C:\ws" } else { "relative" };
+
         assert_eq!(
-            compute_task_keys("C:/ws", "build", &[], DependsOn::Nothing).unwrap_err(),
-            NotReproducible::UnsupportedPlatform
+            compute_task_keys(root, "build", &[project("a", "tsc", &[])], DependsOn::Nothing).unwrap_err(),
+            NotReproducible::UnsafeWorkspaceRoot(root.to_owned())
         );
+    }
+
+    /// The bytes of the fixed workspace of `native-run-task-key-parity.test.ts`: no line ending is translated, a
+    /// CRLF file and the CRLF global input are hashed as they are.
+    fn fixed_workspace(name: &str) -> PathBuf {
+        let root = workspace(name);
+
+        write(&root, "packages/a/package.json", r#"{"name":"a","scripts":{"build":"tsc"}}"#);
+        write(&root, "packages/a/src/index.ts", "export const a = 1;\n");
+        write(&root, "packages/a/src/crlf.txt", "one\r\ntwo\r\n");
+        write(&root, "packages/a/src/nested/deep/last.ts", "export {};\n");
+        write(&root, "tsconfig.json", "{\r\n}\r\n");
+
+        root
+    }
+
+    /// The key Node computes for that workspace on macOS, Linux and Windows (`FIXED_KEY` of the parity test, which
+    /// runs the real hasher). Neither value is derived from this code.
+    const FIXED_KEY: &str = "c9bceef8fcb8fd885b8f8f3f5d57deb4";
+
+    #[test]
+    fn a_fixed_workspace_has_the_key_node_computes() {
+        let root = fixed_workspace("fixed");
+        let keys = compute_task_keys(root.to_str().unwrap(), "build", &[project("a", "tsc", &[])], DependsOn::Nothing)
+            .unwrap();
+
+        assert_eq!(keys.key("a:build").unwrap().hash, FIXED_KEY);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_key_does_not_depend_on_how_a_windows_root_is_spelt() {
+        let root = fixed_workspace("spelling");
+        let native = root.to_str().unwrap().to_owned();
+        let projects = [project("a", "tsc", &[])];
+        let key = |root: &str| {
+            compute_task_keys(root, "build", &projects, DependsOn::Nothing).map(|keys| keys.keys[0].hash.clone())
+        };
+        let lowercase_drive = format!("{}{}", native[..1].to_lowercase(), &native[1..]);
+
+        assert!(native.contains('\\'), "{native}");
+
+        for spelling in [
+            native.clone(),
+            native.replace('\\', "/"),
+            lowercase_drive,
+            format!("{native}\\"),
+            format!("{}/", native.replace('\\', "/")),
+        ] {
+            assert_eq!(key(&spelling).as_deref(), Ok(FIXED_KEY), "{spelling}");
+        }
+
+        // The spellings Node resolves in its own way stay Node's, and so does the one `canonicalize` makes.
+        let verbatim = root.canonicalize().unwrap();
+
+        assert!(verbatim.to_str().unwrap().starts_with(r"\\?\"));
+        assert_eq!(
+            key(verbatim.to_str().unwrap()),
+            Err(NotReproducible::UnsafeWorkspaceRoot(verbatim.to_str().unwrap().to_owned()))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_keyer_takes_a_drive_letter_root() {
+        let root = fixed_workspace("keyer");
+        let keyer = TaskKeyer::new(root.to_str().unwrap(), "build", &[project("a", "tsc", &[])]).unwrap();
+
+        assert_eq!(keyer.key(0).unwrap().hash, FIXED_KEY);
     }
 }
