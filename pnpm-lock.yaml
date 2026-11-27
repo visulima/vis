@@ -580,6 +580,7 @@ overrides:
 packageExtensionsChecksum: sha256-hFPEAqASIfyXCX39BqjdcN2lMGkCn19x0N1yW/52z5s=
 
 patchedDependencies:
+  '@anolilab/multi-semantic-release@4.4.24': 5203f34516cb7f6198daa96ac1df403d0626c66ed0e26a5838dded7b9abf4c43
   picomatch@4.0.5: ea8902f116e4acedcaf4a1cb84df7bf7c67c1c0f5f6b2dddd39096145d546349
   tinyglobby@0.2.17: 3dc68a89992573038dda3690f1e942d721bae88f0c4677029007794e6eae453d
 
@@ -593,7 +594,7 @@ importers:
     devDependencies:
       '@anolilab/multi-semantic-release':
         specifier: catalog:prod
-        version: 4.4.24(ini@7.0.0)(json5@2.2.3)(jsonc-parser@3.3.1)(semantic-release@25.0.9(supports-color@10.2.2)(typescript@6.0.3))(smol-toml@1.9.1)(supports-color@10.2.2)
+        version: 4.4.24(patch_hash=5203f34516cb7f6198daa96ac1df403d0626c66ed0e26a5838dded7b9abf4c43)(ini@7.0.0)(json5@2.2.3)(jsonc-parser@3.3.1)(semantic-release@25.0.9(supports-color@10.2.2)(typescript@6.0.3))(smol-toml@1.9.1)(supports-color@10.2.2)
       '@anolilab/prettier-config':
         specifier: catalog:lint
         version: 10.0.4(prettier@3.9.10)
@@ -12619,7 +12620,7 @@ snapshots:
       - vitest
       - yaml
 
-  '@anolilab/multi-semantic-release@4.4.24(ini@7.0.0)(json5@2.2.3)(jsonc-parser@3.3.1)(semantic-release@25.0.9(supports-color@10.2.2)(typescript@6.0.3))(smol-toml@1.9.1)(supports-color@10.2.2)':
+  '@anolilab/multi-semantic-release@4.4.24(patch_hash=5203f34516cb7f6198daa96ac1df403d0626c66ed0e26a5838dded7b9abf4c43)(ini@7.0.0)(json5@2.2.3)(jsonc-parser@3.3.1)(semantic-release@25.0.9(supports-color@10.2.2)(typescript@6.0.3))(smol-toml@1.9.1)(supports-color@10.2.2)':
     dependencies:
       '@semrel-extra/topo': 1.14.1
       '@visulima/fs': 5.1.0(ini@7.0.0)(json5@2.2.3)(jsonc-parser@3.3.1)(smol-toml@1.9.1)(yaml@2.9.1)
