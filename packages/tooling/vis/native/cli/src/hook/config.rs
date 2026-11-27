@@ -36,6 +36,9 @@ impl Entry {
 
 pub struct Config {
     pub fail_fast: bool,
+    /// Whether the dispatcher `hook install` writes exits 0 under CI (`skipInCI`).
+    #[cfg(unix)]
+    pub skip_in_ci: bool,
     stages: Vec<(String, Vec<Entry>)>,
 }
 
@@ -120,5 +123,10 @@ pub fn parse(raw: &Value) -> Option<Config> {
         })
         .collect::<Option<Vec<_>>>()?;
 
-    Some(Config { fail_fast: object.get("failFast").and_then(Value::as_bool).unwrap_or(false), stages })
+    Some(Config {
+        fail_fast: object.get("failFast").and_then(Value::as_bool).unwrap_or(false),
+        #[cfg(unix)]
+        skip_in_ci: object.get("skipInCI").and_then(Value::as_bool).unwrap_or(false),
+        stages,
+    })
 }

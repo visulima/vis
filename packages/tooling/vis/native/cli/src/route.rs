@@ -55,6 +55,10 @@ static ROUTES: &[Route] = &[
     answers(&["hook", "run"], crate::hook::run),
     answers(&["hook", "list"], crate::hook::list::run),
     #[cfg(unix)]
+    answers(&["hook", "install"], crate::hook::install::run),
+    #[cfg(unix)]
+    answers(&["hook", "uninstall"], crate::hook::uninstall::run),
+    #[cfg(unix)]
     answers(&["hook", "validate"], crate::hook::validate::run),
     answers(&["advisories", "bloom", "status"], crate::advisories::run),
     answers(&["ignore"], crate::ignore::run),
@@ -161,6 +165,8 @@ mod tests {
     const COMMAND_PATHS: &[&[&str]] = &[
         &["hook", "run"],
         &["hook", "list"],
+        &["hook", "install"],
+        &["hook", "uninstall"],
         &["hook", "validate"],
         &["advisories", "bloom", "status"],
         &["ignore"],
