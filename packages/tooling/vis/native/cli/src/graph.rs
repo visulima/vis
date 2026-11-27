@@ -13,7 +13,7 @@ use serde::de::{self, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::package_json::{parse_field, PackageJson, GRAPH_FIELDS};
-use crate::workspace::project_packages;
+use crate::workspace::{project_packages, project_packages_vetted};
 
 /// Outcome of building the graph of a root.
 #[derive(Debug, PartialEq)]
@@ -179,7 +179,16 @@ pub(crate) type Manifests = BTreeMap<String, PackageJson>;
 /// [`project_graph`] with the manifests it was built from, so a caller that reads more of them (`vis list`) does
 /// not read and parse them again. `None` where [`project_graph`] delegates.
 pub(crate) fn project_graph_with_manifests(root: &Path) -> Option<(ProjectGraph, Manifests)> {
-    let packages = project_packages(root)?;
+    graph_of(project_packages(root)?)
+}
+
+/// [`project_graph_with_manifests`] for a root whose `vis.config.*` the caller has read and found free of keys that
+/// change the project set (see `workspace::project_directories_vetted`).
+pub(crate) fn project_graph_vetted_with_manifests(root: &Path) -> Option<(ProjectGraph, Manifests)> {
+    graph_of(project_packages_vetted(root)?)
+}
+
+fn graph_of(packages: Vec<(String, PackageJson)>) -> Option<(ProjectGraph, Manifests)> {
     let mut projects: Vec<(String, Manifest, String)> = Vec::new();
     let mut names: BTreeSet<String> = BTreeSet::new();
     let mut manifests = Manifests::new();

@@ -177,11 +177,33 @@ pub(crate) fn native_context() -> bool {
 /// root `root`: CI, a non-terminal stderr, no runtime warning about the colour variables, and no config or
 /// Deno file at or above either one.
 pub(crate) fn quiet_context(cwd: &Path, root: &Path) -> bool {
+    quiet_environment(cwd, root) && [cwd, root].iter().all(|directory| !has_vis_config(directory))
+}
+
+/// [`quiet_context`] without the config check: CI, a non-terminal stderr, no runtime warning about the colour
+/// variables, and no Deno file at or above `cwd` or `root`. A command that reads the config itself asks this one.
+pub(crate) fn quiet_environment(cwd: &Path, root: &Path) -> bool {
     if !in_ci() || io::stderr().is_terminal() || crate::term::node_warns_about_colour() {
         return false;
     }
 
-    [cwd, root].iter().all(|directory| !has_vis_config(directory) && !any_ancestor_has(directory, &DENO_FILES))
+    [cwd, root].iter().all(|directory| !any_ancestor_has(directory, &DENO_FILES))
+}
+
+/// [`portable_context_decline`] for a command that reads a `vis.config` of the workspace root itself: a unix CI run off
+/// a terminal at the root of a pnpm workspace, with none of the settings that change what Node prints, and with a
+/// config allowed. Whether that config is one the command can use is the command's to check.
+pub(crate) fn config_context_is_native() -> bool {
+    let Ok(cwd) = env::current_dir() else {
+        return false;
+    };
+
+    cfg!(unix)
+        && output_settings_are_default()
+        && !io::stdout().is_terminal()
+        && native_root_is_cwd(&cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
+        && monorepo_root(&cwd).as_deref() == Some(cwd.as_path())
+        && quiet_environment(&cwd, &cwd)
 }
 
 /// `is-in-ci`: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`.

@@ -71,7 +71,7 @@ fn parse(args: &[String]) -> Option<Format> {
 /// entries, empty commands and reserved names are left to Node, since JS key order, last-wins
 /// parsing and prototype-sensitive assignment are not reproduced here.
 #[derive(Default)]
-struct Scripts(Vec<(String, String)>);
+pub(crate) struct Scripts(pub(crate) Vec<(String, String)>);
 
 impl<'de> Deserialize<'de> for Scripts {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -149,8 +149,8 @@ impl<'de> Visitor<'de> for DepNamesVisitor {
 
 /// The `package.json` fields the listing reads.
 #[derive(Default)]
-struct Manifest {
-    scripts: Scripts,
+pub(crate) struct Manifest {
+    pub(crate) scripts: Scripts,
     dependencies: DepNames,
     dev_dependencies: DepNames,
     optional_dependencies: DepNames,
@@ -160,7 +160,7 @@ struct Manifest {
 impl Manifest {
     /// The listing's reading of a parsed manifest, or `None` for a shape left to Node: a repeated field, or a
     /// `scripts` or dependency field that is not a map the rules above accept (`null` included).
-    fn read(package: &PackageJson) -> Option<Self> {
+    pub(crate) fn read(package: &PackageJson) -> Option<Self> {
         if package.repeats(LIST_FIELDS) {
             return None;
         }
@@ -174,7 +174,7 @@ impl Manifest {
         })
     }
 
-    fn declares(&self, name: &str) -> bool {
+    pub(crate) fn declares(&self, name: &str) -> bool {
         [&self.dependencies, &self.dev_dependencies, &self.optional_dependencies, &self.peer_dependencies]
             .iter()
             .any(|block| block.0.iter().any(|key| key == name))

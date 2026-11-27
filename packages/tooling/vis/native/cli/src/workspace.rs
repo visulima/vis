@@ -75,6 +75,12 @@ pub(crate) fn project_packages(root: &Path) -> Option<Vec<(String, PackageJson)>
     resolve(root, false, None)
 }
 
+/// [`project_packages`] for a root whose `vis.config.*` the caller has read and found free of keys that change the
+/// project set (see [`project_directories_vetted`]).
+pub(crate) fn project_packages_vetted(root: &Path) -> Option<Vec<(String, PackageJson)>> {
+    resolve(root, true, None)
+}
+
 fn membership(found: Option<Vec<(String, PackageJson)>>) -> Membership {
     found.map_or(Membership::Delegate, |found| {
         Membership::Native(found.into_iter().map(|(directory, _)| directory).collect())

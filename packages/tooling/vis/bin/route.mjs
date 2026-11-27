@@ -1393,6 +1393,9 @@ const auditMayRunNatively = (platform, environment, args, cwd, interactive, hold
 // CI context off a terminal. The output is the same in every colour environment, but the Node runtime's own colour warning
 // is not. The binary re-checks everything, including the config, the project and its target (an error prints a stack
 // trace, which stays in Node); this only skips the extra process when it would delegate anyway. The text holds no path and no colour, so Windows answers it too.
+// A workspace with a literal `vis.config` `tasks` block takes the same gate: the launcher does not look at the config, because the
+// binary builds the configured graph from it and delegates every shape it cannot reproduce (a refused key, a `project.json` or
+// overlay, an inference marker, a name it cannot print), and it does that on unix only, so on Windows a config always reaches Node.
 const TASK_WHY_ID = /^[\u0021-\u007E]+$/;
 
 const taskWhyIdIsNative = (id) => {
