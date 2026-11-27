@@ -1,3 +1,49 @@
+## @visulima/vis [8.0.0-next.4](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.3...@visulima/vis@8.0.0-next.4) (2026-11-27)
+
+### Features
+
+* **audit:** hand the native fast path to Node when a package bundles or vendors ([d45ea1a](https://github.com/visulima/vis/commit/d45ea1a4305b06c1db7b92e2c5f6cdbf913cedd6))
+* **audit:** report vendored packages with no version as not scanned ([2432588](https://github.com/visulima/vis/commit/24325886b151094f3f8415aae3aa6e7fae30ce6f))
+* **audit:** scan the dependencies a package ships bundled inside itself ([72bb265](https://github.com/visulima/vis/commit/72bb265751bcb01677baf594ce78612f06c9c10d))
+* **task-runner:** build the configured task graph natively, or refuse it ([ccad361](https://github.com/visulima/vis/commit/ccad36160f8767929793817e815617b0cecab6d7))
+* **vis:** answer a passing `security verify-lockfile --offline` natively ([16a0827](https://github.com/visulima/vis/commit/16a08275ed2dfbf96ca44916f94a1d268b02e3bd))
+* **vis:** answer task-why natively for a workspace with a literal tasks config ([def6601](https://github.com/visulima/vis/commit/def6601efb2e81ca0ec032a86ab5153e2d0cb805))
+* **vis:** answer the read-only runs of `security tripwire` natively ([5699284](https://github.com/visulima/vis/commit/5699284eb7541f2c096590ae6684cf31a18900ed))
+* **vis:** install git hooks natively ([657e8e9](https://github.com/visulima/vis/commit/657e8e9671ca8c3f8c6bc389054a574e443d82e3))
+* **vis:** uninstall git hooks natively ([06bd9c5](https://github.com/visulima/vis/commit/06bd9c5e504bfa375f4c4d232eac9dc4d8675b44))
+
+### Bug Fixes
+
+* **audit:** decide the native hand-over by parsing the manifest ([a42721c](https://github.com/visulima/vis/commit/a42721c9bed60c72d62f0aa7ff77d752f70344d7))
+* **audit:** read every package a bundling host ships, and say where a copy lives ([1c130fc](https://github.com/visulima/vis/commit/1c130fc56731511b9c5f8783fd1925449cd589a9))
+
+### Documentation
+
+* **audit:** describe the whole-tree read, the table lines and the policy ([5a48ade](https://github.com/visulima/vis/commit/5a48ade328c4129b940fe2efd3401c78fb83aa12))
+* **audit:** document bundled dependencies and the not-scanned report ([f4d792c](https://github.com/visulima/vis/commit/f4d792c984fc67765115255e9b6f1210f55e3c16))
+
+### Code Refactoring
+
+* **audit:** share the scope-directory walk between bundled and vendored reads ([e4bcb31](https://github.com/visulima/vis/commit/e4bcb31b7830b747fd8f4c4889df2a661eb8140e))
+* **vis:** drop the Windows colour fallback that the detection now answers itself ([aa7f6f3](https://github.com/visulima/vis/commit/aa7f6f35c4aed349fd06fd68948ce8e43df0c652))
+* **vis:** hand `security tripwire` back to Node ([597ef8c](https://github.com/visulima/vis/commit/597ef8ce459aed91490381369ea91f3c86a0f277))
+* **vis:** run `attest verify` in Node in every shape ([1f966b2](https://github.com/visulima/vis/commit/1f966b282b1bc1a73f1b2b63ee03b2eaa6a10edf))
+
+### Tests
+
+* **vis:** ignore the padding moved by the duration in the audit parity masks ([b380c6f](https://github.com/visulima/vis/commit/b380c6f0e8b21561a446ad5a7cffa5afba4d970e))
+* **vis:** ignore the padding moved by the duration in the audit parity masks ([b057f39](https://github.com/visulima/vis/commit/b057f39caa5d0447a5d822e188a51f54f128e38f))
+* **vis:** ignore the spinner frames in the audit parity masks ([b912f77](https://github.com/visulima/vis/commit/b912f77499ede4c3e98c9cfe0318f865268a32a8))
+* **vis:** ignore the spinner frames in the audit parity masks ([c65e790](https://github.com/visulima/vis/commit/c65e790229af07990bb762c2d1d1d79bc5fbd1fd))
+* **vis:** ignore the spinner frames in the audit parity masks ([8481801](https://github.com/visulima/vis/commit/848180146b2f26861e41345a71e15eda7ccaec1d))
+* **vis:** share the Node fallback environment of the hook parity suites ([122a1cb](https://github.com/visulima/vis/commit/122a1cb8d9e356734b5c47af8ba52b45bc4dad68))
+* **vis:** stub the package manager in the new parity suites, document the native paths ([0e34fdf](https://github.com/visulima/vis/commit/0e34fdfdfb7adbcc24a0fa19fcd2ad8999060c3f))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 4.0.0-next.4
+
 ## @visulima/vis [8.0.0-next.3](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.2...@visulima/vis@8.0.0-next.3) (2026-11-27)
 
 ### Features
