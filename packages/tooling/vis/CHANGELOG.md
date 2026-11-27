@@ -1,3 +1,14 @@
+## @visulima/vis [8.0.0-next.2](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.1...@visulima/vis@8.0.0-next.2) (2026-11-27)
+
+### Miscellaneous Chores
+
+* **deps:** point vis and vis-mcp at the released task-runner and vis versions ([a5a5783](https://github.com/visulima/vis/commit/a5a5783824d897f685b141706b394bc8e2915891))
+
+
+### Dependencies
+
+* **@visulima/task-runner:** upgraded to 4.0.0-next.2
+
 ## @visulima/vis [8.0.0-next.1](https://github.com/visulima/vis/compare/@visulima/vis@7.1.0-next.14...@visulima/vis@8.0.0-next.1) (2026-11-27)
 
 ### ⚠ BREAKING CHANGES
