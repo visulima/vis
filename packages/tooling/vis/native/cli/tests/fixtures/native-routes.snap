@@ -113,6 +113,7 @@
 ["--color","security","list"] => surface
 ["--color","security","sync"] => surface
 ["--color","security","tripwire"] => surface
+["--color","security","verify-lockfile"] => surface
 ["--color","self"] => surface
 ["--color","self-update"] => surface
 ["--color","service"] => surface
@@ -277,6 +278,7 @@
 ["--no-color","security","list"] => surface
 ["--no-color","security","sync"] => surface
 ["--no-color","security","tripwire"] => surface
+["--no-color","security","verify-lockfile"] => surface
 ["--no-color","self"] => surface
 ["--no-color","self-update"] => surface
 ["--no-color","service"] => surface
@@ -433,6 +435,7 @@
 ["--quiet","security","list"] => surface
 ["--quiet","security","sync"] => surface
 ["--quiet","security","tripwire"] => surface
+["--quiet","security","verify-lockfile"] => surface
 ["--quiet","self"] => surface
 ["--quiet","self-update"] => surface
 ["--quiet","service"] => surface
@@ -2564,6 +2567,30 @@
 ["security","tripwire","target"] => security tripwire
 ["security","tripwire","target","--help"] => surface
 ["security","tripwire","target","other"] => security tripwire
+["security","verify-lockfile"] => security verify-lockfile
+["security","verify-lockfile","--"] => security verify-lockfile
+["security","verify-lockfile","--","--help"] => security verify-lockfile
+["security","verify-lockfile","--format","json"] => security verify-lockfile
+["security","verify-lockfile","--help"] => surface
+["security","verify-lockfile","--json"] => security verify-lockfile
+["security","verify-lockfile","--json","--offline"] => security verify-lockfile
+["security","verify-lockfile","--no-color","-h"] => surface
+["security","verify-lockfile","--offline"] => security verify-lockfile
+["security","verify-lockfile","--offline","--cwd","."] => security verify-lockfile
+["security","verify-lockfile","--offline","--json"] => security verify-lockfile
+["security","verify-lockfile","--offline","--json","--json"] => security verify-lockfile
+["security","verify-lockfile","--offline","--offline"] => security verify-lockfile
+["security","verify-lockfile","--offline=true"] => security verify-lockfile
+["security","verify-lockfile","--version"] => security verify-lockfile
+["security","verify-lockfile","--version","--help"] => surface
+["security","verify-lockfile","-h"] => surface
+["security","verify-lockfile","bloom","status"] => security verify-lockfile
+["security","verify-lockfile","bloom","status","--help"] => surface
+["security","verify-lockfile","list"] => security verify-lockfile
+["security","verify-lockfile","status","--help"] => surface
+["security","verify-lockfile","target"] => security verify-lockfile
+["security","verify-lockfile","target","--help"] => surface
+["security","verify-lockfile","target","other"] => security verify-lockfile
 ["self"] => surface
 ["self","--"] => surface
 ["self","--","--help"] => surface

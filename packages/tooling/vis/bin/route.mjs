@@ -1168,6 +1168,23 @@ const securityTripwireMayRunNatively = (platform, environment, args, cwd, intera
     return outputSettingsAreDefault(environment) && (args.length === 2 || (args.length === 3 && (args[2] === "--status" || args[2] === "--remove")));
 };
 
+// Whether `vis security verify-lockfile` can pass the binary's native gate (`parse` and `answer` in `security_verify_lockfile.rs`):
+// `--offline`, alone or with `--json` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
+// terminal. The text form also needs a pail layout the environment decides; the JSON form prints no pail line, but the Node runtime's
+// own colour warning still matters. Without `--offline` the policies ask the registry, and a lockfile that fails is listed by Node. The
+// binary re-checks everything, including the config and the lockfile; this only skips the extra process when it would delegate anyway.
+const securityVerifyLockfileMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    const flags = args.slice(2);
+    const offlineOnly = flags.length === 1 && flags[0] === "--offline";
+    const offlineJson = flags.length === 2 && flags.includes("--offline") && flags.includes("--json");
+
+    return outputSettingsAreDefault(environment) && (offlineJson || (offlineOnly && pailOutputIsDecidable(environment, args)));
+};
+
 // Whether `vis security keys-refresh` can pass the binary's native gate (`parse` and `answer` in `keys_refresh.rs`): `--json`,
 // alone or with `--clear` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
 // terminal, with no proxy, CA or Node option in the environment. The command prints no pail line in this form, so the colour
@@ -1644,7 +1661,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["sbom", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sbomMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The plain working-tree scan.
     ["secrets", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => secretsMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
-    // `security list --json`, `security keys-refresh --json`, `security sync` and the read-only runs of `security tripwire`; the other `security` subcommands use the network or run scripts, and follow the help rule below.
+    // `security list --json`, `security keys-refresh --json`, `security sync`, the read-only runs of `security tripwire` and the passing `security verify-lockfile --offline`; the other `security` subcommands use the network or run scripts, and follow the help rule below.
     [
         "security",
         ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
@@ -1662,6 +1679,10 @@ const NATIVE_SHAPE_GATES = new Map([
 
             if (subcommand === "tripwire") {
                 return helpOrNative(args, () => securityTripwireMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+            }
+
+            if (subcommand === "verify-lockfile") {
+                return helpOrNative(args, () => securityVerifyLockfileMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
             }
 
             return undefined;
