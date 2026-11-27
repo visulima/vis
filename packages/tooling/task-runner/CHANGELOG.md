@@ -1,3 +1,9 @@
+## @visulima/task-runner [4.0.0-next.4](https://github.com/visulima/vis/compare/@visulima/task-runner@4.0.0-next.3...@visulima/task-runner@4.0.0-next.4) (2026-11-27)
+
+### Features
+
+* **task-runner:** build the configured task graph natively, or refuse it ([ccad361](https://github.com/visulima/vis/commit/ccad36160f8767929793817e815617b0cecab6d7))
+
 ## @visulima/task-runner [4.0.0-next.3](https://github.com/visulima/vis/compare/@visulima/task-runner@4.0.0-next.2...@visulima/task-runner@4.0.0-next.3) (2026-11-27)
 
 ### Features
