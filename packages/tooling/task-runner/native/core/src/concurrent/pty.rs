@@ -5,8 +5,9 @@
 //! and its output is delivered as raw chunks (`Stdout` events), not lines: escape sequences and
 //! carriage returns reach the consumer exactly as written, for a terminal emulator to interpret.
 //!
-//! The terminal itself comes from `portable-pty` (openpty on Unix, ConPTY on Windows). It only
-//! offers blocking reads, writes and waits, so each runs on a thread of its own and reports back
+//! The terminal itself comes from `portable-pty` (openpty on Unix) or, on Windows, from `win_pty`, which
+//! opens a ConPTY so that the command can start suspended. Both only
+//! offer blocking reads, writes and waits, so each runs on a thread of its own and reports back
 //! through channels the async runner can wait on; the runner's loop never blocks on a terminal.
 
 use std::io::{Read, Write};
@@ -448,8 +449,8 @@ async fn close_terminal(
     }
 }
 
-/// What a ConPTY writes when it starts a command: a request for the cursor position. `portable-pty`
-/// always asks ConPTY to inherit the cursor, and the command does not start until the request is
+/// What a ConPTY writes when it starts a command: a request for the cursor position. The pseudo console
+/// is always created asking ConPTY to inherit the cursor, and the command does not start until the request is
 /// answered, so a host that does not answer runs nothing.
 #[cfg(any(windows, test))]
 const CURSOR_REQUEST: &str = "\x1b[6n";
