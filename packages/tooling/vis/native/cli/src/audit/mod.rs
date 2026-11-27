@@ -20,11 +20,15 @@
 //!   `pnpm-workspace.yaml` with an `auditConfig` (Node prints a line about its ignored advisories), a `vis.config`,
 //!   and a lockfile this crate does not read exactly;
 //! - a lockfile with no package (Node says to install first), and a name or version outside printable ASCII
-//!   (`localeCompare` and the escapes of the report are only reproduced for it).
+//!   (`localeCompare` and the escapes of the report are only reproduced for it);
+//! - a package under `node_modules` that ships other packages inside itself (`bundleDependencies`) or a vendored tree
+//!   (`dist/compiled`): Node scans the first and reports the unversioned ones of the second as not scanned, which this
+//!   crate does not read (see [`bundled`]).
 //!
 //! The URL is `https://api.osv.dev/v1/querybatch`, fixed like Node's. The environment cannot change it, so the tests
 //! reach the code behind the gates ([`scan_workspace`]) with the address of a stub instead.
 
+mod bundled;
 mod osv;
 mod report;
 
@@ -182,6 +186,13 @@ fn scan_workspace(
     generated_at: &str,
 ) -> Result<(String, String), String> {
     let entries = read_packages(root)?;
+
+    // Node scans the packages a package ships inside itself and names the vendored ones it cannot scan; this crate
+    // reads the lockfile only, so it hands the run over before it asks OSV anything.
+    if let Some(reason) = bundled::decline(root) {
+        return Err(reason.to_owned());
+    }
+
     let packages: Vec<Package<'_>> =
         entries.iter().map(|entry| Package { name: &entry.name, version: &entry.version }).collect();
     let took = osv::scan_is_clean(url, &packages)?;

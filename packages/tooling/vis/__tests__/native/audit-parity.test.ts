@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
 import type { Files, Outcome, Result } from "./workspace-parity-harness";
-import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-harness";
+import { binary, Harness, json, nodeEntry, workspaceFiles } from "./workspace-parity-harness";
 
 /**
  * `vis audit --format json --policies none` exists twice: the Node handler (`src/commands/audit/handler.ts`) and the native
@@ -88,7 +88,7 @@ interface Case {
 }
 
 /** The binary hands the run to Node before it asks OSV, and the delegated run prints what Node prints. */
-const expectHandOver = ({ args = NATIVE_ARGS, extra = {}, files = withLock(lockV9(BASIC)) }: Case): void => {
+const expectHandOver = ({ args = NATIVE_ARGS, extra = {}, files = withLock(lockV9(BASIC)) }: Case): Result => {
     const [nodeRoot, nativeRoot] = harness.pair(files);
     const node = runNode(args, nodeRoot, extra);
     const probeRoot = harness.materialize("native", files);
@@ -104,6 +104,8 @@ const expectHandOver = ({ args = NATIVE_ARGS, extra = {}, files = withLock(lockV
     const delegated = harness.runNative(args, nativeRoot, { ...extra, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: wrapper });
 
     expect(outcomeOf(delegated, nativeRoot)).toStrictEqual(outcomeOf(node, nodeRoot));
+
+    return node;
 };
 
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis audit --format json --policies none: what goes to Node", () => {
@@ -217,6 +219,35 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.hasAssertions();
 
             expectHandOver({ files: withLock(lockV9(BASIC), { "vis.config.ts": "export default { security: { policies: { license: { deny: ['GPL-3.0'] } } } };\n" }) });
+        });
+
+        // The Node scan also reads the packages a locked package ships inside itself and reports a vendored tree it
+        // cannot scan; the binary reads the lockfile only, so a run like that is Node's before anything is printed.
+        // (That a tree with neither is still answered natively, byte for byte, is in `audit/tests.rs`: this suite
+        // cannot point the binary at a stub, so an answered run here would ask the live OSV.)
+        it.each([
+            ["a locked package that bundles a dependency", { "node_modules/left-pad/node_modules/inner/package.json": json({ name: "inner", version: "2.0.0" }), "node_modules/left-pad/package.json": json({ bundleDependencies: ["inner"], name: "left-pad", version: "1.3.0" }) }],
+            ["a bundling package in pnpm's store", { "node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/node_modules/inner/package.json": json({ name: "inner", version: "2.0.0" }), "node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/package.json": json({ bundledDependencies: ["inner"], name: "left-pad", version: "1.3.0" }) }],
+        ])("hands over %s, and Node scans the bundled package", (_name, more) => {
+            expect.hasAssertions();
+
+            const node = expectHandOver({ files: withLock(lockV9(BASIC), more) });
+
+            expect(JSON.parse(node.stdout)).toMatchObject({ packages: BASIC.length + 1, unauditable: [] });
+        });
+
+        it("hands over a locked package that vendors packages without versions, and Node reports them", () => {
+            expect.hasAssertions();
+
+            const node = expectHandOver({
+                files: withLock(lockV9(BASIC), {
+                    "node_modules/left-pad/dist/compiled/alpha/package.json": json({ name: "alpha" }),
+                    "node_modules/left-pad/dist/compiled/beta/index.js": "module.exports = 1;\n",
+                    "node_modules/left-pad/package.json": json({ name: "left-pad", version: "1.3.0" }),
+                }),
+            });
+
+            expect(JSON.parse(node.stdout)).toMatchObject({ packages: BASIC.length, unauditable: [{ count: 2, host: "left-pad@1.3.0", kind: "vendored", location: "dist/compiled" }] });
         });
 
         it("hands over a workspace that pins its package manager", () => {
