@@ -1272,6 +1272,7 @@ patchedDependencies:
   # Keep these keys in lockstep with the picomatch/tinyglobby pins in `overrides` above.
   # pnpm applies patches strictly (no fuzz), so the key must name the exact version the
   # patch was cut against — and any version bump means re-cutting the patch.
+  '@anolilab/multi-semantic-release@4.4.24': patches/@anolilab__multi-semantic-release@4.4.24.patch
   picomatch@4.0.5: patches/picomatch@4.0.5.patch
   tinyglobby@0.2.17: patches/tinyglobby@0.2.17.patch
 

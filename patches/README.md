@@ -82,6 +82,25 @@ pays the cost of invoking it per entry. The patch passes `exclude: undefined` in
 
 **Upstream issue:** still open at time of patch. Drop once merged.
 
+## `patches/@anolilab__multi-semantic-release@4.4.24.patch`
+
+When a package depends on a workspace package that is released in the same run, the release tool
+rewrites the dependent's `package.json` to the dependency's next version. For a prerelease
+dependency it predicted that version as "last prerelease + 1" and ignored the release type, so a
+breaking change on the `next` channel (3.1.0-next.3 to 4.0.0-next.1) left the dependent pinned to
+3.1.0-next.4. That version never exists, so the lockfile refresh at the end of the release failed
+with `ERR_PNPM_NO_MATCHING_VERSION_INSIDE_WORKSPACE`, and the dependent was published against the
+old major.
+
+The patch makes both prediction helpers (`ae` for stable, `ce` for prerelease) return the version the
+dependency actually released (`_nextRelease.version`) whenever it is already known. Dependencies are
+released before their dependents, so it is known in every case that matters; the old prediction stays
+as the fallback.
+
+The key is the exact installed version, because the patched file is minified and changes with every
+upstream release. When the catalog moves past 4.4.24, re-cut the patch, or drop it if upstream has
+fixed the prediction (4.6.3 still has it).
+
 ## Regenerating a patch
 
 ```bash
