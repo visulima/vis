@@ -81,7 +81,7 @@ fn the_report_of_a_clean_scan_is_json_stringify_with_two_spaces() {
   "packages": 3,
   "policies": [],
   "results": [],
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "summary": {
     "accepted": 0,
     "duplicatePackages": 0,
@@ -96,7 +96,8 @@ fn the_report_of_a_clean_scan_is_json_stringify_with_two_spaces() {
     "version": "alpha"
   },
   "warnings": [],
-  "workspaceRoot": "/work/app"
+  "workspaceRoot": "/work/app",
+  "unauditable": []
 }
 "#
     );

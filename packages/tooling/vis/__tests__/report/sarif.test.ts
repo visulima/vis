@@ -226,4 +226,24 @@ describe(emitSarif, () => {
         expect(validate(single), formatErrors(validate)).toBe(true);
         expect(validate(multi), formatErrors(validate)).toBe(true);
     });
+
+    it("names the host a bundled copy lives in, and notes what was not scanned, in a schema-valid log", () => {
+        expect.assertions(5);
+
+        const validate = sarifValidator();
+        const log = emitSarif({
+            findings: [{ acknowledged: false, bundledIn: ["host@1.0.0 > dep@2.0.0"], packageName: "dep", packageVersion: "2.0.0", vulnerability: vuln() }],
+            tool: { informationUri: "https://github.com/visulima/visulima", name: "vis-audit", version: "alpha" },
+            unauditable: [{ count: 126, host: "next@16.3.8", kind: "vendored", location: "dist/compiled" }],
+            workspaceRoot: "/repo",
+        });
+
+        expect(log.runs[0]?.results[0]?.message.text).toContain("(bundled in host@1.0.0 > dep@2.0.0)");
+        expect(log.runs[0]?.invocations?.[0]?.toolExecutionNotifications).toStrictEqual([
+            { level: "note", message: { text: "Not scanned: next@16.3.8 vendors 126 packages without versions (dist/compiled)" } },
+        ]);
+        expect(validate(log), formatErrors(validate)).toBe(true);
+        expect(emitSarif({ findings: [], tool: { informationUri: "https://example.com", name: "vis-audit", version: "alpha" }, workspaceRoot: "/repo" }).runs[0]).not.toHaveProperty("invocations");
+        expect(emitSarif({ findings: [], tool: { informationUri: "https://example.com", name: "vis-audit", version: "alpha" }, unauditable: [], workspaceRoot: "/repo" }).runs[0]).not.toHaveProperty("invocations");
+    });
 });

@@ -23,22 +23,7 @@ import type { DependencyPath } from "./dependency-paths";
 import type { BundledHost, InstalledPackage } from "./dependency-scan";
 import type { PackageManifest } from "./manifests";
 import { bundledDependencyNames, readNodeModulesManifests } from "./manifests";
-
-/** Why a package could not be scanned. */
-export type UnauditableKind = "bundled-unreadable" | "vendored";
-
-/** A host that ships packages the scan could not check. */
-export interface UnauditableEntry {
-    /** How many packages. */
-    count: number;
-    /** The host, as `name@version`. */
-    host: string;
-    kind: UnauditableKind;
-    /** Where inside the host they are, relative to it (`dist/compiled`, `node_modules`). */
-    location: string;
-    /** The names, for a bundled package whose manifest cannot be read. */
-    names?: string[];
-}
+import type { UnauditableEntry } from "./unauditable";
 
 export interface BundledScan {
     /** How many packages were found only inside another package (not in the lockfile). */

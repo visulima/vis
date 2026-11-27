@@ -169,4 +169,48 @@ describe(emitCycloneDxVex, () => {
         expect(validate(single), formatErrors(validate)).toBe(true);
         expect(validate(multi), formatErrors(validate)).toBe(true);
     });
+
+    describe("packages bundled inside other packages", () => {
+        const host = { "bom-ref": "pkg:npm/host@1.0.0", name: "host", type: "library" as const, version: "1.0.0" };
+        const bundled = [{ bundledIn: [[{ name: "host", version: "1.0.0" }]], name: "dep", version: "2.0.0" }];
+        const finding = { acknowledged: false, packageName: "dep", packageVersion: "2.0.0", vulnerability: vuln() };
+
+        it("adds a component for the bundled package and an edge from its host, so every affects ref resolves", () => {
+            expect.assertions(3);
+
+            const bom = emitCycloneDxVex({
+                bom: { ...emptyBom(), components: [host], dependencies: [{ ref: "pkg:npm/host@1.0.0" }] },
+                bundled,
+                findings: [finding],
+                now,
+            });
+            const refs = new Set(bom.components?.map((component) => component["bom-ref"]));
+
+            expect(bom.vulnerabilities?.flatMap((entry) => entry.affects?.map((affect) => affect.ref) ?? [])).toStrictEqual(["pkg:npm/dep@2.0.0"]);
+            expect(refs.has("pkg:npm/dep@2.0.0")).toBe(true);
+            expect(bom.dependencies).toStrictEqual([{ dependsOn: ["pkg:npm/dep@2.0.0"], ref: "pkg:npm/host@1.0.0" }]);
+        });
+
+        it("adds a host the BOM does not list, so no edge points at a missing component", () => {
+            expect.assertions(2);
+
+            const bom = emitCycloneDxVex({ bom: emptyBom(), bundled, findings: [finding], now });
+
+            expect(bom.components?.map((component) => component["bom-ref"])).toStrictEqual(["pkg:npm/dep@2.0.0", "pkg:npm/host@1.0.0"]);
+            expect(bom.dependencies).toStrictEqual([{ dependsOn: ["pkg:npm/dep@2.0.0"], ref: "pkg:npm/host@1.0.0" }]);
+        });
+
+        it("leaves the BOM as it was when nothing is bundled, and validates against the schema when something is", () => {
+            expect.assertions(3);
+
+            const validate = cyclonedxValidator();
+            const input: CycloneDxBom = { ...emptyBom(), components: [host], metadata: { timestamp: "2026-05-11T12:00:00Z" }, serialNumber: "urn:uuid:12345678-1234-1234-1234-123456789012" };
+            const plain = emitCycloneDxVex({ bom: input, findings: [], now });
+            const withBundled = emitCycloneDxVex({ bom: input, bundled, findings: [finding], now });
+
+            expect(plain.components).toStrictEqual([host]);
+            expect(plain).not.toHaveProperty("dependencies");
+            expect(validate(withBundled), formatErrors(validate)).toBe(true);
+        });
+    });
 });

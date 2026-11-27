@@ -34,6 +34,34 @@ describe(emitAuditHtml, () => {
         expect(html).toContain("CLEAN");
     });
 
+    it("says nothing was found in the scanned packages, and lists what was not scanned", () => {
+        expect.assertions(4);
+
+        const html = emitAuditHtml({
+            ...baseOptions,
+            findings: [],
+            report: {
+                bloomHits: [],
+                duplicates: [],
+                generatedAt: "2026-05-11T12:00:00.000Z",
+                packages: 100,
+                policies: [],
+                results: [],
+                schemaVersion: "1.1",
+                summary: { accepted: 0, duplicatePackages: 0, issues: 0, policyBlocks: 0, policyDecisions: 0, total: 0 },
+                tool: { name: "vis-audit", version: "alpha" },
+                unauditable: [{ count: 126, host: "next@16.3.8", kind: "vendored", location: "dist/compiled" }],
+                warnings: [],
+                workspaceRoot: "/repo",
+            },
+        });
+
+        expect(html).not.toContain("No security issues found");
+        expect(html).toContain("No known issues in the scanned packages.");
+        expect(html).toContain("next@16.3.8 vendors 126 packages without versions (dist/compiled)");
+        expect(html).not.toContain(">CLEAN<");
+    });
+
     it("renders one row per finding with severity badge and advisory link", () => {
         expect.assertions(3);
 
@@ -275,9 +303,10 @@ describe(emitAuditHtml, () => {
                 packages: 100,
                 policies: [],
                 results: [],
-                schemaVersion: "1.0",
+                schemaVersion: "1.1",
                 summary: { accepted: 0, duplicatePackages: 2, issues: 0, policyBlocks: 0, policyDecisions: 0, total: 0 },
                 tool: { name: "vis-audit", version: "alpha" },
+                unauditable: [],
                 warnings: [],
                 workspaceRoot: "/repo",
             },

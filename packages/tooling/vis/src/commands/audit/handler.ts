@@ -46,6 +46,7 @@ import { compareFindingsForDisplay, severityPassesFilter } from "../../security/
 import type { AcceptedRisk, PackageReportData } from "../../security/socket-security";
 import { DEFAULT_LOW_SCORE_THRESHOLD, findAcceptedRisk, getFullPackageName, scoreLabel } from "../../security/socket-security";
 import { applyOverridePlan, buildOverridePlanFromFindings, planOverrideWrite } from "../../security/transitive-fix";
+import { describeUnauditable } from "../../security/unauditable";
 import type { SecurityVulnerability } from "../../util/catalog";
 import { fetchVulnerabilities } from "../../util/catalog";
 import type { AuditOptions } from "./index";
@@ -528,7 +529,7 @@ const executeAudit = async (
     // found inside other packages, so the vulnerability scan covers them too.
     const lockedInstalled = !isOffline || npmRequested(ecosystems.all) ? lockedPackages(workspaceRoot, pm.name, { includeDev: !prodOnly }) : [];
     const bundledScan = scanBundledDependencies(workspaceRoot, lockedInstalled);
-    const { installed } = bundledScan;
+    const { installed, unauditable } = bundledScan;
     const offlineNonNpm = isOffline
         ? offlineNonNpmEcosystems(ecosystems.all)
             .map((ecosystem) => { return { ecosystem, packages: lockedPackagesForEcosystem(workspaceRoot, ecosystem) }; })
@@ -1127,6 +1128,7 @@ const executeAudit = async (
             findings: findingsForReport(),
             policyDecisions,
             tool: { informationUri: "https://github.com/visulima/visulima", name: "vis-audit", version: "alpha" },
+            unauditable,
             workspaceRoot,
         });
 
@@ -1217,6 +1219,7 @@ const executeAudit = async (
         packagesScanned: installed.length,
         policyDecisions,
         tool: auditReportTool,
+        unauditable,
         unknownPolicyTokens,
         workspaceRoot,
     });
@@ -1261,8 +1264,17 @@ const executeAudit = async (
     }
 
     // 6. Human-readable output
+    // Packages the scan knew were there and could not check. Their line is a notice only: it never changes the exit code.
+    const printNotScanned = (indent: string): void => {
+        for (const entry of unauditable) {
+            pail.warn(`${indent}Not scanned: ${describeUnauditable(entry)}`);
+        }
+    };
+
     if (filtered.length === 0) {
-        pail.success(`No security issues found across ${String(installed.length)} packages.`);
+        // A clean result for the scanned packages is not a clean result for the project when some could not be scanned.
+        pail.success(unauditable.length > 0 ? `No known issues in the scanned packages (${String(installed.length)}).` : `No security issues found across ${String(installed.length)} packages.`);
+        printNotScanned("");
 
         return;
     }
@@ -1420,6 +1432,7 @@ const executeAudit = async (
     pail.info("");
     pail.info(`─ Audit Summary`);
     pail.info(`  ${String(installed.length)} packages scanned`);
+    printNotScanned("  ");
 
     if (nativeExclusions.ignoredAdvisories.length > 0) {
         pail.info(
@@ -1441,7 +1454,7 @@ const executeAudit = async (
             pail.warn(`    ${String(highCount)} high`);
         }
     } else {
-        pail.success("  No vulnerabilities found");
+        pail.success(unauditable.length > 0 ? "  No known vulnerabilities in the scanned packages" : "  No vulnerabilities found");
     }
 
     if (socketIssues.length > 0) {

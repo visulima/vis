@@ -72,7 +72,7 @@ pub(super) fn clean_report(
     let listed = if entries.is_empty() { "[]".to_owned() } else { format!("[\n{}\n  ]", entries.join(",\n")) };
 
     format!(
-        "{{\n  \"bloomHits\": [],\n  \"duplicates\": {listed},\n  \"generatedAt\": {},\n  \"packages\": {packages},\n  \"policies\": [],\n  \"results\": [],\n  \"schemaVersion\": \"1.0\",\n  \"summary\": {{\n    \"accepted\": 0,\n    \"duplicatePackages\": {},\n    \"issues\": 0,\n    \"policyBlocks\": 0,\n    \"policyDecisions\": 0,\n    \"total\": 0\n  }},\n  \"tool\": {TOOL},\n  \"warnings\": [],\n  \"workspaceRoot\": {}\n}}\n",
+        "{{\n  \"bloomHits\": [],\n  \"duplicates\": {listed},\n  \"generatedAt\": {},\n  \"packages\": {packages},\n  \"policies\": [],\n  \"results\": [],\n  \"schemaVersion\": \"1.1\",\n  \"summary\": {{\n    \"accepted\": 0,\n    \"duplicatePackages\": {},\n    \"issues\": 0,\n    \"policyBlocks\": 0,\n    \"policyDecisions\": 0,\n    \"total\": 0\n  }},\n  \"tool\": {TOOL},\n  \"warnings\": [],\n  \"workspaceRoot\": {},\n  \"unauditable\": []\n}}\n",
         json_string(generated_at),
         duplicates.len(),
         json_string(workspace_root)

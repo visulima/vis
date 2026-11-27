@@ -15,6 +15,7 @@ import type { DependencyPath } from "../../security/dependency-paths";
 import type { DuplicatePackage } from "../../security/dependency-scan";
 import type { PolicyDecision } from "../../security/policies";
 import type { AcceptedRisk, PackageAlert, PackageReportData } from "../../security/socket-security";
+import type { UnauditableEntry } from "../../security/unauditable";
 
 export interface AuditReportEntryVulnerability extends SecurityVulnerability {
     /** Optional `--explain` text stitched in by the handler. */
@@ -79,7 +80,7 @@ export interface AuditReportTool {
  * Bump the minor when adding fields, the major when removing/renaming
  * existing ones.
  */
-export const AUDIT_REPORT_SCHEMA_VERSION = "1.0" as const;
+export const AUDIT_REPORT_SCHEMA_VERSION = "1.1" as const;
 
 export interface AuditReportBloomHit {
     name: string;
@@ -98,6 +99,12 @@ export interface AuditReport {
     schemaVersion: typeof AUDIT_REPORT_SCHEMA_VERSION;
     summary: AuditReportSummary;
     tool: AuditReportTool;
+
+    /**
+     * Packages the scan knew were there and could not check: vendored copies with no version, bundled
+     * packages whose manifest is unreadable. Always present (empty when there are none), and the last key.
+     */
+    unauditable: UnauditableEntry[];
     warnings: AuditReportWarning[];
     workspaceRoot: string;
 }
@@ -136,6 +143,8 @@ export interface BuildAuditReportInput {
     policyDecisions: ReadonlyArray<PolicyDecision>;
     /** Tool identification for the report header. */
     tool: AuditReportTool;
+    /** Packages found and not checked (see {@link AuditReport.unauditable}); defaults to none. */
+    unauditable?: ReadonlyArray<UnauditableEntry>;
     /** Unknown `--policies` tokens — surfaced as warnings. */
     unknownPolicyTokens: ReadonlyArray<string>;
     /** Absolute workspace root, mirrored verbatim into the report. */
@@ -143,7 +152,7 @@ export interface BuildAuditReportInput {
 }
 
 export const buildAuditReport = (input: BuildAuditReportInput): AuditReport => {
-    const { bloomHits, duplicates, explanations, filtered, now, packagesScanned, policyDecisions, tool, unknownPolicyTokens, workspaceRoot } = input;
+    const { bloomHits, duplicates, explanations, filtered, now, packagesScanned, policyDecisions, tool, unauditable = [], unknownPolicyTokens, workspaceRoot } = input;
 
     const results: AuditReportEntry[] = filtered.map((entry) => {
         return {
@@ -192,7 +201,7 @@ export const buildAuditReport = (input: BuildAuditReportInput): AuditReport => {
         return { kind: "unknown-policy", token };
     });
 
-    return {
+    const report: Omit<AuditReport, "unauditable"> = {
         bloomHits: bloomHits.map((hit) => {
             return { name: hit.name, version: hit.version };
         }),
@@ -212,5 +221,19 @@ export const buildAuditReport = (input: BuildAuditReportInput): AuditReport => {
         tool,
         warnings,
         workspaceRoot,
+    };
+
+    // Added in schema 1.1. It goes after the spread so it stays the last key and every earlier key keeps its place.
+    return {
+        ...report,
+        unauditable: unauditable.map((entry) => {
+            return {
+                count: entry.count,
+                host: entry.host,
+                kind: entry.kind,
+                location: entry.location,
+                ...(entry.names ? { names: [...entry.names] } : {}),
+            };
+        }),
     };
 };

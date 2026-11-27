@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { pail } from "../../../src/io/logger";
+
 // Real lock file, real reader, real handler, a real `node_modules` tree. Only the OSV querybatch endpoint (global
 // `fetch`) and the output sinks are stubbed. The lock file lists `host` alone; `host` ships `bundled-dep` inside itself
 // (`bundleDependencies`), so the dependency is known only from disk, and the advisory source reports a finding for it.
@@ -13,6 +15,7 @@ const OSV_URL = "https://api.osv.dev/v1/querybatch";
 interface Report {
     packages: number;
     results: { dependencyPaths: { name: string; version: string }[][]; name: string; version: string; vulnerabilities: { id: string }[] }[];
+    unauditable: { count: number; host: string; kind: string; location: string }[];
 }
 
 let workspaceRoot: string;
@@ -59,6 +62,19 @@ const stubOsv = (): void => {
     );
 };
 
+/** Everything the handler tells the user through pail, at any level. */
+const captureMessages = (): string[] => {
+    const messages: string[] = [];
+
+    for (const level of ["error", "info", "notice", "success", "warn"] as const) {
+        vi.spyOn(pail, level).mockImplementation((...parts: unknown[]) => {
+            messages.push(parts.map(String).join(" "));
+        });
+    }
+
+    return messages;
+};
+
 const execAudit = async (options: Record<string, unknown>): Promise<void> => {
     const { default: execute } = await import("../../../src/commands/audit/handler");
 
@@ -77,27 +93,35 @@ const runAudit = async (options: Record<string, unknown> = {}): Promise<Report> 
     return JSON.parse(stdoutChunks.join(""));
 };
 
+const setUp = (): void => {
+    workspaceRoot = mkdtempSync(join(tmpdir(), "vis-audit-bundled-"));
+    stdoutChunks = [];
+    queried = [];
+    process.exitCode = undefined;
+    stubOsv();
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+        stdoutChunks.push(String(chunk));
+
+        return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+};
+
+const tearDown = (): void => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+    rmSync(workspaceRoot, { force: true, recursive: true });
+};
+
 describe("vis audit with a package that bundles a dependency", () => {
     beforeEach(() => {
-        workspaceRoot = mkdtempSync(join(tmpdir(), "vis-audit-bundled-"));
-        stdoutChunks = [];
-        queried = [];
-        process.exitCode = undefined;
+        setUp();
         layout();
-        stubOsv();
-        vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-            stdoutChunks.push(String(chunk));
-
-            return true;
-        });
-        vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     });
 
     afterEach(() => {
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
-        process.exitCode = undefined;
-        rmSync(workspaceRoot, { force: true, recursive: true });
+        tearDown();
     });
 
     it("asks the advisory source about the bundled package and counts it as scanned", async () => {
@@ -171,20 +195,11 @@ describe("vis audit with a package that bundles a dependency", () => {
     it("leaves a bundled finding out of --fix and says why", async () => {
         expect.assertions(2);
 
-        const logged: string[] = [];
-
-        vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
-            logged.push(parts.join(" "));
-        });
-        vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
-            logged.push(String(chunk));
-
-            return true;
-        });
+        const messages = captureMessages();
 
         await execAudit({ fix: true, format: "json", yes: true });
 
-        const text = logged.join("\n") + stdoutChunks.join("");
+        const text = messages.join("\n");
 
         expect(text).toContain("bundled inside other packages");
         expect(text).toContain("Upgrade the package that ships it: host@1.0.0");
@@ -222,5 +237,56 @@ describe("vis audit with a package that bundles a dependency", () => {
         expect(affected).toStrictEqual(["pkg:npm/bundled-dep@2.5.0"]);
         expect(affected.every((ref) => refs.has(ref))).toBe(true);
         expect(vex.dependencies.find((dependency) => dependency.ref === "pkg:npm/host@1.0.0")?.dependsOn).toContain("pkg:npm/bundled-dep@2.5.0");
+    });
+});
+
+describe("vis audit with a package that vendors copies without versions", () => {
+    beforeEach(() => {
+        setUp();
+        write("package.json", { dependencies: { vend: "1.0.0" }, name: "vendor-app", version: "1.0.0", workspaces: ["packages/*"] });
+        write("package-lock.json", { lockfileVersion: 3, packages: { "": { name: "vendor-app", version: "1.0.0" }, "node_modules/vend": { version: "1.0.0" } } });
+        write("node_modules/vend/package.json", { name: "vend", version: "1.0.0" });
+        write("node_modules/vend/dist/compiled/alpha/package.json", { name: "alpha" });
+        write("node_modules/vend/dist/compiled/beta/index.js", "module.exports = 1;");
+    });
+
+    afterEach(() => {
+        tearDown();
+    });
+
+    it("reports them in the JSON as unauditable, as the last key, and scans only what has a version", async () => {
+        expect.assertions(4);
+
+        const report = await runAudit();
+
+        expect(report.unauditable).toStrictEqual([{ count: 2, host: "vend@1.0.0", kind: "vendored", location: "dist/compiled" }]);
+        expect(Object.keys(report).at(-1)).toBe("unauditable");
+        expect(report.packages).toBe(1);
+        expect(queried).toStrictEqual(["vend@1.0.0"]);
+    });
+
+    it("says nothing was found in the scanned packages, names what was not scanned, and exits zero", async () => {
+        expect.assertions(4);
+
+        const messages = captureMessages();
+
+        await execAudit({ exitCode: true, failOn: "low" });
+
+        const text = messages.join("\n");
+
+        expect(text).toContain("No known issues in the scanned packages (1)");
+        expect(text).toContain("Not scanned: vend@1.0.0 vendors 2 packages without versions (dist/compiled)");
+        expect(text).not.toContain("No security issues found");
+        expect(process.exitCode).not.toBe(1);
+    });
+
+    it("keeps the JSON unauditable list empty for a workspace with nothing vendored", async () => {
+        expect.assertions(1);
+
+        rmSync(join(workspaceRoot, "node_modules/vend/dist"), { force: true, recursive: true });
+
+        const report = await runAudit();
+
+        expect(report.unauditable).toStrictEqual([]);
     });
 });
