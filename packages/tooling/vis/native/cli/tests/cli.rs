@@ -22,6 +22,7 @@ fn binary() -> Command {
 }
 
 /// `text` without its SGR colour sequences (`ESC [ ... m`).
+#[cfg(unix)]
 fn without_colour(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
     let mut chars = text.chars();

@@ -8,6 +8,7 @@ use std::process::{Command, ExitStatus};
 /// Conservative per-call argv budget (see `ARG_BUDGET` in dispatch.ts).
 const ARG_BUDGET: usize = 32 * 1024;
 
+#[cfg(unix)]
 const SIGNALS: [(i32, &str); 9] = [
     (1, "SIGHUP"),
     (2, "SIGINT"),
