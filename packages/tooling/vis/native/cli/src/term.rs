@@ -250,9 +250,9 @@ fn term_shows_colour(term: &str) -> bool {
 /// The colour level of stdout in the process `get` describes, by the rules of `createIsColorSupported`, in
 /// its order: `FORCE_COLOR`, `NO_COLOR` and the flags, a dumb or mono `TERM`, Windows, the CI providers, then
 /// the terminal hints, the last of which asks whether stdout is a terminal (`stdout_is_terminal`). `None` is a
-/// case it cannot decide here and Node has to answer: a PM2 process (Node treats it as a terminal), the
-/// Windows build-number rule, and the case where the Node runtime itself warns on stderr, with its process
-/// id in the text: `FORCE_COLOR` together with `NO_COLOR` or `NODE_DISABLE_COLORS`.
+/// case it cannot decide here and Node has to answer: a PM2 process (Node treats it as a terminal) and the
+/// case where the Node runtime itself warns on stderr, with its process id in the text: `FORCE_COLOR`
+/// together with `NO_COLOR` or `NODE_DISABLE_COLORS`. On Windows the level is a lower bound: see below.
 fn detect_level(
     get: &dyn Fn(&str) -> Option<String>,
     flags: ColourFlags,
@@ -323,8 +323,9 @@ fn detect_level(
             return Some(1);
         }
 
-        // The rest is a rule on the Windows build number, which is not read here.
-        return None;
+        // The rest is a rule on the Windows build number, which picks sixteen colours, 256 or true colour but never
+        // none. Every consumer here only asks whether there is colour, so the build number is not read.
+        return Some(1);
     }
 
     if has("CI") {
@@ -404,17 +405,52 @@ pub fn piped_colour_level(args: &[String]) -> Option<u8> {
 }
 
 /// Cerebro's terminal width, in the order of its lookup: `CEREBRO_TERMINAL_WIDTH` (`parseInt`, positive), the size
-/// of stdout, the size of stderr (each needs both columns and rows), `COLUMNS` when `LINES` is set too, and then
-/// the controlling terminal (`/dev/tty`) and `tput`, which fall back to 80. `None` when the answer would come
-/// from a place this process cannot read the way Node does: the `COLUMNS` or `LINES` text that is no clean
-/// number, `tput` (which honours a `COLUMNS` of its own) and a controlling terminal.
+/// of stdout, the size of stderr (each needs both columns and rows; on Windows the size of the console window, as
+/// libuv reads it), `COLUMNS` when `LINES` is set too, and then the controlling terminal (`/dev/tty`, Unix only)
+/// and `tput`, which fall back to 80. `None` when the answer would come from a place this process cannot read the
+/// way Node does: the `COLUMNS` or `LINES` text that is no clean number, `tput` (which honours a `COLUMNS` of its
+/// own) and a controlling terminal.
 pub fn terminal_width() -> Option<usize> {
     width_from(
         &|name| env::var_os(name).map(|value| value.to_string_lossy().into_owned()),
         size_of(terminal_size::terminal_size_of(std::io::stdout())),
         size_of(terminal_size::terminal_size_of(std::io::stderr())),
-        crate::pail::environment_decides_width,
+        nothing_left_to_ask,
     )
+}
+
+/// Whether the lookup past the environment ends at the default size, `columns_set` being whether `COLUMNS` is in
+/// the environment. On Unix `tput` answers from its own `COLUMNS`, and a controlling terminal or a `TERM` outside
+/// [`crate::pail::environment_decides_width`]'s list could answer too. Windows has neither a controlling terminal nor a
+/// `TERM` rule, so only a `tput` that Node could start counts, whatever `COLUMNS` says.
+fn nothing_left_to_ask(columns_set: bool) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = columns_set;
+
+        let directories = std::env::current_dir()
+            .ok()
+            .into_iter()
+            .chain(env::var_os("PATH").map(|path| env::split_paths(&path).collect::<Vec<_>>()).into_iter().flatten());
+
+        !tput_in(directories, &|path| path.is_file())
+    }
+
+    #[cfg(not(windows))]
+    {
+        !columns_set && crate::pail::environment_decides_width()
+    }
+}
+
+/// Whether `tput` would start from one of `directories` (the working directory, then `PATH`): Windows starts a
+/// program named without an extension from `tput.com` or `tput.exe`, which is what Node's `execFileSync("tput")`
+/// finds. `is_file` answers whether a path is a file, so a test can stand in for the file system.
+#[cfg(any(windows, test))]
+fn tput_in(
+    directories: impl IntoIterator<Item = std::path::PathBuf>,
+    is_file: &dyn Fn(&std::path::Path) -> bool,
+) -> bool {
+    directories.into_iter().any(|directory| ["tput.com", "tput.exe"].iter().any(|name| is_file(&directory.join(name))))
 }
 
 /// A terminal size as `(columns, rows)`.
@@ -426,7 +462,7 @@ fn width_from(
     get: &dyn Fn(&str) -> Option<String>,
     stdout: Option<(u16, u16)>,
     stderr: Option<(u16, u16)>,
-    default_size_environment: fn() -> bool,
+    default_size_environment: fn(bool) -> bool,
 ) -> Option<usize> {
     if let Some(width) = get("CEREBRO_TERMINAL_WIDTH").and_then(|text| parse_int(&text)).filter(|&width| width > 0) {
         return usize::try_from(width).ok();
@@ -444,8 +480,8 @@ fn width_from(
         return parse_int(columns).filter(|&width| width > 0).and_then(|width| usize::try_from(width).ok());
     }
 
-    // `tput` answers from its own `COLUMNS`; without one, only a terminal could say, and then the default size is 80.
-    (get("COLUMNS").is_none() && default_size_environment()).then_some(80)
+    // Past the environment only a terminal or `tput` could say, and without either the default size is 80.
+    default_size_environment(get("COLUMNS").is_some()).then_some(80)
 }
 
 /// Make a Windows console render the ANSI codes the native output prints (colour, styling).
@@ -733,17 +769,36 @@ mod tests {
     }
 
     #[test]
-    fn windows_decides_from_the_environment_or_leaves_the_build_number_to_node() {
-        let on_windows =
-            |pairs: &[(&'static str, &'static str)]| detect_level(&get(pairs), ColourFlags::default(), true, true);
+    fn windows_colours_unless_the_environment_or_a_flag_says_otherwise() {
+        let on_windows = |pairs: &[(&'static str, &'static str)], terminal: bool| {
+            detect_level(&get(pairs), ColourFlags::default(), terminal, true)
+        };
 
-        assert_eq!(on_windows(&[("WT_SESSION", "x")]), Some(3));
-        assert_eq!(on_windows(&[("ANSICON", "1")]), Some(1));
-        assert_eq!(on_windows(&[("FORCE_COLOR", "2")]), Some(2));
-        assert_eq!(on_windows(&[("TERM", "dumb")]), Some(0));
-        assert_eq!(on_windows(&[]), None);
-        // The CI rules sit behind the Windows rule.
-        assert_eq!(on_windows(&[("CI", "1"), ("GITHUB_ACTIONS", "1")]), None);
+        assert_eq!(on_windows(&[("WT_SESSION", "x")], true), Some(3));
+        assert_eq!(on_windows(&[("ANSICON", "1")], true), Some(1));
+        assert_eq!(on_windows(&[("FORCE_COLOR", "2")], true), Some(2));
+        assert_eq!(on_windows(&[("TERM", "dumb")], true), Some(0));
+        assert_eq!(on_windows(&[("NO_COLOR", "1")], false), Some(0));
+        // Nothing else decides, so the build-number rule does, and it never answers "no colour": a pipe, a file and
+        // a console alike.
+        for terminal in [true, false] {
+            assert_eq!(on_windows(&[], terminal), Some(1));
+            // The CI rules sit behind the Windows rule, which comes first.
+            assert_eq!(on_windows(&[("CI", "1")], terminal), Some(1));
+            assert_eq!(on_windows(&[("CI", "1"), ("GITHUB_ACTIONS", "1")], terminal), Some(1));
+        }
+    }
+
+    #[test]
+    fn help_is_coloured_on_windows_without_a_hint_and_plain_with_no_color() {
+        let colour = |words: &[&str], pairs: &[(&'static str, &'static str)]| {
+            colour_from(&arguments(words), &get(pairs), false, true)
+        };
+
+        assert_eq!(colour(&["--help"], &[]), Some(true));
+        assert_eq!(colour(&["--help"], &[("NO_COLOR", "1")]), Some(false));
+        assert_eq!(colour(&["--help", "--no-color"], &[]), Some(false));
+        assert_eq!(colour(&["--help"], &[("FORCE_COLOR", "0")]), Some(false));
     }
 
     #[test]
@@ -759,11 +814,11 @@ mod tests {
         stderr: Option<(u16, u16)>,
         default_environment: bool,
     ) -> Option<usize> {
-        fn yes() -> bool {
-            true
+        fn yes(columns_set: bool) -> bool {
+            !columns_set
         }
 
-        fn no() -> bool {
+        fn no(_: bool) -> bool {
             false
         }
 
@@ -802,6 +857,40 @@ mod tests {
         // `COLUMNS` or `LINES` that is no clean number is Node's.
         assert_eq!(width(&[("COLUMNS", "abc"), ("LINES", "30")], None, None, true), None);
         assert_eq!(width(&[("COLUMNS", "0"), ("LINES", "30")], None, None, true), None);
+    }
+
+    #[test]
+    fn a_console_size_comes_from_the_injected_reader_before_anything_else() {
+        // The readers stand in for the console of stdout and stderr: a size is both numbers non-zero.
+        assert_eq!(width(&[], Some((132, 43)), None, true), Some(132));
+        assert_eq!(width(&[], None, Some((97, 30)), true), Some(97));
+        // A pipe or a file has no size, so the environment decides: here nothing is left to ask, hence 80.
+        assert_eq!(width(&[], None, None, true), Some(80));
+    }
+
+    #[test]
+    fn a_columns_variable_without_lines_is_ignored_when_there_is_no_tput_to_read_it() {
+        // Windows with no `tput` on the path: the default size is Node's answer whatever `COLUMNS` says.
+        assert_eq!(width_from(&get(&[("COLUMNS", "120")]), None, None, |_| true), Some(80));
+        assert_eq!(width_from(&get(&[("COLUMNS", "120")]), None, None, |_| false), None);
+        // With a `LINES` as well the pair is the answer, `tput` or not.
+        assert_eq!(width_from(&get(&[("COLUMNS", "120"), ("LINES", "30")]), None, None, |_| true), Some(120));
+    }
+
+    #[test]
+    fn tput_is_found_by_its_windows_names_in_the_working_directory_or_the_path() {
+        use std::path::{Path, PathBuf};
+
+        let directories = || vec![PathBuf::from("work"), PathBuf::from("tools"), PathBuf::from("bin")];
+        let files =
+            |files: &'static [&'static str]| move |path: &Path| files.iter().any(|file| Path::new(file) == path);
+
+        assert!(!tput_in(directories(), &files(&[])));
+        assert!(tput_in(directories(), &files(&["tools/tput.exe"])));
+        assert!(tput_in(directories(), &files(&["work/tput.com"])));
+        // Only the names Windows adds count, and only inside the given directories.
+        assert!(!tput_in(directories(), &files(&["tools/tput", "tools/tput.bat", "elsewhere/tput.exe"])));
+        assert!(!tput_in(Vec::new(), &files(&["tools/tput.exe"])));
     }
 
     #[test]
