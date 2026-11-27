@@ -197,17 +197,6 @@ jobs:
               working-directory: "${{ matrix.package.dir }}"
               run: "cargo test --verbose"
 
-            # vis-cli + vis-core are workspace members alongside the addon; the
-            # `cargo test` above only covers the root addon package. `-p` selects
-            # just these lean crates (no oxc), so this runs on any toolchain.
-            - name: "Run cargo test + clippy (vis-cli + vis-core)"
-              if: "matrix.package.name == 'vis'"
-              shell: "bash"
-              working-directory: "packages/tooling/vis/native"
-              run: |
-                  cargo test -p vis-cli -p vis-core --verbose
-                  cargo clippy -p vis-cli -p vis-core --all-targets -- -D warnings
-
             # fspy_seccomp is a path-dep of task-runner-native (not a
             # workspace member), so `cargo test` above doesn't reach
             # it. Run its tests + perf bench separately on Linux only.
@@ -334,17 +323,23 @@ jobs:
               working-directory: "packages/tooling/task-runner"
               run: "pnpm exec vitest run __tests__/parity"
 
-    # vis-cli runs natively on Linux in the job above; Windows hands part of its surface to Node by design
-    # (discovery, run keys, help), and the rest of it (paths, line endings, PATH splitting) is only checked here.
-    # Part of the required-check aggregation below.
-    test-vis-cli-windows:
-        name: "Test vis-cli (windows-latest)"
+    # vis-cli and vis-core are workspace members alongside the addon (the job above covers only the addon
+    # package); `-p` selects just these lean crates (no oxc), so this runs on any toolchain. They run on every
+    # OS the binary ships for: Windows hands part of its surface to Node by design (discovery, run keys, help),
+    # and paths, line endings and PATH splitting differ between all three. Part of the required-check
+    # aggregation below.
+    test-vis-cli-os:
+        name: "Test vis-cli (${{ matrix.os }})"
         needs: "files-changed"
         if: |
             github.event_name == 'workflow_dispatch' ||
             needs.files-changed.outputs.vis == 'true'
-        runs-on: "windows-latest"
+        runs-on: "${{ matrix.os }}"
         timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                os: ["ubuntu-24.04", "macos-latest", "windows-latest"]
         steps:
             - name: "Git checkout"
               uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
@@ -456,7 +451,7 @@ jobs:
 
     cargo-test-required-check:
         name: "Cargo Test Status"
-        needs: ["files-changed", "test", "test-core-os", "test-vis-cli-windows"]
+        needs: ["files-changed", "test", "test-core-os", "test-vis-cli-os"]
         if: "always()"
         runs-on: "ubuntu-24.04"
         timeout-minutes: 1
@@ -474,12 +469,12 @@ jobs:
                     echo "Task-runner core tests failed or were cancelled (macOS, Windows or Linux parity)"
                     exit 1
                   fi
-                  if [ "$VIS_CLI_WINDOWS_RESULT" = "failure" ] || [ "$VIS_CLI_WINDOWS_RESULT" = "cancelled" ]; then
-                    echo "vis-cli tests failed or were cancelled on Windows"
+                  if [ "$VIS_CLI_OS_RESULT" = "failure" ] || [ "$VIS_CLI_OS_RESULT" = "cancelled" ]; then
+                    echo "vis-cli tests failed or were cancelled (Linux, macOS or Windows)"
                     exit 1
                   fi
                   echo "All Rust tests passed (or skipped)"
               env:
                   RESULT: "${{ needs.test.result }}"
                   CORE_OS_RESULT: "${{ needs.test-core-os.result }}"
-                  VIS_CLI_WINDOWS_RESULT: "${{ needs.test-vis-cli-windows.result }}"
+                  VIS_CLI_OS_RESULT: "${{ needs.test-vis-cli-os.result }}"
