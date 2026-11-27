@@ -64,11 +64,28 @@ const BASIC: Pkg[] = [{ name: "left-pad", version: "1.3.0" }, { name: "is-odd", 
 /** The arguments the binary takes. */
 const NATIVE_ARGS = ["--format", "json", "--policies", "none"];
 
+/** The cursor moves that redraw the progress row, then a braille spinner frame (U+2800 to U+28FF). */
+const REDRAW = "\u001B[2K\u001B[1A\u001B[2K\u001B[G";
+
+const isSpinnerFrame = (line: string): boolean => {
+    const code = line.startsWith(REDRAW) ? line.codePointAt(REDRAW.length) : undefined;
+
+    return code !== undefined && code >= 0x28_00 && code <= 0x28_ff;
+};
+
 /** An outcome with the values that differ between runs by design masked. */
 const masked = (outcome: Outcome): Outcome => {
     // The progress row ends in `· 12ms`; the table form says `Scan completed in 12ms`. The row is padded to a fixed
     // width that includes the duration, so a duration of another length moves the spaces before the dash: collapse them.
-    const timing = (text: string): string => text.replaceAll(/(?<=[·n]) \d+(?:\.\d)?m?s/g, " <TIME>").replaceAll(/ {2,}(?=— )/g, " ");
+    // A scan that outlasts one spinner tick redraws the row with a spinner frame before the result; whether that happens
+    // depends on the machine, so the frame rows are dropped (the redraw of the result row replaces them on screen).
+    const timing = (text: string): string =>
+        text
+            .split("\n")
+            .filter((line) => !isSpinnerFrame(line))
+            .join("\n")
+            .replaceAll(/(?<=[·n]) \d+(?:\.\d)?m?s/g, " <TIME>")
+            .replaceAll(/ {2,}(?=— )/g, " ");
 
     return {
         ...outcome,
