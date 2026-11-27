@@ -1,0 +1,23 @@
+{
+  "edges": [
+    {
+      "source": "gamma",
+      "target": "alpha",
+      "type": "static"
+    }
+  ],
+  "nodes": [
+    {
+      "name": "alpha",
+      "type": "library"
+    },
+    {
+      "name": "beta-cli",
+      "type": "application"
+    },
+    {
+      "name": "gamma",
+      "type": "library"
+    }
+  ]
+}

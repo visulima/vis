@@ -289,7 +289,7 @@ const LIST_NATIVE_SHAPES = [[], ["--json"], ["--format", "json"], ["--format", "
 // is native: no flags, `--json`, or one `--format` value. The binary re-checks the CI context and
 // every other shape, so this only skips the extra process when it would delegate anyway.
 const listMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+    if (interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 
@@ -439,7 +439,7 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
 // `--json`, in a CI context off a terminal. The binary re-checks everything, including whether it can learn the Node
 // version a pin needs, so this only skips the extra process when it would delegate anyway.
 const statusMayRunNatively = (platform, environment, args, interactive) =>
-    platform !== "win32" && !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
+    !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
 // The value of a `--name value` or `--name=value` option at `args[index]`, as `[value, next index]`:
 // `undefined` when the argument is not that option, `false` when its value is missing or looks like a flag.
@@ -1047,7 +1047,7 @@ const graphOption = (args, index) => {
 };
 
 const graphMayRunNatively = (platform, environment, args, interactive) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
+    if (interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || !outputSettingsAreDefault(environment)) {
         return false;
     }
 

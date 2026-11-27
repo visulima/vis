@@ -1,0 +1,66 @@
+[
+  {
+    "name": "alpha",
+    "root": "packages/alpha",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "tsc",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "vitest",
+        "name": "test"
+      },
+      {
+        "aliases": [],
+        "command": "eslint .",
+        "name": "lint"
+      },
+      {
+        "aliases": [],
+        "command": "tsc --noEmit",
+        "name": "typecheck"
+      },
+      {
+        "aliases": [],
+        "command": "x",
+        "name": "dev"
+      },
+      {
+        "aliases": [],
+        "command": "rm -rf dist",
+        "name": "clean"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "beta-cli",
+    "root": "packages/beta-cli",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "node b.js",
+        "name": "start"
+      }
+    ],
+    "type": "application"
+  },
+  {
+    "name": "gamma",
+    "root": "packages/gamma",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo hi",
+        "name": "build"
+      }
+    ],
+    "type": "library"
+  }
+]

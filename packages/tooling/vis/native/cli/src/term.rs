@@ -391,16 +391,46 @@ fn detect_level(
 /// native path cannot tell and Node has to answer: a terminal, Windows, a colour flag among the
 /// arguments, or a PM2 process. Level 0 is plain text, every other level makes pail wrap the same
 /// sixteen-colour codes around the header of its log lines.
+///
+/// Windows stays `None` here because the callers print pail's clock, which this crate only reads on unix. A command
+/// that prints no clock asks [`piped_stdout_colour_level`].
 pub fn piped_colour_level(args: &[String]) -> Option<u8> {
-    if cfg!(windows)
-        || std::io::stdout().is_terminal()
+    if cfg!(windows) {
+        return None;
+    }
+
+    piped_stdout_colour_level(args)
+}
+
+/// [`piped_colour_level`] for the commands that print no pail header, so no clock: the same detection on every
+/// platform.
+pub fn piped_stdout_colour_level(args: &[String]) -> Option<u8> {
+    if std::io::stdout().is_terminal()
         || std::io::stderr().is_terminal()
         || args.iter().any(|argument| ColourFlag::parse(argument).is_some())
     {
         return None;
     }
 
-    level_from(&|name| env::var_os(name).map(|value| value.to_string_lossy().into_owned()))
+    stdout_level_from(&|name| env::var_os(name).map(|value| value.to_string_lossy().into_owned()), cfg!(windows))
+}
+
+/// The level of a piped stdout in the process `get` describes. On Windows, where nothing in the environment decides,
+/// the detection asks the OS build number, and every answer of that rule is some colour (sixteen colours on an old
+/// build, 256 and then true colour on newer ones), so the level is at least 1 there unless a variable, a flag or a dumb
+/// `TERM` turned colour off first. Read from the Node CLI on Windows: `CI`, a CI provider or `COLORTERM` change nothing.
+fn stdout_level_from(get: &dyn Fn(&str) -> Option<String>, windows: bool) -> Option<u8> {
+    if !windows {
+        return level_from(get);
+    }
+
+    let level = detect_level(get, ColourFlags::default(), false, true);
+
+    if level.is_none() && !colour_variables_conflict(&|name| get(name).is_some()) {
+        return Some(1);
+    }
+
+    level
 }
 
 /// Cerebro's terminal width, in the order of its lookup: `CEREBRO_TERMINAL_WIDTH` (`parseInt`, positive), the size
@@ -744,6 +774,46 @@ mod tests {
         assert_eq!(on_windows(&[]), None);
         // The CI rules sit behind the Windows rule.
         assert_eq!(on_windows(&[("CI", "1"), ("GITHUB_ACTIONS", "1")]), None);
+    }
+
+    /// Read from the Node CLI on Windows (build 26200): every run without a colour switch printed colour, whatever the
+    /// CI variables said, and every switch printed none.
+    #[test]
+    fn a_piped_windows_stdout_is_coloured_unless_a_variable_or_a_dumb_terminal_turned_colour_off() {
+        let coloured =
+            |pairs: &[(&'static str, &'static str)]| stdout_level_from(&get(pairs), true).map(|level| level > 0);
+
+        for pairs in [
+            &[][..],
+            &[("CI", "1")],
+            &[("CI", "0")],
+            &[("CI", "1"), ("GITHUB_ACTIONS", "true")],
+            &[("CI", "1"), ("GITLAB_CI", "true")],
+            &[("CI", "1"), ("COLORTERM", "truecolor")],
+            &[("CI", "1"), ("TERM", "xterm")],
+            &[("CI", "1"), ("TERM", "xterm-256color")],
+            &[("CI", "1"), ("FORCE_COLOR", "1")],
+            &[("CI", "1"), ("FORCE_COLOR", "3")],
+            &[("CI", "1"), ("FORCE_COLOR", "")],
+            &[("CI", "1"), ("FORCE_COLOR", "true")],
+            &[("CI", "1"), ("FORCE_COLOR", "banana")],
+            &[("CI", "1"), ("WT_SESSION", "x")],
+            &[("CI", "1"), ("ANSICON", "1")],
+        ] {
+            assert_eq!(coloured(pairs), Some(true), "{pairs:?}");
+        }
+
+        for pairs in [
+            &[("CI", "1"), ("NO_COLOR", "1")][..],
+            &[("CI", "1"), ("FORCE_COLOR", "0")],
+            &[("CI", "1"), ("FORCE_COLOR", "false")],
+            &[("CI", "1"), ("TERM", "dumb")],
+        ] {
+            assert_eq!(coloured(pairs), Some(false), "{pairs:?}");
+        }
+
+        // The runtime's own warning on stderr is Node's to print.
+        assert_eq!(stdout_level_from(&get(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]), true), None);
     }
 
     #[test]

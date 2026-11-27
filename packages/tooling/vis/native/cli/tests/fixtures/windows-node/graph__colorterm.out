@@ -1,0 +1,18 @@
+[1mProject Dependency Graph[22m
+
+ [1m[36mApplications (1)[39m[22m
+
+  [1mbeta-cli[22m
+    [2m(no dependencies)[22m
+
+ [1m[36mLibraries (2)[39m[22m
+
+  alpha
+    [2m(no dependencies)[22m
+
+  gamma
+  [2m└── [22malpha
+
+[2m────────────────────────────────────────────────────────────[22m
+[1m3[22m packages [2m·[22m [1m1[22m dependencies [2m·[22m [1m1[22m apps[2m,[22m [1m2[22m libraries
+[2m(*) = already shown above[22m

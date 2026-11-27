@@ -1,0 +1,15 @@
+{
+    "$comment": "The invocations and environments whose output was captured from the Node CLI on Windows (see capture.mjs). The Rust test tests/windows_node_parity.rs runs the same ones against the native binary and compares the bytes. Each environment starts empty except for what it lists.",
+    "commands": [["list"], ["list", "--json"], ["graph"], ["graph", "--format", "json"], ["graph", "--format", "dot"], ["status"], ["status", "--json"]],
+    "environments": {
+        "ci": { "CI": "1" },
+        "no-color": { "CI": "1", "NO_COLOR": "1" },
+        "force-0": { "CI": "1", "FORCE_COLOR": "0" },
+        "force-1": { "CI": "1", "FORCE_COLOR": "1" },
+        "force-3": { "CI": "1", "FORCE_COLOR": "3" },
+        "term-dumb": { "CI": "1", "TERM": "dumb" },
+        "term-xterm": { "CI": "1", "TERM": "xterm-256color" },
+        "github-actions": { "CI": "1", "GITHUB_ACTIONS": "true" },
+        "colorterm": { "CI": "1", "COLORTERM": "truecolor" }
+    }
+}
