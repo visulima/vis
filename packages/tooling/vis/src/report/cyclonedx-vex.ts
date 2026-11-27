@@ -9,7 +9,7 @@
  */
 
 import { toNpmPurl } from "../sbom/purl";
-import type { CycloneDxBom, CycloneDxSeverity, CycloneDxVulnerability } from "../sbom/types";
+import type { Component, CycloneDxBom, CycloneDxSeverity, CycloneDxVulnerability } from "../sbom/types";
 import type { SecurityVulnerability } from "../security/advisories";
 import { advisorySourceName, advisoryUri, cvssScore } from "./finding";
 
@@ -20,8 +20,18 @@ export interface CycloneDxVexFinding {
     vulnerability: SecurityVulnerability;
 }
 
+/** A package found only inside other packages: it has no entry in the lockfile, so the BOM does not list it. */
+export interface CycloneDxBundledPackage {
+    /** Each place a copy ships, outermost host first; the last host of a chain is the direct parent. */
+    bundledIn?: ReadonlyArray<ReadonlyArray<{ name: string; version: string }>>;
+    name: string;
+    version: string;
+}
+
 export interface CycloneDxVexOptions {
     bom: CycloneDxBom;
+    /** Packages found only inside other packages. They join the BOM as components their hosts depend on, so every `affects[].ref` resolves. */
+    bundled?: ReadonlyArray<CycloneDxBundledPackage>;
     findings: CycloneDxVexFinding[];
     now?: Date;
 }
@@ -141,7 +151,76 @@ export const emitCycloneDxVex = (options: CycloneDxVexOptions): CycloneDxBom => 
     const vulnerabilities = buildCycloneDxVulnerabilities(options.findings, options.now);
 
     return {
-        ...options.bom,
+        ...addBundledComponents(options.bom, options.bundled ?? []),
         vulnerabilities,
+    };
+};
+
+/**
+ * Adds the packages that ship inside other packages to a BOM: one component each (`bom-ref` is the purl, like
+ * every other component) and a dependency edge from the package that ships it. A host the BOM does not list is
+ * added too, so no edge points at a missing component. Returns the BOM itself when there is nothing to add.
+ */
+const addBundledComponents = (bom: CycloneDxBom, bundled: ReadonlyArray<CycloneDxBundledPackage>): CycloneDxBom => {
+    if (bundled.length === 0) {
+        return bom;
+    }
+
+    const known = new Set((bom.components ?? []).map((component) => component["bom-ref"]));
+    const added: Component[] = [];
+    const edges = new Map<string, Set<string>>();
+
+    const ensure = (name: string, version: string): string => {
+        const ref = toNpmPurl(name, version);
+
+        if (!known.has(ref)) {
+            known.add(ref);
+            added.push({ "bom-ref": ref, name, purl: ref, scope: "required", type: "library", version });
+        }
+
+        return ref;
+    };
+
+    for (const pkg of bundled) {
+        const ref = ensure(pkg.name, pkg.version);
+
+        for (const chain of pkg.bundledIn ?? []) {
+            const parent = chain.at(-1);
+
+            if (!parent) {
+                continue;
+            }
+
+            const parentRef = ensure(parent.name, parent.version);
+            const children = edges.get(parentRef);
+
+            if (children) {
+                children.add(ref);
+            } else {
+                edges.set(parentRef, new Set([ref]));
+            }
+        }
+    }
+
+    const dependencies = (bom.dependencies ?? []).map((dependency) => {
+        const children = edges.get(dependency.ref);
+
+        if (!children) {
+            return dependency;
+        }
+
+        edges.delete(dependency.ref);
+
+        return { ...dependency, dependsOn: [...new Set([...(dependency.dependsOn ?? []), ...children])].toSorted() };
+    });
+
+    for (const [ref, children] of edges) {
+        dependencies.push({ dependsOn: [...children].toSorted(), ref });
+    }
+
+    return {
+        ...bom,
+        components: [...(bom.components ?? []), ...added.toSorted((a, b) => (a["bom-ref"] ?? "").localeCompare(b["bom-ref"] ?? ""))],
+        dependencies: dependencies.toSorted((a, b) => a.ref.localeCompare(b.ref)),
     };
 };

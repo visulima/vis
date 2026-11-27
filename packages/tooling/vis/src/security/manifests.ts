@@ -55,6 +55,11 @@ export const parsePersonString = (raw: string): ManifestMaintainer | undefined =
 
 /** Subset of `package.json` fields the policy engine cares about. */
 export interface PackageManifest {
+    /**
+     * Names this package ships inside its own `node_modules` (`bundleDependencies` / `bundledDependencies`).
+     * Set only when it declares at least one; `true` has been expanded to the names under `dependencies`.
+     */
+    bundledDependencies?: string[];
     /** Path to the directory containing `package.json` on disk. */
     directory: string;
 
@@ -77,12 +82,39 @@ export interface PackageManifest {
 }
 
 type RawManifest = {
+    bundledDependencies?: boolean | string[];
+    bundleDependencies?: boolean | string[];
+    dependencies?: Record<string, string>;
     license?: string | { type?: string };
     licenses?: { type?: string }[];
     maintainers?: (ManifestMaintainer | string)[];
     name?: string;
     scripts?: Record<string, string>;
     version?: string;
+};
+
+/**
+ * The package names a manifest ships inside itself. npm reads both spellings; an array lists the names,
+ * and `true` means every entry of `dependencies`. Returns `undefined` when it bundles nothing.
+ */
+export const bundledDependencyNames = (raw: Pick<RawManifest, "bundleDependencies" | "bundledDependencies" | "dependencies">): string[] | undefined => {
+    const names = new Set<string>();
+
+    for (const declared of [raw.bundleDependencies, raw.bundledDependencies]) {
+        if (Array.isArray(declared)) {
+            for (const name of declared) {
+                if (typeof name === "string" && name.length > 0) {
+                    names.add(name);
+                }
+            }
+        } else if (declared === true && raw.dependencies && typeof raw.dependencies === "object") {
+            for (const name of Object.keys(raw.dependencies)) {
+                names.add(name);
+            }
+        }
+    }
+
+    return names.size > 0 ? [...names] : undefined;
 };
 
 /**
@@ -229,7 +261,10 @@ export const readNodeModulesManifests = (cwd: string): Map<string, PackageManife
                 const key = `${pkgName}@${raw.version}`;
 
                 if (!result.has(key)) {
+                    const bundled = bundledDependencyNames(raw);
+
                     result.set(key, {
+                        ...(bundled ? { bundledDependencies: bundled } : {}),
                         directory: fullPath,
                         license: raw.license,
                         licenses: Array.isArray(raw.licenses) ? raw.licenses : undefined,

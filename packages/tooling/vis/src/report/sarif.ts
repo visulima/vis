@@ -24,6 +24,8 @@ import { advisoryUri, securitySeverityString, severityLabel, severityToSarifLeve
 
 export interface SarifFinding {
     acknowledged: boolean;
+    /** Where a copy shipped inside another package lives, as `host > package` paths; named in the message. */
+    bundledIn?: string[];
     packageName: string;
     packageVersion: string;
     vulnerability: SecurityVulnerability;
@@ -107,7 +109,7 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
     const lockfileUri = options.artifactUri ?? (relative(options.workspaceRoot, join(options.workspaceRoot, "package.json")) || "package.json");
 
     for (const finding of options.findings) {
-        const { acknowledged, packageName, packageVersion, vulnerability: vuln } = finding;
+        const { acknowledged, bundledIn, packageName, packageVersion, vulnerability: vuln } = finding;
         const level = severityToSarifLevel(vuln.severity);
         const label = severityLabel(vuln.severity);
 
@@ -141,7 +143,7 @@ export const emitSarif = (options: SarifEmitOptions): SarifLog => {
             message: {
                 text: `${vuln.id}: ${packageName}@${packageVersion} — ${vuln.summary || "no summary"}${
                     vuln.fixedVersions.length > 0 ? ` (fix: ${vuln.fixedVersions.join(", ")})` : ""
-                }`,
+                }${bundledIn && bundledIn.length > 0 ? ` (bundled in ${bundledIn.join("; ")})` : ""}`,
             },
             partialFingerprints: {
                 advisoryId: vuln.id,
