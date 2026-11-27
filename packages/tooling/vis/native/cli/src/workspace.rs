@@ -737,7 +737,9 @@ mod root_tests {
             assert!(readable(root), "{root}");
         }
 
-        for root in [r"\\?\C:\repo", r"\\?\UNC\server\share\repo", r"\\server\share\repo", r"\\.\C:\repo", r"C:repo", r"\repo"] {
+        for root in
+            [r"\\?\C:\repo", r"\\?\UNC\server\share\repo", r"\\server\share\repo", r"\\.\C:\repo", r"C:repo", r"\repo"]
+        {
             assert!(!readable(root), "{root}");
         }
     }
