@@ -132,6 +132,8 @@ When none of the three is configured the run is **skipped** (exit 0). A **missin
   [blockExoticSubdeps] git-dep pulled from exotic source by prod-pkg@1.0.0: github:attacker/evil#deadbeef
 ```
 
+**Native fast path.** In a CI context with no terminal, at the root of a pnpm workspace, the Rust binary prints the passing run of `vis security verify-lockfile --offline` (alone or with `--json`, in either order) without starting Node. With `--offline` both network policies are skipped, so the answer is the number of locked packages and whether any transitive dependency edge comes from a git repository, a hosting shorthand, a bare `owner/repo` or a remote archive. The elapsed time in the headline and in `durationMs` is the wall clock of the run. The binary hands the run to Node before anything is printed for: every run without `--offline` (the policies read the registry), a failing run, a missing or empty lockfile, a lockfile the binary does not read exactly, a `packageManager` pin, a `vis.config` that sets `blockExoticSubdeps`, `exoticSubdepsAllow`, or a `firstSeen` or `publisherChange` policy, a dependency specifier outside ASCII, a text headline that would not fit one log line, and Windows.
+
 ## Options
 
 ### `vis security list`

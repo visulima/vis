@@ -89,6 +89,7 @@ mod sbom;
 mod secrets;
 mod security_list;
 mod security_sync;
+mod security_verify_lockfile;
 mod self_update;
 mod shim_status;
 mod sort_package_json;
