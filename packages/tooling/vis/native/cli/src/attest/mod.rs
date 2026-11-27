@@ -1,20 +1,14 @@
-//! `vis attest` — the offline and verification paths of `src/commands/attest/`, natively.
+//! `vis attest <subject>` (the offline run of `src/commands/attest/`), natively.
 //!
-//! The command has two leaves, and each answers the shapes it reproduces byte for byte and hands the rest to Node
-//! before any output (a hand-off names its reason on stderr when `VIS_DEBUG_DECLINE` is set):
+//! [`emit`] answers the run that has no ambient OIDC token: Node hashes the artifact and skips signing, with a JSON
+//! document or a warning. A run that signs (`CI` equal to `true`, a GitHub Actions token, a Sigstore token),
+//! `--require-signing` and every failure (they are thrown, with a stack) are Node's, and a hand-off names its reason on
+//! stderr when `VIS_DEBUG_DECLINE` is set.
 //!
-//! - [`emit`] (`vis attest <subject>`) answers the run that has no ambient OIDC token: Node hashes the artifact and
-//!   skips signing, with a JSON document or a warning. A run that signs (`CI` equal to `true`, a GitHub Actions
-//!   token, a Sigstore token), `--require-signing` and every failure (they are thrown, with a stack) are Node's.
-//! - [`verify`] (`vis attest verify`) checks the locked packages of a pnpm workspace against the registry's
-//!   provenance and signatures. The JSON and NDJSON reports are native, and so is the table report for a run that
-//!   finds nothing; a table of findings is drawn by the terminal UI and stays in Node.
-//!
-//! Both read the same flags; the parser below takes exact tokens, each at most once.
+//! `vis attest verify` is not answered here: attestation verification has one implementation, the Node one, so the
+//! binary hands every shape of it over before any output.
 
 pub(crate) mod emit;
-mod signature;
-pub(crate) mod verify;
 
 /// What the flags of a leaf were: the values and switches it takes and the words that are neither.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -79,7 +73,7 @@ fn parse(rest: &[String], values: &[&'static str], switches: &[&'static str]) ->
     Some(parsed)
 }
 
-/// The `--format` values both leaves read: `json` and `ndjson` are machine formats, `table` is the default, and
+/// The `--format` values the command reads: `json` and `ndjson` are machine formats, `table` is the default, and
 /// Node reads any other text as `table`, which this does not rely on.
 fn format_of(parsed: &Parsed) -> Option<&str> {
     match parsed.value("format") {

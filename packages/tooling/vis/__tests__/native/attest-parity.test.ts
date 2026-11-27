@@ -15,11 +15,11 @@ import { binary, Harness, nodeEntry, workspaceFiles } from "./workspace-parity-h
  * same exit status and leave the same cache files as Node; every input it declines must be handed to Node before anything is
  * printed (see `workspace-parity-harness.ts` for how both are proved).
  *
- * The native path answers two leaves. `vis attest &lt;subject>` answers the run with no ambient OIDC token, where Node hashes the artifact and
- * skips signing. `vis attest verify` checks the locked packages against the registry: the registry is a stub in a separate process
- * that the `.npmrc` of the workspace points both sides at, and the signing keys sit in the key cache of each side's `HOME`
- * (fresh, so neither side asks the network), signed here with real ECDSA P-256 keys. Each side has its own `HOME`, because the
- * caches live in `~/.vis/cache`; the `createdAt` of a fresh cache entry is masked.
+ * The native path answers one leaf, `vis attest &lt;subject>`: the run with no ambient OIDC token, where Node hashes the artifact and
+ * skips signing. `vis attest verify` has one implementation, the Node one, and the binary hands every shape of it over. Those cases
+ * run against a stub registry in a separate process that the `.npmrc` of the workspace points both sides at, and the signing keys sit
+ * in the key cache of each side's `HOME` (fresh, so neither side asks the network), signed here with real ECDSA P-256 keys. Each side
+ * has its own `HOME`, because the caches live in `~/.vis/cache`; the `createdAt` of a fresh cache entry is masked.
  */
 
 const harness = new Harness(["attest"]);
@@ -140,11 +140,9 @@ interface Case {
     /** True when the native side must answer; false when it must hand the run to Node. */
     native: boolean;
     packages?: [string, string][];
-    /** True when a declined run has filled the caches Node then finds warm. */
-    warm?: boolean;
 }
 
-const run = ({ args, files: extra = {}, native, packages = [], warm = false }: Case): { status: number | null; stderr: string; stdout: string } => {
+const run = ({ args, files: extra = {}, native, packages = [] }: Case): { status: number | null; stderr: string; stdout: string } => {
     const files = workspaceFiles({ ".npmrc": `registry=${base}/\n`, ...(packages.length > 0 ? { "pnpm-lock.yaml": lockfile(packages) } : {}), ...extra });
     const [nodeRoot, nativeRoot] = harness.pair(files);
     const nodeHome = makeHome();
@@ -169,10 +167,7 @@ const run = ({ args, files: extra = {}, native, packages = [], warm = false }: C
     expect(declined.status, `stdout: ${declined.stdout}`).toBe(70);
     expect(declined.stdout, "a declined run prints nothing").toBe("");
 
-    // A table of findings is drawn by Node, which finds the packuments this run fetched in the cache; the other declines write nothing.
-    if (!warm) {
-        expect({ files: Harness.snapshot(probeRoot), home: homeState(probeHome) }, "a declined run must not touch anything").toStrictEqual(before);
-    }
+    expect({ files: Harness.snapshot(probeRoot), home: homeState(probeHome) }, "a declined run must not touch anything").toStrictEqual(before);
 
     const delegated = harness.runNative(args, nativeRoot, { HOME: nativeHome, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
 
@@ -213,86 +208,37 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
     });
 
     describe("attest verify", () => {
-        it("prints the JSON report of a clean tree", () => {
+        // Attestation verification has one implementation, the Node one: the binary hands every shape to it before anything is printed.
+        it.each([
+            [["verify", "--format", "json"], CLEAN],
+            [["verify"], CLEAN],
+            [["verify", "--format=ndjson"], FINDINGS],
+            [["verify", "--format", "json", "--fail-on", "error", "--allowlist", "no-sig,regressed"], FINDINGS],
+            [["verify", "--prod-only"], CLEAN],
+            [["verify", "--format", "xml"], CLEAN],
+            [["verify", "--fail-on", "info"], CLEAN],
+            [["verify", "extra"], CLEAN],
+            [["--format", "json", "verify"], CLEAN],
+        ] as [string[], [string, string][]][])("hands `attest %j` to Node", (args, packages) => {
             expect.hasAssertions();
 
-            const result = run({ args: ["verify", "--format", "json"], native: true, packages: CLEAN });
-
-            expect(result.stdout).toBe('{\n  "findings": [],\n  "ok": true\n}\n');
-            expect(result.status).toBe(0);
+            run({ args, native: false, packages });
         });
 
-        it("prints the line of a clean tree in the table format", () => {
+        it("reports the findings of a tree as Node does", () => {
             expect.hasAssertions();
 
-            expect(run({ args: ["verify"], native: true, packages: CLEAN }).stdout).toContain("No provenance regressions or signature problems across 3 locked packages.");
-        });
-
-        it("reports every kind of finding and fails", () => {
-            expect.hasAssertions();
-
-            const result = run({ args: ["verify", "--format", "json"], native: true, packages: FINDINGS });
+            const result = run({ args: ["verify", "--format", "json"], native: false, packages: FINDINGS });
             const codes = (JSON.parse(result.stdout) as { findings: { code: string }[] }).findings.map((finding) => finding.code);
 
             expect(codes).toStrictEqual(["provenance-regression", "missing-signature", "missing-signature", "unknown-keyid", "expired-key", "invalid-signature"]);
             expect(result.status).toBe(1);
         });
 
-        it("prints a line per finding in NDJSON", () => {
+        it("hands a failing registry to Node", () => {
             expect.hasAssertions();
 
-            const result = run({ args: ["verify", "--format=ndjson"], native: true, packages: FINDINGS });
-
-            expect(result.stdout.trim().split("\n")).toHaveLength(6);
-            expect(result.status).toBe(1);
-        });
-
-        it("fails only on errors with --fail-on error", () => {
-            expect.hasAssertions();
-
-            const warnings: [string, string][] = [["signed", "1.0.0"], ["regressed", "2.0.0"], ["no-sig", "1.0.0"]];
-            const result = run({ args: ["verify", "--format", "json", "--fail-on", "error"], native: true, packages: warnings });
-
-            expect(result.status).toBe(0);
-            expect(JSON.parse(result.stdout)).toMatchObject({ ok: true });
-            expect(run({ args: ["verify", "--format", "json", "--fail-on=error"], native: true, packages: FINDINGS }).status).toBe(1);
-        });
-
-        it("skips the allowlisted packages without asking the registry for them", () => {
-            expect.hasAssertions();
-
-            const result = run({ args: ["verify", "--format", "json", "--allowlist", " no-sig, regressed,,bad-sig,expired,no-integrity,unknown-key "], native: true, packages: FINDINGS });
-
-            expect(JSON.parse(result.stdout)).toStrictEqual({ findings: [], ok: true });
-        });
-
-        it("counts a package the registry does not know as clean", () => {
-            expect.hasAssertions();
-
-            run({ args: ["verify", "--format", "json"], native: true, packages: [...CLEAN, ["ghost", "1.0.0"]] });
-        });
-
-        it("hands the table of findings to Node, which finds the cache warm", () => {
-            expect.hasAssertions();
-
-            run({ args: ["verify"], native: false, packages: FINDINGS, warm: true });
-        });
-
-        it.each([
-            [["verify", "--prod-only"]],
-            [["verify", "--format", "xml"]],
-            [["verify", "--fail-on", "info"]],
-            [["verify", "extra"]],
-        ])("hands `attest %j` to Node", (args: string[]) => {
-            expect.hasAssertions();
-
-            run({ args, native: false, packages: CLEAN });
-        });
-
-        it("hands a failing registry to Node, with the cache of the packages that were read", () => {
-            expect.hasAssertions();
-
-            run({ args: ["verify", "--format", "json"], native: false, packages: [...CLEAN, ["broken", "1.0.0"]], warm: true });
+            run({ args: ["verify", "--format", "json"], native: false, packages: [...CLEAN, ["broken", "1.0.0"]] });
         });
     });
 
