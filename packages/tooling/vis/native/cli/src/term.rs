@@ -227,6 +227,7 @@ fn colour_variables_conflict(has: &dyn Fn(&str) -> bool) -> bool {
 /// The colour level `@visulima/is-ansi-color-supported` (0 none, 1 sixteen colours, 2 256, 3 true
 /// colour) reports for a process whose stdout is not a terminal, read from `get` (the environment): see
 /// [`detect_level`].
+#[cfg(test)]
 fn level_from(get: &dyn Fn(&str) -> Option<String>) -> Option<u8> {
     detect_level(get, ColourFlags::default(), false, false)
 }
@@ -413,25 +414,12 @@ pub fn piped_stdout_colour_level(args: &[String]) -> Option<u8> {
         return None;
     }
 
-    stdout_level_from(&|name| env::var_os(name).map(|value| value.to_string_lossy().into_owned()), cfg!(windows))
-}
-
-/// The level of a piped stdout in the process `get` describes. On Windows, where nothing in the environment decides,
-/// the detection asks the OS build number, and every answer of that rule is some colour (sixteen colours on an old
-/// build, 256 and then true colour on newer ones), so the level is at least 1 there unless a variable, a flag or a dumb
-/// `TERM` turned colour off first. Read from the Node CLI on Windows: `CI`, a CI provider or `COLORTERM` change nothing.
-fn stdout_level_from(get: &dyn Fn(&str) -> Option<String>, windows: bool) -> Option<u8> {
-    if !windows {
-        return level_from(get);
-    }
-
-    let level = detect_level(get, ColourFlags::default(), false, true);
-
-    if level.is_none() && !colour_variables_conflict(&|name| get(name).is_some()) {
-        return Some(1);
-    }
-
-    level
+    detect_level(
+        &|name| env::var_os(name).map(|value| value.to_string_lossy().into_owned()),
+        ColourFlags::default(),
+        false,
+        cfg!(windows),
+    )
 }
 
 /// Cerebro's terminal width, in the order of its lookup: `CEREBRO_TERMINAL_WIDTH` (`parseInt`, positive), the size
@@ -835,8 +823,9 @@ mod tests {
     /// CI variables said, and every switch printed none.
     #[test]
     fn a_piped_windows_stdout_is_coloured_unless_a_variable_or_a_dumb_terminal_turned_colour_off() {
-        let coloured =
-            |pairs: &[(&'static str, &'static str)]| stdout_level_from(&get(pairs), true).map(|level| level > 0);
+        let level =
+            |pairs: &[(&'static str, &'static str)]| detect_level(&get(pairs), ColourFlags::default(), false, true);
+        let coloured = |pairs: &[(&'static str, &'static str)]| level(pairs).map(|level| level > 0);
 
         for pairs in [
             &[][..],
@@ -868,7 +857,7 @@ mod tests {
         }
 
         // The runtime's own warning on stderr is Node's to print.
-        assert_eq!(stdout_level_from(&get(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]), true), None);
+        assert_eq!(level(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]), None);
     }
 
     #[test]
