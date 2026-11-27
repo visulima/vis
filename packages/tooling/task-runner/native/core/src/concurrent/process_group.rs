@@ -92,8 +92,8 @@ mod windows {
 
     #[link(name = "ntdll")]
     extern "system" {
-        /// Undocumented-in-headers but stable ntdll export that decrements the suspend count of
-        /// every thread of a process; `windows-sys` has no binding for it. Returns an `NTSTATUS`.
+        /// Decrements the suspend count of every thread of a process; `windows-sys` has no binding
+        /// for this ntdll export. Returns an `NTSTATUS`.
         fn NtResumeProcess(process: HANDLE) -> i32;
     }
 
@@ -187,7 +187,7 @@ mod windows {
     /// best-effort (the command still runs, a kill just cannot take the tree); a process that
     /// cannot be resumed is an error, because it would never run. The caller must kill it then.
     pub(crate) fn assign_and_resume(job: Option<&JobObject>, pid: u32) -> io::Result<()> {
-        // `PROCESS_SET_QUOTA | PROCESS_TERMINATE` is what job assignment needs.
+        // Job assignment needs `PROCESS_SET_QUOTA | PROCESS_TERMINATE`; the resume needs `PROCESS_SUSPEND_RESUME`.
         // SAFETY: plain FFI call; the handle is closed below on every path.
         let process_handle =
             unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME, 0, pid) };

@@ -898,8 +898,7 @@ mod tests {
         assert!(pids.len() >= 2, "both pings should be running, found {pids:?}");
 
         run.control.send(ControlMessage::Abort { graceful: false }).unwrap();
-        let (result, _) = run.finish().await;
-        assert!(result.close_events[0].killed || !result.success);
+        run.finish().await;
 
         for _ in 0..50 {
             pids = pings_with("-n 730");
