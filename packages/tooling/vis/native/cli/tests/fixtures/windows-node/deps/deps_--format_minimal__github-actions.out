@@ -1,0 +1,4 @@
+workspace-protocol	packages/a/package.json	dependencies	b	^1.0.0 → workspace:*
+empty-deps	packages/b/package.json	dependencies
+root-package-manager	package.json	
+dead-workspace-pattern	pnpm-workspace.yaml	apps/*

@@ -5,6 +5,7 @@ use super::data::{Package, Workspace};
 use super::lint::Report;
 use super::{Lint, Selection};
 use crate::json::{stringify, Json};
+use crate::node_context::printed_path;
 use crate::term::Style;
 
 /// The plural `s` of `count` things.
@@ -450,8 +451,8 @@ fn block(issues: Vec<Json>) -> Json {
     object(vec![("issues", Json::Array(issues)), ("total", Json::Int(total))])
 }
 
-/// `printJson`.
-pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection) -> String {
+/// `printJson`, or `None` when a path in it is one only Node can print.
+pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection) -> Option<String> {
     let packages = &workspace.packages;
     let mut out: Vec<(&str, Json)> = vec![(
         "fixed",
@@ -587,12 +588,12 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
     }
 
     if selection.has(Lint::DeadWorkspacePatterns) {
-        let source_path = workspace.root.join("pnpm-workspace.yaml");
+        let source_path = printed_path(&workspace.root.join("pnpm-workspace.yaml"))?;
         let issues = report.dead_patterns.iter().map(|issue| {
             object(vec![
                 ("pattern", text(&issue.pattern)),
                 ("source", text("pnpm-workspace.yaml")),
-                ("sourcePath", text(&source_path.to_string_lossy())),
+                ("sourcePath", text(&source_path)),
             ])
         });
 
@@ -633,5 +634,5 @@ pub(super) fn json(workspace: &Workspace, report: &Report, selection: &Selection
         out.push(("similarDeps", block(issues.collect())));
     }
 
-    format!("{}\n", stringify(&object(out), "  "))
+    Some(format!("{}\n", stringify(&object(out), "  ")))
 }

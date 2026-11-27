@@ -1,0 +1,13 @@
+Hooks in .vis/hooks/:
+
+commit-msg (4 lines)
+  - msg — Check the message
+      commitlint
+
+pre-commit (12 lines)
+  - lint — Lint the sources
+      npx eslint .
+  - format
+      prettier --check .
+  - typecheck — Run tsc
+      tsc --noEmit

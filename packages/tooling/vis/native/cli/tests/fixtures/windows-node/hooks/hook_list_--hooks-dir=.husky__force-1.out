@@ -1,0 +1,5 @@
+Hooks in .husky/:
+
+pre-push (4 lines)
+  - test — Run tests
+      vitest run

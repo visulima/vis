@@ -1,0 +1,11 @@
+{
+  "name": "a",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "b": "^1.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

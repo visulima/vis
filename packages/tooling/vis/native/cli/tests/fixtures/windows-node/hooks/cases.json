@@ -1,0 +1,10 @@
+{
+    "$comment": "Captured from the Node CLI on Windows by ../capture.mjs; tests/windows_node_parity.rs runs the same commands against the native binary. `workspace` is a directory below tests/fixtures.",
+    "workspace": "windows-node/workspaces/hooks",
+    "commands": [
+        ["hook", "list"],
+        ["hook", "list", "--hooks-dir=.husky"],
+        ["hook", "list", "--hooks-dir", ".vis/hooks"],
+        ["hook", "list", "--hooks-dir=nothing-here"]
+    ]
+}

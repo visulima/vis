@@ -34,10 +34,22 @@ pub(crate) fn inherited_root_allows(cwd: &Path, env_root: Option<&OsStr>) -> boo
 
 /// Why Node would not reach the same answer from the working directory for a read-only command, or `None` when it
 /// would: a unix CI run off a terminal at the root of a pnpm workspace, with none of the settings that change what
-/// Node prints.
+/// Node prints. Windows is Node's here; the commands whose output was compared with Node's on Windows ask
+/// [`portable_context_decline`] instead.
 pub(crate) fn context_decline() -> Option<&'static str> {
+    if !cfg!(unix) {
+        return Some("not a unix platform");
+    }
+
+    portable_context_decline()
+}
+
+/// [`context_decline`] without the platform: the CI context a command needs on every platform. A command asks this
+/// one only once its output has been compared with the Node CLI's on Windows too (`tests/windows_node_parity.rs`),
+/// where Node paints colour, prints paths with `/` and a capital drive letter ([`printed_path`]) and has no pail clock
+/// this crate reads.
+pub(crate) fn portable_context_decline() -> Option<&'static str> {
     [
-        (!cfg!(unix), "not a unix platform"),
         (!output_settings_are_default(), "an output setting (NODE_ENV, DEBUG, PAIL_LOG_LEVEL, CEREBRO_*) is set"),
         (io::stdout().is_terminal(), "stdout is a terminal"),
         (!native_context(), "not a CI run at the root of a pnpm workspace with a quiet stderr"),
@@ -49,6 +61,38 @@ pub(crate) fn context_decline() -> Option<&'static str> {
 /// Whether [`context_decline`] has nothing to say.
 pub(crate) fn context_is_native() -> bool {
     context_decline().is_none()
+}
+
+/// Whether [`portable_context_decline`] has nothing to say.
+pub(crate) fn portable_context_is_native() -> bool {
+    portable_context_decline().is_none()
+}
+
+/// `path` as Node prints it. On unix the path itself. On Windows `@visulima/path` has made it `/`-separated with a
+/// capital drive letter (`c:\Users\a` is `C:/Users/a`) and nothing else about it changes, which this reproduces for a
+/// drive path; a UNC or device path is `None`, because only Node can say what it prints.
+pub(crate) fn printed_path(path: &Path) -> Option<String> {
+    let text = path.to_string_lossy();
+
+    if cfg!(windows) {
+        printed_windows_path(&text)
+    } else {
+        Some(text.into_owned())
+    }
+}
+
+fn printed_windows_path(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' || !matches!(bytes[2], b'\\' | b'/') {
+        return None;
+    }
+
+    let rest = text[2..].replace('\\', "/");
+
+    // Repeated separators and a trailing one are normalised away by Node; a path from the OS has neither.
+    (!rest[1..].contains("//") && (rest.len() == 1 || !rest.ends_with('/')))
+        .then(|| format!("{}:{rest}", char::from(bytes[0].to_ascii_uppercase())))
 }
 
 /// Whether Node would reach the same answer from the workspace root `cwd`: a unix CI run with no terminal on either
@@ -193,6 +237,24 @@ mod tests {
         }
 
         app
+    }
+
+    #[test]
+    fn a_windows_drive_path_prints_with_slashes_and_a_capital_drive_letter() {
+        // What the Node CLI printed for each of these working directories on Windows (`deps --format json`).
+        for (given, shown) in [
+            ("C:\\Users\\vis\\ws\\empty", "C:/Users/vis/ws/empty"),
+            ("c:\\Users\\vis\\ws\\empty", "C:/Users/vis/ws/empty"),
+            ("C:\\users\\VIS\\Vis-Gates\\ws\\EMPTY", "C:/users/VIS/Vis-Gates/ws/EMPTY"),
+            ("c:/Users/vis/ws/empty", "C:/Users/vis/ws/empty"),
+            ("C:\\", "C:/"),
+        ] {
+            assert_eq!(printed_windows_path(given).as_deref(), Some(shown), "{given}");
+        }
+
+        for other in ["\\\\server\\share\\a", "\\\\?\\C:\\a", "relative\\a", "C:a", "C:\\a\\\\b", "C:\\a\\", ""] {
+            assert_eq!(printed_windows_path(other), None, "{other}");
+        }
     }
 
     #[test]

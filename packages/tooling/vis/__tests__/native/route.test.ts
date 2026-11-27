@@ -721,22 +721,54 @@ describe("launcher routing (bin/route.mjs)", () => {
         // launcher hands them over there exactly as it does elsewhere: in CI, off a terminal, with no output setting.
         describe("the read-only commands that answer natively on Windows too", () => {
             const ci = { CI: "1" };
-            const commands = [["list"], ["list", "--json"], ["graph"], ["graph", "--format", "json"], ["graph", "--format=dot", "--depth", "2"], ["status"], ["status", "--json"]];
+            // The one directory with a root marker: the binary's root is the working directory.
+            const root = "C:\\work\\app";
+            const holdsMarker = (directory: string) => directory === root;
+            const commands = [
+                ["list"],
+                ["list", "--json"],
+                ["graph"],
+                ["graph", "--format", "json"],
+                ["graph", "--format=dot", "--depth", "2"],
+                ["status"],
+                ["status", "--json"],
+                ["task-why", "a:build"],
+                ["hook", "list"],
+                ["hook", "list", "--hooks-dir=.husky"],
+                ["deps"],
+                ["deps", "--format", "json"],
+                ["deps", "--quiet"],
+            ];
 
             it.each(commands)("routes `vis %s` in CI", (...args: string[]) => {
                 expect.assertions(1);
 
-                expect(routesToNative(args, "win32", ci, "C:\\work\\app", false)).toBe(true);
+                expect(routesToNative(args, "win32", ci, root, false, holdsMarker)).toBe(true);
+            });
+
+            it("keeps `vis hook validate` in Node on Windows only: the binary reads file modes and runs `sh -n` on unix", () => {
+                expect.assertions(2);
+
+                expect(routesToNative(["hook", "validate"], "win32", ci, root, false, holdsMarker)).toBe(false);
+                expect(routesToNative(["hook", "validate"], "linux", ci, "/work/app", false, (directory: string) => directory === "/work/app")).toBe(true);
+            });
+
+            it("keeps the other commands that wait for their Windows capture in Node", () => {
+                expect.assertions(4);
+
+                for (const args of [["shim", "status"], ["inspect", "left-pad"], ["audit", "--format", "json"], ["optimize"]]) {
+                    expect(routesToNative(args, "win32", ci, root, false, holdsMarker)).toBe(false);
+                }
             });
 
             it.each(commands)("keeps `vis %s` in Node outside CI, on a terminal and where the colour or output settings are unusual", (...args: string[]) => {
                 expect.assertions(5);
 
-                expect(routesToNative(args, "win32", {}, "C:\\work\\app", false)).toBe(false);
-                expect(routesToNative(args, "win32", ci, "C:\\work\\app", true)).toBe(false);
-                expect(routesToNative(args, "win32", { ...ci, FORCE_COLOR: "1", NO_COLOR: "1" }, "C:\\work\\app", false)).toBe(false);
-                expect(routesToNative(args, "win32", { ...ci, DEBUG: "vis" }, "C:\\work\\app", false)).toBe(false);
-                expect(routesToNative(args, "win32", { ...ci, NODE_ENV: "test" }, "C:\\work\\app", false)).toBe(false);
+                expect(routesToNative(args, "win32", {}, root, false, holdsMarker)).toBe(false);
+                expect(routesToNative(args, "win32", ci, root, true, holdsMarker)).toBe(false);
+                expect(routesToNative(args, "win32", { ...ci, FORCE_COLOR: "1", NO_COLOR: "1" }, root, false, holdsMarker)).toBe(false);
+                expect(routesToNative(args, "win32", { ...ci, DEBUG: "vis" }, root, false, holdsMarker)).toBe(false);
+                expect(routesToNative(args, "win32", { ...ci, NODE_ENV: "test" }, root, false, holdsMarker)).toBe(false);
             });
         });
     });

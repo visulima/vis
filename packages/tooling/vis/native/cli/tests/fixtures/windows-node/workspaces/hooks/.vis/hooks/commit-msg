@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# msg: Check the message
+commitlint

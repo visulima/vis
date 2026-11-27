@@ -1,0 +1,40 @@
+{
+    "$comment": "The environments each case file runs in. Every environment starts empty except for what it lists.",
+    "environments": {
+        "ci": {
+            "CI": "1"
+        },
+        "no-color": {
+            "CI": "1",
+            "NO_COLOR": "1"
+        },
+        "force-0": {
+            "CI": "1",
+            "FORCE_COLOR": "0"
+        },
+        "force-1": {
+            "CI": "1",
+            "FORCE_COLOR": "1"
+        },
+        "force-3": {
+            "CI": "1",
+            "FORCE_COLOR": "3"
+        },
+        "term-dumb": {
+            "CI": "1",
+            "TERM": "dumb"
+        },
+        "term-xterm": {
+            "CI": "1",
+            "TERM": "xterm-256color"
+        },
+        "github-actions": {
+            "CI": "1",
+            "GITHUB_ACTIONS": "true"
+        },
+        "colorterm": {
+            "CI": "1",
+            "COLORTERM": "truecolor"
+        }
+    }
+}

@@ -21,7 +21,7 @@ use std::path::Path;
 use std::process::exit;
 
 use super::common::{parse, STAGES};
-use crate::node_context::context_is_native;
+use crate::node_context::portable_context_is_native;
 use crate::output::write_stdout;
 
 /// The handler cuts a first command line of more than this many characters to `DISPLAY_KEPT` of them and `...`.
@@ -210,7 +210,7 @@ fn lines(hooks_directory: &str, stages: &[Stage]) -> Vec<String> {
 fn answer(args: &[String]) -> Option<String> {
     let hooks_directory = parse(args, "list")?;
 
-    if !context_is_native() {
+    if !portable_context_is_native() {
         return None;
     }
 

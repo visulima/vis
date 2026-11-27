@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# test: Run tests
+vitest run
