@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, Prefix};
 
 use rayon::prelude::*;
 
@@ -94,19 +94,25 @@ pub fn project_directories_vetted(root: &Path) -> Membership {
     membership(resolve(root, true, None))
 }
 
-/// Whether `root` is a path this module reads: absolute and UTF-8, off Windows.
+/// Whether `root` is a path this module reads: absolute and UTF-8.
 fn root_is_readable(root: &Path) -> bool {
-    !cfg!(windows) && root.is_absolute() && root.to_str().is_some()
+    root.is_absolute() && root.to_str().is_some()
+}
+
+/// Whether a component of a root is one this module reads: a name, the root directory, and on Windows the drive
+/// letter. A verbatim (`\\?\`) or UNC prefix is Node's, which normalises those differently.
+fn component_is_readable(component: Component<'_>) -> bool {
+    match component {
+        Component::RootDir | Component::Normal(_) => true,
+        Component::Prefix(prefix) => matches!(prefix.kind(), Prefix::Disk(_)),
+        Component::CurDir | Component::ParentDir => false,
+    }
 }
 
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
 fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Vec<(String, PackageJson)>> {
-    if !root_is_readable(root) {
-        return None;
-    }
-
-    if root.components().any(|component| !matches!(component, Component::RootDir | Component::Normal(_))) {
+    if !root_is_readable(root) || !root.components().all(component_is_readable) {
         return None;
     }
 
@@ -695,6 +701,71 @@ mod tests {
         }
 
         assert!(checked >= 10, "fixtures went missing: {checked}");
+    }
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+
+    fn readable(root: &str) -> bool {
+        let root = Path::new(root);
+
+        root_is_readable(root) && root.components().all(component_is_readable)
+    }
+
+    #[test]
+    fn a_relative_root_or_one_with_a_parent_segment_is_left_to_node() {
+        for root in ["packages", "./packages", "../repo"] {
+            assert!(!readable(root), "{root}");
+        }
+
+        #[cfg(unix)]
+        assert!(!readable("/repo/../a"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_absolute_root_is_read() {
+        assert!(readable("/repo"));
+        assert!(readable("/"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_root_is_read_and_a_verbatim_or_network_root_is_left_to_node() {
+        for root in [r"C:\repo", r"c:\repo\packages", r"D:\"] {
+            assert!(readable(root), "{root}");
+        }
+
+        for root in [r"\\?\C:\repo", r"\\?\UNC\server\share\repo", r"\\server\share\repo", r"\\.\C:\repo", r"C:repo", r"\repo"] {
+            assert!(!readable(root), "{root}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_junction_is_not_a_project_directory() {
+        let root = std::env::temp_dir().join(format!("vis-workspace-junction-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        fs::create_dir_all(root.join("elsewhere/a")).expect("target");
+        fs::create_dir_all(root.join("pkgs/real")).expect("project");
+        fs::write(root.join("package.json"), r#"{"name":"root","workspaces":["pkgs/*"]}"#).expect("root manifest");
+        fs::write(root.join("elsewhere/a/package.json"), r#"{"name":"a"}"#).expect("manifest");
+        fs::write(root.join("pkgs/real/package.json"), r#"{"name":"real"}"#).expect("manifest");
+
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("pkgs/linked"))
+            .arg(root.join("elsewhere/a"))
+            .status()
+            .expect("mklink");
+
+        assert!(status.success());
+        assert_eq!(project_directories(&root), Membership::Native(vec!["pkgs/real".to_owned()]));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
 
