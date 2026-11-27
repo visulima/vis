@@ -282,6 +282,8 @@ mod tests {
                 if let Some((link, target)) = entry.split_once("->") {
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(target, directory.join(link)).expect("link");
+                    #[cfg(not(unix))]
+                    let _ = (link, target);
                 } else {
                     let path = directory.join(entry);
 
@@ -319,6 +321,8 @@ mod tests {
             if let Some((link, target)) = entry.split_once("->") {
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(target, directory.join(link)).expect("link");
+                #[cfg(not(unix))]
+                let _ = (link, target);
             } else {
                 fs::write(directory.join(entry), "").expect("entry");
             }

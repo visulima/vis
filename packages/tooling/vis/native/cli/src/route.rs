@@ -157,6 +157,7 @@ pub(crate) fn route(args: &[String]) -> Dispatch {
 #[cfg(test)]
 mod tests {
     /// Every command path the routes name. A new route is a new line here, and in the snapshot.
+    #[cfg(unix)]
     const COMMAND_PATHS: &[&[&str]] = &[
         &["hook", "run"],
         &["hook", "list"],
@@ -209,9 +210,11 @@ mod tests {
         &["why"],
     ];
 
+    #[cfg(unix)]
     use std::collections::BTreeSet;
 
     use super::*;
+    #[cfg(unix)]
     use crate::manifest::Manifest;
 
     fn label(dispatch: &Dispatch) -> String {
@@ -229,6 +232,7 @@ mod tests {
     /// Every argument list the snapshot covers: the shared fixture's, each manifest command and its
     /// aliases, and every command word of the table, each alone and with a subcommand, a positional,
     /// a help flag and a leading global flag.
+    #[cfg(unix)]
     fn invocations() -> BTreeSet<Vec<String>> {
         #[derive(serde::Deserialize)]
         struct Fixture {
@@ -321,8 +325,10 @@ mod tests {
 
     /// One line per invocation, `["args"] => entry`: where the dispatch takes it. The file was written from the
     /// `match` that `main` held before the table (`b6ba86dc`), so a difference here is a route that moved.
+    #[cfg(unix)]
     const SNAPSHOT: &str = include_str!("../tests/fixtures/native-routes.snap");
 
+    #[cfg(unix)]
     fn render() -> String {
         invocations()
             .into_iter()

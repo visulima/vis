@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[cfg(unix)]
 use super::entries::{has_backslash, sorted_entries};
 use super::settings::Settings;
 
