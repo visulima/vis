@@ -1,3 +1,14 @@
+## @visulima/task-runner [4.0.0-next.2](https://github.com/visulima/vis/compare/@visulima/task-runner@4.0.0-next.1...@visulima/task-runner@4.0.0-next.2) (2026-11-27)
+
+### Bug Fixes
+
+* **task-runner:** end an empty Windows terminal environment with two NULs ([9d1eda2](https://github.com/visulima/vis/commit/9d1eda2810133c1cd6c19ed80f804778b785bd0b))
+* **task-runner:** start Windows terminal commands suspended so a kill reaches their grandchildren ([4edc5da](https://github.com/visulima/vis/commit/4edc5da9803139c8a799a06ae891658ae5af4df5))
+
+### Documentation
+
+* **task-runner:** say that the Windows terminal comes from win_pty, not portable-pty ([ffc7f6b](https://github.com/visulima/vis/commit/ffc7f6b50891723e15df093400423b9d2df5dd23))
+
 ## @visulima/task-runner [4.0.0-next.1](https://github.com/visulima/vis/compare/@visulima/task-runner@3.1.0-next.3...@visulima/task-runner@4.0.0-next.1) (2026-11-27)
 
 ### ⚠ BREAKING CHANGES
