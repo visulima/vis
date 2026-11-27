@@ -62,6 +62,10 @@ fn version_prints_bare_injected_semver() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
+)]
 fn help_wins_over_the_version() {
     for args in [&["--version", "--help"][..], &["-V", "-h"]] {
         let output = binary().args(args).env("VIS_VERSION", "1.2.3").output().expect("run binary");
@@ -580,6 +584,10 @@ fn no_color_flag_beats_force_color_in_help() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
+)]
 fn help_for_an_unknown_command_reports_on_stderr_and_exits_zero() {
     let output = binary().args(["help", "frobnicate"]).env("VIS_VERSION", "1.2.3").output().expect("run binary");
 
@@ -589,6 +597,10 @@ fn help_for_an_unknown_command_reports_on_stderr_and_exits_zero() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
+)]
 fn help_group_filter_lists_only_that_group() {
     let output = binary().args(["help", "--group", "Git Hooks"]).env("COLUMNS", "100").output().expect("run binary");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -660,6 +672,10 @@ fn package_manager_commands_answer_help_without_running_the_manager() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
+)]
 fn command_help_is_answered_natively_without_a_node_fallback() {
     // `hook run --help` used to be handed to Node; the manifest renders it now, so it
     // works even when no fallback entry exists.
@@ -740,6 +756,10 @@ fn command_groups_and_bare_migrate_still_reach_node() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "the help surface is Node's on Windows: the terminal width cannot be read the way Node reads it"
+)]
 fn dlx_help_after_a_global_flag_lists_the_full_global_options() {
     // Only `dlx` as the first argument takes the lean entry; `-v dlx` runs the full CLI.
     let lean = binary().args(["dlx", "--help"]).env("COLUMNS", "100").output().expect("run binary");

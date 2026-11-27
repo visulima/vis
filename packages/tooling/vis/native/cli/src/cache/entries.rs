@@ -251,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn backslash_names_are_left_to_node() {
         assert!(has_backslash(OsStr::new("a\\b")));
         assert!(!has_backslash(OsStr::new("a/b")));

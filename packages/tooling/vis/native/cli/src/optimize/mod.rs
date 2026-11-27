@@ -495,6 +495,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn e18e_entries_print_by_category_and_win_over_an_override() {
         let dir = workspace("text", &["left-pad", "chalk", "is-number", "abab"]);
         let layout = Layout { width: 100, colour: false };
@@ -521,6 +522,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Windows is handed to Node here: native discovery is off, and so are the run keys")]
     fn e18e_entries_are_in_the_json_with_their_codemod_flag() {
         let dir = workspace("json", &["left-pad", "chalk"]);
         let layout = Layout { width: 100, colour: false };

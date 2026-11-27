@@ -725,7 +725,9 @@ mod downloads_marshall {
         plan.cache
             .iter()
             .filter_map(|action| match action {
-                CacheAction::Write { file, text } if file.to_string_lossy().contains("/downloads/") => {
+                CacheAction::Write { file, text }
+                    if file.to_string_lossy().replace('\\', "/").contains("/downloads/") =>
+                {
                     Some(text.clone())
                 }
                 _ => None,
@@ -863,7 +865,7 @@ mod downloads_marshall {
         let plan = only_downloads(&setup).unwrap();
 
         assert!(plan.stdout.contains("Only 7 downloads in the past month."));
-        assert!(plan.cache.iter().all(|action| !matches!(action, CacheAction::Write { file, .. } if file.to_string_lossy().contains("/downloads/"))));
+        assert!(plan.cache.iter().all(|action| !matches!(action, CacheAction::Write { file, .. } if file.to_string_lossy().replace('\\', "/").contains("/downloads/"))));
         assert_eq!(registry.requests.load(Ordering::SeqCst), 1);
     }
 
@@ -946,7 +948,9 @@ mod archived_repo_marshall {
         plan.cache
             .iter()
             .filter_map(|action| match action {
-                CacheAction::Write { file, text } if file.to_string_lossy().contains("/archived-repo/") => {
+                CacheAction::Write { file, text }
+                    if file.to_string_lossy().replace('\\', "/").contains("/archived-repo/") =>
+                {
                     Some(text.clone())
                 }
                 _ => None,
@@ -1755,7 +1759,9 @@ mod expired_domains_marshall {
         plan.cache
             .iter()
             .filter_map(|action| match action {
-                CacheAction::Write { file, text } if file.to_string_lossy().contains("/expired-domains/") => {
+                CacheAction::Write { file, text }
+                    if file.to_string_lossy().replace('\\', "/").contains("/expired-domains/") =>
+                {
                     Some(text.clone())
                 }
                 _ => None,

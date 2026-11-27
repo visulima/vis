@@ -16,6 +16,9 @@ use crate::output::write_stdout;
 use crate::pm_shim::SHIM_NAMES;
 
 /// The text Node prints for the shim directory `directory` and the `PATH` entries `path`.
+/// What separates the entries of `PATH`, as `path.delimiter` does in Node.
+const PATH_DELIMITER: char = if cfg!(windows) { ';' } else { ':' };
+
 fn text(directory: &Path, path: &str) -> Option<String> {
     let shown = directory.to_str()?;
 
@@ -35,7 +38,7 @@ fn text(directory: &Path, path: &str) -> Option<String> {
         ));
     }
 
-    text.push_str(if path.split(':').any(|entry| entry == shown) {
+    text.push_str(if path.split(PATH_DELIMITER).any(|entry| entry == shown) {
         "PATH: active (shim dir is on PATH).\n"
     } else {
         "PATH: NOT on PATH \u{2014} the guard is inactive until you add it.\n"
@@ -88,7 +91,7 @@ mod tests {
 
         let shown = directory.to_str().expect("a UTF-8 temporary directory");
         let off = text(&directory, "/usr/bin").expect("a report");
-        let on = text(&directory, &format!("/usr/bin:{shown}")).expect("a report");
+        let on = text(&directory, &format!("/usr/bin{PATH_DELIMITER}{shown}")).expect("a report");
 
         std::fs::remove_dir_all(&directory).expect("remove the shim directory");
 

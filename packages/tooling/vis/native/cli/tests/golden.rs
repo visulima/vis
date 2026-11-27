@@ -116,7 +116,26 @@ fn capture_streams(exe: &Path, args: &[&str], color: bool, width: u32, cwd: &Pat
 
     let output = command.output().unwrap_or_else(|error| panic!("run {}: {error}", exe.display()));
 
-    (output.status.code(), output.stdout, output.stderr)
+    (output.status.code(), with_unix_line_endings(output.stdout), with_unix_line_endings(output.stderr))
+}
+
+/// The goldens hold what Node prints on Linux; the help text ends its lines with `\r\n` on Windows, as Node's does.
+fn with_unix_line_endings(bytes: Vec<u8>) -> Vec<u8> {
+    if !cfg!(windows) {
+        return bytes;
+    }
+
+    let mut converted = Vec::with_capacity(bytes.len());
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            continue;
+        }
+
+        converted.push(*byte);
+    }
+
+    converted
 }
 
 fn subject() -> PathBuf {
@@ -153,6 +172,11 @@ fn help_output_matches_goldens() {
     let mut failures = Vec::new();
 
     for case in CASES {
+        // Without colour the help is Node's on Windows: it cannot tell which colour level pail would print.
+        if cfg!(windows) && !case.color && !update {
+            continue;
+        }
+
         for width in WIDTHS {
             let path = golden_path(case, width);
 
