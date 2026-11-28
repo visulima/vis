@@ -1,0 +1,11 @@
+{
+  "name": "foo-alpha",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build foo-alpha",
+    "test": "echo test foo-alpha"
+  },
+  "dependencies": {
+    "foo-bar": "workspace:*"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Zed",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo build Zed",
+    "test": "echo test Zed"
+  },
+  "dependencies": {
+    "ten": "workspace:*",
+    "@types/node": "1.0.0"
+  },
+  "devDependencies": {
+    "b2": "workspace:*"
+  }
+}

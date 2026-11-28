@@ -1,0 +1,91 @@
+{
+  "edges": [
+    {
+      "source": "a-app",
+      "target": "Beta",
+      "type": "static"
+    },
+    {
+      "source": "a-app",
+      "target": "_core",
+      "type": "static"
+    },
+    {
+      "source": "a-app",
+      "target": "mid",
+      "type": "devDependency"
+    },
+    {
+      "source": "b10",
+      "target": "b2",
+      "type": "static"
+    },
+    {
+      "source": "Beta",
+      "target": "_core",
+      "type": "static"
+    },
+    {
+      "source": "mid",
+      "target": "Beta",
+      "type": "static"
+    },
+    {
+      "source": "Zed",
+      "target": "ten",
+      "type": "static"
+    },
+    {
+      "source": "Zed",
+      "target": "b2",
+      "type": "devDependency"
+    },
+    {
+      "source": "aa-exact",
+      "target": "zz-exact",
+      "type": "static"
+    }
+  ],
+  "nodes": [
+    {
+      "name": "a-app",
+      "type": "application"
+    },
+    {
+      "name": "b10",
+      "type": "library"
+    },
+    {
+      "name": "b2",
+      "type": "library"
+    },
+    {
+      "name": "Beta",
+      "type": "library"
+    },
+    {
+      "name": "mid",
+      "type": "library"
+    },
+    {
+      "name": "ten",
+      "type": "library"
+    },
+    {
+      "name": "Zed",
+      "type": "library"
+    },
+    {
+      "name": "_core",
+      "type": "library"
+    },
+    {
+      "name": "zz-exact",
+      "type": "library"
+    },
+    {
+      "name": "aa-exact",
+      "type": "library"
+    }
+  ]
+}

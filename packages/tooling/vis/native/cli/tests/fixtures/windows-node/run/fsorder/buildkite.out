@@ -1,0 +1,42 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 8 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m a1:build
+[2m>[22m b1:build
+[2m>[22m b2:build
+[32m√[39m  a1:build[36m [cache][2m[39m (8 ms)[22m
+--- [32m√[39m a1:build
+a1
+[2m>[22m c-beta:build
+[32m√[39m  b1:build[36m [cache][2m[39m (8 ms)[22m
+--- [32m√[39m b1:build
+b1
+[2m>[22m mid:build
+[32m√[39m  b2:build[36m [cache][2m[39m (9 ms)[22m
+--- [32m√[39m b2:build
+b2
+[2m>[22m ten:build
+[32m√[39m  mid:build[36m [cache][2m[39m (4 ms)[22m
+--- [32m√[39m mid:build
+mid
+[2m>[22m zed:build
+[32m√[39m  ten:build[36m [cache][2m[39m (4 ms)[22m
+--- [32m√[39m ten:build
+ten
+[2m>[22m zz-core:build
+[32m√[39m  c-beta:build[36m [cache][2m[39m (11 ms)[22m
+--- [32m√[39m c-beta:build
+c-beta
+[32m√[39m  zed:build[36m [cache][2m[39m (5 ms)[22m
+--- [32m√[39m zed:build
+zed
+[32m√[39m  zz-core:build[36m [cache][2m[39m (4 ms)[22m
+--- [32m√[39m zz-core:build
+zz-core
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 8 projects
+
+   [32m√[39m  8 tasks completed[2m (8 read from cache)  ·  Took 41 ms[22m
+
+  8 cached · 0.1s

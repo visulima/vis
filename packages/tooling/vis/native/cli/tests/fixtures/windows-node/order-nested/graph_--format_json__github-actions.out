@@ -1,0 +1,113 @@
+{
+  "edges": [
+    {
+      "source": "a-app",
+      "target": "Beta",
+      "type": "static"
+    },
+    {
+      "source": "a-app",
+      "target": "_core",
+      "type": "static"
+    },
+    {
+      "source": "a-app",
+      "target": "mid",
+      "type": "devDependency"
+    },
+    {
+      "source": "b10",
+      "target": "b2",
+      "type": "static"
+    },
+    {
+      "source": "Beta",
+      "target": "_core",
+      "type": "static"
+    },
+    {
+      "source": "mid",
+      "target": "Beta",
+      "type": "static"
+    },
+    {
+      "source": "a-b",
+      "target": "a-c",
+      "type": "static"
+    },
+    {
+      "source": "a-b",
+      "target": "b2-w",
+      "type": "static"
+    },
+    {
+      "source": "foo-alpha",
+      "target": "foo-bar",
+      "type": "static"
+    },
+    {
+      "source": "foo-bar",
+      "target": "mid",
+      "type": "static"
+    },
+    {
+      "source": "x-y",
+      "target": "a-c",
+      "type": "static"
+    }
+  ],
+  "nodes": [
+    {
+      "name": "a-app",
+      "type": "application"
+    },
+    {
+      "name": "b10",
+      "type": "library"
+    },
+    {
+      "name": "b2",
+      "type": "library"
+    },
+    {
+      "name": "Beta",
+      "type": "library"
+    },
+    {
+      "name": "mid",
+      "type": "library"
+    },
+    {
+      "name": "_core",
+      "type": "library"
+    },
+    {
+      "name": "a-c",
+      "type": "library"
+    },
+    {
+      "name": "a-b",
+      "type": "library"
+    },
+    {
+      "name": "b2-w",
+      "type": "library"
+    },
+    {
+      "name": "foo-alpha",
+      "type": "library"
+    },
+    {
+      "name": "foo-bar",
+      "type": "library"
+    },
+    {
+      "name": "foo-x",
+      "type": "application"
+    },
+    {
+      "name": "x-y",
+      "type": "library"
+    }
+  ]
+}

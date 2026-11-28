@@ -17,6 +17,12 @@
             "target": "build"
         },
         {
+            "name": "fsorder",
+            "workspace": "windows-node/workspaces/run-fsorder",
+            "target": "build",
+            "note": "Directories that are not in byte order (mixed case, `_`, digits) holding packages whose names rise in the order Node finds the directories in (the file system's), so the tasks start and are listed in one order."
+        },
+        {
             "name": "order",
             "workspace": "windows-node/workspaces/run-order",
             "target": "build",

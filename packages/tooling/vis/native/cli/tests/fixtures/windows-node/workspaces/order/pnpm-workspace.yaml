@@ -1,0 +1,4 @@
+packages:
+  - packages/*
+  - zz-exact
+  - Aa-exact

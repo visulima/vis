@@ -1,0 +1,15 @@
+[33m[1mFound 2 empty dependency blocks[22m[39m
+  [1ma-b[22m [2m(nested/a-b/d/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+  [1mx-y[22m [2m(nested/_x/y/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+[2m  Run with --fix to drop empty blocks.[22m
+
+[33m[1mFound 3 @types/* deps in dependencies[22m[39m
+  [1ma-c[22m [2m(nested/a/c/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1mfoo-bar[22m [2m(nested/Foo/bar/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1mx-y[22m [2m(nested/_x/y/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+[2m  Run with --fix to move them to devDependencies.[22m

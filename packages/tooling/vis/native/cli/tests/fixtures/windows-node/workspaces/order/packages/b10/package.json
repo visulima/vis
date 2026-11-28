@@ -1,0 +1,12 @@
+{
+  "name": "b10",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build b10",
+    "test": "echo test b10"
+  },
+  "dependencies": {
+    "b2": "workspace:*"
+  },
+  "devDependencies": {}
+}

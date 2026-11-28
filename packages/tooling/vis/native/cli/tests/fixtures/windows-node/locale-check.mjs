@@ -62,13 +62,14 @@ const native = run(binary, ["run", "build"], {
 });
 
 const nodeHooks = run(process.execPath, [cli, "hook", "list"]);
-const binaryHooks = run(binary, ["hook", "list"]);
+// With a Node to fall back on, a binary that declines the command prints what Node prints and exits 0, so "the same
+// output and a zero exit" holds for an answer and for a hand-over alike; an answer in the wrong order differs from Node's.
+const binaryHooks = run(binary, ["hook", "list"], { VIS_FALLBACK_ENTRY: cli, VIS_NODE: process.execPath });
 
 console.log(
     JSON.stringify({
         hooks: {
             node: stages(nodeHooks.stdout.replaceAll("\r\n", "\n")),
-            // A binary that does not answer hands the command to Node, which it cannot find here: nothing is printed.
             binary: { status: binaryHooks.status, stdoutBytes: binaryHooks.stdout.length, same: binaryHooks.stdout === nodeHooks.stdout },
         },
         locale: new Intl.Collator().resolvedOptions().locale,

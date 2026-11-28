@@ -1,0 +1,16 @@
+{
+    "$comment": "Captured from the Node CLI on Windows by ../capture.mjs; tests/windows_node_parity.rs runs the same commands against the native binary. The workspace's project directories differ in case, underscores, hyphens and digits, so the order Node finds them in (the file system's) is not the byte order. `workspace` is a directory below tests/fixtures.",
+    "workspace": "windows-node/workspaces/order-nested",
+    "commands": [
+        ["list"],
+        ["graph"],
+        ["graph", "--format", "json"],
+        ["graph", "--format", "dot"],
+        ["status", "--json"],
+        ["deps", "--types-in-deps", "--empty-deps"],
+        ["deps", "--types-in-deps", "--empty-deps", "--format", "json"],
+        ["task-why", "foo-alpha:build"],
+        ["task-why", "a-c:build"],
+        ["task-why", "mid:build"]
+    ]
+}

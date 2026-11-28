@@ -1,0 +1,11 @@
+{
+  "name": "mid",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build mid",
+    "test": "echo test mid"
+  },
+  "dependencies": {
+    "Beta": "workspace:*"
+  }
+}

@@ -1,0 +1,182 @@
+[
+  {
+    "name": "Beta",
+    "root": "packages/Beta",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build Beta",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test Beta",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "Zed",
+    "root": "packages/Zed",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build Zed",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test Zed",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "_core",
+    "root": "packages/_core",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build _core",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test _core",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "a-app",
+    "root": "packages/a-app",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build a-app",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test a-app",
+        "name": "test"
+      }
+    ],
+    "type": "application"
+  },
+  {
+    "name": "aa-exact",
+    "root": "Aa-exact",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build aa-exact",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test aa-exact",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "b10",
+    "root": "packages/b10",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build b10",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test b10",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "b2",
+    "root": "packages/b2",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build b2",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test b2",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "mid",
+    "root": "packages/mid",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build mid",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test mid",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "ten",
+    "root": "packages/ten",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build ten",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test ten",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  },
+  {
+    "name": "zz-exact",
+    "root": "zz-exact",
+    "tags": [],
+    "targets": [
+      {
+        "aliases": [],
+        "command": "echo build zz-exact",
+        "name": "build"
+      },
+      {
+        "aliases": [],
+        "command": "echo test zz-exact",
+        "name": "test"
+      }
+    ],
+    "type": "library"
+  }
+]

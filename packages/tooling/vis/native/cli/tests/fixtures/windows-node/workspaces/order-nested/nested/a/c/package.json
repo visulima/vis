@@ -1,0 +1,12 @@
+{
+  "name": "a-c",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo build a-c",
+    "test": "echo test a-c"
+  },
+  "dependencies": {
+    "@types/node": "1.0.0"
+  }
+}

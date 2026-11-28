@@ -1,0 +1,8 @@
+{
+  "name": "b2-w",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build b2-w",
+    "test": "echo test b2-w"
+  }
+}

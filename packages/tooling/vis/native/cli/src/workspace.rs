@@ -483,8 +483,9 @@ fn skipped(path: &Path) -> Option<bool> {
     Some(text.contains("node_modules") || text.contains(".git"))
 }
 
-/// Directories under `dir` in the order `walkSync` yields them: sorted by name, depth-first,
-/// symlinks and skipped paths left out. `max_depth` of `Some(1)` lists only the children.
+/// Directories under `dir` in the order `walkSync` yields them: each directory's entries in `readdir` order (sorted by
+/// name on unix, the file system's own on Windows), depth-first, symlinks and skipped paths left out. `max_depth` of
+/// `Some(1)` lists only the children.
 fn list_dirs(dir: &Path, max_depth: Option<usize>) -> Option<Vec<String>> {
     let mut found = Vec::new();
 
@@ -509,6 +510,12 @@ fn walk(dir: &Path, prefix: &str, depth: usize, found: &mut Vec<String>) -> Opti
         entries.push((entry.file_name().into_string().ok()?, entry.file_type().ok()?));
     }
 
+    // Node lists a directory in the order `readdir` returns it. On unix libuv sorts that by name, bytewise. On Windows
+    // it does not sort: the entries come as the file system holds them (NTFS: by upper-cased name, so `Beta` sits
+    // between `b2` and `mid` and `_core` after `Zed`), and `read_dir` asks the file system the same way, so they are
+    // left as they come instead of this module reproducing a file system's order. Checked on NTFS only (see the
+    // `order` groups of `tests/fixtures/windows-node`).
+    #[cfg(not(windows))]
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (name, file_type) in entries {

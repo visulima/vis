@@ -1,0 +1,14 @@
+Project   Type         Layer  Tags  Targets    
+───────────────────────────────────────────────
+Beta      library      —      —     build, test
+Zed       library      —      —     build, test
+_core     library      —      —     build, test
+a-app     application  —      —     build, test
+aa-exact  library      —      —     build, test
+b10       library      —      —     build, test
+b2        library      —      —     build, test
+mid       library      —      —     build, test
+ten       library      —      —     build, test
+zz-exact  library      —      —     build, test
+
+10 project(s)

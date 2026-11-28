@@ -1,0 +1,7 @@
+{
+  "name": "a1",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo a1"
+  }
+}

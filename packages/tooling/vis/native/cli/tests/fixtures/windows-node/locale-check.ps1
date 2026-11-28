@@ -21,7 +21,11 @@ function Check([string]$label, [bool]$ok, [string]$detail) {
 function Step([string]$culture) {
     Set-Culture $culture
     $line = node (Join-Path $here "locale-check.mjs") $Cli $Binary (Join-Path $Scratch $culture)
-    return $line | ConvertFrom-Json
+    $step = $line | ConvertFrom-Json
+    # The orders below are only meaningful when the Node run they come from was the all-hit run.
+    # `Out-Host`: this function's output is its return value, which a check line written to the pipeline would join.
+    Check "${culture}: the second Node run read all four tasks from the cache" ([bool]$step.node.cached) ("cached = " + $step.node.cached) | Out-Host
+    return $step
 }
 
 try {
@@ -34,7 +38,7 @@ try {
         $tailored = Step $culture
         Check "${culture}: Node sorts ch after h" (($tailored.node.starts -join ",") -eq "c:build,d:build,h:build,ch:build") ($tailored.node.starts -join ",")
         Check "${culture}: the binary hands the run back" (($tailored.binary.status -eq 75) -and ($tailored.binary.stdoutBytes -eq 0)) ("exit " + $tailored.binary.status)
-        Check "${culture}: Node lists post-commit before post-checkout and the binary prints nothing" (($tailored.hooks.node -join ",") -eq "commit-msg,post-commit,post-checkout,pre-commit" -and $tailored.hooks.binary.stdoutBytes -eq 0) ($tailored.hooks.node -join ",")
+        Check "${culture}: Node lists post-commit before post-checkout and the binary prints Node's list" (($tailored.hooks.node -join ",") -eq "commit-msg,post-commit,post-checkout,pre-commit" -and $tailored.hooks.binary.status -eq 0 -and $tailored.hooks.binary.same) ($tailored.hooks.node -join ",")
     }
 
     foreach ($culture in @("da-DK", "hu-HU", "es-ES_tradnl", "sv-SE", "de-DE")) {

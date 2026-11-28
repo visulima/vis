@@ -1,0 +1,15 @@
+Found 2 empty dependency blocks
+  a-b (nested/a-b/d/package.json)
+    devDependencies: {}
+  x-y (nested/_x/y/package.json)
+    devDependencies: {}
+  Run with --fix to drop empty blocks.
+
+Found 3 @types/* deps in dependencies
+  a-c (nested/a/c/package.json)
+    @types/node 1.0.0
+  foo-bar (nested/Foo/bar/package.json)
+    @types/node 1.0.0
+  x-y (nested/_x/y/package.json)
+    @types/node 1.0.0
+  Run with --fix to move them to devDependencies.

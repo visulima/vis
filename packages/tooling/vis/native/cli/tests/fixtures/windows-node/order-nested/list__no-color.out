@@ -1,0 +1,17 @@
+Project    Type         Layer  Tags  Targets    
+────────────────────────────────────────────────
+Beta       library      —      —     build, test
+_core      library      —      —     build, test
+a-app      application  —      —     build, test
+a-b        library      —      —     build, test
+a-c        library      —      —     build, test
+b10        library      —      —     build, test
+b2         library      —      —     build, test
+b2-w       library      —      —     build, test
+foo-alpha  library      —      —     build, test
+foo-bar    library      —      —     build, test
+foo-x      application  —      —     build, test
+mid        library      —      —     build, test
+x-y        library      —      —     build, test
+
+13 project(s)

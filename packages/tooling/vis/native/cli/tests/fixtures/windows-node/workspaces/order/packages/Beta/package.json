@@ -1,0 +1,12 @@
+{
+  "name": "Beta",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build Beta",
+    "test": "echo test Beta"
+  },
+  "dependencies": {
+    "_core": "workspace:*"
+  },
+  "devDependencies": {}
+}

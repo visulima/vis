@@ -1,0 +1,8 @@
+{
+  "name": "_core",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build _core",
+    "test": "echo test _core"
+  }
+}

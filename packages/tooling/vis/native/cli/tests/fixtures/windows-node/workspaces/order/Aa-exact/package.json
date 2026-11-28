@@ -1,0 +1,11 @@
+{
+  "name": "aa-exact",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo build aa-exact",
+    "test": "echo test aa-exact"
+  },
+  "dependencies": {
+    "zz-exact": "workspace:*"
+  }
+}

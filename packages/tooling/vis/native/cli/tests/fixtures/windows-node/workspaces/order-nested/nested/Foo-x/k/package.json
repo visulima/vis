@@ -1,0 +1,11 @@
+{
+  "name": "foo-x",
+  "version": "1.0.0",
+  "bin": {
+    "foo-x": "./cli.js"
+  },
+  "scripts": {
+    "build": "echo build foo-x",
+    "test": "echo test foo-x"
+  }
+}
