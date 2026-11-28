@@ -14,6 +14,7 @@ use serde_json::Value;
 use super::json::Json;
 use super::meta::{decorate, read_manifest, Decoration, Deps, Installed, License, Manifest, Unsupported};
 use super::semver;
+use super::xml::{Element, Unescapable};
 use crate::collation::collate;
 use crate::graph::{ProjectGraph, ProjectType};
 use crate::pnpm_lock::{self as lock, Entry};
@@ -90,9 +91,102 @@ impl Bom {
 
         format!("{}\n", document.pretty())
     }
+
+    /// `serializeBomToXml(bom)`: the `metadata`, and `components` and `dependencies` where there are any. `Err` when a
+    /// value is one the XML library does not escape in full (see `xml.rs`), which only Node writes.
+    pub(super) fn to_xml(&self, timestamp: &str, serial_number: &str) -> Result<String, Unescapable> {
+        let tool = Element::parent("component", vec![Element::text("name", "@visulima/vis")])
+            .with_attribute("type", "application");
+        let metadata = Element::parent(
+            "metadata",
+            vec![
+                Element::text("timestamp", timestamp),
+                Element::parent(
+                    "lifecycles",
+                    vec![Element::parent("lifecycle", vec![Element::text("phase", "build")])],
+                ),
+                Element::parent("tools", vec![Element::parent("components", vec![tool])]),
+                self.metadata.to_xml(),
+            ],
+        );
+        let mut children = vec![metadata];
+
+        if !self.components.is_empty() {
+            children.push(Element::parent("components", self.components.iter().map(Component::to_xml).collect()));
+        }
+
+        if !self.dependencies.is_empty() {
+            let dependencies = self.dependencies.iter().map(|(reference, depends_on)| {
+                let targets: Vec<Element> = depends_on
+                    .iter()
+                    .map(|target| Element::empty("dependency").with_attribute("ref", target.as_str()))
+                    .collect();
+
+                if targets.is_empty() {
+                    Element::empty("dependency").with_attribute("ref", reference.as_str())
+                } else {
+                    Element::parent("dependency", targets).with_attribute("ref", reference.as_str())
+                }
+            });
+
+            children.push(Element::parent("dependencies", dependencies.collect()));
+        }
+
+        let document = Element::parent("bom", children)
+            .with_attribute("version", "1")
+            .with_attribute("xmlns", "http://cyclonedx.org/schema/bom/1.7")
+            .with_attribute("serialNumber", serial_number);
+
+        Ok(format!("{}\n", document.document()?))
+    }
 }
 
 impl Component {
+    /// `componentToXmlElement`: the children in the order the Node code pushes them, each only where it is truthy.
+    fn to_xml(&self) -> Element {
+        let mut children = vec![Element::text("name", self.name.as_str())];
+
+        if !self.version.is_empty() {
+            children.push(Element::text("version", self.version.as_str()));
+        }
+
+        if let Some(description) = &self.decoration.description {
+            children.push(Element::text("description", description.as_str()));
+        }
+
+        if let Some(author) = &self.decoration.author {
+            children.push(Element::text("author", author.as_str()));
+        }
+
+        if let Some(hash) = &self.hash {
+            let entry = Element::text("hash", hash.hex.as_str()).with_attribute("alg", hash.algorithm);
+
+            children.push(Element::parent("hashes", vec![entry]));
+        }
+
+        if let Some(licenses) = &self.decoration.licenses {
+            children.push(Element::parent("licenses", vec![license_xml(licenses)]));
+        }
+
+        children.push(Element::text("purl", self.bom_ref.as_str()));
+
+        if let Some(scope) = self.scope {
+            children.push(Element::text("scope", scope));
+        }
+
+        if !self.decoration.references.is_empty() {
+            let references = self.decoration.references.iter().map(|(kind, url)| {
+                Element::parent("reference", vec![Element::text("url", url.as_str())]).with_attribute("type", *kind)
+            });
+
+            children.push(Element::parent("externalReferences", references.collect()));
+        }
+
+        Element::parent("component", children)
+            .with_attribute("type", self.kind)
+            .with_attribute("bom-ref", self.bom_ref.as_str())
+    }
+
     fn to_json(&self) -> Json {
         let mut fields = vec![
             ("bom-ref", Json::string(self.bom_ref.as_str())),
@@ -135,6 +229,19 @@ impl Component {
         }
 
         Json::Object(fields)
+    }
+}
+
+/// `licensesToXmlElement` for one entry: an expression, or a licence with its id, else its name. An entry with
+/// neither is an element with no children, which the library does not write.
+fn license_xml(license: &License) -> Element {
+    match license {
+        License::Expression(expression) => Element::text("expression", expression.as_str()),
+        License::Id(id) if !id.is_empty() => Element::parent("license", vec![Element::text("id", id.as_str())]),
+        License::Name(name) if !name.is_empty() => {
+            Element::parent("license", vec![Element::text("name", name.as_str())])
+        }
+        License::Id(_) | License::Name(_) => Element::parent("license", Vec::new()),
     }
 }
 

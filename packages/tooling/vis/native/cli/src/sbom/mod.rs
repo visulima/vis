@@ -1,4 +1,4 @@
-//! `vis sbom` — the native fast path for the CycloneDX JSON BOM of a pnpm workspace.
+//! `vis sbom` — the native fast path for the CycloneDX JSON or XML BOM of a pnpm workspace.
 //!
 //! The Node handler (`src/commands/sbom/handler.ts`) builds the BOM from the workspace graph and the
 //! lockfile and writes it to a file, or to stdout for `--output -`. This module writes the same bytes,
@@ -7,16 +7,22 @@
 //! else, unchanged, to Node. Every check runs before a file is created or a byte is printed, so a
 //! delegation never follows an effect.
 //!
-//! Native: `vis sbom` with `--format json`, `--output <path>|-`, `--focus <a,b>` and `--include-dev`, each at
-//! most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
+//! Native: `vis sbom` with `--format json|xml` (either case), `--output <path>|-`, `--focus <a,b>` and
+//! `--include-dev`, each at most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
 //! `pnpm-lock.yaml` and `package.json` files are read exactly (see `pnpm_lock.rs`, `meta.rs`, `semver.rs`).
-//! Node: `--format xml`, every other flag, any other lockfile manager, a `vis.config.*`, a project with a
-//! `project.json`, another ecosystem's lock file at the root, a terminal, and everything the readers refuse.
+//! A `vis.config.*` at the root is read when it is a literal whose keys cannot change the projects, their edges or
+//! the ecosystems in the BOM, with its `projectIgnore` applied (`config_workspace.rs`).
+//! An XML document with a value that the XML library does not escape in full is Node's (see `xml.rs`).
+//! Node: every other `--format` and flag, any other lockfile manager, any other config, a project with a
+//! `project.json`, a lock file at the root of an ecosystem that Node reads into the BOM (`NODE_ONLY_FILES`), a terminal,
+//! and everything the readers refuse. A lock file of an ecosystem that is not opted in (`GATED_FILES`) is no obstacle:
+//! Node leaves it out and says so on stderr, which this module prints as well.
 
 mod bom;
 mod json;
 mod meta;
 mod semver;
+mod xml;
 
 use std::env;
 use std::ffi::OsString;
@@ -26,32 +32,79 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::collation::root_collation;
-use crate::graph::{project_graph, GraphResult};
+use crate::config_workspace::{read_vetted, Consumer};
+use crate::graph::{project_graph, project_graph_vetted_with_manifests, GraphResult};
 use crate::js;
-use crate::node_context::{ci_root_context, quiet_context};
-use crate::output::write_stdout;
+use crate::node_context::{ci_root_context, config_context_is_native, quiet_context};
+use crate::output::{write_stderr, write_stdout};
 use crate::pail::{Layout, Level};
+use crate::root_search::read_json;
 use crate::text::is_ascii_graphic_path;
-use crate::vis_config::{self, ConfigState};
+use crate::vis_config::{config_file_in, has_vis_config};
 
-/// Lock and manifest files of the other ecosystems `vis sbom` reads from the root, which Node adds to the BOM
-/// or reports on stderr as found-but-not-included.
-const OTHER_ECOSYSTEM_FILES: [&str; 12] = [
-    "Cargo.lock",
-    "Gemfile.lock",
-    "Package.resolved",
-    "build.zig.zon",
-    "composer.lock",
-    "go.sum",
-    "gradle.lockfile",
-    "mix.lock",
-    "packages.lock.json",
-    "pom.xml",
-    "pubspec.lock",
-    "uv.lock",
+/// Lock and manifest files at the root that Node reads into the BOM whatever the config says (`Cargo.lock`,
+/// `Gemfile.lock`, `composer.lock`, `uv.lock`), and the two manifests of a gated ecosystem that are also project
+/// markers (`pom.xml`, `build.zig.zon`), whose workspaces the binary hands to Node.
+const NODE_ONLY_FILES: [&str; 6] =
+    ["Cargo.lock", "Gemfile.lock", "build.zig.zon", "composer.lock", "pom.xml", "uv.lock"];
+
+/// The gated ecosystems that Node finds by one root file, as `(id, file)` in the order of `GATED_ECOSYSTEMS`
+/// (`src/sbom/ecosystem-gate.ts`), which is the order of the clauses of its notice. Without an opt-in in the
+/// config, which no config the binary reads holds, none of them is in the BOM: Node only says on stderr that it
+/// found the file.
+const GATED_FILES: [(&str, &str); 6] = [
+    ("gradle", "gradle.lockfile"),
+    ("hex", "mix.lock"),
+    ("go", "go.sum"),
+    ("dart", "pubspec.lock"),
+    ("swift", "Package.resolved"),
+    ("nuget", "packages.lock.json"),
 ];
 
+/// The line Node prints on stderr for the gated ecosystems found by file at the root (`skippedEcosystemsNotice`), or
+/// `None` when there is none.
+fn skipped_notice(root: &Path) -> Option<String> {
+    let clauses: Vec<String> = GATED_FILES
+        .iter()
+        .filter(|(_, file)| root.join(file).exists())
+        .map(|(id, file)| format!("{file} found; not included. Set {id}.discover or add '{id}' to sbom.ecosystems."))
+        .collect();
+
+    (!clauses.is_empty()).then(|| {
+        format!("vis sbom: ecosystems found by file, which does not show they are used. {}", clauses.join(" "))
+    })
+}
+
+/// `--format`, which Node lowercases before it compares it with `json` and `xml`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Format {
+    Json,
+    Xml,
+}
+
+impl Format {
+    /// The format `value` names in ASCII letters of either case; any other text is Node's to read or refuse.
+    fn from_flag(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("json") {
+            Some(Self::Json)
+        } else if value.eq_ignore_ascii_case("xml") {
+            Some(Self::Xml)
+        } else {
+            None
+        }
+    }
+
+    /// Where the document goes when `--output` is absent.
+    fn default_output(self) -> &'static str {
+        match self {
+            Self::Json => "sbom.cdx.json",
+            Self::Xml => "sbom.cdx.xml",
+        }
+    }
+}
+
 struct Plan {
+    format: Format,
     include_dev: bool,
     focus: Vec<String>,
     /// `-` for stdout.
@@ -88,7 +141,7 @@ fn plain_output(output: &str) -> bool {
 
 /// The arguments after `sbom`, or `None` for any shape this module does not answer.
 fn parse(args: &[String]) -> Option<Plan> {
-    let (mut include_dev, mut format, mut focus, mut output) = (false, false, None, None);
+    let (mut include_dev, mut format, mut focus, mut output) = (false, None, None, None);
     let mut rest = args.iter().skip(1);
 
     while let Some(argument) = rest.next() {
@@ -103,11 +156,11 @@ fn parse(args: &[String]) -> Option<Plan> {
         }
 
         if let Some(value) = value_of(argument, "--format", &mut rest)? {
-            if format || value != "json" {
+            if format.is_some() {
                 return None;
             }
 
-            format = true;
+            format = Some(Format::from_flag(value)?);
 
             continue;
         }
@@ -135,17 +188,39 @@ fn parse(args: &[String]) -> Option<Plan> {
         None => Vec::new(),
     };
 
-    Some(Plan { include_dev, focus, output: output.unwrap_or_else(|| "sbom.cdx.json".to_owned()) })
+    let format = format.unwrap_or(Format::Json);
+
+    Some(Plan { format, include_dev, focus, output: output.unwrap_or_else(|| format.default_output().to_owned()) })
 }
 
-/// Whether Node would reach the same answer: a CI context off a terminal, no output settings that change
-/// the status lines, and `cwd` the workspace root of a pnpm workspace with no config.
-fn context(cwd: &Path) -> bool {
-    ci_root_context(cwd)
-        && quiet_context(cwd, cwd)
-        && vis_config::read(cwd) == ConfigState::Absent
-        && root_collation()
-        && !OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists())
+/// Whether the config at the root is a `vis.config.js` in a package that does not say whether it is a module. Node
+/// then finds out by parsing the file and prints a `MODULE_TYPELESS_PACKAGE_JSON` warning on stderr, whose text
+/// depends on the Node version and which this command does not reproduce.
+fn module_type_is_guessed(root: &Path) -> bool {
+    config_file_in(root).is_some_and(|path| path.extension().is_some_and(|extension| extension == "js"))
+        && read_json(&root.join("package.json")).is_none_or(|manifest| manifest.get("type").is_none())
+}
+
+/// The `projectIgnore` entries of the config (none without one) when Node would reach the same answer: a CI context off a terminal, no output
+/// settings that change the status lines, and `cwd` the workspace root of a pnpm workspace whose `vis.config` is
+/// absent, or a literal one whose keys cannot change the BOM beyond `projectIgnore` (see `config_workspace`). `None`
+/// for every other config and context.
+fn context(cwd: &Path) -> Option<Vec<String>> {
+    if !ci_root_context(cwd) || !root_collation() || NODE_ONLY_FILES.iter().any(|name| cwd.join(name).exists()) {
+        return None;
+    }
+
+    // Node loads the config of the workspace root only; with one at or above the working directory, the root's own
+    // literal config is read, and nothing else is Node's to answer.
+    if has_vis_config(cwd) {
+        if !config_context_is_native() || module_type_is_guessed(cwd) {
+            return None;
+        }
+
+        return read_vetted(cwd, Consumer::Sbom).map(|vetted| vetted.ignore);
+    }
+
+    quiet_context(cwd, cwd).then(Vec::new)
 }
 
 /// Whether the file can be written where Node writes it. `ensureDirSync` looks at the directory with `lstat`: one
@@ -182,20 +257,32 @@ fn answer(args: &[String]) -> Option<i32> {
     let plan = parse(args)?;
     let cwd = env::current_dir().ok()?;
 
-    if !context(&cwd) {
-        return None;
-    }
-
+    let ignore = context(&cwd)?;
     let to_stdout = plan.output == "-";
     let layout = if to_stdout { None } else { Some(Layout::detect(args)?) };
 
-    let GraphResult::Native(graph) = project_graph(&cwd) else {
-        return None;
+    // A config's `projectIgnore` drops directories from the project set, with the rules of the root `.gitignore`.
+    let graph = if has_vis_config(&cwd) {
+        project_graph_vetted_with_manifests(&cwd, &ignore)?.0
+    } else {
+        let GraphResult::Native(graph) = project_graph(&cwd) else {
+            return None;
+        };
+
+        graph
     };
 
     let options = bom::Options { focus: &plan.focus, include_dev: plan.include_dev };
     let bom = bom::build(&cwd, &graph, &options).ok()?;
-    let text = bom.to_json(&js::iso_now(), &format!("urn:uuid:{}", js::random_uuid()?));
+    let (timestamp, serial_number) = (js::iso_now(), format!("urn:uuid:{}", js::random_uuid()?));
+    let text = match plan.format {
+        Format::Json => bom.to_json(&timestamp, &serial_number),
+        Format::Xml => bom.to_xml(&timestamp, &serial_number).ok()?,
+    };
+
+    // Node prints the notice before it builds anything; it is printed here once nothing can send the run to Node any more,
+    // so a delegation never repeats it.
+    let notice = skipped_notice(&cwd).map(|line| line + "\n");
 
     let Some(layout) = layout else {
         // A document that Node would cut short on a pipe is Node's to cut short.
@@ -203,6 +290,7 @@ fn answer(args: &[String]) -> Option<i32> {
             return None;
         }
 
+        write_notice(notice.as_deref());
         write_stdout("sbom", "the SBOM", &text);
 
         return Some(0);
@@ -224,14 +312,22 @@ fn answer(args: &[String]) -> Option<i32> {
             &format!("{} components, {} dependency edges", bom.component_count(), bom.dependency_count()),
         );
 
+    write_notice(notice.as_deref());
     write_stdout("sbom", "the confirmation", &message);
 
     Some(0)
 }
 
+/// The found-but-not-included line, on stderr as `console.error` writes it.
+fn write_notice(notice: Option<&str>) {
+    if let Some(notice) = notice {
+        write_stderr("sbom", "the notice", notice);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse, plain_output};
+    use super::{module_type_is_guessed, parse, plain_output, skipped_notice, Format};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -242,6 +338,18 @@ mod tests {
         let plan = parse(&argv(&["sbom"])).unwrap();
 
         assert_eq!((plan.include_dev, plan.focus.len(), plan.output.as_str()), (false, 0, "sbom.cdx.json"));
+        assert_eq!(plan.format, Format::Json);
+
+        // `--format` is lowercased by Node, so any case of `json` and `xml` is the same format, and the file follows it.
+        for (flag, format, file) in [("XML", Format::Xml, "sbom.cdx.xml"), ("Json", Format::Json, "sbom.cdx.json")] {
+            let plan = parse(&argv(&["sbom", &format!("--format={flag}")])).unwrap();
+
+            assert_eq!((plan.format, plan.output.as_str()), (format, file));
+        }
+
+        let plan = parse(&argv(&["sbom", "--format", "xml", "--output", "out/x.xml"])).unwrap();
+
+        assert_eq!((plan.format, plan.output.as_str()), (Format::Xml, "out/x.xml"));
 
         let plan =
             parse(&argv(&["sbom", "--format=json", "--include-dev", "--focus", "a, b,,", "--output", "-"])).unwrap();
@@ -253,9 +361,63 @@ mod tests {
     }
 
     #[test]
+    fn the_notice_names_each_found_gated_file_in_the_order_of_the_ecosystems() {
+        let root = std::env::temp_dir().join(format!("vis-sbom-notice-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(skipped_notice(&root), None);
+
+        // Written in the reverse of the order they are named in.
+        for file in ["packages.lock.json", "go.sum", "gradle.lockfile"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        assert_eq!(
+            skipped_notice(&root).as_deref(),
+            Some(
+                "vis sbom: ecosystems found by file, which does not show they are used. gradle.lockfile found; not included. Set gradle.discover or add 'gradle' to sbom.ecosystems. go.sum found; not included. Set go.discover or add 'go' to sbom.ecosystems. packages.lock.json found; not included. Set nuget.discover or add 'nuget' to sbom.ecosystems."
+            )
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_js_config_in_a_package_without_a_type_is_nodes() {
+        let root = std::env::temp_dir().join(format!("vis-sbom-module-type-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("vis.config.js"), "export default {};\n").unwrap();
+
+        // No package.json, and one without a `type`: Node guesses the module type and warns.
+        assert!(module_type_is_guessed(&root));
+
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        assert!(module_type_is_guessed(&root));
+
+        std::fs::write(root.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        assert!(!module_type_is_guessed(&root));
+
+        // The other extensions are never guessed.
+        std::fs::remove_file(root.join("vis.config.js")).unwrap();
+        std::fs::write(root.join("vis.config.ts"), "export default {};\n").unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        assert!(!module_type_is_guessed(&root));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn delegates_every_other_shape() {
         for shape in [
-            &["sbom", "--format", "xml"][..],
+            &["sbom", "--format", "yaml"][..],
+            &["sbom", "--format", "xmls"],
+            &["sbom", "--format=\u{212A}ml"],
+            &["sbom", "--format", "xml", "--format", "json"],
+            &["sbom", "--format=json", "--format=json"],
             &["sbom", "--format"],
             &["sbom", "--output"],
             &["sbom", "--output", "--include-dev"],

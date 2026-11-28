@@ -598,8 +598,12 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it("does not answer several patterns that would run side by side", () => {
             expect.hasAssertions();
 
-            delegation({ args: RANGE, config: `{ "*.txt": "echo a", "a*": "echo b" }` });
-            delegation({ args: [...RANGE, "--concurrent", "2"], config: `{ "*.txt": "echo a", "a*": "echo b" }` });
+            // The first command sleeps, so the two tasks finish in the same order on every run: with several workers the lines
+            // follow the order the tasks finish in.
+            const config = String.raw`{ "*.txt": "sh -c 'sleep 0.3; echo a' sh", "a*": "echo b" }`;
+
+            delegation({ args: RANGE, config });
+            delegation({ args: [...RANGE, "--concurrent", "2"], config });
         });
 
         it("does not answer a concurrency from the environment", () => {

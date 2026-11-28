@@ -1,5 +1,5 @@
 //! The literal `vis.config` of a workspace root, read for the commands that read the workspace (`task-why`, `graph`,
-//! `status`), and the projects of that workspace as the task graph builder takes them.
+//! `sbom`, `status`), and the projects of that workspace as the task graph builder takes them.
 //!
 //! What Node does with the config before one of these commands prints anything: the config loader reads the file
 //! (`loadVisConfig`), refuses the removed keys and a malformed `scopedTasks`, merges `extends`, applies the `security`
@@ -46,6 +46,9 @@ use crate::workspace::names_hold_non_js_marker;
 pub(crate) enum Consumer {
     /// `vis graph`: the project graph, whose targets nothing prints.
     Graph,
+    /// `vis sbom`: the projects and their edges, and the lockfile; no target is printed. The ecosystem opt-ins
+    /// (`sbom`, the `discover` flags set to `true`) change what the BOM holds, and are refused like for `Graph`.
+    Sbom,
     /// `vis status`: the number of unique targets, and the violations of `constraints`.
     Status,
     /// `vis task-why`: the task graph.
@@ -342,7 +345,7 @@ mod tests {
     #[test]
     fn an_inert_key_is_harmless_and_every_other_is_nodes() {
         for key in INERT {
-            for consumer in [Consumer::Graph, Consumer::Status] {
+            for consumer in [Consumer::Graph, Consumer::Sbom, Consumer::Status] {
                 assert!(accepted(&json!({ key: {} }), consumer), "{key}");
             }
 
@@ -365,17 +368,18 @@ mod tests {
             "versionConstraint",
             "somethingNew",
         ] {
-            for consumer in [Consumer::Graph, Consumer::Status, Consumer::TaskWhy] {
+            for consumer in [Consumer::Graph, Consumer::Sbom, Consumer::Status, Consumer::TaskWhy] {
                 assert!(!accepted(&json!({ key: {} }), consumer), "{key}");
             }
         }
     }
 
     #[test]
-    fn constraints_are_harmless_to_the_graph_only() {
+    fn constraints_are_harmless_to_the_graph_and_the_bom_only() {
         let config = json!({ "constraints": { "rules": [] } });
 
         assert!(accepted(&config, Consumer::Graph));
+        assert!(accepted(&config, Consumer::Sbom));
         assert!(!accepted(&config, Consumer::Status));
         assert!(!accepted(&config, Consumer::TaskWhy));
     }
@@ -385,6 +389,9 @@ mod tests {
         for key in DISCOVER_KEYS {
             assert!(accepted(&json!({ key: { "discover": false } }), Consumer::Graph), "{key}");
             assert!(accepted(&json!({ key: {} }), Consumer::Graph), "{key}");
+            assert!(accepted(&json!({ key: { "discover": false } }), Consumer::Sbom), "{key}");
+            // The opt-in of a gated ecosystem puts its lock file into the BOM, which the binary does not read.
+            assert!(!accepted(&json!({ key: { "discover": true } }), Consumer::Sbom), "{key}");
             assert!(!accepted(&json!({ key: { "discover": true } }), Consumer::Graph), "{key}");
             assert!(!accepted(&json!({ key: { "discover": 1 } }), Consumer::Graph), "{key}");
             assert!(!accepted(&json!({ key: { "discover": false, "other": 1 } }), Consumer::Graph), "{key}");
@@ -432,6 +439,9 @@ mod tests {
 
     #[test]
     fn a_config_that_is_not_an_object_is_nodes() {
+        // `sbom.ecosystems` opts an ecosystem in without a `discover` flag.
+        assert!(!accepted(&json!({ "sbom": { "ecosystems": ["go"] } }), Consumer::Sbom));
+        assert!(!accepted(&json!({ "sbom": {} }), Consumer::Sbom));
         assert!(vet(&json!([]), &[], Consumer::Graph).is_none());
         assert!(vet(&Value::Null, &[], Consumer::Graph).is_none());
     }

@@ -2462,10 +2462,16 @@
 ["sbom","--focus","missing"] => sbom
 ["sbom","--focus="] => sbom
 ["sbom","--focus=a","--include-dev","--output","-"] => sbom
+["sbom","--format","Json","--output","out/sbom.xml"] => sbom
 ["sbom","--format","json"] => sbom
 ["sbom","--format","json","--format","json"] => sbom
 ["sbom","--format","xml"] => sbom
+["sbom","--format","xml","--format","json"] => sbom
+["sbom","--format","yaml"] => sbom
+["sbom","--format=XML","--output","-"] => sbom
 ["sbom","--format=json","--include-dev"] => sbom
+["sbom","--format=xmls"] => sbom
+["sbom","--format=Kml"] => sbom
 ["sbom","--help"] => surface
 ["sbom","--include-dev","--include-dev"] => sbom
 ["sbom","--include-dev=false"] => sbom

@@ -9,15 +9,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 import { COLOUR_ENVIRONMENTS, COLOUR_VARIABLES, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
+import { CONFIG_CASES, GRAPH_ONLY_CASES } from "./config-workspace-cases";
 
 /**
  * `vis sbom` exists twice: the Node handler (`src/commands/sbom/handler.ts`, over the lockfile parser of
  * `@visulima/package` and the CycloneDX builder in `src/sbom/`) and the native path (`native/cli/src/sbom/`).
  * Every fixture below is built twice, once for each engine, and run with the same arguments and CI context.
  * stdout, stderr, the exit status and every file the run wrote must match, byte for byte, with two
- * exceptions that are random by design and are checked for their shape instead of their value: the
- * `serialNumber` (a version 4 UUID) and the `timestamp` (an ISO date close to now) of the BOM, and pail's clock
- * (`HH:MM:SS`) in the status lines. The native run uses a copy of the binary outside the package and no
+ * exceptions that are random by design and are checked for their shape instead of their value (decision 2 of
+ * plan 012: random fields are compared masked): the `serialNumber` (a version 4 UUID) and the `timestamp` (an ISO
+ * date close to now) of the BOM, in the JSON and in the XML form, and pail's clock (`HH:MM:SS`) in the status
+ * lines. The native run uses a copy of the binary outside the package and no
  * fallback entry, so a call the binary declines exits 70 and cannot pass for an answer.
  */
 
@@ -445,6 +447,60 @@ const plain = (root: string, extra: (root: string) => void = () => undefined): v
 const configured = (root: string): void => { plain(root, (directory) => { write(directory, "vis.config.json", "{}\n"); }); };
 const withCargoLock = (root: string): void => { plain(root, (directory) => { write(directory, "Cargo.lock", "version = 3\n"); }); };
 const withGoSum = (root: string): void => { plain(root, (directory) => { write(directory, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n"); }); };
+
+/**
+ * A root file of a gated ecosystem (Maven and Zig aside, whose files are project markers): Node does not read it unless the
+ * ecosystem is opted in, and says on stderr that it found it. Only the existence of the file matters, so the content is a stub.
+ */
+const gatedFile = (file: string, content = "stub\n") => (root: string): void => { plain(root, (directory) => { write(directory, file, content); }); };
+const withMixLock = gatedFile("mix.lock", "%{}\n");
+const withPubspecLock = gatedFile("pubspec.lock", "packages: {}\n");
+const withPackageResolved = gatedFile("Package.resolved", '{"pins":[],"version":2}\n');
+const withPackagesLockJson = gatedFile("packages.lock.json", '{"version":1,"dependencies":{}}\n');
+const withGradleLockfile = gatedFile("gradle.lockfile", "# lock\nempty=\n");
+const withAllGated = (root: string): void => {
+    plain(root, (directory) => {
+        for (const file of ["packages.lock.json", "Package.resolved", "pubspec.lock", "go.sum", "mix.lock", "gradle.lockfile"]) {
+            write(directory, file, "stub\n");
+        }
+    });
+};
+const withGoSumDirectory = (root: string): void => { plain(root, (directory) => { mkdirSync(join(directory, "go.sum")); }); };
+const withGoSumDangling = (root: string): void => { plain(root, (directory) => { symlinkSync(join(directory, "missing"), join(directory, "go.sum")); }); };
+/** A config whose `discover` flags are off beside the lock files of those ecosystems: the flag opts nothing in, so the files are only reported. */
+const configuredDiscoverOff = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", "export default { go: { discover: false }, hex: { discover: false } };\n");
+    write(root, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n");
+    write(root, "mix.lock", "%{}\n");
+};
+const configuredWithGoSum = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n");
+    write(root, "mix.lock", "%{}\n");
+};
+// The manifests of two gated ecosystems are project markers, which the workspace read hands to Node; a lock file of an ecosystem Node reads stays Node's.
+const withPomXml = (root: string): void => { plain(root, (directory) => { write(directory, "pom.xml", "<project/>\n"); }); };
+const withZigZon = (root: string): void => { plain(root, (directory) => { write(directory, "build.zig.zon", ".{}\n"); }); };
+const withGatedAndCargoLock = (root: string): void => { plain(root, (directory) => { write(directory, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n"); write(directory, "Cargo.lock", "version = 3\n"); }); };
+
+// Which lockfile Node reads: pnpm first, then npm-shrinkwrap.json, package-lock.json, yarn.lock and bun.lock. The binary reads pnpm-lock.yaml only.
+const npmLock = (): Json => { return { lockfileVersion: 3, name: "npm-root", packages: { "": { name: "npm-root", version: "1.0.0" }, "node_modules/left-pad": { integrity: sri("sha512", "left-pad@1.3.0"), resolved: "https://registry.example.test/left-pad/-/left-pad-1.3.0.tgz", version: "1.3.0" } }, requires: true, version: "1.0.0" }; };
+const bunLock = (): string => `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "bun-root" } },\n  "packages": { "left-pad": ["left-pad@1.3.0", "", {}, "${sri("sha512", "left-pad@1.3.0")}"] }\n}\n`;
+const otherManager = (root: string, lockfile: string, content: string | Json): void => {
+    write(root, "package.json", { name: "other-root", private: true, version: "1.0.0", workspaces: ["packages/*"] });
+    write(root, lockfile, content);
+    write(root, "packages/a/package.json", { dependencies: { "left-pad": "^1.0.0" }, name: "other-a", version: "1.0.0" });
+};
+const npmOnly = (root: string): void => { otherManager(root, "package-lock.json", npmLock()); };
+const shrinkwrapOnly = (root: string): void => { otherManager(root, "npm-shrinkwrap.json", npmLock()); };
+const bunOnly = (root: string): void => { otherManager(root, "bun.lock", bunLock()); };
+// A pnpm workspace that also holds another manager's lockfile: Node reads the pnpm one first, and so does the binary.
+const pnpmWithNpmLock = (root: string): void => { plain(root, (directory) => { write(directory, "package-lock.json", npmLock()); }); };
+const pnpmWithShrinkwrap = (root: string): void => { plain(root, (directory) => { write(directory, "npm-shrinkwrap.json", npmLock()); }); };
+const pnpmWithYarnLock = (root: string): void => { plain(root, (directory) => { write(directory, "yarn.lock", '# yarn lockfile v1\n\n\nleft-pad@^1.0.0:\n  version "1.3.0"\n'); }); };
+const pnpmWithBunLock = (root: string): void => { plain(root, (directory) => { write(directory, "bun.lock", bunLock()); }); };
+
 const withProjectJson = (root: string): void => { plain(root, (directory) => { write(directory, "packages/a/project.json", { name: "renamed-a", projectType: "tool" }); }); };
 const withUvLock = (root: string): void => { plain(root, (directory) => { write(directory, "uv.lock", "version = 1\n"); }); };
 const crlf = (root: string): void => {
@@ -483,11 +539,103 @@ const yarnOnly = (root: string): void => {
 const emptyLock = (root: string): void => { workspace(root, { lock: "lockfileVersion: '9.0'\n", projects: { a: { name: "empty-a", version: "1.0.0" } } }); };
 const noProjects = (root: string): void => { workspace(root, { lock: lockV9([{ name: "lodash", version: "4.17.21" }]), projects: {} }); };
 
+/**
+ * A registry package for every kind of edge, beside a `vis.config` that drops one project and leaves the rest: the
+ * dependencies of the dropped project are not in the BOM, and a project that depends on it resolves it as a registry
+ * package (the lockfile lists it) instead of as a workspace edge.
+ */
+const configuredRegistry = (root: string): void => {
+    workspace(root, {
+        lock: lockV9([...LEFT_PAD, { deps: { "left-pad": "1.3.0" }, name: "@scope/pkg", version: "2.1.0" }, { name: "only-dropped", version: "1.0.0" }, { name: "@fixture/dropped", version: "3.0.0" }]),
+        projects: {
+            a: { dependencies: { "@fixture/dropped": "^3.0.0", "@fixture/kept": "workspace:*", "@scope/pkg": "^2.0.0" }, devDependencies: { "left-pad": "1.0.0" }, name: "@fixture/a", version: "1.0.0" },
+            dropped: { dependencies: { "only-dropped": "1.0.0" }, name: "@fixture/dropped", version: "3.0.0" },
+            kept: { dependencies: { "left-pad": "~1.3.0" }, name: "@fixture/kept", version: "2.0.0" },
+        },
+    });
+    write(root, "vis.config.ts", 'export default { projectIgnore: ["dropped"], sponsor: { enabled: false } };\n');
+};
+
+/** `configuredRegistry` with the ignore rule and the config of every spelling the binary reads. */
+const configuredIgnoreRules = (root: string): void => {
+    configuredRegistry(root);
+    write(root, ".gitignore", "kept\n");
+    write(root, "vis.config.ts", 'export default { projectIgnore: ["dropped/"], strictEnv: true };\n');
+};
+
+/**
+ * What the XML writer has to get right, which the JSON writer does not meet: text with every one of the four escaped
+ * characters (none of them followed by a word run and a `;`), an apostrophe, line breaks and tabs, a name with `&lt;&amp;>` in it,
+ * an empty version (which the XML leaves out and the JSON keeps), and every kind of licence and reference.
+ */
+const xmlQuirks = (root: string): void => {
+    const doubleQuote = String.fromCodePoint(34);
+
+    workspace(root, {
+        lock: lockV9([{ name: "left-pad", version: "1.3.0" }]),
+        projects: {
+            a: { description: `say ${doubleQuote}hi${doubleQuote} & <b>bold</b> > it's`, name: "quirk-a", version: "1.0.0" },
+            b: { description: "a > b < c & d \" e ' f", name: "quirk-b", version: "1.0.0" },
+            c: { author: "A & B <ab@example.test>", description: "line one\nline two\ttabbed\r\nand a carriage return", name: "quirk-c", version: "" },
+            d: { dependencies: { "left-pad": "1.3.0" }, license: "MIT OR Apache-2.0", name: "n<&x y>", version: "1.0.0" },
+            e: { homepage: `https://example.test/?a=1&b=2&c=${doubleQuote}x${doubleQuote}`, license: "MIT", name: "quirk-e", repository: "git+https://example.test/e.git?x=<y>", version: "1.0.0" },
+            f: { license: "Custom <License> & Co", name: "quirk-f", version: "1.0.0" },
+            g: { bugs: { url: "https://example.test/issues?a=<b" }, name: "quirk-g", version: "2.0.0" },
+        },
+        root: { description: `${doubleQuote}root${doubleQuote} x <![CDATA[ y`, name: "root<&>", version: "" },
+    });
+};
+
+/**
+ * Text that the XML library leaves as it is, one kind in each fixture. The binary writes the XML of the two that stay well-formed
+ * and hold no markup that the text did not escape (a predefined entity, and a `"` in a text), and hands the XML of the others to Node,
+ * which writes the library's output: a description that starts with `&lt;![CDATA[` (written as it is, which lets a package
+ * add markup to the document), an entity that XML does not define (`&amp;copy;`, `&amp;#38;`), and a `&lt;` or `>` followed by a word run and a `;`.
+ * The JSON document of every one of them is the binary's.
+ */
+const xmlWith = (description: string) => (root: string): void => {
+    workspace(root, { lock: lockV9([]), projects: { a: { description, name: "unescaped-a", version: "1.0.0" } } });
+};
+const xmlCdata = xmlWith("<![CDATA[raw <b> & text]]>");
+const xmlCdataInjection = xmlWith('<![CDATA[x]]><injected by="description"/>');
+const xmlCdataLater = xmlWith("x<![CDATA[y <b>");
+const xmlKeptEntity = xmlWith("fish &amp; chips &lt;b&gt; &quot;x&quot; &apos;");
+const xmlKeptQuote = xmlWith('say "hi";');
+const xmlKeptTag = xmlWith("a<b;c");
+const xmlKeptGreater = xmlWith("a>b; and ]]>x;");
+const xmlKeptAuthors = (root: string): void => {
+    workspace(root, { lock: lockV9([]), projects: { a: { author: "Pine Wu <octref@gmail.com>; Anthony Fu <anthonyfu117@hotmail.com>", name: "authors-a", version: "1.0.0" } } });
+};
+const xmlNumericEntity = xmlWith("&#38; &#x26;");
+const xmlUnknownEntity = xmlWith("copy &copy; right");
+
+const XML_UNESCAPED_DELEGATED = ["xmlCdata", "xmlCdataInjection", "xmlKeptGreater", "xmlKeptTag", "xmlNumericEntity", "xmlUnknownEntity"];
+const XML_UNESCAPED_NATIVE = ["xmlCdataLater", "xmlKeptAuthors", "xmlKeptEntity", "xmlKeptQuote"];
+
+/** A config that opts a gated ecosystem in (the lock file it reads is not there, so only the config differs), in each of the two ways. */
+const optInByList = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", 'export default { sbom: { ecosystems: ["go"] } };\n');
+};
+const optInByDiscover = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", "export default { go: { discover: true } };\n");
+};
+const optInUnknown = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", 'export default { sbom: { ecosystems: ["rust"] } };\n');
+};
+
 const FIXTURES: Record<string, (root: string) => void> = {
     basic,
     bomManifest,
     brokenInstalled,
+    bunOnly,
     configured,
+    configuredDiscoverOff,
+    configuredIgnoreRules,
+    configuredRegistry,
+    configuredWithGoSum,
     conflictingInstalled,
     crlf,
     emptyLock,
@@ -500,19 +648,68 @@ const FIXTURES: Record<string, (root: string) => void> = {
     nonAsciiLicense,
     nonAsciiName,
     noProjects,
+    npmOnly,
     numberDescription,
+    optInByDiscover,
+    optInByList,
+    optInUnknown,
+    pnpmWithBunLock,
+    pnpmWithNpmLock,
+    pnpmWithShrinkwrap,
+    pnpmWithYarnLock,
     protoDependency,
     ranges,
     resolutions,
+    shrinkwrapOnly,
     symlinkDirectory,
     unicodeSpace,
     unsupportedRange,
+    withAllGated,
     withCargoLock,
+    withGatedAndCargoLock,
     withGoSum,
+    withGoSumDangling,
+    withGoSumDirectory,
+    withGradleLockfile,
+    withMixLock,
+    withPackageResolved,
+    withPackagesLockJson,
+    withPomXml,
     withProjectJson,
+    withPubspecLock,
     withUvLock,
+    withZigZon,
+    xmlCdata,
+    xmlCdataInjection,
+    xmlCdataLater,
+    xmlKeptAuthors,
+    xmlKeptEntity,
+    xmlKeptGreater,
+    xmlKeptQuote,
+    xmlKeptTag,
+    xmlNumericEntity,
+    xmlQuirks,
+    xmlUnknownEntity,
     yarnOnly,
 };
+
+/** The workspaces of `config-workspace-cases.ts` (the ones `vis graph` and `vis status` run on), over a lockfile of this suite. */
+const CONFIG_FIXTURE_PREFIX = "config: ";
+
+for (const entry of [...CONFIG_CASES, ...GRAPH_ONLY_CASES]) {
+    FIXTURES[`${CONFIG_FIXTURE_PREFIX}${entry.name}`] = (root: string): void => {
+        for (const [path, content] of Object.entries(entry.files)) {
+            if (typeof content === "object" && "link" in content) {
+                throw new TypeError(`${path}: a link is not a fixture of this suite`);
+            }
+
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), content);
+        }
+
+        write(root, "pnpm-lock.yaml", lockV9([...LEFT_PAD]));
+    };
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Running both engines
@@ -630,7 +827,9 @@ let counter = 0;
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 const fresh = (fixture: string): string => {
-    const root = join(scratch, `${fixture}-${String(counter++)}`);
+    // A path the status line prints must be plain ASCII for the binary to answer, so the case names that hold spaces are not used as they are.
+    // A `.git` anywhere in the path would make Node's workspace walk skip every project (its skip regex runs on the absolute path), so no dots either.
+    const root = join(scratch, `${fixture.replaceAll(/[^\w-]+/g, "_")}-${String(counter++)}`);
 
     mkdirSync(root, { recursive: true });
     (FIXTURES[fixture] as (root: string) => void)(root);
@@ -732,6 +931,29 @@ const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] 
     ["emptyLock", ["--output", "-"]],
     ["emptyLock", []],
     ["noProjects", ["--output", "-"]],
+    // A gated ecosystem found by file is left out and reported on stderr; the notice names each file in the order of the ecosystems.
+    ["withGoSum", ["--output", "-"]],
+    ["withGoSum", []],
+    ["withMixLock", ["--output", "-"]],
+    ["withPubspecLock", ["--output", "-"]],
+    ["withPackageResolved", ["--output", "-"]],
+    ["withPackagesLockJson", ["--output", "-"]],
+    ["withGradleLockfile", ["--output", "-"]],
+    ["withAllGated", ["--output", "-"]],
+    ["withAllGated", []],
+    ["withAllGated", ["--output", "-", "--include-dev"]],
+    ["withAllGated", ["--focus", "@fixture/a", "--output", "-"]],
+    ["withGoSumDirectory", ["--output", "-"]],
+    ["withGoSumDangling", ["--output", "-"]],
+    ["configuredDiscoverOff", ["--output", "-"]],
+    ["configuredDiscoverOff", []],
+    ["configuredWithGoSum", ["--output", "-"]],
+    ["configuredWithGoSum", []],
+    // The pnpm lockfile is read first, whatever else is at the root.
+    ["pnpmWithNpmLock", ["--output", "-"]],
+    ["pnpmWithShrinkwrap", ["--output", "-"]],
+    ["pnpmWithYarnLock", ["--output", "-"]],
+    ["pnpmWithBunLock", ["--output", "-"]],
     ["monorepoLock", ["--output", "-"]],
     ["monorepoLock", ["--output", "-", "--include-dev"]],
     ["monorepoLock", ["--output", "{root}/out/monorepo.json"]],
@@ -740,12 +962,42 @@ const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] 
     ["monorepoInstalled", []],
 ];
 
+/**
+ * The XML BOM, over every fixture above that the native path answers (to stdout and to the default file, `sbom.cdx.xml`), and over
+ * the fixture that holds what only the XML writer has to get right. `--format` is lowercased by Node, so the spelling is free.
+ */
+const NATIVE_XML: [fixture: string, args: string[], env?: Record<string, string>][] = [
+    ...NATIVE.filter(([, args]) => !args.some((argument) => argument.startsWith("--format"))).map(([fixture, args, env]): [string, string[], Record<string, string>?] => [fixture, ["--format", "xml", ...args], env]),
+    ["xmlQuirks", ["--format", "xml", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml"]],
+    ["xmlQuirks", ["--format=XML", "--output", "-", "--include-dev"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "quirk-a", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "quirk-c,quirk-e", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "n<&x y>", "--output", "-"]],
+    ["xmlQuirks", ["--format", "json", "--output", "-"]],
+    // The JSON of the text that the XML library does not escape in full is the binary's, and so is the XML where the text is no obstacle.
+    ...[...XML_UNESCAPED_DELEGATED, ...XML_UNESCAPED_NATIVE].map((fixture): [string, string[]] => [fixture, ["--output", "-"]]),
+    ...XML_UNESCAPED_NATIVE.flatMap((fixture): [string, string[]][] => [[fixture, ["--format", "xml", "--output", "-"]], [fixture, ["--format", "xml"]]]),
+    ["basic", ["--format", "Xml", "--output", "-"]],
+    ["basic", ["--format=xML", "--output", "{root}/abs/out.xml"]],
+    ["basic", ["--format", "JSON", "--output", "-"]],
+    ["basic", ["--format", "XML", "--output", "nested/dir/out.xml"]],
+    ["basic", ["--output", "out.xml", "--format", "xml"]],
+];
+
 /** Shapes the native path hands to Node; the fallback entry then makes Node answer, and its output must be Node's. */
 const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>][] = [
-    ["basic", ["--format", "xml", "--output", "-"]],
-    ["basic", ["--format", "xml"]],
     ["basic", ["--format", "yaml"]],
-    ["basic", ["--format", "JSON", "--output", "-"]],
+    ["basic", ["--format=xmls", "--output", "-"]],
+    ["basic", ["--format", "xml", "--format", "json", "--output", "-"]],
+    ["basic", ["--format", "xml", "--include-dev=false", "--output", "-"]],
+    ["basic", ["--format", "xml", "--output", "../outside.xml"]],
+    ["configuredRegistry", ["--format", "xml", "--focus", "@fixture/dropped", "--output", "-"]],
+    // Text that the XML library leaves as it is in a way the binary does not write: it is Node's.
+    ...XML_UNESCAPED_DELEGATED.map((fixture): [string, string[]] => [fixture, ["--format", "xml", "--output", "-"]]),
+    ["xmlCdataInjection", ["--format", "xml"]],
+    ["yarnOnly", ["--format", "xml", "--output", "-"]],
+    ["symlinkDirectory", ["--format", "xml", "--output", "link/x.xml"]],
     ["basic", ["--unknown"]],
     ["basic", ["--output", "-", "extra"]],
     ["basic", ["--include-dev=false", "--output", "-"]],
@@ -774,11 +1026,22 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     ["basic", ["--output", "-"], { FORCE_COLOR: "1", NO_COLOR: "1" }],
     ["basic", ["--output", "-", "--no-color"]],
     ["configured", ["--output", "-"]],
+    ["optInByList", ["--output", "-"]],
+    ["optInByDiscover", ["--output", "-"]],
+    // Node refuses an unknown ecosystem id and fails the run.
+    ["optInUnknown", ["--output", "-"]],
     ["withCargoLock", ["--output", "-"]],
     ["withUvLock", ["--output", "-"]],
-    ["withGoSum", ["--output", "-"]],
     ["withProjectJson", ["--output", "-"]],
     ["yarnOnly", ["--output", "-"]],
+    // The other managers' lockfiles are read by Node, and not by the binary.
+    ["npmOnly", ["--output", "-"]],
+    ["shrinkwrapOnly", ["--output", "-"]],
+    ["bunOnly", ["--output", "-"]],
+    // The manifests of Maven and Zig are project markers; the lock files of the ecosystems Node reads stay with it.
+    ["withPomXml", ["--output", "-"]],
+    ["withZigZon", ["--output", "-"]],
+    ["withGatedAndCargoLock", ["--output", "-"]],
     ["crlf", ["--output", "-"]],
     ["unicodeSpace", ["--output", "-"]],
     ["protoDependency", ["--output", "-"]],
@@ -824,7 +1087,7 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
     const label = (fixture: string, args: string[], env?: Record<string, string>): string => `${fixture}: sbom ${args.join(" ")} ${env ? JSON.stringify(env) : ""}`;
 
-    it.each(NATIVE.map(([fixture, args, env]) => [label(fixture, args, env), fixture, args, env] as const))("%s is answered natively and matches Node", (_name, fixture, args, env) => {
+    it.each([...NATIVE, ...NATIVE_XML].map(([fixture, args, env]) => [label(fixture, args, env), fixture, args, env] as const))("%s is answered natively and matches Node", (_name, fixture, args, env) => {
         const node = runNode(fixture, args, true, env);
         const native = runNative(fixture, args, true, env);
 
@@ -843,6 +1106,101 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
         expect(bare.run.status).toBe(70);
         expect(bare.run.files).toStrictEqual({});
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+    }, 120_000);
+
+    // A literal `vis.config` at the workspace root: the BOM depends on it through `projectIgnore`, the `discover` flags of
+    // the gated ecosystems and `sbom.ecosystems`, and on nothing else (see `config_workspace.rs`). Every case that `vis graph`
+    // is answered natively for runs through both engines, to stdout and to a file; every other is handed to Node.
+    // One case that `vis graph` answers is Node's here: a `vis.config.js` in a package without a `type` makes Node print its
+    // MODULE_TYPELESS_PACKAGE_JSON warning on stderr, which the BOM command (that prints stderr lines of its own) does not reproduce.
+    const SBOM_DECLINES = new Set(["vis.config.js without a package type"]);
+    const configCases = [...CONFIG_CASES, ...GRAPH_ONLY_CASES].map((entry) => [entry.name, `${CONFIG_FIXTURE_PREFIX}${entry.name}`, entry.graph && !SBOM_DECLINES.has(entry.name)] as const);
+
+    it.each(configCases.filter((entry) => entry[2]).flatMap(([name, fixture]) => [[name, fixture, ["--output", "-"]], [name, fixture, []], [name, fixture, ["--output", "-", "--include-dev"]]] as const))("with a config, %s %j is answered natively and matches Node", (_name, fixture, args) => {
+        const node = runNode(fixture, [...args], true);
+        const native = runNative(fixture, [...args], true);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+        expect(node.run.status).toBe(0);
+    }, 120_000);
+
+    it.each(configCases.filter((entry) => !entry[2]).map(([name, fixture]) => [name, fixture] as const))("with a config, %s is declined by the binary and answered by Node", (_name, fixture) => {
+        const args = ["--output", "-"];
+        const node = runNode(fixture, args, true);
+        const bare = runNative(fixture, args, true);
+        const native = runNative(fixture, args, true, undefined, nodeEntry);
+
+        expect(bare.run.status).toBe(70);
+        expect(bare.run.files).toStrictEqual({});
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+    }, 120_000);
+
+    it.each([
+        ["configuredRegistry", ["--output", "-"]],
+        ["configuredRegistry", ["--output", "-", "--include-dev"]],
+        ["configuredRegistry", []],
+        ["configuredRegistry", ["--focus", "@fixture/a", "--output", "-"]],
+        ["configuredRegistry", ["--focus", "@fixture/kept", "--output", "-", "--include-dev"]],
+        ["configuredRegistry", ["--format", "xml", "--output", "-"]],
+        ["configuredRegistry", ["--format", "xml", "--output", "-", "--include-dev"]],
+        ["configuredRegistry", ["--format", "xml"]],
+        ["configuredRegistry", ["--format", "xml", "--focus", "@fixture/a", "--output", "-"]],
+        ["configuredIgnoreRules", ["--format", "xml", "--output", "-"]],
+        ["configuredIgnoreRules", ["--output", "-"]],
+        ["configuredIgnoreRules", ["--output", "-", "--include-dev"]],
+    ] as const)("%s with a projectIgnore: sbom %j matches Node", (fixture, args) => {
+        const node = runNode(fixture, [...args], true);
+        const native = runNative(fixture, [...args], true);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+        expect(node.run.status).toBe(0);
+    }, 120_000);
+
+    // The project that the config drops is no project: a focus on it is Node's to refuse.
+    it("hands a focus on a project that the config drops to Node", () => {
+        const args = ["--focus", "@fixture/dropped", "--output", "-"];
+        const node = runNode("configuredRegistry", args, true);
+        const bare = runNative("configuredRegistry", args, true);
+        const native = runNative("configuredRegistry", args, true, undefined, nodeEntry);
+
+        expect(bare.run.status).toBe(70);
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+    }, 120_000);
+
+    // Node loads the config of the workspace root and the binary reads that one only: from a project directory it hands over.
+    it("hands a configured run from a project directory to Node", () => {
+        const root = fresh("configuredRegistry");
+        const bare = spawnSync(nativeBinary, ["sbom", "--output", "-"], { cwd: join(root, "packages", "a"), encoding: "utf8", env: environment(true) });
+
+        expect(bare.status).toBe(70);
+    });
+
+    it("hands a configured run outside CI to Node", () => {
+        const bare = runNative("configuredRegistry", ["--output", "-"], false);
+
+        expect(bare.run.status).toBe(70);
+        expect(bare.run.files).toStrictEqual({});
+    });
+
+    it.each(["40", "120", UNSET])("prints the same status lines as Node for a configured workspace at COLUMNS=%s", (columns) => {
+        const node = runNode("configuredRegistry", [], true, { COLUMNS: columns, GITHUB_ACTIONS: "true" });
+        const native = runNative("configuredRegistry", [], true, { COLUMNS: columns, GITHUB_ACTIONS: "true" });
+
         expect(native.run.status).toBe(node.run.status);
         expect(native.run.stdout).toBe(node.run.stdout);
         expect(native.run.stderr).toBe(node.run.stderr);
@@ -874,6 +1232,53 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
         expect(bare.status).toBe(70);
         expect(bare.stdout).toBe("");
+    }, 120_000);
+
+    it("leaves an XML document that does not fit a pipe to Node", () => {
+        expect.hasAssertions();
+
+        const root = fresh("monorepoLock");
+        const bare = spawnSync(nativeBinary, ["sbom", "--format", "xml", "--output", "-"], { cwd: root, encoding: "utf8", env: environment(true) });
+
+        expect(bare.status).toBe(70);
+        expect(bare.stdout).toBe("");
+    }, 120_000);
+
+    it("writes a small XML document to a pipe like Node", () => {
+        expect.hasAssertions();
+
+        const nodeRoot = fresh("xmlQuirks");
+        const nativeRoot = fresh("xmlQuirks");
+        const node = spawnSync(process.execPath, [nodeEntry, "sbom", "--format", "xml", "--output", "-"], { cwd: nodeRoot, encoding: "utf8", env: environment(true) });
+        const native = spawnSync(nativeBinary, ["sbom", "--format", "xml", "--output", "-"], { cwd: nativeRoot, encoding: "utf8", env: environment(true) });
+
+        expect(native.status).toBe(node.status);
+        expect(mask(native.stdout, nativeRoot)).toBe(mask(node.stdout, nodeRoot));
+        expect(native.stderr).toBe(node.stderr);
+        expect(Buffer.byteLength(native.stdout)).toBeLessThan(64 * 1024);
+    }, 120_000);
+
+    // The notice goes through the console of the CLI, not through pail: it is one line, whatever the width or the colour.
+    it.each([...COLOUR_ENVIRONMENTS, { COLUMNS: "30" }, { COLUMNS: "200" }, { COLUMNS: "10", GITHUB_ACTIONS: "true" }].map((env) => [JSON.stringify(env), env] as const))("prints the notice of a found gated ecosystem like Node in the environment %s", (_name, env) => {
+        for (const args of [["--output", "-"], ["--format", "xml", "--output", "-"]]) {
+            const node = runNode("withAllGated", args, true, env);
+            const native = runNative("withAllGated", args, true, env);
+
+            expect(native.run.status).toBe(node.run.status);
+            expect(native.run.stdout).toBe(node.run.stdout);
+            expect(native.run.stderr).toBe(node.run.stderr);
+            expect(native.run.stderr).toContain("vis sbom: ecosystems found by file");
+        }
+    }, 120_000);
+
+    it.each(COLOUR_ENVIRONMENTS.map((env) => [JSON.stringify(env), env] as const))("prints the notice and the status lines like Node in the environment %s", (_name, env) => {
+        const node = runNode("withGoSum", [], true, env);
+        const native = runNative("withGoSum", [], true, env);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
     }, 120_000);
 
     it("declines outside CI, where Node adds notices of its own", () => {
