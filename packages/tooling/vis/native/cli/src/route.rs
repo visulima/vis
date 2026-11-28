@@ -94,6 +94,8 @@ static ROUTES: &[Route] = &[
     answers(&["security", "sync"], crate::security_sync::run),
     answers(&["security", "verify-lockfile"], crate::security_verify_lockfile::run),
     answers(&["shim", "status"], crate::shim_status::run),
+    #[cfg(unix)]
+    answers(&["migrate", "verify"], crate::migrate::verify::run),
     answers(&["deps"], crate::deps::run),
     answers(&["self-update"], crate::self_update::run),
     answers(&["attest"], crate::attest::emit::run),
@@ -204,6 +206,7 @@ mod tests {
         &["security", "sync"],
         &["security", "verify-lockfile"],
         &["shim", "status"],
+        &["migrate", "verify"],
         &["deps"],
         &["self-update"],
         &["attest"],
