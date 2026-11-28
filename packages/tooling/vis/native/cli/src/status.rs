@@ -3,12 +3,14 @@
 //! Mirrors `packages/tooling/vis/src/commands/status/handler.ts`. Its five numbers come from:
 //!
 //! - projects and unique targets: [`crate::graph`] and the script targets [`crate::list`] reads, so the same
-//!   workspaces (no config, no inference detector, every project with scripts) are answered;
+//!   workspaces (no config, no inference detector, every project with scripts) are answered. With a literal
+//!   `vis.config` ([`crate::config_workspace`]) the count is the builder's: the scripts of every project and the
+//!   `tasks` defaults that bring a command, over the projects `projectIgnore` leaves;
 //! - runtime issues: [`crate::runtime_check`], which compares the root manifest and `.nvmrc` with the Node the run
 //!   would be handed to. That is the launcher's own Node (`VIS_NODE_VERSION`) when it started the binary, and
 //!   otherwise the answer of `node --version` for `VIS_NODE` or the `node` on `PATH`, asked once and only when a Node
 //!   pin exists. No `node`, or an answer that is not a clean `vX.Y.Z`, is Node's;
-//! - constraints: configured in `vis.config`, which the context gate already excludes, so there are none;
+//! - constraints: configured by the `constraints` key of `vis.config`, which makes the run Node's, so there are none;
 //! - flaky tasks and the cache hit rate: the run summaries under `.vis/runs` (`loadRunSummaries`,
 //!   `analyzeFlakiness`). A summary file that is not strict JSON, or a field whose JavaScript behaviour depends on its
 //!   type (`retryAttempts`, `stats.total`), is left to Node, because Node would skip, coerce or throw there.
@@ -16,7 +18,7 @@
 //! The text view is coloured by `@visulima/colorize`; the colour comes from the same detection as pail's
 //! ([`crate::term::piped_stdout_colour_level`]), and a run that cannot tell is Node's.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -24,16 +26,18 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use task_runner_core::project_targets;
 
+use crate::config_workspace::{assumptions, configured_projects, read_vetted, Consumer, Vetted};
 use crate::graph::project_graph_with_manifests;
 use crate::json::{stringify, Json};
 use crate::list::unique_target_count;
-use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
+use crate::node_context::{config_context_is_native, monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::write_stdout;
 use crate::runtime_check::count_findings;
 use crate::term::{piped_stdout_colour_level, Style};
 use crate::toolchain::{resolve_command, Versions};
-use crate::vis_config;
+use crate::vis_config::has_vis_config;
 
 /// Summaries the cache hit rate looks at, newest by file name.
 const RATE_WINDOW: usize = 20;
@@ -244,7 +248,19 @@ fn cache_hit_rate(summaries: &HashMap<String, Value>) -> Option<Option<String>> 
     Some(None)
 }
 
-fn overview(root: &Path) -> Option<Overview> {
+/// How many projects the workspace holds and how many distinct targets they have, for a workspace with a vetted
+/// `vis.config`: the targets the builder gives every project (the scripts, then the `tasks` defaults that bring a
+/// command), counted by name. The builder refuses the shapes it does not reproduce, and so does this.
+fn configured_counts(root: &Path, vetted: &Vetted) -> Option<(usize, usize)> {
+    let config = &vetted.tasks;
+    let projects = configured_projects(root, config.inference_disabled, &vetted.ignore)?;
+    let targets = project_targets(&projects, config, assumptions(config)).ok()?;
+    let unique: HashSet<&str> = targets.iter().flat_map(|(_, names)| names.iter().map(String::as_str)).collect();
+
+    Some((projects.len(), unique.len()))
+}
+
+fn overview(root: &Path, vetted: Option<&Vetted>) -> Option<Overview> {
     let user_agent = env::var("npm_config_user_agent");
     let user_agent = match &user_agent {
         Ok(agent) => Some(agent.as_str()),
@@ -252,15 +268,21 @@ fn overview(root: &Path) -> Option<Overview> {
         Err(env::VarError::NotUnicode(_)) => return None,
     };
 
-    let (graph, manifests) = project_graph_with_manifests(root)?;
-    let targets = unique_target_count(root, &graph, &manifests)?;
+    let (projects, targets) = match vetted {
+        Some(vetted) => configured_counts(root, vetted)?,
+        None => {
+            let (graph, manifests) = project_graph_with_manifests(root)?;
+
+            (graph.projects.len(), unique_target_count(root, &graph, &manifests)?)
+        }
+    };
     let summaries = read_summaries(root)?;
     let flaky_tasks = flaky_count(&run_history(root, &summaries)?)?;
     let cache_hit_rate = cache_hit_rate(&summaries)?;
     // Last, because it may start `node`: a workspace Node answers anyway does not pay for that.
     let runtime_issues = count_findings(root, user_agent, &mut node_version)?;
 
-    Some(Overview { cache_hit_rate, flaky_tasks, projects: graph.projects.len(), runtime_issues, targets })
+    Some(Overview { cache_hit_rate, flaky_tasks, projects, runtime_issues, targets })
 }
 
 fn render_json(overview: &Overview) -> String {
@@ -316,14 +338,27 @@ fn answer(args: &[String]) -> Option<String> {
     let cwd = env::current_dir().ok()?;
     let root = monorepo_root(&cwd)?;
 
-    if !quiet_context(&cwd, &root) || vis_config::requires_node(&vis_config::read(&root)) {
-        return None;
-    }
+    // A `vis.config` at or above the working directory: a literal one whose keys cannot change the projects, their
+    // targets or the constraint count is read (see `config_workspace`), from the workspace root only. Any other is
+    // Node's.
+    let vetted = if has_vis_config(&cwd) {
+        if cwd != root || !config_context_is_native() {
+            return None;
+        }
+
+        Some(read_vetted(&root, Consumer::Status)?)
+    } else {
+        if !quiet_context(&cwd, &root) {
+            return None;
+        }
+
+        None
+    };
 
     // The text view is painted by the colour library: its level, or Node's answer when this cannot tell. The JSON
     // carries no colour.
     let style = if json { Style { colour: false } } else { Style { colour: piped_stdout_colour_level(args)? > 0 } };
-    let overview = overview(&root)?;
+    let overview = overview(&root, vetted.as_ref())?;
 
     Some(if json { render_json(&overview) } else { render_text(&overview, style) })
 }

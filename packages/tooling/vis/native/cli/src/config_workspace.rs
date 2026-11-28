@@ -20,7 +20,8 @@
 //! - the `discover` flags of `composer`, `dart`, `gem`, `go`, `gradle`, `hex`, `maven`, `nuget`, `python`, `swift`
 //!   and `zig` add projects that have no `package.json` when they are `true`; a flag that is `false` or absent (and no
 //!   other key of that block) changes nothing.
-//! - [`INERT`] lists keys nothing on the path reads. `constraints` is one for `graph` only.
+//! - [`INERT`] lists keys nothing on the path reads. `constraints` is one for `graph` only: `status` counts its
+//!   violations.
 //! - every other key is Node's: `extends`, `runtime`, `versionConstraint`, `security`, `plugins` and `install` change
 //!   how the config loads or run hooks; `scopedTasks`, `taskGroups` and `fileGroups` change targets and can throw;
 //!   `targetDefaults`, `taskRunnerOptions` and `taskDefaults` make the loader fail. A key that is not in any list is
@@ -44,6 +45,8 @@ use crate::workspace::names_hold_non_js_marker;
 pub(crate) enum Consumer {
     /// `vis graph`: the project graph, whose targets nothing prints.
     Graph,
+    /// `vis status`: the number of unique targets, and the violations of `constraints`.
+    Status,
     /// `vis task-why`: the task graph.
     TaskWhy,
 }
@@ -114,7 +117,7 @@ pub(crate) fn vet(config: &Value, order: &[String], consumer: Consumer) -> Optio
                 graph_keys.insert(key.clone(), value.clone());
             }
             "projectIgnore" => ignore = project_ignore(value)?,
-            "constraints" if consumer == Consumer::Graph => {}
+            "constraints" if consumer != Consumer::Status => {}
             key if DISCOVER_KEYS.contains(&key) => {
                 if !discovers_nothing(value) {
                     return None;
@@ -125,7 +128,8 @@ pub(crate) fn vet(config: &Value, order: &[String], consumer: Consumer) -> Optio
         }
     }
 
-    // `task-why` read these keys only as far as `TaskConfig::parse` does, and the others are as old as it is.
+    // `task-why` answers only the keys `TaskConfig::parse` reads, as it did before this module existed: no `projectIgnore`
+    // and none of the harmless keys, which its parity suite does not cover.
     if consumer == Consumer::TaskWhy && (!ignore.is_empty() || object.len() != graph_keys.len()) {
         return None;
     }
@@ -335,7 +339,9 @@ mod tests {
     #[test]
     fn an_inert_key_is_harmless_and_every_other_is_nodes() {
         for key in INERT {
-            assert!(accepted(&json!({ key: {} }), Consumer::Graph), "{key}");
+            for consumer in [Consumer::Graph, Consumer::Status] {
+                assert!(accepted(&json!({ key: {} }), consumer), "{key}");
+            }
 
             assert!(!accepted(&json!({ key: {} }), Consumer::TaskWhy), "{key}");
         }
@@ -356,7 +362,7 @@ mod tests {
             "versionConstraint",
             "somethingNew",
         ] {
-            for consumer in [Consumer::Graph, Consumer::TaskWhy] {
+            for consumer in [Consumer::Graph, Consumer::Status, Consumer::TaskWhy] {
                 assert!(!accepted(&json!({ key: {} }), consumer), "{key}");
             }
         }
@@ -367,6 +373,7 @@ mod tests {
         let config = json!({ "constraints": { "rules": [] } });
 
         assert!(accepted(&config, Consumer::Graph));
+        assert!(!accepted(&config, Consumer::Status));
         assert!(!accepted(&config, Consumer::TaskWhy));
     }
 
@@ -413,7 +420,7 @@ mod tests {
     #[test]
     fn tasks_go_through_the_builders_parse() {
         assert!(accepted(&json!({ "tasks": { "build": { "dependsOn": ["^build"] } } }), Consumer::Graph));
-        assert!(accepted(&json!({ "inferTargets": false }), Consumer::Graph));
+        assert!(accepted(&json!({ "inferTargets": false }), Consumer::Status));
         assert!(!accepted(&json!({ "inferTargets": { "vite": false } }), Consumer::Graph));
         assert!(!accepted(&json!({ "tasks": { "build": { "dependsOn": ["src/**"] } } }), Consumer::Graph));
         assert!(!accepted(&json!({ "tasks": { "build": { "options": {} } } }), Consumer::Graph));

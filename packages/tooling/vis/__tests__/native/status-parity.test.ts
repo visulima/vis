@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS } from "./colour-environments";
+import { CONFIG_CASES, STATUS_CASES } from "./config-workspace-cases";
 import type { Files } from "./workspace-parity-harness";
 import { binary, Harness, json, nodeEntry, workspaceFiles } from "./workspace-parity-harness";
 
@@ -242,7 +243,9 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         delegated("a packageManager that is a number", manifest({ packageManager: 9 }), { ...agent("pnpm/9.0.0") });
         delegated("a user agent that is not plain", manifest({ packageManager: "pnpm@9.0.0" }), agent("pnpm/9.0.0\t1"));
         delegated("a manifest that is not an object", { "package.json": "[]" });
-        delegated("a vis.config.ts", { "vis.config.ts": "export default {};\n", ...base() });
+        // An empty config is a literal that changes nothing: the config cases below cover what it may hold.
+        native("a vis.config.ts that is empty", { "vis.config.ts": "export default {};\n", ...base() });
+        delegated("a vis.config.ts with a key Node alone reads", { "vis.config.ts": 'export default { fileGroups: { src: ["src/**"] } };\n', ...base() });
         delegated("a project without scripts", { ...base(), ...project("c", { scripts: undefined }) });
         delegated("a project with an inference detector", { ...base(), "packages/a/vite.config.ts": "export default {};\n" });
         delegated("a project.json", { ...base(), "packages/a/project.json": json({ name: "a" }) });
@@ -286,5 +289,59 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(native.status, native.stderr).not.toBe(70);
         expect(Harness.outcome(native, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+    });
+});
+
+/**
+ * A workspace with a literal `vis.config`: the count of unique targets and the projects depend on `tasks`, `inferTargets` and
+ * `projectIgnore`, and the constraint count on `constraints` (see `config_workspace.rs`). Every case of
+ * `config-workspace-cases.ts` runs through Node and the binary, in the workspace root, in CI.
+ */
+describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis status with a vis.config: native vs Node", () => {
+    const configHarness = new Harness(["status"]);
+    const ignoreCase = (): Files => CONFIG_CASES.find((entry) => entry.name === "projectIgnore of a name at any depth")?.files ?? {};
+
+    beforeAll(() => {
+        configHarness.setup("vis-status-config-parity-");
+    });
+
+    afterAll(() => {
+        configHarness.teardown();
+    });
+
+    const caseRuns = (native: boolean) =>
+        [...CONFIG_CASES, ...STATUS_CASES].filter((entry) => entry.status === native).flatMap((entry) => (native ? [[], ["--json"]] : [["--json"]]).map((args) => [entry.name, entry, args] as const));
+
+    it.each(caseRuns(true))("%s %j is answered natively and matches Node", (_name, entry, args) => {
+        expect(configHarness.expectParity(entry.files, args).stdout).not.toBe("");
+    });
+
+    it.each(caseRuns(false))("%s %j is handed to Node", (_name, entry, args) => {
+        expect(configHarness.expectDelegation(entry.files, args).status).not.toBe(70);
+    });
+
+    it("hands a run from a project directory to Node", () => {
+        const [nodeRoot, nativeRoot] = configHarness.pair(ignoreCase());
+        const node = configHarness.runNode(["--json"], `${nodeRoot}/packages/lib`);
+        const declined = configHarness.runNative(["--json"], `${nativeRoot}/packages/lib`);
+
+        expect(declined.status).toBe(70);
+        expect(declined.stdout).toBe("");
+
+        const delegated = configHarness.runNative(["--json"], `${nativeRoot}/packages/lib`, { VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath });
+
+        expect(Harness.outcome(delegated, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+    });
+
+    it("hands a run outside CI to Node", () => {
+        configHarness.expectDelegation(ignoreCase(), ["--json"], {}, false);
+    });
+
+    it.each(SHORT_COLOUR_ENVIRONMENTS)("in %j a configured workspace matches Node", (colour) => {
+        configHarness.expectParity(ignoreCase(), [], colour);
+    });
+
+    it.each(DELEGATED_COLOUR_ENVIRONMENTS)("hands a configured run with %j to Node", (colour) => {
+        configHarness.expectDelegation(ignoreCase(), [], colour);
     });
 });
