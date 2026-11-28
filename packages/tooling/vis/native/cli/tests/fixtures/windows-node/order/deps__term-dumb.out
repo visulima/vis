@@ -1,0 +1,46 @@
+✓ workspace-protocol: no violations
+
+✓ redefine-root: no violations
+
+✓ workspace-versions: no drift
+
+✓ custom-types: no engines / packageManager / volta drift
+
+✓ banned-deps: no violations
+
+Found 3 empty dependency blocks
+  b10 (packages/b10/package.json)
+    devDependencies: {}
+  b2 (packages/b2/package.json)
+    devDependencies: {}
+  Beta (packages/Beta/package.json)
+    devDependencies: {}
+  Run with --fix to drop empty blocks.
+
+✓ root-private: root package.json is "private": true
+
+Missing packageManager on root (package.json)
+    no canonical specifier configured (set policy.rootPackageManager.suggested to enable --fix)
+  e.g. "packageManager": "pnpm@10.32.1"
+
+✓ root-deps: no runtime dependencies on private root
+
+Found 4 workspace dirs without a package.json
+    packages/a-notes
+    packages/b3
+    packages/Docs
+    packages/_tmp
+  Either delete the directory or scaffold a package.json (vis create).
+
+✓ dead-workspace-pattern: every workspace pattern matches at least one package
+
+Found 3 @types/* deps in dependencies
+  a-app (packages/a-app/package.json)
+    @types/node 1.0.0
+  Zed (packages/Zed/package.json)
+    @types/node 1.0.0
+  _core (packages/_core/package.json)
+    @types/node 1.0.0
+  Run with --fix to move them to devDependencies.
+
+✓ similar-deps: every related dep family is in sync

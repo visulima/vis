@@ -1,0 +1,59 @@
+Project Dependency Graph
+
+ Applications (2)
+
+  a-app
+  ├── Beta
+  │   └── _core
+  ├── _core (*)
+  └── mid
+      └── Beta (*)
+
+  foo-x
+    (no dependencies)
+
+ Libraries (11)
+
+  Beta
+  └── _core
+
+  _core
+    (no dependencies)
+
+  a-b
+  ├── a-c
+  └── b2-w
+
+  a-c
+    (no dependencies)
+
+  b10
+  └── b2
+
+  b2
+    (no dependencies)
+
+  b2-w
+    (no dependencies)
+
+  foo-alpha
+  └── foo-bar
+      └── mid
+          └── Beta
+              └── _core
+
+  foo-bar
+  └── mid
+      └── Beta
+          └── _core
+
+  mid
+  └── Beta
+      └── _core
+
+  x-y
+  └── a-c
+
+────────────────────────────────────────────────────────────
+13 packages · 11 dependencies · 2 apps, 11 libraries
+(*) = already shown above

@@ -1,0 +1,17 @@
+Found 3 empty dependency blocks
+  b10 (packages/b10/package.json)
+    devDependencies: {}
+  b2 (packages/b2/package.json)
+    devDependencies: {}
+  Beta (packages/Beta/package.json)
+    devDependencies: {}
+  Run with --fix to drop empty blocks.
+
+Found 3 @types/* deps in dependencies
+  a-app (packages/a-app/package.json)
+    @types/node 1.0.0
+  Zed (packages/Zed/package.json)
+    @types/node 1.0.0
+  _core (packages/_core/package.json)
+    @types/node 1.0.0
+  Run with --fix to move them to devDependencies.

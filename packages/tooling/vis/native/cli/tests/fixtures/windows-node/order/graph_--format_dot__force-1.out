@@ -1,0 +1,23 @@
+digraph ProjectGraph {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor="#87CEEB", fontname="monospace"];
+  "a-app" [fillcolor="#FFD700"];
+  "b10" [fillcolor="#87CEEB"];
+  "b2" [fillcolor="#87CEEB"];
+  "Beta" [fillcolor="#87CEEB"];
+  "mid" [fillcolor="#87CEEB"];
+  "ten" [fillcolor="#87CEEB"];
+  "Zed" [fillcolor="#87CEEB"];
+  "_core" [fillcolor="#87CEEB"];
+  "zz-exact" [fillcolor="#87CEEB"];
+  "aa-exact" [fillcolor="#87CEEB"];
+  "a-app" -> "Beta" [style=solid];
+  "a-app" -> "_core" [style=solid];
+  "a-app" -> "mid" [style=dotted, color="#888888"];
+  "b10" -> "b2" [style=solid];
+  "Beta" -> "_core" [style=solid];
+  "mid" -> "Beta" [style=solid];
+  "Zed" -> "ten" [style=solid];
+  "Zed" -> "b2" [style=dotted, color="#888888"];
+  "aa-exact" -> "zz-exact" [style=solid];
+}

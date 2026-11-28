@@ -127,8 +127,8 @@ fn the_binary_prints_what_node_printed_on_windows() {
         let _ = fs::remove_dir_all(&workspace);
     }
 
-    // Four groups of 7, 3, 4 and 6 commands, in 9 environments each.
-    assert_eq!(checked, 180);
+    // Six groups of 7, 6, 4, 3, 19 and 10 commands, in 9 environments each.
+    assert_eq!(checked, 441);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

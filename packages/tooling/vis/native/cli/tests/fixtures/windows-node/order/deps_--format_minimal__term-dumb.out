@@ -1,0 +1,11 @@
+empty-deps	packages/b10/package.json	devDependencies
+empty-deps	packages/b2/package.json	devDependencies
+empty-deps	packages/Beta/package.json	devDependencies
+root-package-manager	package.json	
+missing-package-json	packages/a-notes
+missing-package-json	packages/b3
+missing-package-json	packages/Docs
+missing-package-json	packages/_tmp
+types-in-deps	packages/a-app/package.json	@types/node	1.0.0
+types-in-deps	packages/Zed/package.json	@types/node	1.0.0
+types-in-deps	packages/_core/package.json	@types/node	1.0.0

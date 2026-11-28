@@ -12,6 +12,11 @@
 // The committed captures came from the published `@visulima/vis@8.0.0-next.2` (`dist/bin.js`), Node v26.13.1, Windows
 // 10.0.26200 (Windows 11), stdout a file. Capture again with the Node CLI of the release being compared against.
 //
+// The groups `order` and `order-nested` came from this checkout built on the Windows guest instead (base `cd25db5d`,
+// the `vis` package at `8.0.0-next.3`, with its native addon), same Node, Windows and stdout. Their workspaces hold
+// project directories whose byte order and file system (NTFS) order differ, so what they pin is the order Node lists
+// projects in.
+//
 // The one edit made to the bytes is the workspace's own path, which Node prints with `/` and a capital drive letter
 // (a few `deps` reports hold it): it becomes `{workspace}`, which the test fills in with the directory it runs in.
 import { spawnSync } from "node:child_process";

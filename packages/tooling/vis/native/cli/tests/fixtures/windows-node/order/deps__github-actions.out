@@ -1,0 +1,46 @@
+[32m✓ workspace-protocol: no violations[39m
+
+[32m✓ redefine-root: no violations[39m
+
+[32m✓ workspace-versions: no drift[39m
+
+[32m✓ custom-types: no engines / packageManager / volta drift[39m
+
+[32m✓ banned-deps: no violations[39m
+
+[33m[1mFound 3 empty dependency blocks[22m[39m
+  [1mb10[22m [2m(packages/b10/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+  [1mb2[22m [2m(packages/b2/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+  [1mBeta[22m [2m(packages/Beta/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+[2m  Run with --fix to drop empty blocks.[22m
+
+[32m✓ root-private: root package.json is "private": true[39m
+
+[31m[1mMissing packageManager on root [2m(package.json)[1m[22m[39m
+[2m    no canonical specifier configured (set policy.rootPackageManager.suggested to enable --fix)[22m
+[2m  e.g. "packageManager": "pnpm@10.32.1"[22m
+
+[32m✓ root-deps: no runtime dependencies on private root[39m
+
+[33m[1mFound 4 workspace dirs without a package.json[22m[39m
+    [31mpackages/a-notes[39m
+    [31mpackages/b3[39m
+    [31mpackages/Docs[39m
+    [31mpackages/_tmp[39m
+[2m  Either delete the directory or scaffold a package.json (vis create).[22m
+
+[32m✓ dead-workspace-pattern: every workspace pattern matches at least one package[39m
+
+[33m[1mFound 3 @types/* deps in dependencies[22m[39m
+  [1ma-app[22m [2m(packages/a-app/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1mZed[22m [2m(packages/Zed/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1m_core[22m [2m(packages/_core/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+[2m  Run with --fix to move them to devDependencies.[22m
+
+[32m✓ similar-deps: every related dep family is in sync[39m

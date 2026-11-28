@@ -1,0 +1,20 @@
+{
+    "deps_--types-in-deps_--empty-deps__ci": 1,
+    "deps_--types-in-deps_--empty-deps__no-color": 1,
+    "deps_--types-in-deps_--empty-deps__force-0": 1,
+    "deps_--types-in-deps_--empty-deps__force-1": 1,
+    "deps_--types-in-deps_--empty-deps__force-3": 1,
+    "deps_--types-in-deps_--empty-deps__term-dumb": 1,
+    "deps_--types-in-deps_--empty-deps__term-xterm": 1,
+    "deps_--types-in-deps_--empty-deps__github-actions": 1,
+    "deps_--types-in-deps_--empty-deps__colorterm": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__ci": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__no-color": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__force-0": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__force-1": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__force-3": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__term-dumb": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__term-xterm": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__github-actions": 1,
+    "deps_--types-in-deps_--empty-deps_--format_json__colorterm": 1
+}

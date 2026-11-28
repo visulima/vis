@@ -1,0 +1,17 @@
+[33m[1mFound 3 empty dependency blocks[22m[39m
+  [1mb10[22m [2m(packages/b10/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+  [1mb2[22m [2m(packages/b2/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+  [1mBeta[22m [2m(packages/Beta/package.json)[22m
+    [2mdevDependencies[22m: [31m{}[39m
+[2m  Run with --fix to drop empty blocks.[22m
+
+[33m[1mFound 3 @types/* deps in dependencies[22m[39m
+  [1ma-app[22m [2m(packages/a-app/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1mZed[22m [2m(packages/Zed/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+  [1m_core[22m [2m(packages/_core/package.json)[22m
+    [31m@types/node[39m [2m1.0.0[22m
+[2m  Run with --fix to move them to devDependencies.[22m

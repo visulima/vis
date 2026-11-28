@@ -1,0 +1,45 @@
+[1mProject Dependency Graph[22m
+
+ [1m[36mApplications (1)[39m[22m
+
+  [1ma-app[22m
+  [2m├── [22mBeta
+  [2m│[22m   [2m└── [22m_core
+  [2m├── [22m_core[2m (*)[22m
+  [2m└── [22mmid
+      [2m└── [22mBeta[2m (*)[22m
+
+ [1m[36mLibraries (9)[39m[22m
+
+  Beta
+  [2m└── [22m_core
+
+  Zed
+  [2m├── [22mten
+  [2m└── [22mb2
+
+  _core
+    [2m(no dependencies)[22m
+
+  aa-exact
+  [2m└── [22mzz-exact
+
+  b10
+  [2m└── [22mb2
+
+  b2
+    [2m(no dependencies)[22m
+
+  mid
+  [2m└── [22mBeta
+      [2m└── [22m_core
+
+  ten
+    [2m(no dependencies)[22m
+
+  zz-exact
+    [2m(no dependencies)[22m
+
+[2m────────────────────────────────────────────────────────────[22m
+[1m10[22m packages [2m·[22m [1m9[22m dependencies [2m·[22m [1m1[22m apps[2m,[22m [1m9[22m libraries
+[2m(*) = already shown above[22m

@@ -1,0 +1,57 @@
+{
+  "fixed": {
+    "catalogProposals": false,
+    "customTypes": false,
+    "deadWorkspacePatterns": false,
+    "emptyDeps": false,
+    "rootDeps": false,
+    "rootPackageManager": false,
+    "rootPrivate": false,
+    "typesInDeps": false,
+    "workspaceProtocol": false,
+    "workspaceVersions": false
+  },
+  "emptyDeps": {
+    "issues": [
+      {
+        "depType": "devDependencies",
+        "packageDir": "nested/a-b/d",
+        "packageJsonPath": "nested/a-b/d/package.json",
+        "packageName": "a-b"
+      },
+      {
+        "depType": "devDependencies",
+        "packageDir": "nested/_x/y",
+        "packageJsonPath": "nested/_x/y/package.json",
+        "packageName": "x-y"
+      }
+    ],
+    "total": 2
+  },
+  "typesInDeps": {
+    "issues": [
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "nested/a/c",
+        "packageJsonPath": "nested/a/c/package.json",
+        "packageName": "a-c"
+      },
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "nested/Foo/bar",
+        "packageJsonPath": "nested/Foo/bar/package.json",
+        "packageName": "foo-bar"
+      },
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "nested/_x/y",
+        "packageJsonPath": "nested/_x/y/package.json",
+        "packageName": "x-y"
+      }
+    ],
+    "total": 3
+  }
+}

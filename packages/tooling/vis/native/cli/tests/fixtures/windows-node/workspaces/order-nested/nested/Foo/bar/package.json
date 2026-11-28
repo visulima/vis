@@ -1,0 +1,13 @@
+{
+  "name": "foo-bar",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo build foo-bar",
+    "test": "echo test foo-bar"
+  },
+  "dependencies": {
+    "mid": "workspace:*",
+    "@types/node": "1.0.0"
+  }
+}

@@ -1,0 +1,45 @@
+Project Dependency Graph
+
+ Applications (1)
+
+  a-app
+  ├── Beta
+  │   └── _core
+  ├── _core (*)
+  └── mid
+      └── Beta (*)
+
+ Libraries (9)
+
+  Beta
+  └── _core
+
+  Zed
+  ├── ten
+  └── b2
+
+  _core
+    (no dependencies)
+
+  aa-exact
+  └── zz-exact
+
+  b10
+  └── b2
+
+  b2
+    (no dependencies)
+
+  mid
+  └── Beta
+      └── _core
+
+  ten
+    (no dependencies)
+
+  zz-exact
+    (no dependencies)
+
+────────────────────────────────────────────────────────────
+10 packages · 9 dependencies · 1 apps, 9 libraries
+(*) = already shown above

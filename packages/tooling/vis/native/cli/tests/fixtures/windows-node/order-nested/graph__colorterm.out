@@ -1,0 +1,59 @@
+[1mProject Dependency Graph[22m
+
+ [1m[36mApplications (2)[39m[22m
+
+  [1ma-app[22m
+  [2m├── [22mBeta
+  [2m│[22m   [2m└── [22m_core
+  [2m├── [22m_core[2m (*)[22m
+  [2m└── [22mmid
+      [2m└── [22mBeta[2m (*)[22m
+
+  [1mfoo-x[22m
+    [2m(no dependencies)[22m
+
+ [1m[36mLibraries (11)[39m[22m
+
+  Beta
+  [2m└── [22m_core
+
+  _core
+    [2m(no dependencies)[22m
+
+  a-b
+  [2m├── [22ma-c
+  [2m└── [22mb2-w
+
+  a-c
+    [2m(no dependencies)[22m
+
+  b10
+  [2m└── [22mb2
+
+  b2
+    [2m(no dependencies)[22m
+
+  b2-w
+    [2m(no dependencies)[22m
+
+  foo-alpha
+  [2m└── [22mfoo-bar
+      [2m└── [22mmid
+          [2m└── [22mBeta
+              [2m└── [22m_core
+
+  foo-bar
+  [2m└── [22mmid
+      [2m└── [22mBeta
+          [2m└── [22m_core
+
+  mid
+  [2m└── [22mBeta
+      [2m└── [22m_core
+
+  x-y
+  [2m└── [22ma-c
+
+[2m────────────────────────────────────────────────────────────[22m
+[1m13[22m packages [2m·[22m [1m11[22m dependencies [2m·[22m [1m2[22m apps[2m,[22m [1m11[22m libraries
+[2m(*) = already shown above[22m

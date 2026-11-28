@@ -1,0 +1,14 @@
+{
+  "name": "x-y",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo build x-y",
+    "test": "echo test x-y"
+  },
+  "dependencies": {
+    "a-c": "workspace:*",
+    "@types/node": "1.0.0"
+  },
+  "devDependencies": {}
+}

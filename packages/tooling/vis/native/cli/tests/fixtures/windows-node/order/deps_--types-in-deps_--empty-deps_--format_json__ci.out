@@ -1,0 +1,63 @@
+{
+  "fixed": {
+    "catalogProposals": false,
+    "customTypes": false,
+    "deadWorkspacePatterns": false,
+    "emptyDeps": false,
+    "rootDeps": false,
+    "rootPackageManager": false,
+    "rootPrivate": false,
+    "typesInDeps": false,
+    "workspaceProtocol": false,
+    "workspaceVersions": false
+  },
+  "emptyDeps": {
+    "issues": [
+      {
+        "depType": "devDependencies",
+        "packageDir": "packages/b10",
+        "packageJsonPath": "packages/b10/package.json",
+        "packageName": "b10"
+      },
+      {
+        "depType": "devDependencies",
+        "packageDir": "packages/b2",
+        "packageJsonPath": "packages/b2/package.json",
+        "packageName": "b2"
+      },
+      {
+        "depType": "devDependencies",
+        "packageDir": "packages/Beta",
+        "packageJsonPath": "packages/Beta/package.json",
+        "packageName": "Beta"
+      }
+    ],
+    "total": 3
+  },
+  "typesInDeps": {
+    "issues": [
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "packages/a-app",
+        "packageJsonPath": "packages/a-app/package.json",
+        "packageName": "a-app"
+      },
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "packages/Zed",
+        "packageJsonPath": "packages/Zed/package.json",
+        "packageName": "Zed"
+      },
+      {
+        "childSpecifier": "1.0.0",
+        "depName": "@types/node",
+        "packageDir": "packages/_core",
+        "packageJsonPath": "packages/_core/package.json",
+        "packageName": "_core"
+      }
+    ],
+    "total": 3
+  }
+}

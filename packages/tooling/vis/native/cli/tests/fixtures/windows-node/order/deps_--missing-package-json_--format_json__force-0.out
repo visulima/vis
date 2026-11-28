@@ -1,0 +1,31 @@
+{
+  "fixed": {
+    "catalogProposals": false,
+    "customTypes": false,
+    "deadWorkspacePatterns": false,
+    "emptyDeps": false,
+    "rootDeps": false,
+    "rootPackageManager": false,
+    "rootPrivate": false,
+    "typesInDeps": false,
+    "workspaceProtocol": false,
+    "workspaceVersions": false
+  },
+  "missingPackageJson": {
+    "issues": [
+      {
+        "packageDir": "packages/a-notes"
+      },
+      {
+        "packageDir": "packages/b3"
+      },
+      {
+        "packageDir": "packages/Docs"
+      },
+      {
+        "packageDir": "packages/_tmp"
+      }
+    ],
+    "total": 4
+  }
+}
