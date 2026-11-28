@@ -15,6 +15,7 @@ import { VisReleaseError } from "../../errors";
 import type { InstallLockfileOnlyOptions, PackOptions, PackResult, PublishNativeOptions, PublishOptions, PublishResult, WorkspaceListEntry } from "./interface";
 import { PackageManagerAdapter } from "./interface";
 import { interpretNativePublishResult, NpmAdapter } from "./npm";
+import { listPnpmWorkspaceFromFiles } from "./pnpm-workspace-files";
 
 export class PnpmAdapter extends PackageManagerAdapter {
     public readonly id = "pnpm" as const;
@@ -111,6 +112,10 @@ export class PnpmAdapter extends PackageManagerAdapter {
         } catch {
             return [];
         }
+    }
+
+    public override async listWorkspacePackagesFromFiles(cwd: string): Promise<WorkspaceListEntry[] | undefined> {
+        return listPnpmWorkspaceFromFiles(cwd);
     }
 
     public async publish(options: PublishOptions): Promise<PublishResult> {

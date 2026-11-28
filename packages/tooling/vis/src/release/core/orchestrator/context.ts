@@ -71,8 +71,10 @@ export interface BuildContextOptions {
 
     /**
      * The caller only prints the plan and never publishes or writes. Skips the
-     * `--version` minimum-version gate of the package manager, which only publishing needs.
-     * Without it the gate runs as before.
+     * `--version` minimum-version gate of the package manager, which only publishing
+     * needs, and lists the workspace from its files when they give the package
+     * manager's own answer (it asks the manager when they cannot). Without it the
+     * gate and the manager's list command run as before.
      */
     readOnly?: boolean;
 
@@ -131,7 +133,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     const branch = options.channel ?? (await detectCurrentBranch(cwd, runner));
     const resolved = branch ? resolveChannel(branch, config.channels) : undefined;
 
-    const { packages, perPackageConfig, projectsByEcosystem } = await discoverReleasePackages(pm, config, cwd);
+    const { packages, perPackageConfig, projectsByEcosystem } = await discoverReleasePackages(pm, config, cwd, { readOnly: options.readOnly });
     const depGraph = new DependencyGraph(packages);
 
     // Read change files

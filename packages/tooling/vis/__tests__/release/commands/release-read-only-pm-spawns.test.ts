@@ -67,7 +67,7 @@ const writeJson = (path: string, value: unknown): void => {
 const setupFixture = (): string => {
     const cwd = mkdtempSync(join(tmpdir(), "vis-read-only-"));
 
-    writeJson(join(cwd, "package.json"), { name: "fixture-root", private: true, version: "0.0.0" });
+    writeJson(join(cwd, "package.json"), { name: "fixture-root", packageManager: "pnpm@11.28.2", private: true, version: "0.0.0" });
     writeFileSync(join(cwd, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
 
     for (const [dir, name, version] of [
@@ -92,20 +92,43 @@ const setupFixture = (): string => {
     return cwd;
 };
 
-const logger = { error: () => {}, info: () => {}, warn: () => {} };
+const printed: string[] = [];
+const logger = { error: () => {}, info: (message: string) => printed.push(message), warn: () => {} };
+
+/** Everything a command prints to stdout or to its logger, plus the value it returns. */
+const capture = async (run: () => Promise<unknown>): Promise<string> => {
+    printed.length = 0;
+
+    const chunks: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        chunks.push(String(chunk));
+
+        return true;
+    });
+
+    try {
+        const returned = await run();
+
+        return `${chunks.join("")}${typeof returned === "string" ? returned : ""}${printed.join("\n")}`;
+    } finally {
+        write.mockRestore();
+    }
+};
 
 describe("read-only vis release commands and the package manager", () => {
     let cwd: string;
+    let faithfulList: string;
 
     beforeEach(() => {
         cwd = setupFixture();
         pnpm.calls = [];
         // What `pnpm -r ls` prints for the fixture: the root and both packages.
-        pnpm.list = JSON.stringify(
+        faithfulList = JSON.stringify(
             ["", "packages/a", "packages/b"].map((dir) => {
                 return { name: dir === "" ? "fixture-root" : `@scope/${dir.slice(-1)}`, path: join(realpathSync(cwd), dir) };
             }),
         );
+        pnpm.list = faithfulList;
         // Below pnpm's minimum (9.5.0): the version gate rejects it when it runs.
         pnpm.version = "8.0.0";
     });
@@ -132,25 +155,131 @@ describe("read-only vis release commands and the package manager", () => {
         expect(pnpm.calls).not.toContain("--version");
     });
 
-    it.each([
-        ["next-version", () => nextVersionHandler({ logger, options: {}, workspaceRoot: cwd })],
-        ["status --json", () => statusHandler({ logger, options: { json: true }, workspaceRoot: cwd })],
-        ["ci plan", () => ciPlanHandler({ logger, options: {}, workspaceRoot: cwd })],
-        ["check", () => checkHandler({ logger, options: {}, workspaceRoot: cwd })],
-        ["changelog", () => releaseChangelog({ cwd })],
-    ] as [string, () => Promise<unknown>][])("%s does not ask the manager for its version", async (_name, run) => {
+    describe.each([
+        ["next-version", () => nextVersionHandler({ logger, options: {}, workspaceRoot: cwd }), "@scope/b 2.5.0 -> 2.5.1"],
+        ["status --json", () => statusHandler({ logger, options: { json: true }, workspaceRoot: cwd }), "\"@scope/b\""],
+        ["ci plan", () => ciPlanHandler({ logger, options: {}, workspaceRoot: cwd }), "\"@scope/b\""],
+        ["check", () => checkHandler({ logger, options: {}, workspaceRoot: cwd }), "1 change file(s) present"],
+        ["changelog", async () => JSON.stringify(await releaseChangelog({ cwd })), "@scope/b"],
+    ] as [string, () => Promise<unknown>, string][])("%s", (_name, run, expectedOutput) => {
+        it("does not spawn the package manager and still finds the packages", async () => {
+            expect.hasAssertions();
+
+            // A list that names nothing the fixture has: had the manager been asked, there would be no plan to print.
+            pnpm.list = "[]";
+
+            const output = await capture(run);
+
+            expect(process.exitCode).not.toBe(1);
+            expect(pnpm.calls).toStrictEqual([]);
+            expect(output).toContain(expectedOutput);
+        });
+    });
+
+    it("prints the same lines from the files as it does with the manager's list", async () => {
         expect.hasAssertions();
 
-        const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+        const run = (): Promise<string> => capture(() => nextVersionHandler({ logger, options: {}, workspaceRoot: cwd }));
 
-        try {
-            await run();
-        } finally {
-            write.mockRestore();
-        }
+        // The list `beforeEach` wrote by hand is what pnpm prints for this fixture: this is the reference run.
+        pnpm.version = "11.0.0";
 
-        expect(process.exitCode).not.toBe(1);
-        expect(pnpm.calls).not.toContain("--version");
+        const reference = await capture(async () => {
+            const context = await buildContext({ cwd, skipRegistryLookup: true });
+
+            process.stdout.write(context.plan.releases.map((release) => `${release.name} ${release.oldVersion} -> ${release.newVersion}\n`).join(""));
+        });
+
+        expect(pnpm.calls).toContain("-r ls --depth -1 --json");
+
+        pnpm.calls = [];
+        pnpm.list = "[]";
+
+        await expect(run()).resolves.toBe(reference);
+        expect(reference).toBe("@scope/a 1.0.0 -> 1.1.0\n@scope/b 2.5.0 -> 2.5.1\n");
+        expect(pnpm.calls).toStrictEqual([]);
+    });
+
+    describe("listing the workspace", () => {
+        // A list that names nothing the fixture has: if the manager were asked, the plan would be empty.
+        beforeEach(() => {
+            pnpm.list = "[]";
+        });
+
+        it("reads the packages from pnpm-workspace.yaml and does not run `pnpm -r ls`", async () => {
+            expect.hasAssertions();
+
+            const context = await buildContext({ cwd, readOnly: true, skipRegistryLookup: true });
+
+            expect(context.plan.releases.map((release) => release.name)).toStrictEqual(["@scope/a", "@scope/b"]);
+            expect(pnpm.calls).toStrictEqual([]);
+        });
+
+        it("gives the same packages and plan as the manager's own list", async () => {
+            expect.hasAssertions();
+
+            const fromFiles = await buildContext({ cwd, readOnly: true, skipRegistryLookup: true });
+
+            // The hand-written list `beforeEach` made, not one derived from the answer under test.
+            pnpm.list = faithfulList;
+            pnpm.version = "11.0.0";
+
+            const fromManager = await buildContext({ cwd, skipRegistryLookup: true });
+
+            expect(pnpm.calls).toContain("-r ls --depth -1 --json");
+            expect(fromFiles.packages.map((pkg) => pkg.dir)).toStrictEqual(fromManager.packages.map((pkg) => pkg.dir));
+            expect(fromFiles.plan).toStrictEqual(fromManager.plan);
+        });
+
+        it("asks the manager when a command that writes builds the context", async () => {
+            expect.hasAssertions();
+
+            pnpm.version = "11.0.0";
+
+            const context = await buildContext({ cwd, skipRegistryLookup: true });
+
+            expect(context.packages).toHaveLength(0);
+            expect(pnpm.calls).toStrictEqual(["--version", "-r ls --depth -1 --json"]);
+        });
+
+        it("asks the manager when the patterns are beyond what the files can answer", async () => {
+            expect.hasAssertions();
+
+            writeFileSync(join(cwd, "pnpm-workspace.yaml"), "packages:\n  - 'packages/{a,b}'\n");
+            pnpm.list = JSON.stringify(
+                ["a", "b"].map((dir) => {
+                    return { name: `@scope/${dir}`, path: join(realpathSync(cwd), "packages", dir) };
+                }),
+            );
+
+            const context = await buildContext({ cwd, readOnly: true, skipRegistryLookup: true });
+
+            expect(pnpm.calls).toStrictEqual(["-r ls --depth -1 --json"]);
+            expect(context.plan.releases.map((release) => release.name)).toStrictEqual(["@scope/a", "@scope/b"]);
+        });
+
+        it("asks the manager when the workspace does not pin its pnpm version", async () => {
+            expect.hasAssertions();
+
+            writeJson(join(cwd, "package.json"), { name: "fixture-root", private: true, version: "0.0.0" });
+            pnpm.list = faithfulList;
+
+            const context = await buildContext({ cwd, readOnly: true, skipRegistryLookup: true });
+
+            expect(pnpm.calls).toStrictEqual(["-r ls --depth -1 --json"]);
+            expect(context.plan.releases.map((release) => release.name)).toStrictEqual(["@scope/a", "@scope/b"]);
+        });
+
+        it("asks the manager from a directory that is not the workspace root", async () => {
+            expect.hasAssertions();
+
+            // pnpm finds the workspace root above its working directory; the files are only read at the directory itself.
+            writeJson(join(cwd, "packages", "a", "package.json"), { name: "@scope/a", packageManager: "pnpm@11.0.0", version: "1.0.0" });
+
+            await buildContext({ cwd: join(cwd, "packages", "a"), readOnly: true, skipRegistryLookup: true });
+
+            expect(pnpm.calls).toStrictEqual(["-r ls --depth -1 --json"]);
+        });
     });
 
     it("check --strict still asks the manager for its version", async () => {
