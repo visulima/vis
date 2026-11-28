@@ -1,0 +1,20 @@
+<CLOCK> INFO ...............................................................
+
+Scan completed in <TIME>
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "results": [],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/visulima/visulima",
+          "name": "vis-audit",
+          "rules": [],
+          "version": "alpha"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

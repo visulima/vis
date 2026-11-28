@@ -515,12 +515,15 @@ fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_js
     assert!(super::bundled::decline(&broken).is_some());
 }
 
-// ---- findings that Node drops -----------------------------------------------------------------------------------
+// ---- findings that Node drops, and the formats other than `json` -------------------------------------------------
 
-use super::formats::found_row;
+use super::formats::{banner, found_row, Format};
 use super::osv::documented_findings;
+use super::scan_format;
+use crate::pail::Layout;
 
 const NOW: &str = "2026-01-02T03:04:05.678Z";
+const PLAIN_LAYOUT: Layout = Layout { width: 80, colour: false };
 
 /// What the stub answers for the recorded lockfile of six packages in the run Node was recorded on: two findings for
 /// the first package, none for the second, one for the third. The batch endpoint documents `id` and `modified` only.
@@ -538,6 +541,44 @@ fn unmasked(fixture: &str, root: &std::path::Path) -> String {
         .replace("{now}", NOW)
         .replace("{seconds}", &NOW[..19])
         .replace("{date}", &NOW[..10])
+}
+
+fn masked(output: &str) -> String {
+    let clock = regex::Regex::new(r"(?m)^\d\d:\d\d:\d\d INFO").unwrap();
+    let elapsed = regex::Regex::new(r"Scan completed in \d+(?:\.\d)?m?s").unwrap();
+
+    elapsed.replace_all(&clock.replace_all(output, "<CLOCK> INFO"), "Scan completed in <TIME>").into_owned()
+}
+
+fn run_format(
+    name: &str,
+    format: Format,
+    body: &'static str,
+    layout: Option<Layout>,
+) -> (std::path::PathBuf, Result<(String, String), String>) {
+    let root = workspace(name);
+    let (url, _seen) = serve(Box::leak(json_reply("200 OK", body).into_boxed_str()));
+    let outcome = scan_format(&root, &url, format, Style { colour: false }, false, &|| NOW.to_owned(), layout);
+
+    (root, outcome)
+}
+
+#[test]
+fn takes_the_formats_that_print_an_empty_result_and_hands_over_the_rest() {
+    for format in ["json", "sarif"] {
+        assert!(parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format}");
+        assert!(parse(&argv(&["audit", &format!("--format={format}"), "--policies=none", "--exit-code"])), "{format}");
+    }
+
+    for format in ["table", "cyclonedx-vex", "cyclonedx", "html", "SARIF", "Json", ""] {
+        assert!(!parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format:?}");
+    }
+
+    // A format named twice, even with the same value, and a format with the default policies stay Node's.
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--format", "sarif", "--policies", "none"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--policies", "none", "--report", "r.html"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--policies", "none", "--output", "r.sarif"])));
 }
 
 #[test]
@@ -630,9 +671,8 @@ fn the_row_matches_what_node_printed_in_every_colour_and_terminal() {
 
 #[test]
 fn findings_node_drops_print_the_report_of_a_clean_scan() {
-    let root = workspace("found-json");
-    let (url, _seen) = serve(Box::leak(json_reply("200 OK", FOUND).into_boxed_str()));
-    let (printed, _row) = scan_workspace(&root, &url, Style { colour: false }, false, NOW).unwrap();
+    let (root, outcome) = run_format("found-json", Format::Json, FOUND, None);
+    let (printed, _row) = outcome.unwrap();
 
     assert_eq!(printed, unmasked(include_str!("../../tests/fixtures/audit/found.json.stdout"), &root));
     // ... which is the clean report, byte for byte, as Node printed it for the same lockfile.
@@ -643,11 +683,71 @@ fn findings_node_drops_print_the_report_of_a_clean_scan() {
     assert_eq!(include_str!("../../tests/fixtures/audit/found.gates.exit"), "0\n");
 }
 
-#[test]
-fn a_record_with_fields_node_maps_is_node_s() {
-    let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
-    let root = workspace("detailed");
-    let (url, _seen) = serve(Box::leak(json_reply("200 OK", detailed).into_boxed_str()));
+macro_rules! format_matches_node {
+    ($name:ident, $format:expr, $found:literal, $clean:literal, $clean_row:literal) => {
+        #[test]
+        fn $name() {
+            for (label, body, stdout, row) in [
+                (
+                    "with findings",
+                    FOUND,
+                    include_str!($found),
+                    include_str!("../../tests/fixtures/audit/found.plain.stderr"),
+                ),
+                ("clean", CLEAN, include_str!($clean), include_str!($clean_row)),
+            ] {
+                let (root, outcome) =
+                    run_format(&format!("{}-{label}", stringify!($name)), $format, body, Some(PLAIN_LAYOUT));
+                let (printed, printed_row) = outcome.unwrap();
 
-    assert!(scan_workspace(&root, &url, Style { colour: false }, false, NOW).unwrap_err().contains("fields Node maps"));
+                assert_eq!(masked(&printed), unmasked(stdout, &root), "{label}");
+                assert_eq!(timing().replace(&printed_row, "· <TIME>"), row, "{label}");
+            }
+        }
+    };
+}
+
+format_matches_node!(
+    sarif_matches_node,
+    Format::Sarif,
+    "../../tests/fixtures/audit/found.sarif.stdout",
+    "../../tests/fixtures/audit/clean.sarif.stdout",
+    "../../tests/fixtures/audit/clean.sarif.stderr"
+);
+
+#[test]
+fn the_block_of_scan_completed_is_pail_s_and_only_where_it_can_be_laid_out() {
+    let text = banner(PLAIN_LAYOUT, Duration::from_millis(12)).unwrap();
+
+    assert!(
+        regex::Regex::new(r"^\d\d:\d\d:\d\d INFO \.+\n\nScan completed in 12ms\n$").unwrap().is_match(&text),
+        "{text:?}"
+    );
+    assert_eq!(text.lines().next().unwrap().len(), 77);
+    // A coloured header (pail wraps the clock and the label, and dims the message) and a line too narrow for the
+    // message are Node's.
+    assert!(banner(Layout { width: 80, colour: true }, Duration::from_millis(12)).is_none());
+    assert!(banner(Layout { width: 24, colour: false }, Duration::from_millis(12)).is_none());
+}
+
+#[test]
+fn a_format_that_prints_the_block_needs_pail_s_layout() {
+    let (_root, outcome) = run_format("no-layout", Format::Sarif, FOUND, None);
+
+    assert!(outcome.is_err());
+
+    let (_root, outcome) = run_format("colour-layout", Format::Sarif, FOUND, Some(Layout { width: 80, colour: true }));
+
+    assert!(outcome.unwrap_err().contains("pail"));
+}
+
+#[test]
+fn a_run_node_would_print_differently_is_node_s_in_every_format() {
+    let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
+
+    for format in [Format::Json, Format::Sarif] {
+        let (_root, outcome) = run_format("detailed", format, detailed, Some(PLAIN_LAYOUT));
+
+        assert!(outcome.unwrap_err().contains("fields Node maps"), "{format:?}");
+    }
 }

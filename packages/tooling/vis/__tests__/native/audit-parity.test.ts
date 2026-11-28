@@ -10,7 +10,7 @@ import type { Files, Outcome, Result } from "./workspace-parity-harness";
 import { binary, Harness, json, nodeEntry, packageRoot, workspaceFiles } from "./workspace-parity-harness";
 
 /**
- * `vis audit --format json --policies none` exists twice: the Node handler (`src/commands/audit/handler.ts`)
+ * `vis audit --format json|sarif --policies none` exists twice: the Node handler (`src/commands/audit/handler.ts`)
  * and the native path (`native/cli/src/audit/`), which answers only a scan whose report is empty (nothing found, or findings the
  * handler drops: OSV's batch answer holds an id, which maps to a severity no `--severity` level lets through). The binary reads its OSV address from nowhere
  * but its own code, so this suite cannot point it at a stub: every case here is one the binary must hand to Node before it
@@ -101,6 +101,13 @@ const masked = (outcome: Outcome): Outcome => {
             .filter((line) => !isSpinnerFrame(line))
             .join("\n")
             .replaceAll(/(?<=[·n]) \d+(?:\.\d)?m?s/g, " <TIME>")
+            // The harness has already put `HH:MM:SS` for every clock (the pail block of `Scan completed in …`, the timestamps of the
+            // JUnit, GitLab and CSAF documents); the CSAF dates keep their milliseconds.
+            .replaceAll(/(?<=HH:MM:SS)\.\d{3}Z/g, ".<MS>Z")
+            // A narrow line wraps the block's message in front of its time.
+            .replaceAll(/Scan completed in\s+\d+(?:\.\d)?m?s/g, "Scan completed in <TIME>")
+            // The serial number of a CycloneDX document is random by design.
+            .replaceAll(/"serialNumber": "urn:uuid:[0-9a-f-]+"/g, '"serialNumber": "<UUID>"')
             .replaceAll(/ {2,}(?=— )/g, " ");
 
     return {
@@ -174,7 +181,18 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             [["--format", "json", "--policies", "none", "--policies", "none"]],
             [["--policies", "none"]],
             [["--format", "table", "--policies", "none"]],
-            [["--format", "sarif", "--policies", "none"]],
+            // The formats the binary prints are `json` and `sarif`; `table` draws a live progress view and
+            // the bill of materials of `cyclonedx-vex` carries a random serial number.
+            [["--format", "table", "--policies", "none", "--severity", "high"]],
+            [["--format", "cyclonedx-vex", "--policies", "none"]],
+            [["--format", "cyclonedx", "--policies", "none"]],
+            [["--format", "html", "--policies", "none"]],
+            [["--format", "sarif"]],
+            [["--format", "junit", "--policies", "license"]],
+            [["--format", "sarif", "--format", "junit", "--policies", "none"]],
+            [["--format", "gitlab", "--policies", "none", "--report", "audit.html"]],
+            [["--format", "csaf", "--policies", "none", "--output", "audit.json"]],
+            [["--format", "sarif", "--policies", "none", "--show-accepted"]],
             [["--format", "json", "--format", "json", "--policies", "none"]],
             [[...NATIVE_ARGS, "--offline"]],
             [[...NATIVE_ARGS, "--prod-only"]],
@@ -222,6 +240,16 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect.hasAssertions();
 
             expectHandOver({ extra });
+        });
+
+        // The formats other than `json` also print a pail block on stdout, whose header the binary lays out only without colour and for a
+        // width it can tell; it declines both before it asks OSV.
+        it.each([{ FORCE_COLOR: "1" }, { COLUMNS: "20" }, { COLUMNS: "wide" }])("hands over a printed block under %j", (extra) => {
+            expect.hasAssertions();
+
+            for (const format of ["sarif"]) {
+                expectHandOver({ args: ["--format", format, "--policies", "none"], extra });
+            }
         });
 
         it.each([["--no-color"], ["--color"]])("leaves %s to Node", (flag) => {
@@ -304,7 +332,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const stamp = { modified: "2024-01-01T00:00:00Z" };
         // Two findings for the first package, none for the second, one for the third: the batch endpoint answers with an id and a timestamp.
         const FOUND = [{ vulns: [{ id: "GHSA-aaaa-bbbb-cccc", ...stamp }, { id: "MAL-2024-1", ...stamp }] }, {}, { vulns: [{ id: "CVE-2020-1", ...stamp }] }];
-        const FORMATS = ["json"] as const;
+        const FORMATS = ["json", "sarif"] as const;
 
         const maskStderr = (text: string): string => text.replaceAll(/· \d+(?:\.\d)?m?s/g, "· <TIME>");
         const maskStdout = (text: string, root: string): string =>
@@ -337,6 +365,16 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(maskStderr(result.stderr)).toBe(recorded("found.plain.stderr"));
         });
 
+        it.each(["sarif"] as const)("prints the line of the scan before the document of a clean scan (%s)", (format) => {
+            expect.hasAssertions();
+
+            const { result, root } = runNodeOn(format, []);
+
+            expect(result.status, result.stderr).toBe(0);
+            expect(maskStdout(result.stdout, root)).toBe(recorded(`clean.${format}.stdout`));
+            expect(maskStderr(result.stderr)).toBe(recorded(`clean.${format}.stderr`));
+        });
+
         it("prints the clean report of the recorded lockfile for a finding it drops", () => {
             expect.hasAssertions();
 
@@ -354,7 +392,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
 
         // The gates read the findings that reach the report; the ones the batch endpoint lists are not among them. The binary exits 0 for these.
-        it.each(["json"] as const)("exits 0 for a dropped finding under every gate (%s)", (format) => {
+        it.each(["json", "sarif"] as const)("exits 0 for a dropped finding under every gate (%s)", (format) => {
             expect.hasAssertions();
 
             const gated = runNodeOn(format, FOUND, {}, ["--exit-code", "--fail-on", "low", "--severity", "critical"]);
