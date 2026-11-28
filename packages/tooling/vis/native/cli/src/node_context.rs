@@ -381,7 +381,11 @@ mod tests {
             ("yarn", vec![("package.json", r#"{"workspaces":{"packages":["a"]}}"#), ("yarn.lock", "")], Manager::Yarn),
             ("pnpm", vec![("package.json", "{}"), ("pnpm-lock.yaml", ""), ("pnpm-workspace.yaml", "")], Manager::Pnpm),
             ("pin", vec![("package.json", r#"{"packageManager":"npm@10.0.0","workspaces":[]}"#)], Manager::Npm),
-            ("pnpm-pin", vec![("package.json", r#"{"packageManager":"pnpm@9.0.0"}"#), ("pnpm-workspace.yaml", "")], Manager::Pnpm),
+            (
+                "pnpm-pin",
+                vec![("package.json", r#"{"packageManager":"pnpm@9.0.0"}"#), ("pnpm-workspace.yaml", "")],
+                Manager::Pnpm,
+            ),
         ] {
             let (base, deep) = workspace_fixture(name, &files, "packages/a/src");
 
@@ -413,8 +417,14 @@ mod tests {
     fn two_lockfiles_or_a_lerna_or_turbo_marker_leave_the_root_to_node() {
         let workspaces = r#"{"workspaces":["packages/*"]}"#;
 
-        for (name, extra) in [("mixed", ("yarn.lock", "")), ("lerna", ("lerna.json", "{}")), ("turbo", ("turbo.json", "{}"))] {
-            let (_, deep) = workspace_fixture(name, &[("package.json", workspaces), ("package-lock.json", "{}"), extra], "packages/a");
+        for (name, extra) in
+            [("mixed", ("yarn.lock", "")), ("lerna", ("lerna.json", "{}")), ("turbo", ("turbo.json", "{}"))]
+        {
+            let (_, deep) = workspace_fixture(
+                name,
+                &[("package.json", workspaces), ("package-lock.json", "{}"), extra],
+                "packages/a",
+            );
 
             assert_eq!(workspace_root(&deep), None, "{name}");
         }
@@ -424,7 +434,11 @@ mod tests {
     fn a_project_with_its_own_lockfile_is_the_nearest_marker() {
         let (_, deep) = workspace_fixture(
             "nested",
-            &[("package.json", r#"{"workspaces":["packages/*"]}"#), ("package-lock.json", "{}"), ("packages/a/package.json", "{}")],
+            &[
+                ("package.json", r#"{"workspaces":["packages/*"]}"#),
+                ("package-lock.json", "{}"),
+                ("packages/a/package.json", "{}"),
+            ],
             "packages/a",
         );
 

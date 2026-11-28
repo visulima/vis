@@ -1027,13 +1027,36 @@ mod gitignore_fixture_tests {
 
     #[test]
     fn the_directories_of_a_workspace_come_from_the_yaml_first_and_the_manifest_second() {
-        let listed = |directories: &[&str]| Some(directories.iter().map(|directory| (*directory).to_owned()).collect::<Vec<_>>());
+        let listed = |directories: &[&str]| {
+            Some(directories.iter().map(|directory| (*directory).to_owned()).collect::<Vec<_>>())
+        };
         let yaml = ("pnpm-workspace.yaml", "packages:\n  - \"apps/*\"\n");
 
-        assert_eq!(of_workspace("array", &[("package.json", r#"{"workspaces":["packages/*","apps/*"]}"#)]), listed(&["packages/a", "apps/web"]));
-        assert_eq!(of_workspace("object", &[("package.json", r#"{"workspaces":{"packages":["packages/a"],"nohoist":["x"]}}"#)]), listed(&["packages/a"]));
-        assert_eq!(of_workspace("yaml-wins", &[("package.json", r#"{"workspaces":["packages/*"]}"#), yaml]), listed(&["apps/web"]));
-        assert_eq!(of_workspace("yaml-without-list", &[("package.json", r#"{"workspaces":["packages/*"]}"#), ("pnpm-workspace.yaml", "onlyBuiltDependencies:\n  - x\n")]), listed(&["packages/a"]));
+        assert_eq!(
+            of_workspace("array", &[("package.json", r#"{"workspaces":["packages/*","apps/*"]}"#)]),
+            listed(&["packages/a", "apps/web"])
+        );
+        assert_eq!(
+            of_workspace(
+                "object",
+                &[("package.json", r#"{"workspaces":{"packages":["packages/a"],"nohoist":["x"]}}"#)]
+            ),
+            listed(&["packages/a"])
+        );
+        assert_eq!(
+            of_workspace("yaml-wins", &[("package.json", r#"{"workspaces":["packages/*"]}"#), yaml]),
+            listed(&["apps/web"])
+        );
+        assert_eq!(
+            of_workspace(
+                "yaml-without-list",
+                &[
+                    ("package.json", r#"{"workspaces":["packages/*"]}"#),
+                    ("pnpm-workspace.yaml", "onlyBuiltDependencies:\n  - x\n")
+                ]
+            ),
+            listed(&["packages/a"])
+        );
 
         // Nothing named, or a value Node reads as nothing.
         for (name, manifest) in [

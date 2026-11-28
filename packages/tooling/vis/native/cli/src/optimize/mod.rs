@@ -168,7 +168,10 @@ fn context(args: &[String]) -> Option<(Layout, PathBuf, Manager)> {
     // a project directory prints the same as the root does); this crate finds that root for a pnpm, npm or yarn workspace.
     let (root, manager) = workspace_root(&cwd)?;
 
-    if !ci_context(&root) || !quiet_environment(&cwd, &root) || !config_leaves_the_report_alone(&root, node_has_register_hooks) {
+    if !ci_context(&root)
+        || !quiet_environment(&cwd, &root)
+        || !config_leaves_the_report_alone(&root, node_has_register_hooks)
+    {
         return None;
     }
 
@@ -522,7 +525,9 @@ fn lockfile_contains(manager: &str, text: &str, package: &str) -> bool {
 
     match manager {
         "npm" => text.contains(&format!("\"{package}\":")) || text.contains(&format!("\"node_modules/{package}\":")),
-        "yarn" => follows_boundary(text, package, |character| matches!(character, '"' | ','), |rest| rest.starts_with('@')),
+        "yarn" => {
+            follows_boundary(text, package, |character| matches!(character, '"' | ','), |rest| rest.starts_with('@'))
+        }
         _ => follows_boundary(
             text,
             package,
@@ -534,14 +539,21 @@ fn lockfile_contains(manager: &str, text: &str, package: &str) -> bool {
 
 /// Whether `text` holds `package` after the start of a line, a whitespace character (`^` and `\s` of the patterns) or a
 /// character `boundary` accepts, and before a rest that `follows` accepts. Occurrences may overlap.
-fn follows_boundary(text: &str, package: &str, boundary: impl Fn(char) -> bool, follows: impl Fn(&str) -> bool) -> bool {
+fn follows_boundary(
+    text: &str,
+    package: &str,
+    boundary: impl Fn(char) -> bool,
+    follows: impl Fn(&str) -> bool,
+) -> bool {
     let mut from = 0;
 
     while let Some(offset) = text[from..].find(package) {
         let start = from + offset;
         let before = text[..start].chars().next_back();
 
-        if before.is_none_or(|character| is_js_whitespace(character) || boundary(character)) && follows(&text[start + package.len()..]) {
+        if before.is_none_or(|character| is_js_whitespace(character) || boundary(character))
+            && follows(&text[start + package.len()..])
+        {
             return true;
         }
 
@@ -733,10 +745,16 @@ mod tests {
         assert!(accepts("none", &[]));
         assert!(accepts("empty", &[("vis.config.ts", "export default {};\n")]));
         assert!(accepts("mjs", &[("vis.config.mjs", "export default { cache: { enabled: true } };\n")]));
-        assert!(accepts("unknown", &[("vis.config.ts", "export default { nope: 1, update: 5, plugins: [{ name: 'x' }] };\n")]));
+        assert!(accepts(
+            "unknown",
+            &[("vis.config.ts", "export default { nope: 1, update: 5, plugins: [{ name: 'x' }] };\n")]
+        ));
         assert!(accepts("backend", &[("vis.config.ts", "export default { install: { backend: 'npm' } };\n")]));
         // `security` is read for the package-manager commands only.
-        assert!(accepts("security", &[("vis.config.ts", "export default { security: { allowBuilds: { esbuild: true } } };\n")]));
+        assert!(accepts(
+            "security",
+            &[("vis.config.ts", "export default { security: { allowBuilds: { esbuild: true } } };\n")]
+        ));
         assert!(accepts(
             "tasks",
             &[("vis.config.ts", "export default { tasks: { build: { inputs: ['a'], dependsOn: '^build', outputs: ['@inherit'] }, empty: null } };\n")]
