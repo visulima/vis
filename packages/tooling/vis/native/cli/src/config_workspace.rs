@@ -14,8 +14,9 @@
 //!   `TaskConfig::parse`, whose refusals cover what Node rejects while it loads the workspace (a `dependsOn` entry
 //!   that is a file pattern, a URI-shaped input, a task group), so a config it accepts loads. `graph` ignores the
 //!   targets; `task-why` and `status` build them.
-//! - `projectIgnore` changes which directories are projects: each entry becomes a `!` pattern that joins the
-//!   `.gitignore` rules of the root. It is accepted only as an array of plain, non-blank entries that the native
+//! - `projectIgnore` changes which directories are projects: each entry is an ignore pattern that joins the
+//!   `.gitignore` rules of the root (Node spells it `!entry` among the workspace patterns and strips the `!` before it
+//!   reaches the matcher). It is accepted only as an array of plain, non-blank entries that the native
 //!   `.gitignore` rules read, and [`crate::workspace`] applies it with them.
 //! - the `discover` flags of `composer`, `dart`, `gem`, `go`, `gradle`, `hex`, `maven`, `nuget`, `python`, `swift`
 //!   and `zig` add projects that have no `package.json` when they are `true`; a flag that is `false` or absent (and no
@@ -80,9 +81,11 @@ pub(crate) struct Vetted {
     pub tasks: TaskConfig,
 }
 
-/// The `projectIgnore` entries of the config as the lines Node adds to the matcher (`!` + entry, trailing slashes
-/// removed), or `None` for a shape that is Node's: not an array of strings, an entry that is blank, a comment or
-/// ends up empty. Whether the native rules read a line is checked where they are built.
+/// The `projectIgnore` entries of the config as the lines Node's gitignore matcher gets, trailing slashes removed: Node
+/// appends each entry to the workspace patterns as `!entry`, and `resolveWorkspacePatterns` strips that `!` again and
+/// passes the bare entry on as an ignore pattern, so no `!` belongs in these lines (the native rules decline a negation).
+/// `None` for a shape that is Node's: not an array of strings, an entry that is blank, a comment or ends up empty.
+/// Whether the native rules read a line is checked where they are built.
 fn project_ignore(value: &Value) -> Option<Vec<String>> {
     value
         .as_array()?
