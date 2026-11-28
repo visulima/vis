@@ -1,9 +1,15 @@
-//! `vis audit --format json --policies none` — the native answer for a scan that finds nothing.
+//! `vis audit --format json --policies none` — the native answer for a scan whose report is empty.
 //!
 //! The Node handler (`src/commands/audit/handler.ts`) reads the lockfile, asks OSV about every package and
-//! prints a report. When OSV lists no finding and the policy engine is skipped, the report holds no result: the
-//! packages scanned, the duplicate versions, and a row on stderr that says `none found`. This module prints
-//! exactly that, on the client of [`crate::http`], and nothing else.
+//! prints a report. When OSV lists no finding, or lists only what the handler drops, and the policy engine is
+//! skipped, the report holds no result: the packages scanned, the duplicate versions, and a row on stderr that says
+//! `none found` (or `N found`). This module prints exactly that, on the client of [`crate::http`], and nothing else.
+//!
+//! The handler drops a finding of the batch endpoint because that endpoint answers with an id and a timestamp only,
+//! and a finding with no severity field is `UNKNOWN`, which no `--severity` level lets through (see [`osv`] and
+//! [`formats`]). Such a run lists nothing in the results, the summary or an exit gate, so the exit status is 0 for every
+//! flag this module takes. An answer that carries a field the handler maps (a severity, a fix, a summary) may reach the
+//! report, with the resolution paths of the lockfile graph, and stays Node's.
 //!
 //! `--policies none` is required because the engine is not skipped otherwise: the default config turns on the
 //! `publisherChange` policy, which reads the registry's packument of every package and may report a block (and
@@ -12,8 +18,9 @@
 //! Everything else goes to Node before a byte is printed, and Node then asks OSV itself:
 //!
 //! - every other output format, every flag but `--severity`, `--fail-on` and `--exit-code` (which change nothing
-//!   when there is no finding), and every other package manager;
-//! - an answer that lists a finding or that Node would read differently, and a request that fails (see [`osv`]);
+//!   when the report lists no finding), and every other package manager;
+//! - an answer that lists a finding the handler would report or map differently, or a body Node reads differently,
+//!   and a request that fails (see [`osv`]);
 //! - an environment where Node's `fetch` and this client would not reach the same server the same way (see
 //!   [`crate::http::node_fetch`]), a `VIS_AUDIT_BACKEND` or a `VIS_INSTALLER` (the audit may then run `aube audit`; an
 //!   `aube` on `PATH` alone does not make it), a `packageManager` pin (Node reads the manager from it), a
@@ -31,6 +38,8 @@
 mod bundled;
 mod osv;
 mod report;
+
+mod formats;
 
 #[cfg(test)]
 mod tests;
@@ -51,10 +60,11 @@ use crate::pnpm_lock;
 use crate::term::{piped_colour_level, Style};
 use crate::text::{is_ascii_graphic, is_ascii_graphic_path};
 use crate::vis_config::{self, ConfigState};
+use formats::found_row;
 use report::Package;
 
-/// The values `--severity` and `--fail-on` take; with no finding they change nothing, and Node reads any other
-/// value (or none) its own way.
+/// The values `--severity` and `--fail-on` take; with no finding in the report they change nothing, and Node reads any
+/// other value (or none) its own way.
 const LEVELS: [&str; 4] = ["low", "medium", "high", "critical"];
 
 /// Whether `args` (the whole argv) are `audit --format json --policies none` with at most one each of
@@ -154,7 +164,7 @@ fn environment_decline(cwd: &Path) -> Option<&'static str> {
     .find_map(|(declined, reason)| declined.then_some(reason))
 }
 
-/// What a clean run prints on stdout and stderr, or the reason it is Node's.
+/// What a run whose findings Node would not report prints on stdout and stderr, or the reason it is Node's.
 fn answer(args: &[String]) -> Result<(String, String), String> {
     if !parse(args) {
         return Err("not `audit --format json` with the flags it takes".to_owned());
@@ -176,8 +186,8 @@ fn answer(args: &[String]) -> Result<(String, String), String> {
     scan_workspace(&cwd, osv::URL, Style { colour }, term_is_linux, &iso_now())
 }
 
-/// The scan behind the gates: reads the lockfile of `root`, asks OSV at `url` and, when nothing is listed, returns the
-/// report for stdout and the row for stderr.
+/// The scan behind the gates: reads the lockfile of `root`, asks OSV at `url` and, when the answer lists nothing or only
+/// findings Node drops (see [`formats`]), returns the report for stdout and the row for stderr.
 fn scan_workspace(
     root: &Path,
     url: &str,
@@ -195,7 +205,7 @@ fn scan_workspace(
 
     let packages: Vec<Package<'_>> =
         entries.iter().map(|entry| Package { name: &entry.name, version: &entry.version }).collect();
-    let took = osv::scan_is_clean(url, &packages)?;
+    let (found, took) = osv::scan(url, &packages)?;
     let workspace_root = root.to_str().ok_or("the working directory is not UTF-8")?;
     let stdout = report::clean_report(packages.len(), &report::duplicates(&packages), generated_at, workspace_root);
 
@@ -203,5 +213,11 @@ fn scan_workspace(
         return Err("the report is larger than Node reliably writes to a pipe".to_owned());
     }
 
-    Ok((stdout, report::progress_row(style, took, term_is_linux)))
+    let row = if found == 0 {
+        report::progress_row(style, took, term_is_linux)
+    } else {
+        found_row(style, found, took, term_is_linux)
+    };
+
+    Ok((stdout, row))
 }

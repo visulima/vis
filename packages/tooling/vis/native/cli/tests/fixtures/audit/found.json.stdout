@@ -1,0 +1,42 @@
+{
+  "bloomHits": [],
+  "duplicates": [
+    {
+      "name": "@scope/b",
+      "versionCount": 2,
+      "versions": [
+        "1.0.0",
+        "2.0.0"
+      ]
+    },
+    {
+      "name": "zod",
+      "versionCount": 2,
+      "versions": [
+        "3.22.0",
+        "4.0.0"
+      ]
+    }
+  ],
+  "generatedAt": "{now}",
+  "packages": 6,
+  "policies": [],
+  "results": [],
+  "schemaVersion": "1.1",
+  "summary": {
+    "accepted": 0,
+    "duplicatePackages": 2,
+    "issues": 0,
+    "policyBlocks": 0,
+    "policyDecisions": 0,
+    "total": 0
+  },
+  "tool": {
+    "informationUri": "https://github.com/visulima/visulima",
+    "name": "vis-audit",
+    "version": "alpha"
+  },
+  "warnings": [],
+  "workspaceRoot": "{root}",
+  "unauditable": []
+}

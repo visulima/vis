@@ -352,7 +352,7 @@ fn a_whole_run_prints_what_node_printed_in_every_colour_and_terminal() {
 }
 
 #[test]
-fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_as_node_s() {
+fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_with_fields_node_maps_as_node_s() {
     let root = workspace("status");
     let style = Style { colour: false };
     let (url, _seen) = serve(Box::leak(json_reply("400 Bad Request", "{}").into_boxed_str()));
@@ -360,7 +360,8 @@ fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_as_node_s() {
     assert!(scan_workspace(&root, &url, style, false, "T").is_ok());
 
     let (url, _seen) = serve(Box::leak(
-        json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x"}]},{},{},{},{},{}]}"#).into_boxed_str(),
+        json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","summary":"x"}]},{},{},{},{},{}]}"#)
+            .into_boxed_str(),
     ));
 
     assert!(scan_workspace(&root, &url, style, false, "T").is_err());
@@ -512,4 +513,141 @@ fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_js
     let broken = installed("broken-json", &[("node_modules/plain/package.json", "{ not json")]);
 
     assert!(super::bundled::decline(&broken).is_some());
+}
+
+// ---- findings that Node drops -----------------------------------------------------------------------------------
+
+use super::formats::found_row;
+use super::osv::documented_findings;
+
+const NOW: &str = "2026-01-02T03:04:05.678Z";
+
+/// What the stub answers for the recorded lockfile of six packages in the run Node was recorded on: two findings for
+/// the first package, none for the second, one for the third. The batch endpoint documents `id` and `modified` only.
+const FOUND: &str = r#"{"results":[{"vulns":[{"id":"GHSA-aaaa-bbbb-cccc","modified":"2024-01-01T00:00:00Z"},{"id":"MAL-2024-1","modified":"2024-01-01T00:00:00Z"}]},{},{"vulns":[{"id":"CVE-2020-1","modified":"2024-01-01T00:00:00Z"}]},{},{},{}]}"#;
+
+fn timing() -> regex::Regex {
+    regex::Regex::new(r"· \d+(?:\.\d)?m?s").unwrap()
+}
+
+/// A recorded document with the values Node's runs differ by (the clock, the elapsed time, the root) put back to the
+/// ones the run under test used, and the output of this run with its clock and elapsed time masked the way the fixture is.
+fn unmasked(fixture: &str, root: &std::path::Path) -> String {
+    fixture
+        .replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\"))
+        .replace("{now}", NOW)
+        .replace("{seconds}", &NOW[..19])
+        .replace("{date}", &NOW[..10])
+}
+
+#[test]
+fn counts_the_findings_of_the_documented_answer_for_the_packages_asked_about() {
+    for (body, scanned, count) in [
+        (FOUND, 6, 3),
+        // The answer is read for the packages Node asked about; a longer list is ignored, a shorter one is not an error.
+        (FOUND, 1, 2),
+        (FOUND, 0, 0),
+        (r#"{"results":[{"vulns":[{"id":"a","modified":"x"}]}]}"#, 3, 1),
+        // A repeated id counts each time, and a record may carry any key Node does not read.
+        (r#"{"results":[{"vulns":[{"id":"a"},{"id":"a","modified":null,"details":"x"}]}]}"#, 1, 2),
+        // The keys Node maps may be absent or null.
+        (
+            r#"{"results":[{"vulns":[{"id":"a","severity":null,"database_specific":null,"affected":null,"aliases":null,"summary":null}]}]}"#,
+            1,
+            1,
+        ),
+        (r#"{"results":[{"vulns":null},{"vulns":[]},{}]}"#, 3, 0),
+    ] {
+        assert_eq!(documented_findings(body, scanned), Some(count), "{body}");
+    }
+}
+
+#[test]
+fn a_record_node_maps_or_reads_differently_is_node_s() {
+    for body in [
+        // Every field `mapOsvVuln` reads, present: the finding may get a severity and reach the report, or its
+        // type may make the handler's `catch` print an error row.
+        r#"{"results":[{"vulns":[{"id":"a","severity":[{"type":"CVSS_V3","score":"9.8"}]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","database_specific":{"severity":"HIGH"}}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","affected":[]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","aliases":["CVE-1"]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","summary":"x"}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","summary":""}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","aliases":[]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","severity":false}]}]}"#,
+        // A record that is not an object, or has no string id, and a list that is not an array.
+        r#"{"results":[{"vulns":[null]}]}"#,
+        r#"{"results":[{"vulns":["GHSA-x"]}]}"#,
+        r#"{"results":[{"vulns":[{}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":7}]}]}"#,
+        r#"{"results":[{"vulns":{"id":"a"}}]}"#,
+        r#"{"results":[{"vulns":"abc"}]}"#,
+        // A result that is not an object, past the packages asked about as well.
+        r#"{"results":[null]}"#,
+        r#"{"results":[{},"x"]}"#,
+        r#"{"results":{}}"#,
+        r#"[]"#,
+        "{",
+        "\u{feff}{\"results\":[]}",
+    ] {
+        assert_eq!(documented_findings(body, 1), None, "{body}");
+    }
+}
+
+#[test]
+fn the_row_of_a_scan_with_findings_has_a_yellow_warning_and_the_count() {
+    let took = Duration::from_millis(12);
+
+    assert_eq!(
+        found_row(Style { colour: false }, 4, took, false),
+        "  \u{26a0} Known vulnerabilities (OSV) \u{2014} 4 found \u{b7} 12ms\n"
+    );
+    assert_eq!(
+        found_row(Style { colour: false }, 1, took, true),
+        "  ! Known vulnerabilities (OSV) \u{2014} 1 found \u{b7} 12ms\n"
+    );
+    assert_eq!(
+        found_row(Style { colour: true }, 4, took, false),
+        "  \u{1b}[33m\u{26a0}\u{1b}[39m Known vulnerabilities (OSV) \u{1b}[2m\u{2014} 4 found \u{b7} 12ms\u{1b}[22m\n"
+    );
+}
+
+#[test]
+fn the_row_matches_what_node_printed_in_every_colour_and_terminal() {
+    let root = workspace("found-rows");
+
+    for (style, linux, stderr) in [
+        (Style { colour: false }, false, include_str!("../../tests/fixtures/audit/found.plain.stderr")),
+        (Style { colour: true }, false, include_str!("../../tests/fixtures/audit/found.colour.stderr")),
+        (Style { colour: false }, true, include_str!("../../tests/fixtures/audit/found.linux.stderr")),
+    ] {
+        let (url, _seen) = serve(Box::leak(json_reply("200 OK", FOUND).into_boxed_str()));
+        let (_printed, row) = scan_workspace(&root, &url, style, linux, NOW).unwrap();
+
+        assert_eq!(timing().replace(&row, "· <TIME>"), stderr);
+    }
+}
+
+#[test]
+fn findings_node_drops_print_the_report_of_a_clean_scan() {
+    let root = workspace("found-json");
+    let (url, _seen) = serve(Box::leak(json_reply("200 OK", FOUND).into_boxed_str()));
+    let (printed, _row) = scan_workspace(&root, &url, Style { colour: false }, false, NOW).unwrap();
+
+    assert_eq!(printed, unmasked(include_str!("../../tests/fixtures/audit/found.json.stdout"), &root));
+    // ... which is the clean report, byte for byte, as Node printed it for the same lockfile.
+    assert_eq!(printed, STDOUT.replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\")));
+
+    // The exit gates see no finding: Node exits 0 with `--exit-code --fail-on low --severity critical` too, and the run
+    // here ends in `exit(0)` whatever the answer lists.
+    assert_eq!(include_str!("../../tests/fixtures/audit/found.gates.exit"), "0\n");
+}
+
+#[test]
+fn a_record_with_fields_node_maps_is_node_s() {
+    let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
+    let root = workspace("detailed");
+    let (url, _seen) = serve(Box::leak(json_reply("200 OK", detailed).into_boxed_str()));
+
+    assert!(scan_workspace(&root, &url, Style { colour: false }, false, NOW).unwrap_err().contains("fields Node maps"));
 }

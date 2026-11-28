@@ -1341,7 +1341,7 @@ const inspectMayRunNatively = (platform, environment, args, cwd, interactive, ho
 
 // The flags `vis audit` takes natively (`parse` in `native/cli/src/audit/mod.rs`): `--format json` and `--policies none` (the
 // default config runs the `publisherChange` policy, which asks the registry) and, at most once each, `--severity` and
-// `--fail-on` with one of the four levels, and `--exit-code`; with no finding they change nothing.
+// `--fail-on` with one of the four levels, and `--exit-code`; with no finding in the report they change nothing.
 const AUDIT_LEVELS = new Set(["critical", "high", "low", "medium"]);
 
 const AUDIT_VALUES = new Map([
@@ -1387,7 +1387,7 @@ const auditArgsAreNative = (flags) => {
 
 // Whether `vis audit` can pass the binary's native gate (`parse` and `answer` in `audit/mod.rs`): `--format json --policies none` for a pnpm
 // workspace whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node option in the
-// environment. The binary answers only a scan that finds nothing and hands everything else to Node before it prints (the
+// environment. The binary answers only a scan whose report is empty (nothing found, or findings the handler drops) and hands everything else to Node before it prints (the
 // OSV answer, the lockfile, the config and `pnpm-workspace.yaml` are its to check). The Node runtime's own colour warning
 // is Node's.
 const auditMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
