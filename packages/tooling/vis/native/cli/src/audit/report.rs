@@ -14,9 +14,9 @@ use crate::term::Style;
 const TOOL: &str = "{\n    \"informationUri\": \"https://github.com/visulima/visulima\",\n    \"name\": \"vis-audit\",\n    \"version\": \"alpha\"\n  }";
 
 /// One package of the lockfile, as the report counts it.
-pub(super) struct Package<'a> {
-    pub(super) name: &'a str,
-    pub(super) version: &'a str,
+pub(crate) struct Package<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) version: &'a str,
 }
 
 /// A package name installed in more than one version, in the order the lockfile lists them.

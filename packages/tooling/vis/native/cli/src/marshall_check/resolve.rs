@@ -25,7 +25,7 @@ const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 ///
 /// The expression is node-semver's `COERCE` (digits of at most 16 characters, ASCII only), which finds the leftmost
 /// match; a component with a leading zero or above `MAX_SAFE_INTEGER` makes the version invalid, and so `null`.
-pub(super) fn coerce(spec: &str) -> Option<String> {
+pub(crate) fn coerce(spec: &str) -> Option<String> {
     let pattern = Regex::new(r"(?-u)(^|[^0-9])([0-9]{1,16})(?:\.([0-9]{1,16}))?(?:\.([0-9]{1,16}))?(?:$|[^0-9])")
         .expect("the coerce expression compiles");
     let found = pattern.captures(spec.as_bytes())?;

@@ -15,7 +15,7 @@ use super::report::Package;
 use crate::http::{node_fetch, HttpClient, HttpConfig, HttpError};
 use crate::js::json_string;
 
-pub(super) const URL: &str = "https://api.osv.dev/v1/querybatch";
+pub(crate) const URL: &str = "https://api.osv.dev/v1/querybatch";
 
 /// `timeoutMs` of `fetchVulnerabilities`, which aborts the whole request, body included.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -133,5 +133,14 @@ pub(super) fn scan(url: &str, packages: &[Package<'_>]) -> Result<(usize, Durati
                     .to_owned()
             })
         }
+    }
+}
+
+/// [`scan`] for a caller that has no use for a finding (`vis check`): how long it took when the answer lists nothing,
+/// or the reason to hand the run to Node.
+pub(crate) fn scan_is_clean(url: &str, packages: &[Package<'_>]) -> Result<Duration, String> {
+    match scan(url, packages)? {
+        (0, took) => Ok(took),
+        _ => Err("the answer lists findings, or is not the JSON object Node reads the same way".to_owned()),
     }
 }

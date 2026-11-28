@@ -729,6 +729,91 @@ const addColourIsPlain = (environment) => {
     return !ADD_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && (term === undefined || term.includes("dumb") || term.includes("mono"));
 };
 
+// The flags of `vis check` the binary answers (`parse` in `native/cli/src/check/args.rs`): each flag at most once, `--include` and
+// `--exclude` repeated, a package pattern, and nothing else. A word right after the value of `--include` or `--exclude` is left to
+// Node, which reads it as another value of that option. `--ai`, `--ai-type`, `--security-config`, `--sync`, `--include-internal` and
+// every flag written with `=` are Node's.
+const CHECK_BOOLEANS = [["-D", "--dev"], ["-P", "--prod"], ["--peer"], ["--prerelease"], ["--exit-code"], ["--no-security"]];
+const CHECK_VALUES = new Map([
+    ["--format", ["table", "json", "minimal"]],
+    ["--target", ["latest", "minor", "patch"]],
+    ["-t", ["latest", "minor", "patch"]],
+]);
+const CHECK_PATTERN = /^[\u0021-\u007E]+$/;
+
+// One token of `check`'s arguments: where to go on from and whether it was a value of `--include` or `--exclude`, or `undefined` when the
+// token is not one the binary answers. `seen` holds the flags read so far.
+const checkTokenStep = (rest, index, seen) => {
+    const token = rest[index];
+
+    if (token === "--include" || token === "--exclude") {
+        const value = rest[index + 1];
+
+        return value !== undefined && CHECK_PATTERN.test(value) && !value.startsWith("-") ? { multiValue: true, next: index + 2 } : undefined;
+    }
+
+    if (CHECK_VALUES.has(token)) {
+        const group = token === "-t" ? "--target" : token;
+
+        if (seen.has(group) || !CHECK_VALUES.get(token).includes(rest[index + 1])) {
+            return undefined;
+        }
+
+        seen.add(group);
+
+        return { multiValue: false, next: index + 2 };
+    }
+
+    if (token.startsWith("-")) {
+        const names = CHECK_BOOLEANS.find((flag) => flag.includes(token));
+
+        if (names === undefined || seen.has(names[0])) {
+            return undefined;
+        }
+
+        seen.add(names[0]);
+
+        return { multiValue: false, next: index + 1 };
+    }
+
+    return CHECK_PATTERN.test(token) ? { multiValue: false, next: index + 1 } : undefined;
+};
+
+const checkShapeIsNative = (rest) => {
+    const seen = new Set();
+    let afterMultiValue = false;
+    let index = 0;
+
+    while (index < rest.length) {
+        // A word right after the value of `--include` or `--exclude` is another value of that option in Node.
+        if (afterMultiValue && !rest[index].startsWith("-")) {
+            return false;
+        }
+
+        const step = checkTokenStep(rest, index, seen);
+
+        if (step === undefined) {
+            return false;
+        }
+
+        ({ multiValue: afterMultiValue, next: index } = step);
+    }
+
+    // cerebro rejects the pair with an error of its own.
+    return !(seen.has("-D") && seen.has("-P"));
+};
+
+// Whether `vis check` (and its alias `c`) can pass the binary's native gate (`answer` in `native/cli/src/check/mod.rs`): the install
+// context (a CI run off a terminal with no setting that changes Node's output), at the workspace root, with no colour the
+// binary cannot decide and no proxy, CA file or Node option, since the run asks the registry. The binary re-checks everything,
+// including the workspace, the config and the `.npmrc`; this only skips the extra process when it would delegate anyway.
+const checkMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) =>
+    installContextIsNative(platform, environment, args, interactive)
+    && cwdIsRoot(environment, cwd, holdsMarker)
+    && addColourIsPlain(environment)
+    && networkEnvironmentIsPlain(environment)
+    && checkShapeIsNative(args.slice(1));
+
 // The marshall check asks the registry and other services, which needs the environment to lead `fetch` and the binary's
 // client to the same servers the same way; `--no-marshall-check` makes no request.
 const addMayRunNatively = (platform, environment, args, interactive) =>
@@ -1162,6 +1247,46 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
 
+// Whether `vis init` can pass the binary's native gate (`parse` and `answer` in `init.rs`): the flags that ask nothing, each spelled
+// exactly and given once, in a CI context off a terminal at the root of a pnpm workspace. The binary also hands the run to Node when
+// stdin is a terminal (Node then asks its questions), which the launcher does not see, and re-checks everything else (the package
+// manager, an existing config, the files it would merge into); this only skips the extra process when it would delegate anyway.
+// `--yes` is not an `init` option, `--interactive` and any other editor than `vscode` stay in Node. Windows stays in Node.
+const INIT_FLAGS = new Set(["--agent", "--force", "--no-interactive", "--schema", "--sync-native"]);
+
+const initArgsAreNative = (args) => {
+    const flags = args.slice(1);
+    const seen = new Set();
+
+    for (let index = 0; index < flags.length; index += 1) {
+        let flag = flags[index];
+
+        if (flag === "--editor" && flags[index + 1] === "vscode") {
+            index += 1;
+        } else if (flag !== "--editor=vscode" && !INIT_FLAGS.has(flag)) {
+            return false;
+        }
+
+        flag = flag.startsWith("--editor") ? "--editor" : flag;
+
+        if (seen.has(flag)) {
+            return false;
+        }
+
+        seen.add(flag);
+    }
+
+    return true;
+};
+
+const initMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && initArgsAreNative(args);
+};
+
 // Whether `vis security verify-lockfile` can pass the binary's native gate (`parse` and `answer` in `security_verify_lockfile.rs`):
 // `--offline`, alone or with `--json` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
 // terminal. The text form also needs a pail layout the environment decides; the JSON form prints no pail line, but the Node runtime's
@@ -1468,6 +1593,73 @@ const hookMayRunNatively = (platform, environment, args, cwd, interactive, holds
     return outputSettingsAreDefault(environment) && hookShapeIsNative(args);
 };
 
+// Whether `vis staged` can pass the binary's native gate (`args::parse` and `prepare` in `staged/`): the options it
+// reads (`--quiet`, `--verbose`, `--relative`, `--revert`, `--no-stash`, `--concurrent false|<n>`, `--diff <range>`), at
+// the root of a pnpm workspace in a CI context off a terminal, and a run that cannot end in the stack trace Node prints
+// for an emptied commit: a `--diff` run, which never makes that check, or `--quiet` without `--verbose`. The Node
+// handler reads `--allow-empty`, `--auto-stage`, `--continue-on-error`, `--fail-on-changes`, `--force-kill`,
+// `--diff-filter` and the two `--hide-*` flags under a name its parser does not give them, so they do nothing there and
+// the binary leaves a call that names one to Node. The binary re-checks everything, including the config, the
+// repository, the glob patterns and the programs; this only skips the extra process when it would delegate anyway.
+// Unix only.
+const STAGED_FLAGS = new Set(["--no-stash", "--quiet", "--relative", "--revert", "--verbose"]);
+const STAGED_VALUES = new Set(["--concurrent", "--diff"]);
+const STAGED_CONCURRENT = /^(?:false|[1-9]\d{0,5})$/;
+const STAGED_RANGE = /^[a-z_][\w./~^@-]*$/i;
+const STAGED_RESERVED_RANGES = new Set(["false", "infinity", "nan", "null", "true", "undefined"]);
+
+const stagedValueIsNative = (name, value) => {
+    if (value === undefined) {
+        return false;
+    }
+
+    return name === "--concurrent" ? STAGED_CONCURRENT.test(value) : STAGED_RANGE.test(value) && !STAGED_RESERVED_RANGES.has(value.toLowerCase());
+};
+
+// `--name=value` of an option that takes one, as a name and its value; any other word is its own name.
+const splitStagedWord = (word) => {
+    const equals = word.indexOf("=");
+
+    return equals !== -1 && STAGED_VALUES.has(word.slice(0, equals)) ? [word.slice(0, equals), word.slice(equals + 1)] : [word, undefined];
+};
+
+// The options the binary reads, by name, or `undefined` for an option it does not read, a repeated one (the parser reads it as a list) or a bad value.
+const stagedOptions = (words) => {
+    const options = new Map();
+
+    for (let index = 0; index < words.length; index += 1) {
+        const [name, inline] = splitStagedWord(words[index]);
+        let value = inline;
+
+        if (STAGED_VALUES.has(name) && value === undefined) {
+            index += 1;
+            value = words[index];
+        }
+
+        if (options.has(name) || !(STAGED_FLAGS.has(name) || (STAGED_VALUES.has(name) && stagedValueIsNative(name, value)))) {
+            return undefined;
+        }
+
+        options.set(name, value);
+    }
+
+    return options;
+};
+
+const stagedShapeIsNative = (args) => {
+    const options = stagedOptions(args.slice(1));
+
+    return options !== undefined && (options.has("--diff") || (options.has("--quiet") && !options.has("--verbose")));
+};
+
+const stagedMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && colourIsDecidable(environment, args) && environment.VIS_STAGED_CONCURRENT === undefined && stagedShapeIsNative(args);
+};
+
 // Whether `vis shim status` can pass the binary's native gate (`answer` in `shim_status.rs`): exactly `shim status`, at the root of a pnpm
 // workspace in a CI context off a terminal. The binary re-checks everything, so this only skips the extra process when it would delegate anyway.
 // `shim install` and `shim uninstall` write files and stay in Node. Windows stays in Node.
@@ -1599,6 +1791,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["attest", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => attestMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `audit --format json`, answered only when the scan finds nothing.
     ["audit", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => auditMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // `check` and its alias: see `check` below.
+    ["c", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => checkMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache prune` (`cache_prune.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
@@ -1610,6 +1804,8 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
         },
     ],
+    // The outdated check, typed `check` or `c`: the table, JSON and minimal formats of a workspace of plain version ranges; `--ai`, `--security-config` and the rest stay in Node.
+    ["check", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => checkMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
     // The dependency-policy lints: the selectors, `--quiet` and `--format`.
@@ -1636,6 +1832,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
+    // `init`'s flags that ask nothing (`--force`, `--agent`, `--editor vscode`, `--sync-native`, `--schema`, `--no-interactive`): the binary writes the config and hands every other shape to Node.
+    ["init", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => initMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The JSON report of the marshalls `--only` names, or the default set less the ones `MARSHALL_DISABLE_*` turns off.
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
@@ -1688,6 +1886,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ],
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
     ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // The plain-command `staged` block over a git range (`--diff <range>`) or under `--quiet`; every other run is Node's.
+    ["staged", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => stagedMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
     // The overview and its `--json`; a Node pin the binary cannot check (no `node` on PATH) or run summaries of an unexpected shape stay in Node.
     ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],

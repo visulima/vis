@@ -53,7 +53,7 @@ pub(crate) enum Consumer {
 }
 
 /// Top-level keys that nothing on the path of these commands reads (see the module documentation).
-const INERT: [&str; 13] = [
+pub(crate) const INERT: [&str; 13] = [
     "affectedIgnore",
     "ai",
     "branchScopedCache",

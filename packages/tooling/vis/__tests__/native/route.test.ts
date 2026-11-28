@@ -352,6 +352,83 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis init` flag shapes (parse in init.rs)", () => {
+        const ci = { CI: "1" };
+        const root = "/work/app";
+        // `root` holds the only root marker, so a working directory below it is not the workspace root.
+        const route = (args: string[], environment: Record<string, string> = ci, cwd = root) =>
+            routesToNative(["init", ...args], "linux", environment, cwd, false, (directory: string) => directory === root);
+
+        it.each([
+            [[]],
+            [["--no-interactive"]],
+            [["--schema"]],
+            [["--force"]],
+            [["--agent"]],
+            [["--sync-native"]],
+            [["--editor", "vscode"]],
+            [["--editor=vscode"]],
+            [["--force", "--agent", "--editor", "vscode", "--sync-native", "--no-interactive"]],
+            [["--sync-native", "--editor=vscode", "--force"]],
+        ])("routes `vis init %j` in CI", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(route(args)).toBe(true);
+        });
+
+        it.each([
+            [["--yes"]],
+            [["--interactive"]],
+            [["--force", "--force"]],
+            [["--editor"]],
+            [["--editor", "zed"]],
+            [["--editor=zed"]],
+            [["--editor", "vscode", "--editor=vscode"]],
+            [["--force=true"]],
+            [["--no-force"]],
+            [["--agent=false"]],
+            [["extra"]],
+            [["--"]],
+            [["--cwd", "."]],
+        ])("delegates `vis init %j`", (args: string[]) => {
+            expect.assertions(1);
+
+            expect(route(args)).toBe(false);
+        });
+
+        it.each([[{}], [{ CI: "1", NODE_ENV: "test" }], [{ CI: "1", NODE_ENV: "debug" }], [{ CI: "1", DEBUG: "1" }], [{ CI: "1", PAIL_LOG_LEVEL: "error" }], [{ CEREBRO_OUTPUT_LEVEL: "16", CI: "1" }], [{ CI: "1", FORCE_COLOR: "1", NO_COLOR: "1" }], [{ CI: "1", TERM: "iTerm.app" }]])(
+            "delegates `vis init` in the environment %j",
+            (environment: Record<string, string>) => {
+                expect.assertions(1);
+
+                expect(route([], environment)).toBe(false);
+            },
+        );
+
+        it("delegates from a directory below the workspace root, and from one that is not the inherited root", () => {
+            expect.assertions(3);
+
+            expect(route([], ci, `${root}/packages/a`)).toBe(false);
+            expect(route([], { ...ci, VIS_MONOREPO_ROOT: "/work/other" })).toBe(false);
+            expect(route([], { ...ci, VIS_MONOREPO_ROOT: root })).toBe(true);
+        });
+
+        it("delegates a colour flag, a terminal and Windows", () => {
+            expect.assertions(3);
+
+            expect(route(["--no-color"])).toBe(false);
+            expect(routesToNative(["init"], "linux", ci, root, true, (directory: string) => directory === root)).toBe(false);
+            expect(routesToNative(["init"], "win32", ci, root, false, (directory: string) => directory === root)).toBe(false);
+        });
+
+        it("renders the help surface natively on every platform", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(["init", "--help"], "linux")).toBe(true);
+            expect(routesToNative(["init", "--help"], "win32")).toBe(true);
+        });
+    });
+
     describe("`vis sync ci-workflow` flag shapes (parse in ci_workflow/mod.rs)", () => {
         const ci = { CI: "1" };
         const root = "/work/app";
@@ -580,6 +657,7 @@ describe("launcher routing (bin/route.mjs)", () => {
         const COMMANDS: [string, string[], Record<string, string>][] = [
             ["clean", ["clean"], { CI: "1" }],
             ["ignore", ["ignore"], { CI: "1" }],
+            ["init", ["init"], { CI: "1" }],
             ["install", ["install"], { CI: "1" }],
             ["cache clean", ["cache", "clean", "--dry-run"], { CI: "1" }],
             ["cache hash", ["cache", "hash", "app:build"], { CI: "1" }],
@@ -589,10 +667,11 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
             ["sync ci-workflow", ["sync", "ci-workflow", "--provider=github"], { CI: "1" }],
             ["task-why", ["task-why", "app:build"], { CI: "1" }],
+            ["staged", ["staged", "--quiet"], { CI: "1" }],
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
-        const PRINTS_PAIL_LINES = new Set(["cache clean", "cache hash", "cache prune", "cache why", "clean", "install", "replay", "secrets"]);
+        const PRINTS_PAIL_LINES = new Set(["cache clean", "cache hash", "cache prune", "cache why", "clean", "init", "install", "replay", "secrets"]);
 
         const ANSWERED: Record<string, string>[] = [
             { GITHUB_ACTIONS: "true" },
