@@ -193,10 +193,6 @@ fn parse(args: &[String]) -> Option<Plan> {
     Some(Plan { format, include_dev, focus, output: output.unwrap_or_else(|| format.default_output().to_owned()) })
 }
 
-/// What a `vis.config` leaves of the workspace for the BOM: the `projectIgnore` entries, which are empty without a
-/// config.
-type Ignore = Vec<String>;
-
 /// Whether the config at the root is a `vis.config.js` in a package that does not say whether it is a module. Node
 /// then finds out by parsing the file and prints a `MODULE_TYPELESS_PACKAGE_JSON` warning on stderr, whose text
 /// depends on the Node version and which this command does not reproduce.
@@ -205,11 +201,11 @@ fn module_type_is_guessed(root: &Path) -> bool {
         && read_json(&root.join("package.json")).is_none_or(|manifest| manifest.get("type").is_none())
 }
 
-/// The `projectIgnore` of the config when Node would reach the same answer: a CI context off a terminal, no output
+/// The `projectIgnore` entries of the config (none without one) when Node would reach the same answer: a CI context off a terminal, no output
 /// settings that change the status lines, and `cwd` the workspace root of a pnpm workspace whose `vis.config` is
 /// absent, or a literal one whose keys cannot change the BOM beyond `projectIgnore` (see `config_workspace`). `None`
 /// for every other config and context.
-fn context(cwd: &Path) -> Option<Ignore> {
+fn context(cwd: &Path) -> Option<Vec<String>> {
     if !ci_root_context(cwd) || !root_collation() || NODE_ONLY_FILES.iter().any(|name| cwd.join(name).exists()) {
         return None;
     }
