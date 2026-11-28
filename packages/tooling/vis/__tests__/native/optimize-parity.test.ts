@@ -60,10 +60,12 @@ const VIS_CONFIG_MODULE: Files = {
 interface ConfigCase {
     files: Files;
     label: string;
+    /** Fields of the root manifest, which is the package scope of the config. */
+    manifest?: Record<string, unknown>;
 }
 
-const config = (label: string, source: string, name = "vis.config.ts"): ConfigCase => {
-    return { files: { [name]: source }, label };
+const config = (label: string, source: string, name = "vis.config.ts", manifest?: Record<string, unknown>): ConfigCase => {
+    return { files: { [name]: source }, label, manifest };
 };
 
 /** Configs Node loads without a word, whatever they hold: the report does not read them. */
@@ -77,6 +79,11 @@ const ACCEPTED_CONFIGS: ConfigCase[] = [
     config("a security block, which only the package-manager commands read", 'export default { security: { allowBuilds: { esbuild: true }, policies: { installScripts: { strict: false } } } };\n'),
     config("a security value of another type", "export default { security: 5 };\n"),
     config("tasks with lists", 'export default { tasks: { build: { dependsOn: ["^build"], inputs: ["@inherit", "src/**"], outputs: "dist" }, test: null } };\n'),
+    config("a `.ts` config in a CommonJS package", "export default { cache: {} };\n", "vis.config.ts", { type: "commonjs" }),
+    config("a `.ts` config in a package of another `type`", "export default { cache: {} };\n", "vis.config.ts", { type: "bogus" }),
+    config("a `.js` config in a module package", "export default { cache: {} };\n", "vis.config.js", { type: "module" }),
+    config("a `.mts` config in a CommonJS package", "export default { cache: {} };\n", "vis.config.mts", { type: "commonjs" }),
+    config("a `.mjs` config in a CommonJS package", "export default { cache: {} };\n", "vis.config.mjs", { type: "commonjs" }),
     config("a JSON config, which Node does not load", '{ "runtime": "bun", "targetDefaults": {} }\n', "vis.config.json"),
     { files: { "vis.config.json": "{ not json", "vis.config.ts": "export default {};\n" }, label: "a JSON config beside a script config" },
     // Node loads the first script config in its own order (`.ts` before `.mjs`) and never reads the other.
@@ -95,6 +102,11 @@ const DECLINED_CONFIGS: ConfigCase[] = [
     config("a task list that is null", "export default { tasks: { build: { dependsOn: null } } };\n"),
     config("an install block Node runs", "export default { install: { corepack: true } };\n"),
     config("ESM syntax in a CommonJS file", "export default {};\n", "vis.config.cjs"),
+    config("ESM syntax in a `.cts` file", "export default {};\n", "vis.config.cts"),
+    config("a `.js` config in a CommonJS package", "export default { cache: {} };\n", "vis.config.js", { type: "commonjs" }),
+    config("a `.js` config in a package of another `type`", "export default { cache: {} };\n", "vis.config.js", { type: "bogus" }),
+    config("a `.js` config in a package whose `type` is null", "export default { cache: {} };\n", "vis.config.js", { type: null }),
+    config("a `.ts` config in a package whose `type` is a number", "export default { cache: {} };\n", "vis.config.ts", { type: 1 }),
     config("an invalid JSON config", "{ not json", "vis.config.json"),
 ];
 
@@ -124,13 +136,13 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         ["--no-install", "--format", "json", "--prod"],
     ];
 
-    const rich = (): Files =>
+    const rich = (manifest: Record<string, unknown> = {}): Files =>
         workspaceFiles({
             ...project("a", { dependencies: deps(0, 6), devDependencies: deps(6, 5) }),
             ...project("b", { peerDependencies: deps(11, 4), optionalDependencies: deps(15, 3) }),
             // Names the e18e manifests know, so the report has e18e entries as well as socket ones.
             ...project("c", { dependencies: { "a-sync-waterfall": "1", "@cypress/request": "1", "arr-diff": "1", left: "1", ...deps(0, 2) } }),
-        }, { dependencies: deps(20, 3), devDependencies: deps(23, 2) });
+        }, { dependencies: deps(20, 3), devDependencies: deps(23, 2), ...manifest });
 
     describe("accepted shapes", () => {
         it.each(FLAG_SETS)("`optimize %s` prints what Node does", (...flags: string[]) => {
@@ -420,11 +432,11 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
 
         describe("with a literal vis.config", () => {
-            it.each(ACCEPTED_CONFIGS)("$label is read like Node does", ({ files }) => {
+            it.each(ACCEPTED_CONFIGS)("$label is read like Node does", ({ files, manifest }) => {
                 expect.hasAssertions();
 
-                harness.expectParity({ ...rich(), ...files }, []);
-                harness.expectParity({ ...rich(), ...files }, ["--format", "json", "--dry-run"]);
+                harness.expectParity({ ...rich(manifest), ...files }, []);
+                harness.expectParity({ ...rich(manifest), ...files }, ["--format", "json", "--dry-run"]);
             });
 
             it("reads the config `vis init` writes: a `defineConfig` call from the vis config module", () => {
@@ -505,10 +517,10 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  - "!packages/b"\n' }, []);
         });
 
-        it.each(DECLINED_CONFIGS)("a vis.config with $label is declined", ({ files }) => {
+        it.each(DECLINED_CONFIGS)("a vis.config with $label is declined", ({ files, manifest }) => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...rich(), ...files }, []);
+            harness.expectDelegation({ ...rich(manifest), ...files }, []);
         });
 
         describe("a root the binary does not read", () => {

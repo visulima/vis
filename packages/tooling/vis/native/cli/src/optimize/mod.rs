@@ -37,7 +37,7 @@ use crate::json::Json;
 use crate::node_context::{ci_context, quiet_environment, workspace_root};
 use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
-use crate::root_search::Manager;
+use crate::root_search::{read_json, Manager};
 use crate::vis_config::{self, ConfigState};
 use crate::workspace::directories_of_workspace;
 
@@ -186,7 +186,8 @@ const TASK_LIST_FIELDS: [&str; 4] = ["aliases", "dependsOn", "inputs", "outputs"
 /// That is a config that is a plain literal and is not one of the shapes the Node loader fails or prints on: a key only
 /// Node handles (`extends`, `runtime`, `versionConstraint`, the removed keys, an `install` it must run), a `__proto__` key
 /// (a literal sets the prototype with it, a map holds a key), or a task whose list fields `includes` cannot be called on.
-/// A config in a parent directory, or in the root in a form Node does not evaluate, is never loaded.
+/// A config in a parent directory, or in the root in a form Node does not evaluate, is never loaded. The file also has to be
+/// one Node loads as the module it is written as ([`module_format_loads`]).
 fn config_leaves_the_report_alone(root: &Path) -> bool {
     let config = match vis_config::read(root) {
         ConfigState::Absent => return true,
@@ -200,8 +201,14 @@ fn config_leaves_the_report_alone(root: &Path) -> bool {
         return false;
     };
 
-    if file.extension().is_some_and(|extension| extension == "json") {
+    let extension = file.extension().and_then(|extension| extension.to_str());
+
+    if extension == Some("json") {
         return true;
+    }
+
+    if !module_format_loads(root, extension) {
+        return false;
     }
 
     let mut rest = config.clone();
@@ -211,6 +218,35 @@ fn config_leaves_the_report_alone(root: &Path) -> bool {
     }
 
     !vis_config::requires_node(&ConfigState::Static(rest)) && !holds_proto_key(&config) && tasks_load(&config)
+}
+
+/// Whether Node loads a config with this extension in the package scope of the root `package.json` without a word. A
+/// `.cts` or `.cjs` file is CommonJS, which its `export default` is not; a `.js` file is CommonJS under `"type": "commonjs"`
+/// (Node warns and the loader prints an error block); and a `type` that is not a string makes Node reject the manifest for
+/// the `.ts` and `.js` files that read their package scope (`.mts` and `.mjs` never do). Probed against the Node CLI: a `.ts`
+/// loads under any string `type`, a `.js` under none or `module`.
+fn module_format_loads(root: &Path, extension: Option<&str>) -> bool {
+    match extension {
+        Some("cts" | "cjs") => false,
+        Some(extension @ ("ts" | "js")) => {
+            let manifest = root.join("package.json");
+
+            if !manifest.exists() {
+                return true;
+            }
+
+            let Some(manifest) = read_json(&manifest) else {
+                return false;
+            };
+
+            match manifest.get("type") {
+                None => true,
+                Some(Value::String(module_type)) => extension == "ts" || module_type == "module",
+                Some(_) => false,
+            }
+        }
+        _ => true,
+    }
 }
 
 /// Whether `value` holds an object key named `__proto__` anywhere.
@@ -675,8 +711,38 @@ mod tests {
 
         // A script config of a form Node cannot load as ESM prints an error block.
         assert!(!accepts("cjs", &[("vis.config.cjs", "export default {};\n")]));
+        assert!(!accepts("cts", &[("vis.config.cts", "export default {};\n")]));
         // A config that is not valid JSON is not read as data either.
         assert!(!accepts("bad-json", &[("vis.config.json", "{ not json")]));
+    }
+
+    #[test]
+    fn the_package_scope_of_the_root_decides_which_script_configs_load() {
+        let config = "export default { cache: {} };\n";
+
+        for (name, file, manifest, accepted) in [
+            ("ts-none", "vis.config.ts", r#"{"name":"r"}"#, true),
+            ("ts-commonjs", "vis.config.ts", r#"{"type":"commonjs"}"#, true),
+            ("ts-module", "vis.config.ts", r#"{"type":"module"}"#, true),
+            ("ts-other", "vis.config.ts", r#"{"type":"bogus"}"#, true),
+            ("ts-number", "vis.config.ts", r#"{"type":1}"#, false),
+            ("ts-null", "vis.config.ts", r#"{"type":null}"#, false),
+            ("ts-array", "vis.config.ts", r#"{"type":["module"]}"#, false),
+            ("js-none", "vis.config.js", r#"{"name":"r"}"#, true),
+            ("js-module", "vis.config.js", r#"{"type":"module"}"#, true),
+            ("js-commonjs", "vis.config.js", r#"{"type":"commonjs"}"#, false),
+            ("js-other", "vis.config.js", r#"{"type":"bogus"}"#, false),
+            ("js-null", "vis.config.js", r#"{"type":null}"#, false),
+            ("mts-commonjs", "vis.config.mts", r#"{"type":"commonjs"}"#, true),
+            ("mts-number", "vis.config.mts", r#"{"type":1}"#, true),
+            ("mjs-commonjs", "vis.config.mjs", r#"{"type":"commonjs"}"#, true),
+            ("ts-not-json", "vis.config.ts", "{ not json", false),
+        ] {
+            assert_eq!(accepts(name, &[(file, config), ("package.json", manifest)]), accepted, "{name}");
+        }
+
+        // No manifest at all leaves the scope without a `type`.
+        assert!(accepts("no-manifest", &[("vis.config.js", config)]));
     }
 
     #[test]
