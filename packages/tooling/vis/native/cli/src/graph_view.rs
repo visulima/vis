@@ -11,20 +11,28 @@
 //! - a format name other than `ascii`, `dot`, `json` and `tui`, which Node answers with the ASCII tree but
 //!   which more likely is a typo that deserves Node's own handling;
 //! - any workspace [`crate::graph::project_graph`] hands to Node, one whose project names JavaScript would not
-//!   keep in discovery order (all-digit names) or that are not ASCII, and a project at the workspace root.
+//!   keep in discovery order (all-digit names) or that are not ASCII, and a project at the workspace root;
+//! - a `vis.config` that is not a literal the binary reads as data, or one with a key that can change the projects or
+//!   their edges. The graph depends on the config through `projectIgnore`, the `discover` flags of the non-JS
+//!   ecosystems and a `project.json` (which the membership read refuses), so a literal config whose other keys are
+//!   harmless is answered with its `projectIgnore` applied (`crate::config_workspace` lists what is harmless and why).
+//!   The workspace root must be the working directory, as for `task-why`: Node loads the config of the root only.
 
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::graph::{project_graph, EdgeKind, GraphResult, ProjectGraph, ProjectType};
+use crate::config_workspace::{read_vetted, Consumer, Vetted};
+use crate::graph::{
+    project_graph, project_graph_vetted_with_manifests, EdgeKind, GraphResult, ProjectGraph, ProjectType,
+};
 use crate::js::is_index_like;
 use crate::json::{stringify, Json};
-use crate::node_context::{monorepo_root, output_settings_are_default, quiet_context};
+use crate::node_context::{config_context_is_native, monorepo_root, output_settings_are_default, quiet_context};
 use crate::output::{node_may_cut_short, write_stdout, STREAM_LIMIT};
 use crate::term::{piped_stdout_colour_level, Style};
-use crate::vis_config;
+use crate::vis_config::has_vis_config;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Format {
@@ -361,24 +369,47 @@ fn answer(args: &[String]) -> Option<String> {
     let root = monorepo_root(&cwd)?;
 
     // Node prints the graph through `logger.info`, which a configured log level silences or changes.
-    if !output_settings_are_default()
-        || !quiet_context(&cwd, &root)
-        || vis_config::requires_node(&vis_config::read(&root))
-    {
+    if !output_settings_are_default() {
         return None;
     }
+
+    // A `vis.config` at or above the working directory: a literal one whose keys cannot change the projects or their
+    // edges is read (see `config_workspace`), from the workspace root only. Any other is Node's.
+    let vetted = if has_vis_config(&cwd) {
+        if cwd != root || !config_context_is_native() {
+            return None;
+        }
+
+        Some(read_vetted(&root, Consumer::Graph)?)
+    } else {
+        if !quiet_context(&cwd, &root) {
+            return None;
+        }
+
+        None
+    };
 
     // Pail's level for a run with neither stream on a terminal; `None` for a terminal, a colour flag and the
     // cases only Node can tell.
     let colour = piped_stdout_colour_level(args)? > 0;
 
-    text_for(&root, &options, Style { colour })
+    text_for(&root, &options, Style { colour }, vetted.as_ref())
 }
 
-fn text_for(root: &Path, options: &Options, style: Style) -> Option<String> {
-    let GraphResult::Native(graph) = project_graph(root) else {
-        return None;
-    };
+/// The graph of `root`: with a vetted config, the one that config's `projectIgnore` leaves; without one, the graph of a
+/// workspace that has no config at all.
+fn graph_of(root: &Path, vetted: Option<&Vetted>) -> Option<ProjectGraph> {
+    match vetted {
+        Some(vetted) => Some(project_graph_vetted_with_manifests(root, &vetted.ignore)?.0),
+        None => match project_graph(root) {
+            GraphResult::Native(graph) => Some(graph),
+            GraphResult::Delegate => None,
+        },
+    }
+}
+
+fn text_for(root: &Path, options: &Options, style: Style, vetted: Option<&Vetted>) -> Option<String> {
+    let graph = graph_of(root, vetted)?;
 
     if !names_are_plain(&graph) {
         return None;

@@ -1,3 +1,4 @@
+/* eslint-disable vitest/expect-expect -- the parity harness asserts */
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 import { DELEGATED_COLOUR_ENVIRONMENTS, SHORT_COLOUR_ENVIRONMENTS, withoutColour } from "./colour-environments";
+import { CONFIG_CASES, GRAPH_ONLY_CASES } from "./config-workspace-cases";
+import { binary as harnessBinary, Harness, nodeEntry as harnessNodeEntry } from "./workspace-parity-harness";
 
 /**
  * `vis graph` exists twice: the Node handler (`src/commands/graph/handler.ts`) and the native graph
@@ -54,6 +57,9 @@ const nativeArguments = (args: string[]): boolean => {
 /** Fixtures the native path answers, for the CI context. Everything else must delegate. */
 const nativeFixtures = new Set(["basic", "empty", "libs-only", "multi-pattern"]);
 
+// `delegate-vis-config` holds a config the binary reads (an empty one), and still delegates here: `runNative` gives these runs a stale
+// inherited root (the fixture's parent), and a config is only read from the workspace root the binary has confirmed. The configs
+// the binary does answer are in the last block, which runs generated workspaces from the shared table.
 const fixtures = ["basic", "empty", "libs-only", "multi-pattern", "delegate-complex-patterns", "delegate-index-name", "delegate-unicode-name", "delegate-vis-config", "delegate-project-json"];
 
 const argumentSets: string[][] = [
@@ -249,5 +255,76 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
         expect(runNative(directory, ["--format=json"], true, paths.stub, directory, colour).stdout).toContain(marker);
         expect(runNative(directory, ["--format=json"], true, nodeEntry, directory, colour).stdout).toBe(runNode(directory, ["--format=json"], true, colour).stdout);
+    });
+});
+
+/**
+ * A workspace with a literal `vis.config`: the project graph depends on the config through `projectIgnore`, the `discover`
+ * flags of the non-JS ecosystems and a `project.json`, and on nothing else the graph prints (see `config_workspace.rs`).
+ * Every case of `config-workspace-cases.ts` runs through Node and the binary, in the workspace root, in CI. The binary
+ * answers the ones the table says it answers, byte for byte, and hands every other to Node before it prints anything.
+ */
+describe.skipIf(!harnessBinary || process.platform === "win32" || !existsSync(harnessNodeEntry))("vis graph with a vis.config: native vs Node", () => {
+    const harness = new Harness(["graph"]);
+    const ignoreCase = (): Record<string, Buffer | string | { link: string }> => CONFIG_CASES.find((entry) => entry.name === "projectIgnore of a name at any depth")?.files ?? {};
+
+    beforeAll(() => {
+        harness.setup("vis-graph-config-parity-");
+    });
+
+    afterAll(() => {
+        harness.teardown();
+    });
+
+    const runs = (native: boolean) =>
+        [...CONFIG_CASES, ...GRAPH_ONLY_CASES].filter((entry) => entry.graph === native).flatMap((entry) => (native ? [[], ["--format=json"], ["--format=dot"]] : [["--format=json"]]).map((args) => [entry.name, entry, args] as const));
+
+    it.each(runs(true))("%s %j is answered natively and matches Node", (_name, entry, args) => {
+        expect(harness.expectParity(entry.files, args).stdout).not.toBe("");
+    });
+
+    it.each(runs(false))("%s %j is handed to Node", (_name, entry, args) => {
+        expect(harness.expectDelegation(entry.files, args).status).not.toBe(70);
+    });
+
+    // Node loads the config of the workspace root, and the binary reads that one only: from a project directory it hands over.
+    it("hands a run from a project directory to Node", () => {
+        const [nodeRoot, nativeRoot] = harness.pair(ignoreCase());
+        const node = harness.runNode(["--format=json"], `${nodeRoot}/packages/lib`);
+        const declined = harness.runNative(["--format=json"], `${nativeRoot}/packages/lib`);
+
+        expect(declined.status).toBe(70);
+        expect(declined.stdout).toBe("");
+
+        const delegated = harness.runNative(["--format=json"], `${nativeRoot}/packages/lib`, { VIS_FALLBACK_ENTRY: harnessNodeEntry, VIS_NODE: process.execPath });
+
+        expect(Harness.outcome(delegated, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+    });
+
+    // An inherited root that names another directory is never trusted: the config is the root's, and the root is not known.
+    it("hands a run with a stale inherited root to Node", () => {
+        const [nodeRoot, nativeRoot] = harness.pair(ignoreCase());
+        const extra = { VIS_MONOREPO_ROOT: `${nativeRoot}/packages` };
+        const node = harness.runNode(["--format=json"], nodeRoot, { VIS_MONOREPO_ROOT: `${nodeRoot}/packages` });
+        const declined = harness.runNative(["--format=json"], nativeRoot, extra);
+
+        expect(declined.status).toBe(70);
+
+        const delegated = harness.runNative(["--format=json"], nativeRoot, { ...extra, VIS_FALLBACK_ENTRY: harnessNodeEntry, VIS_NODE: process.execPath });
+
+        expect(Harness.outcome(delegated, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+    });
+
+    it("hands a run outside CI to Node", () => {
+        harness.expectDelegation(ignoreCase(), ["--format=json"], {}, false);
+    });
+
+    it.each(SHORT_COLOUR_ENVIRONMENTS)("in %j a configured workspace matches Node", (colour) => {
+        harness.expectParity(ignoreCase(), [], colour);
+        harness.expectParity(ignoreCase(), ["--depth=1"], colour);
+    });
+
+    it.each(DELEGATED_COLOUR_ENVIRONMENTS)("hands a configured run with %j to Node", (colour) => {
+        harness.expectDelegation(ignoreCase(), ["--format=json"], colour);
     });
 });
