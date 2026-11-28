@@ -565,7 +565,7 @@ fn run_format(
 
 #[test]
 fn takes_the_formats_that_print_an_empty_result_and_hands_over_the_rest() {
-    for format in ["json", "sarif", "junit", "gitlab"] {
+    for format in ["json", "sarif", "junit", "gitlab", "csaf"] {
         assert!(parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format}");
         assert!(parse(&argv(&["audit", &format!("--format={format}"), "--policies=none", "--exit-code"])), "{format}");
     }
@@ -728,6 +728,13 @@ format_matches_node!(
     "../../tests/fixtures/audit/clean.gitlab.stdout",
     "../../tests/fixtures/audit/clean.gitlab.stderr"
 );
+format_matches_node!(
+    csaf_matches_node,
+    Format::Csaf,
+    "../../tests/fixtures/audit/found.csaf.stdout",
+    "../../tests/fixtures/audit/clean.csaf.stdout",
+    "../../tests/fixtures/audit/clean.csaf.stderr"
+);
 
 #[test]
 fn the_clocks_of_the_documents_are_the_ones_node_reads() {
@@ -736,6 +743,10 @@ fn the_clocks_of_the_documents_are_the_ones_node_reads() {
     assert!(document(Format::Gitlab, NOW).unwrap().contains("\"start_time\": \"2026-01-02T03:04:05\""));
     assert!(document(Format::Gitlab, NOW).unwrap().contains("\"end_time\": \"2026-01-02T03:04:05\""));
 
+    let csaf = document(Format::Csaf, NOW).unwrap();
+
+    assert!(csaf.contains("\"id\": \"vis-audit-2026-01-02\""));
+    assert!(csaf.contains("\"current_release_date\": \"2026-01-02T03:04:05.678Z\""));
     assert!(document(Format::Json, NOW).is_none());
 }
 
@@ -769,7 +780,7 @@ fn a_format_that_prints_the_block_needs_pail_s_layout() {
 fn a_run_node_would_print_differently_is_node_s_in_every_format() {
     let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
 
-    for format in [Format::Json, Format::Sarif, Format::Junit, Format::Gitlab] {
+    for format in [Format::Json, Format::Sarif, Format::Junit, Format::Gitlab, Format::Csaf] {
         let (_root, outcome) = run_format("detailed", format, detailed, Some(PLAIN_LAYOUT));
 
         assert!(outcome.unwrap_err().contains("fields Node maps"), "{format:?}");

@@ -1,0 +1,34 @@
+<CLOCK> INFO ...............................................................
+
+Scan completed in <TIME>
+{
+  "document": {
+    "category": "csaf_vex",
+    "csaf_version": "2.0",
+    "distribution": {
+      "tlp": {
+        "label": "WHITE"
+      }
+    },
+    "publisher": {
+      "category": "vendor",
+      "name": "vis-audit",
+      "namespace": "https://github.com/visulima/visulima"
+    },
+    "title": "vis audit · vis-audit-{date}",
+    "tracking": {
+      "current_release_date": "{now}",
+      "id": "vis-audit-{date}",
+      "initial_release_date": "{now}",
+      "revision_history": [
+        {
+          "date": "{now}",
+          "number": "1",
+          "summary": "Initial audit emission"
+        }
+      ],
+      "status": "final",
+      "version": "1"
+    }
+  }
+}

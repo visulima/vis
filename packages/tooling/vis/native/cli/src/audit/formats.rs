@@ -7,7 +7,7 @@
 //! format below, so each is the document Node writes for an empty result:
 //!
 //! - `json`: [`super::report::clean_report`];
-//! - `sarif`, `junit`, `gitlab`: the documents below. The handler prints `Scan completed in …` as a pail block
+//! - `sarif`, `junit`, `gitlab`, `csaf`: the documents below. The handler prints `Scan completed in …` as a pail block
 //!   on stdout ahead of them (its `isJson` test, where the quiet formats need `quietHeader`), which makes the document
 //!   follow a line that is not part of it; that line is reproduced, because the run is byte for byte Node's or not
 //!   Node's at all.
@@ -25,6 +25,7 @@ use crate::term::Style;
 /// The `--format` values answered here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Format {
+    Csaf,
     Gitlab,
     Json,
     Junit,
@@ -34,6 +35,7 @@ pub(super) enum Format {
 impl Format {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
+            "csaf" => Some(Self::Csaf),
             "gitlab" => Some(Self::Gitlab),
             "json" => Some(Self::Json),
             "junit" => Some(Self::Junit),
@@ -94,6 +96,16 @@ fn gitlab(now: &str) -> String {
     )
 }
 
+/// The CSAF document of a scan with no finding: no `product_tree` and no `vulnerabilities`, the tracking id from the
+/// UTC date, and `now` as the release dates.
+fn csaf(now: &str) -> String {
+    let id = format!("vis-audit-{}", now.get(..10).unwrap_or(now));
+
+    format!(
+        "{{\n  \"document\": {{\n    \"category\": \"csaf_vex\",\n    \"csaf_version\": \"2.0\",\n    \"distribution\": {{\n      \"tlp\": {{\n        \"label\": \"WHITE\"\n      }}\n    }},\n    \"publisher\": {{\n      \"category\": \"vendor\",\n      \"name\": \"vis-audit\",\n      \"namespace\": \"https://github.com/visulima/visulima\"\n    }},\n    \"title\": \"vis audit \u{b7} {id}\",\n    \"tracking\": {{\n      \"current_release_date\": \"{now}\",\n      \"id\": \"{id}\",\n      \"initial_release_date\": \"{now}\",\n      \"revision_history\": [\n        {{\n          \"date\": \"{now}\",\n          \"number\": \"1\",\n          \"summary\": \"Initial audit emission\"\n        }}\n      ],\n      \"status\": \"final\",\n      \"version\": \"1\"\n    }}\n  }}\n}}\n"
+    )
+}
+
 /// The document of a format other than `json` (whose report is [`super::report::clean_report`]), with `now` as its
 /// clock, or `None` for `json`.
 pub(super) fn document(format: Format, now: &str) -> Option<String> {
@@ -102,5 +114,6 @@ pub(super) fn document(format: Format, now: &str) -> Option<String> {
         Format::Sarif => Some(SARIF.to_owned()),
         Format::Junit => Some(junit(now)),
         Format::Gitlab => Some(gitlab(now)),
+        Format::Csaf => Some(csaf(now)),
     }
 }

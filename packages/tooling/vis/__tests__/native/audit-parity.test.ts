@@ -10,7 +10,7 @@ import type { Files, Outcome, Result } from "./workspace-parity-harness";
 import { binary, Harness, json, nodeEntry, packageRoot, workspaceFiles } from "./workspace-parity-harness";
 
 /**
- * `vis audit --format json|sarif|junit|gitlab --policies none` exists twice: the Node handler (`src/commands/audit/handler.ts`)
+ * `vis audit --format json|sarif|junit|gitlab|csaf --policies none` exists twice: the Node handler (`src/commands/audit/handler.ts`)
  * and the native path (`native/cli/src/audit/`), which answers only a scan whose report is empty (nothing found, or findings the
  * handler drops: OSV's batch answer holds an id, which maps to a severity no `--severity` level lets through). The binary reads its OSV address from nowhere
  * but its own code, so this suite cannot point it at a stub: every case here is one the binary must hand to Node before it
@@ -181,7 +181,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             [["--format", "json", "--policies", "none", "--policies", "none"]],
             [["--policies", "none"]],
             [["--format", "table", "--policies", "none"]],
-            // The formats the binary prints are `json`, `sarif`, `junit` and `gitlab`; `table` draws a live progress view and
+            // The formats the binary prints are `json`, `sarif`, `junit`, `gitlab` and `csaf`; `table` draws a live progress view and
             // the bill of materials of `cyclonedx-vex` carries a random serial number.
             [["--format", "table", "--policies", "none", "--severity", "high"]],
             [["--format", "cyclonedx-vex", "--policies", "none"]],
@@ -247,7 +247,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         it.each([{ FORCE_COLOR: "1" }, { COLUMNS: "20" }, { COLUMNS: "wide" }])("hands over a printed block under %j", (extra) => {
             expect.hasAssertions();
 
-            for (const format of ["sarif", "junit", "gitlab"]) {
+            for (const format of ["sarif", "junit", "gitlab", "csaf"]) {
                 expectHandOver({ args: ["--format", format, "--policies", "none"], extra });
             }
         });
@@ -332,7 +332,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         const stamp = { modified: "2024-01-01T00:00:00Z" };
         // Two findings for the first package, none for the second, one for the third: the batch endpoint answers with an id and a timestamp.
         const FOUND = [{ vulns: [{ id: "GHSA-aaaa-bbbb-cccc", ...stamp }, { id: "MAL-2024-1", ...stamp }] }, {}, { vulns: [{ id: "CVE-2020-1", ...stamp }] }];
-        const FORMATS = ["json", "sarif", "junit", "gitlab"] as const;
+        const FORMATS = ["json", "sarif", "junit", "gitlab", "csaf"] as const;
 
         const maskStderr = (text: string): string => text.replaceAll(/· \d+(?:\.\d)?m?s/g, "· <TIME>");
         const maskStdout = (text: string, root: string): string =>
@@ -365,7 +365,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             expect(maskStderr(result.stderr)).toBe(recorded("found.plain.stderr"));
         });
 
-        it.each(["sarif", "junit", "gitlab"] as const)("prints the line of the scan before the document of a clean scan (%s)", (format) => {
+        it.each(["sarif", "junit", "gitlab", "csaf"] as const)("prints the line of the scan before the document of a clean scan (%s)", (format) => {
             expect.hasAssertions();
 
             const { result, root } = runNodeOn(format, []);
