@@ -517,7 +517,7 @@ fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_js
 
 // ---- findings that Node drops, and the formats other than `json` -------------------------------------------------
 
-use super::formats::{banner, found_row, Format};
+use super::formats::{banner, document, found_row, Format};
 use super::osv::documented_findings;
 use super::scan_format;
 use crate::pail::Layout;
@@ -565,7 +565,7 @@ fn run_format(
 
 #[test]
 fn takes_the_formats_that_print_an_empty_result_and_hands_over_the_rest() {
-    for format in ["json", "sarif"] {
+    for format in ["json", "sarif", "junit"] {
         assert!(parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format}");
         assert!(parse(&argv(&["audit", &format!("--format={format}"), "--policies=none", "--exit-code"])), "{format}");
     }
@@ -714,6 +714,21 @@ format_matches_node!(
     "../../tests/fixtures/audit/clean.sarif.stdout",
     "../../tests/fixtures/audit/clean.sarif.stderr"
 );
+format_matches_node!(
+    junit_matches_node,
+    Format::Junit,
+    "../../tests/fixtures/audit/found.junit.stdout",
+    "../../tests/fixtures/audit/clean.junit.stdout",
+    "../../tests/fixtures/audit/clean.junit.stderr"
+);
+
+#[test]
+fn the_clocks_of_the_documents_are_the_ones_node_reads() {
+    // `toISOString()` without the milliseconds and the zone for JUnit and GitLab, whole for CSAF with the UTC date as id.
+    assert!(document(Format::Junit, NOW).unwrap().contains("timestamp=\"2026-01-02T03:04:05\""));
+
+    assert!(document(Format::Json, NOW).is_none());
+}
 
 #[test]
 fn the_block_of_scan_completed_is_pail_s_and_only_where_it_can_be_laid_out() {
@@ -745,7 +760,7 @@ fn a_format_that_prints_the_block_needs_pail_s_layout() {
 fn a_run_node_would_print_differently_is_node_s_in_every_format() {
     let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
 
-    for format in [Format::Json, Format::Sarif] {
+    for format in [Format::Json, Format::Sarif, Format::Junit] {
         let (_root, outcome) = run_format("detailed", format, detailed, Some(PLAIN_LAYOUT));
 
         assert!(outcome.unwrap_err().contains("fields Node maps"), "{format:?}");

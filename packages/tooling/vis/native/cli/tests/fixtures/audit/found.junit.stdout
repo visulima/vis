@@ -1,0 +1,8 @@
+<CLOCK> INFO ...............................................................
+
+Scan completed in <TIME>
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="vis-audit" tests="0" failures="0" skipped="0" errors="0" time="0">
+  <testsuite name="vulnerabilities" tests="0" failures="0" skipped="0" errors="0" timestamp="{seconds}" time="0">
+  </testsuite>
+</testsuites>

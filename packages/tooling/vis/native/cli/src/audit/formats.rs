@@ -7,7 +7,7 @@
 //! format below, so each is the document Node writes for an empty result:
 //!
 //! - `json`: [`super::report::clean_report`];
-//! - `sarif`: the document below. The handler prints `Scan completed in …` as a pail block
+//! - `sarif`, `junit`: the documents below. The handler prints `Scan completed in …` as a pail block
 //!   on stdout ahead of them (its `isJson` test, where the quiet formats need `quietHeader`), which makes the document
 //!   follow a line that is not part of it; that line is reproduced, because the run is byte for byte Node's or not
 //!   Node's at all.
@@ -26,6 +26,7 @@ use crate::term::Style;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Format {
     Json,
+    Junit,
     Sarif,
 }
 
@@ -33,6 +34,7 @@ impl Format {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
             "json" => Some(Self::Json),
+            "junit" => Some(Self::Junit),
             "sarif" => Some(Self::Sarif),
             _ => None,
         }
@@ -66,11 +68,26 @@ pub(super) fn banner(layout: Layout, took: Duration) -> Option<String> {
 /// unauditable package: the `run` has no `invocations` key then, and the lockfile path does not appear.
 const SARIF: &str = "{\n  \"$schema\": \"https://json.schemastore.org/sarif-2.1.0.json\",\n  \"runs\": [\n    {\n      \"results\": [],\n      \"tool\": {\n        \"driver\": {\n          \"informationUri\": \"https://github.com/visulima/visulima\",\n          \"name\": \"vis-audit\",\n          \"rules\": [],\n          \"version\": \"alpha\"\n        }\n      }\n    }\n  ],\n  \"version\": \"2.1.0\"\n}\n";
 
+/// `now.toISOString()` without the milliseconds and the `Z`, which `emitJUnitAudit` and `emitGitlabDepScan` stamp.
+fn to_seconds(now: &str) -> &str {
+    now.get(..19).unwrap_or(now)
+}
+
+/// The Surefire document of a scan with no finding: both counts zero and one empty `vulnerabilities` suite (the
+/// `policies` suite is written only when it has a case).
+fn junit(now: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"vis-audit\" tests=\"0\" failures=\"0\" skipped=\"0\" errors=\"0\" time=\"0\">\n  <testsuite name=\"vulnerabilities\" tests=\"0\" failures=\"0\" skipped=\"0\" errors=\"0\" timestamp=\"{}\" time=\"0\">\n  </testsuite>\n</testsuites>\n",
+        to_seconds(now)
+    )
+}
+
 /// The document of a format other than `json` (whose report is [`super::report::clean_report`]), with `now` as its
 /// clock, or `None` for `json`.
-pub(super) fn document(format: Format, _now: &str) -> Option<String> {
+pub(super) fn document(format: Format, now: &str) -> Option<String> {
     match format {
         Format::Json => None,
         Format::Sarif => Some(SARIF.to_owned()),
+        Format::Junit => Some(junit(now)),
     }
 }

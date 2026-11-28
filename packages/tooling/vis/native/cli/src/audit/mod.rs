@@ -1,4 +1,4 @@
-//! `vis audit --format json|sarif --policies none` — the native answer for a scan whose report is empty.
+//! `vis audit --format json|sarif|junit --policies none` — the native answer for a scan whose report is empty.
 //!
 //! The Node handler (`src/commands/audit/handler.ts`) reads the lockfile, asks OSV about every package and
 //! prints a report. When OSV lists no finding, or lists only what the handler drops, and the policy engine is
@@ -77,7 +77,7 @@ fn parse(args: &[String]) -> bool {
     parse_format(args).is_some()
 }
 
-/// The `--format` (`json` or `sarif`) of `args` (the whole argv) when they are
+/// The `--format` (`json`, `sarif` or `junit`) of `args` (the whole argv) when they are
 /// `audit --format <format> --policies none` with at most one each of `--severity <level>`, `--fail-on <level>` and
 /// `--exit-code`, or `None`. A value follows its flag as `--name value` or `--name=value`.
 fn parse_format(args: &[String]) -> Option<Format> {
@@ -177,7 +177,7 @@ fn environment_decline(cwd: &Path) -> Option<&'static str> {
 /// What a run whose findings Node would not report prints on stdout and stderr, or the reason it is Node's.
 fn answer(args: &[String]) -> Result<(String, String), String> {
     let Some(format) = parse_format(args) else {
-        return Err("not `audit --format json|sarif --policies none` with the flags it takes".to_owned());
+        return Err("not `audit --format json|sarif|junit --policies none` with the flags it takes".to_owned());
     };
 
     if let Some(reason) = context_decline() {

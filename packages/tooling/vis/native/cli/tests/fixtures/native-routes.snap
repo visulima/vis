@@ -854,6 +854,7 @@
 ["audit","--format","table","--policies","none"] => audit
 ["audit","--format=json"] => audit
 ["audit","--format=json","--policies=none"] => audit
+["audit","--format=junit","--policies=none","--exit-code"] => audit
 ["audit","--help"] => surface
 ["audit","--no-color","-h"] => surface
 ["audit","--policies","none"] => audit
