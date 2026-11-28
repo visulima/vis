@@ -293,7 +293,10 @@ fn a_status_outside_2xx_is_an_empty_result_as_in_node() {
 #[test]
 fn every_other_outcome_is_node_s() {
     for (name, reply) in [
-        ("a finding with a severity", json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","severity":[]}]}]}"#)),
+        (
+            "a finding with a severity",
+            json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","severity":[]}]}]}"#),
+        ),
         ("a body that is not JSON", json_reply("200 OK", "{")),
         ("an empty 204", "HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n".to_owned()),
         (
