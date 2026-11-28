@@ -30,8 +30,9 @@ libc = "0.2"
 rustls-native-certs = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-# Switches the console to ANSI mode at startup (see src/term.rs).
-windows-sys = { version = "0.61", features = [ "Win32_System_Console" ] }
+# Switches the console to ANSI mode at startup (see src/term.rs), and reads the user locale that decides Node's
+# collation on Windows (see src/collation.rs).
+windows-sys = { version = "0.61", features = [ "Win32_Globalization", "Win32_System_Console" ] }
 
 [dependencies]
 vis-core = { path = "../core" }

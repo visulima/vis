@@ -10,6 +10,9 @@
 //! - a context other than the one the other read-only commands answer (`native_context`: a CI context off a
 //!   terminal at the root of a pnpm workspace, no `vis.config`, no Deno file) or any output setting that changes
 //!   what Node prints;
+//! - two or more stage scripts under a locale whose `localeCompare` tailors some letter pairs (`ch` sorts after `h`
+//!   in Czech, so `post-commit` comes before `post-checkout`), which orders the stages differently from the byte
+//!   order this module uses (`root_collation`; on Windows the user locale decides, elsewhere the locale variables);
 //! - a hooks directory that is not a directory, an entry that cannot be read, and a stage script that is not plain
 //!   ASCII text: the header pattern and the length checks of the handler work on UTF-16 text and JavaScript's
 //!   notion of white space, which this module reproduces for printable ASCII, tab and line feed only.
@@ -21,6 +24,7 @@ use std::path::Path;
 use std::process::exit;
 
 use super::common::{parse, STAGES};
+use crate::collation::root_collation;
 use crate::node_context::portable_context_is_native;
 use crate::output::write_stdout;
 
@@ -160,6 +164,11 @@ fn read_stages(directory: &Path) -> Option<Vec<Stage>> {
         let content = String::from_utf8(bytes).ok()?;
 
         stages.push(Stage { blocks: parse_stage_script(&content), raw_line_count: content.split('\n').count(), stage });
+    }
+
+    // Node orders the stages with `localeCompare`; byte order is the same only where the collation has no tailoring.
+    if stages.len() > 1 && !root_collation() {
+        return None;
     }
 
     stages.sort_by_key(|stage| stage.stage);
