@@ -1202,11 +1202,13 @@ const optimizeShapeIsNative = (flags) => {
 };
 
 // Whether `vis optimize` can pass the binary's native gate (`parse` and `context` in `optimize/mod.rs`): the report without a
-// terminal, for a pnpm workspace whose root is the working directory, in a CI context with no `vis.config`, and none of the
-// variables that change what pail prints. The binary re-checks everything, including the workspace patterns, the manifests and
-// the package manager; this only skips the extra process when it would delegate anyway. It stays in Node on Windows.
-const optimizeMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
-    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+// terminal, for a pnpm, npm or yarn workspace, in a CI context, and none of the variables that change what pail prints. The
+// report names no path, so the working directory may be the root or a directory below it; the binary finds the root. It re-checks
+// everything, including the root, the `vis.config` (absent, or a literal Node loads without a word), the workspace patterns,
+// the manifests and the package manager; this only skips the extra process when it would delegate anyway. It stays in Node on
+// Windows.
+const optimizeMayRunNatively = (platform, environment, args, interactive) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !pailOutputIsDecidable(environment, args)) {
         return false;
     }
 
@@ -1839,7 +1841,7 @@ const NATIVE_SHAPE_GATES = new Map([
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
     // The report without a terminal (`--dry-run`, `--format`, `--pin`, `--prod`); a terminal is the interactive picker, which stays in Node.
-    ["optimize", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => optimizeMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    ["optimize", ({ args, environment, interactive, platform }) => helpOrNative(args, () => optimizeMayRunNatively(platform, environment, args, interactive))],
     // A recorded run, a task of it, or the list of runs.
     ["replay", ({ args, environment, interactive, platform }) => helpOrNative(args, () => replayMayRunNatively(platform, environment, args, interactive))],
     // `run <target>`, answered only when every task is a cache hit; the binary hands every other run to Node.
