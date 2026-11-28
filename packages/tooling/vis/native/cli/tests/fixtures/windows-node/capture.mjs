@@ -29,7 +29,7 @@ const slug = (args) => args.join("_").replaceAll(/[^\w.=-]+/g, "-");
 const stripped = /^(ANSICON|APPVEYOR|BUILDKITE|CI|CIRCLECI|COLORTERM|CONTINUOUS_INTEGRATION|DRONE|FORCE_COLOR|GITEA_ACTIONS|GITHUB_ACTIONS|GITHUB_WORKFLOW|GITLAB_CI|JENKINS_URL|NODE_DISABLE_COLORS|NO_COLOR|NODE_ENV|DEBUG|PAIL_LOG_LEVEL|TEAMCITY_VERSION|TERM|TERM_PROGRAM|TF_BUILD|TRAVIS|WT_SESSION|VIS_MONOREPO_ROOT|COLUMNS|LINES|CEREBRO_.*)$/i;
 
 const groups = readdirSync(here, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== "workspaces")
+    .filter((entry) => entry.isDirectory() && entry.name !== "workspaces" && entry.name !== "run")
     .map((entry) => entry.name)
     .filter((name) => selected.length === 0 || selected.includes(name));
 

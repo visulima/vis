@@ -14,7 +14,7 @@ use crate::node_context::{in_ci, native_context};
 use crate::term;
 use crate::toolchain::Pins;
 
-use super::render::{Grouping, Look};
+use super::render::{unicode_symbols, Grouping, Look};
 
 /// An entry this close to the sweep window is treated as expired: the native answer never depends on the
 /// edge of a race with the sweep.
@@ -57,6 +57,17 @@ fn variable_set(name: &str) -> bool {
     env::var_os(name).is_some()
 }
 
+/// A `CEREBRO_*` variable (cerebro's output settings), up to case where the platform ignores it.
+pub(super) fn is_cerebro_variable(name: &str, ignore_case: bool) -> bool {
+    const PREFIX: &str = "CEREBRO_";
+
+    if ignore_case {
+        name.get(..PREFIX.len()).is_some_and(|start| start.eq_ignore_ascii_case(PREFIX))
+    } else {
+        name.starts_with(PREFIX)
+    }
+}
+
 /// The part of the context only the process knows: where the output goes, which variables are set,
 /// who started the binary. The workspace is looked at later. `None` means "Node answers".
 fn environment_look(args: &[String]) -> Option<Look> {
@@ -68,7 +79,8 @@ fn environment_look(args: &[String]) -> Option<Look> {
         return None;
     }
 
-    if env::vars_os().any(|(key, _)| key.to_str().is_some_and(|key| key.starts_with("CEREBRO_"))) {
+    // Windows names its variables without regard to case, and Node reads `process.env.CEREBRO_*` the same way.
+    if env::vars_os().any(|(key, _)| key.to_str().is_some_and(|key| is_cerebro_variable(key, cfg!(windows)))) {
         return None;
     }
 
@@ -77,10 +89,12 @@ fn environment_look(args: &[String]) -> Option<Look> {
     }
 
     // The renderer's colour follows the same detection as pail's: any level above 0 prints the same
-    // sixteen-colour codes, `None` is a case only Node can decide.
-    let colour = term::piped_colour_level(args)? > 0;
+    // sixteen-colour codes, `None` is a case only Node can decide. The run prints no pail header and so no pail
+    // clock, which is the one thing `piped_colour_level` leaves to Node on Windows for; off Windows the two are the
+    // same call.
+    let colour = term::piped_stdout_colour_level(args)? > 0;
 
-    Some(Look { colour, grouping: Grouping::detect() })
+    Some(Look { colour, unicode: unicode_symbols(), grouping: Grouping::detect() })
 }
 
 /// `process.arch` and `process.platform` as Node names them; anything else is Node's.
@@ -93,6 +107,7 @@ fn node_environment() -> Option<(&'static str, &'static str)> {
     let platform = match env::consts::OS {
         "macos" => "darwin",
         "linux" => "linux",
+        "windows" => "win32",
         _ => return None,
     };
 
@@ -218,6 +233,15 @@ pub(super) fn gates(args: &[String]) -> Option<Gates> {
 
     // The pins Node's toolchain preflight reads; the ones this module cannot decide send the run to Node.
     let pins = Pins::read(&root)?;
+
+    // Windows is answered only where nothing is asked of a process. A pinned tool is found by splitting `PATH` on `:`
+    // and by an executable bit, and Node's own version is asked of `node` the same way, which on Windows (a `;`
+    // separated `PATH`, `.cmd` shims, version managers) is not the lookup Node makes and has never been compared with
+    // it. So a workspace with a pin, and a start without the launcher (which supplies Node's version), stay in Node.
+    if cfg!(windows) && (!pins.is_empty() || launcher_version.is_none()) {
+        return None;
+    }
+
     let cache = default_task_cache_directory(&root)?;
 
     // No cache directory means no hit; Node creates it.

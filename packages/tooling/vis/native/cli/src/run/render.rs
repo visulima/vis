@@ -50,11 +50,28 @@ impl Grouping {
     }
 }
 
-/// What the static renderer prints around the plain text: the colour codes and the grouping directives.
+/// What the static renderer prints around the plain text: the colour codes, the glyphs and the grouping directives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Look {
     pub(super) colour: bool,
+    /// The glyph set: `✓` and `—`, or on a Windows terminal that is not known to draw them `√` and `-`.
+    pub(super) unicode: bool,
     pub(super) grouping: Grouping,
+}
+
+/// Whether the renderer draws `✓` and `—` (`isUnicodeSupported` of `src/tui/symbols.ts`). On Windows only Windows
+/// Terminal (`WT_SESSION` non-empty), VS Code (`TERM_PROGRAM=vscode`) and `TERM=xterm-256color` do; any other
+/// environment, a CI runner included, gets `√` and `-` (captured from the Node CLI on Windows). Elsewhere this is
+/// always `true`, as before; `symbols.ts` reads `false` for `TERM=linux` on unix, which is left as it was.
+pub(super) fn unicode_symbols() -> bool {
+    unicode_from(cfg!(windows), |name| env::var_os(name))
+}
+
+fn unicode_from(windows: bool, get: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    !windows
+        || get("WT_SESSION").is_some_and(|value| !value.is_empty())
+        || get("TERM_PROGRAM").is_some_and(|value| value == "vscode")
+        || get("TERM").is_some_and(|value| value == "xterm-256color")
 }
 
 /// `(durationMs / 1000).toFixed(1)` for a duration below one second: JavaScript rounds an exact tie up,
@@ -88,9 +105,20 @@ impl Look {
         )
     }
 
+    /// `\u{2713}` or its fallback `\u{221a}`.
+    fn tick_glyph(&self) -> char {
+        if self.unicode {
+            '\u{2713}'
+        } else {
+            '\u{221a}'
+        }
+    }
+
     /// The success tick, green off a plain log.
     fn tick(&self) -> String {
-        self.paint("\u{2713}", "\u{1b}[32m\u{2713}\u{1b}[39m")
+        let glyph = self.tick_glyph();
+
+        self.paint(&glyph.to_string(), &format!("\u{1b}[32m{glyph}\u{1b}[39m"))
     }
 
     /// The stored output of a task, set off from the rest of the log the way the environment's grouping does it
@@ -100,10 +128,10 @@ impl Look {
 
         match self.grouping {
             Grouping::Separators => {
-                let dashes = "\u{2014}".repeat(SEPARATOR_WIDTH);
+                let dashes = if self.unicode { "\u{2014}" } else { "-" }.repeat(SEPARATOR_WIDTH);
                 let separator = self.paint(&dashes, &format!("\u{1b}[2m{dashes}\u{1b}[22m"));
                 let label = self.paint(
-                    &format!("\u{2713} [cache] {id}"),
+                    &format!("{} [cache] {id}", self.tick_glyph()),
                     &format!("{tick} \u{1b}[36m[cache]\u{1b}[39m \u{1b}[1m{id}\u{1b}[22m"),
                 );
 
@@ -274,8 +302,8 @@ mod tests {
 
     #[test]
     fn the_look_wraps_the_codes_only_with_colour() {
-        let plain = Look { colour: false, grouping: Grouping::Github };
-        let colour = Look { colour: true, grouping: Grouping::Azure };
+        let plain = Look { colour: false, unicode: true, grouping: Grouping::Github };
+        let colour = Look { colour: true, unicode: true, grouping: Grouping::Azure };
         let mut out = String::new();
 
         plain.output_block("p:build", "out", &mut out);
@@ -284,6 +312,44 @@ mod tests {
         assert_eq!(out, "::group::\u{2713} p:build\nout\n::endgroup::\n##[group]\u{1b}[32m\u{2713}\u{1b}[39m p:build\nout\n##[endgroup]\n");
         assert_eq!(plain.banner("37"), " VIS  \u{2022}");
         assert!(colour.banner("32").starts_with("\u{1b}[1m\u{1b}[7m VIS "));
+    }
+
+    #[test]
+    fn windows_draws_unicode_only_for_the_terminals_that_are_known_to() {
+        let given = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs.iter().find(|(key, _)| *key == name).map(|(_, value)| std::ffi::OsString::from(value))
+            }
+        };
+
+        assert!(!unicode_from(true, given(&[])));
+        assert!(!unicode_from(true, given(&[("CI", "1"), ("COLORTERM", "truecolor"), ("FORCE_COLOR", "3")])));
+        assert!(!unicode_from(true, given(&[("TERM", "dumb")])));
+        assert!(!unicode_from(true, given(&[("TERM", "xterm")])));
+        assert!(!unicode_from(true, given(&[("TERM_PROGRAM", "Apple_Terminal")])));
+        // `Boolean("")` is false: an empty `WT_SESSION` is no session.
+        assert!(!unicode_from(true, given(&[("WT_SESSION", "")])));
+
+        assert!(unicode_from(true, given(&[("WT_SESSION", "0")])));
+        assert!(unicode_from(true, given(&[("TERM_PROGRAM", "vscode")])));
+        assert!(unicode_from(true, given(&[("TERM", "xterm-256color")])));
+        // Anywhere else the answer is `true`, as it was before this one existed.
+        assert!(unicode_from(false, given(&[])));
+    }
+
+    #[test]
+    fn the_tick_and_the_separator_follow_the_glyph_set() {
+        let ascii = Look { colour: false, unicode: false, grouping: Grouping::Separators };
+        let unicode = Look { colour: false, unicode: true, grouping: Grouping::Separators };
+        let (mut plain, mut fancy) = (String::new(), String::new());
+
+        ascii.output_block("p:build", "out", &mut plain);
+        unicode.output_block("p:build", "out", &mut fancy);
+
+        assert_eq!(plain, format!("{0}\n\u{221a} [cache] p:build\nout\n{0}\n", "-".repeat(80)));
+        assert_eq!(fancy, format!("{0}\n\u{2713} [cache] p:build\nout\n{0}\n", "\u{2014}".repeat(80)));
+        assert_eq!(ascii.tick(), "\u{221a}");
+        assert_eq!(Look { colour: true, ..ascii }.tick(), "\u{1b}[32m\u{221a}\u{1b}[39m");
     }
 
     #[test]

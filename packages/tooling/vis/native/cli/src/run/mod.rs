@@ -36,6 +36,8 @@ use std::time::{Duration, Instant, SystemTime};
 use rayon::prelude::*;
 use task_runner_core::{lookup_entry, CacheLookup, RunProject, TaskKey, TaskKeyer};
 
+use crate::collation::{collate, root_collation};
+use crate::graph::{project_graph, GraphResult};
 use crate::targets::{script_targets_below, Targets};
 use crate::text::is_ascii_graphic;
 use crate::toolchain::{self, Versions};
@@ -44,6 +46,8 @@ mod preflight;
 mod render;
 mod summary_json;
 
+#[cfg(test)]
+use preflight::is_cerebro_variable;
 use preflight::{gates, lockfile_is_fresh, node_version_text, nothing_to_sweep, Gates};
 use render::{layout_fits, Look};
 
@@ -89,6 +93,30 @@ struct Answer {
     arch: &'static str,
     platform: &'static str,
     node_version: String,
+}
+
+/// Whether the order Node prints this run in is the order this module prints it in, on a file system whose
+/// enumeration order this module cannot read. Node starts tasks that do not depend on each other by `id.localeCompare`
+/// and lists them in the order it finds the project directories, which `readdir` gives sorted on unix (libuv sorts) and
+/// on Windows in the file system's own order (NTFS: by upper-cased name). This module lists them by project directory
+/// in byte order. The two agree when the task ids are already in root-collation order and the directories are in the
+/// same order under byte order and under upper-cased order; anything else stays Node's. `tasks` is `(id, root)` in
+/// project order.
+fn print_order_matches_node(tasks: &[(&str, &str)]) -> bool {
+    let upper = |root: &str| root.split('/').map(str::to_ascii_uppercase).collect::<Vec<_>>();
+    let bytes = |root: &str| root.split('/').map(str::to_owned).collect::<Vec<_>>();
+
+    root_collation()
+        && tasks.windows(2).all(|pair| {
+            collate(pair[0].0, pair[1].0).is_lt()
+                && bytes(pair[0].1) < bytes(pair[1].1)
+                && upper(pair[0].1) < upper(pair[1].1)
+        })
+}
+
+/// Whether no project of the workspace depends on another (a peer dependency counts, as it does in Node's graph).
+fn projects_are_independent(root: &Path) -> bool {
+    matches!(project_graph(root), GraphResult::Native(graph) if graph.projects.values().all(|project| project.edges.is_empty()))
 }
 
 /// Sets the size of the thread pool the parallel parts below run on. The first call wins; a pool that already exists
@@ -262,6 +290,17 @@ fn attempt(args: &[String]) -> Option<Answer> {
         return None;
     }
 
+    // Unix hands Node the project directories sorted by byte, the order printed here; Windows does not. Node also starts
+    // the tasks of a project that depends on others first, which this module does not read, so on Windows a workspace
+    // whose projects depend on each other is Node's as well.
+    if cfg!(windows)
+        && (!print_order_matches_node(
+            &keyer.tasks().iter().map(|task| (task.id.as_str(), task.root.as_str())).collect::<Vec<_>>(),
+        ) || !projects_are_independent(&gates.root))
+    {
+        return None;
+    }
+
     let mut hits = look_up_all(&keyer, &gates.cache)?;
 
     sort_times(&mut hits);
@@ -359,6 +398,38 @@ mod tests {
         ] {
             assert_eq!(parse(&argv(shape)), None, "{shape:?}");
         }
+    }
+
+    #[test]
+    fn a_cerebro_variable_is_matched_up_to_case_only_where_the_platform_ignores_case() {
+        assert!(is_cerebro_variable("CEREBRO_OUTPUT_LEVEL", false));
+        assert!(!is_cerebro_variable("cerebro_output_level", false));
+        assert!(is_cerebro_variable("cerebro_output_level", true));
+        assert!(is_cerebro_variable("Cerebro_X", true));
+        assert!(!is_cerebro_variable("CEREBRO", true));
+        assert!(!is_cerebro_variable("XCEREBRO_X", true));
+        // A multi-byte character inside the first eight bytes is not a boundary: no match, no panic.
+        assert!(!is_cerebro_variable("CEREBR\u{e9}_X", true));
+    }
+
+    #[test]
+    fn the_print_order_is_trusted_only_where_every_order_node_may_use_agrees() {
+        let sorted = [("alpha:build", "packages/alpha"), ("b10:build", "packages/b10"), ("b2:build", "packages/b2")];
+
+        assert!(print_order_matches_node(&sorted));
+        assert!(print_order_matches_node(&sorted[..1]));
+        assert!(print_order_matches_node(&[]));
+        // Ids out of collation order: Node starts them by `id.localeCompare`.
+        assert!(!print_order_matches_node(&[("b:build", "packages/a"), ("a:build", "packages/b")]));
+        // Mixed case and `_` sort differently as bytes and as upper-cased names (NTFS): `Zed` is before `a-app` as bytes
+        // and after it as upper-cased names, `_core` is before `a-app` as bytes and after it as upper-cased names.
+        assert!(!print_order_matches_node(&[("a:build", "packages/Zed"), ("b:build", "packages/a-app")]));
+        assert!(!print_order_matches_node(&[("a:build", "packages/_core"), ("b:build", "packages/a")]));
+        // Both orders agree here, so the order is certain.
+        assert!(print_order_matches_node(&[("a:build", "packages/Zed"), ("b:build", "packages/_core")]));
+        // A name that is a prefix of another is compared by component, not through the separator.
+        assert!(print_order_matches_node(&[("a:build", "packages/b"), ("b:build", "packages/b-x")]));
+        assert!(!print_order_matches_node(&[("a:build", "packages/b-x"), ("b:build", "packages/b/c")]));
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -509,7 +580,7 @@ mod tests {
         let hits = look_up(&root, &cache, &projects).expect("every task hits");
         let now = SystemTime::now();
         let answer = Answer {
-            look: Look { colour: false, grouping: render::Grouping::Separators },
+            look: Look { colour: false, unicode: true, grouping: render::Grouping::Separators },
             hits,
             target: "build".to_owned(),
             started: now,

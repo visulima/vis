@@ -1,0 +1,34 @@
+{
+    "$comment": "Captured from the Node CLI on Windows by ../capture-run.mjs; tests/windows_node_parity.rs runs the same target against the native binary on the cache the cold run wrote. `workspace` is a directory below tests/fixtures.",
+    "cases": [
+        {
+            "name": "one",
+            "workspace": "windows-node/workspaces/run-one",
+            "target": "build"
+        },
+        {
+            "name": "many",
+            "workspace": "windows-node/workspaces/run-many",
+            "target": "build"
+        },
+        {
+            "name": "sorted",
+            "workspace": "windows-node/workspaces/run-sorted",
+            "target": "build"
+        },
+        {
+            "name": "order",
+            "workspace": "windows-node/workspaces/run-order",
+            "target": "build",
+            "native": false,
+            "note": "Directories and ids in different orders (mixed case, `_`, a directory named unlike its package). Node starts the tasks by id and lists the projects in NTFS order; the binary hands the run back."
+        },
+        {
+            "name": "chain",
+            "workspace": "windows-node/workspaces/run-chain",
+            "target": "build",
+            "native": false,
+            "note": "Workspace dependencies: Node starts tasks deepest project first, before the id order; the binary does not read the dependencies and hands the run back on Windows."
+        }
+    ]
+}

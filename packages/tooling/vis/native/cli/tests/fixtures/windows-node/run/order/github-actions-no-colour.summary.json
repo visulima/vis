@@ -1,0 +1,229 @@
+{
+  "duration": 84,
+  "endTime": "2026-11-28T00:20:37.211Z",
+  "environment": {
+    "arch": "x64",
+    "nodeVersion": "v26.13.1",
+    "platform": "win32"
+  },
+  "id": "2026-11-28T00-20-37-127Z_e752e855-8b49-4094-a552-10702e28db72",
+  "startTime": "2026-11-28T00:20:37.127Z",
+  "stats": {
+    "cached": 7,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 7
+  },
+  "taskGraph": {
+    "dependencies": {
+      "ten:build": [],
+      "Beta:build": [],
+      "b10:build": [],
+      "b2:build": [],
+      "mid:build": [],
+      "zed:build": [],
+      "core:build": []
+    },
+    "roots": [
+      "ten:build",
+      "Beta:build",
+      "b10:build",
+      "b2:build",
+      "mid:build",
+      "zed:build",
+      "core:build"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-11-28T00:20:37.190Z",
+      "exitCode": 0,
+      "hash": "13b12742fe5ed45eaeedb3e71564e417",
+      "hashDetails": {
+        "command": "dfd603e6609b252b0c21443db32fa7ed",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/b10/package.json": "2db72bc1a2197d1aec91c8304833452c",
+          "packages/b10/src/index.ts": "347225e6c32fd30d5df15f2c340c9431"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.180Z",
+      "target": {
+        "project": "b10",
+        "target": "build"
+      },
+      "taskId": "b10:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-11-28T00:20:37.195Z",
+      "exitCode": 0,
+      "hash": "637ed20a84ea59bd9ceb6d6a03d7cefc",
+      "hashDetails": {
+        "command": "03ef6d32cf1f22a1d15a04264c41788a",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/b2/package.json": "130f3988a7f03de907e80f1dfaa478fd",
+          "packages/b2/src/index.ts": "45ca683530a044013d8705c5f3572bfb"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.185Z",
+      "target": {
+        "project": "b2",
+        "target": "build"
+      },
+      "taskId": "b2:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 13,
+      "endTime": "2026-11-28T00:20:37.199Z",
+      "exitCode": 0,
+      "hash": "d889946c64bbab66ab032e7213c89a43",
+      "hashDetails": {
+        "command": "44a3e6fcc6987ea797f90f69461f3770",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/a-app/package.json": "5fb400d57200d85d60b0ecb1aac7387e",
+          "packages/a-app/src/index.ts": "d3402f5e7813436ebab6172993bdc6a2"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.186Z",
+      "target": {
+        "project": "Beta",
+        "target": "build"
+      },
+      "taskId": "Beta:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 8,
+      "endTime": "2026-11-28T00:20:37.202Z",
+      "exitCode": 0,
+      "hash": "a51d421f95042dc812bf629c7561636b",
+      "hashDetails": {
+        "command": "e9330adc43690f8d5a2ec0d41010a037",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/_core/package.json": "5aa6b71aff5b80a37087e0d2661dd997",
+          "packages/_core/src/index.ts": "8b49a3a99e58afa6d1008e9f27daf15f"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.194Z",
+      "target": {
+        "project": "core",
+        "target": "build"
+      },
+      "taskId": "core:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 8,
+      "endTime": "2026-11-28T00:20:37.205Z",
+      "exitCode": 0,
+      "hash": "ca89af5ca10fb857165658d418363ba7",
+      "hashDetails": {
+        "command": "ea88bfdd931ac1ec5dd93a3f34c175b8",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/Mid/package.json": "44d3a5f006cb015614be4a7786ebf336",
+          "packages/Mid/src/index.ts": "882bd461d8f9696a4cba660465ace0ee"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.197Z",
+      "target": {
+        "project": "mid",
+        "target": "build"
+      },
+      "taskId": "mid:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 6,
+      "endTime": "2026-11-28T00:20:37.207Z",
+      "exitCode": 0,
+      "hash": "5f1002f61b3a38ef758b1edb628acebb",
+      "hashDetails": {
+        "command": "5be765b2d9af587d022b794f4148e88d",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/10-ten/package.json": "28616052b679b391fd17e1aa308eb8de",
+          "packages/10-ten/src/index.ts": "4bc0197dfb0ec4c1a536c6b083757294"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.201Z",
+      "target": {
+        "project": "ten",
+        "target": "build"
+      },
+      "taskId": "ten:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 4,
+      "endTime": "2026-11-28T00:20:37.208Z",
+      "exitCode": 0,
+      "hash": "d52e0efbb9e886b6bbfaa40a55b24c9f",
+      "hashDetails": {
+        "command": "8fed9e05022ce7cc7ec599d048537e1c",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/Zed/package.json": "b755d0c6de0d69d4fc19095cde1b37bb",
+          "packages/Zed/src/index.ts": "5ef0000f89388c40f162d04218d168f5"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:37.204Z",
+      "target": {
+        "project": "zed",
+        "target": "build"
+      },
+      "taskId": "zed:build"
+    }
+  ]
+}

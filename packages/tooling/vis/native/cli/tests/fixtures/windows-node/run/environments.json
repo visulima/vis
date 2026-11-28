@@ -1,0 +1,30 @@
+{
+    "$comment": "Environments only the run captures use, on top of ../environments.json: the log groupings the renderer prints for a CI provider, and the variables that decide which glyphs a Windows terminal gets.",
+    "environments": {
+        "gitlab": {
+            "CI": "1",
+            "GITLAB_CI": "true"
+        },
+        "buildkite": {
+            "CI": "1",
+            "BUILDKITE": "true"
+        },
+        "azure": {
+            "CI": "1",
+            "TF_BUILD": "True"
+        },
+        "wt-session": {
+            "CI": "1",
+            "WT_SESSION": "00000000-0000-0000-0000-000000000000"
+        },
+        "vscode": {
+            "CI": "1",
+            "TERM_PROGRAM": "vscode"
+        },
+        "github-actions-no-colour": {
+            "CI": "1",
+            "GITHUB_ACTIONS": "true",
+            "NO_COLOR": "1"
+        }
+    }
+}

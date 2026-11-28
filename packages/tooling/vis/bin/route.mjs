@@ -260,9 +260,11 @@ const taskCacheMayExist = (cwd) => {
 // no flag, in a CI context off a terminal, with none of the variables above, from a workspace root that already has
 // a task cache. The binary re-checks everything and also needs the launcher's hand-off (it answers only a run in which
 // every task is a cache hit and hands every other run to Node before printing anything), so this only skips the extra
-// process when it would delegate anyway. It stays in Node on Windows.
+// process when it would delegate anyway. Windows is answered too: the binary's output there was compared with the Node
+// CLI's on Windows (`tests/windows_node_parity.rs`), and what it cannot reproduce there (a toolchain pin, a task order
+// the file system decides) it hands back like any other miss.
 const runMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker, cacheMayExist) => {
-    if (platform === "win32" || interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || args.length !== 2 || args[1].startsWith("-")) {
+    if (interactive || !inCi(environment) || nodeWarnsAboutColour(environment) || args.length !== 2 || args[1].startsWith("-")) {
         return false;
     }
 
@@ -274,7 +276,8 @@ const runMayRunNatively = (platform, environment, args, cwd, interactive, holdsM
     if (
         RUN_NODE_ONLY_VARIABLES.some((key) => environment[key] !== undefined)
         || ["debug", "test"].includes(environment.NODE_ENV)
-        || Object.keys(environment).some((key) => key.startsWith("CEREBRO_"))
+        // Windows reads its variables without regard to case, and so does Node's `process.env`.
+        || Object.keys(environment).some((key) => (platform === "win32" ? key.toUpperCase() : key).startsWith("CEREBRO_"))
     ) {
         return false;
     }

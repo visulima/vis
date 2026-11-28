@@ -8,3 +8,6 @@
 # What Node prints on Windows keeps its `\r\n` between sections: no line-ending conversion in either direction.
 /packages/tooling/vis/native/cli/tests/golden/*.windows.txt -text
 /packages/tooling/vis/__tests__/util/__snapshots__/*.yml text eol=lf
+
+# Captured Node output of `vis run` keeps its bytes: cache entries, summaries and stdout with `\r` in them. No line-ending conversion.
+/packages/tooling/vis/native/cli/tests/fixtures/windows-node/run/** -text
