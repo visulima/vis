@@ -1464,6 +1464,73 @@ const hookMayRunNatively = (platform, environment, args, cwd, interactive, holds
     return outputSettingsAreDefault(environment) && hookShapeIsNative(args);
 };
 
+// Whether `vis staged` can pass the binary's native gate (`args::parse` and `prepare` in `staged/`): the options it
+// reads (`--quiet`, `--verbose`, `--relative`, `--revert`, `--no-stash`, `--concurrent false|<n>`, `--diff <range>`), at
+// the root of a pnpm workspace in a CI context off a terminal, and a run that cannot end in the stack trace Node prints
+// for an emptied commit: a `--diff` run, which never makes that check, or `--quiet` without `--verbose`. The Node
+// handler reads `--allow-empty`, `--auto-stage`, `--continue-on-error`, `--fail-on-changes`, `--force-kill`,
+// `--diff-filter` and the two `--hide-*` flags under a name its parser does not give them, so they do nothing there and
+// the binary leaves a call that names one to Node. The binary re-checks everything, including the config, the
+// repository, the glob patterns and the programs; this only skips the extra process when it would delegate anyway.
+// Unix only.
+const STAGED_FLAGS = new Set(["--no-stash", "--quiet", "--relative", "--revert", "--verbose"]);
+const STAGED_VALUES = new Set(["--concurrent", "--diff"]);
+const STAGED_CONCURRENT = /^(?:false|[1-9]\d{0,5})$/;
+const STAGED_RANGE = /^[a-z_][\w./~^@-]*$/i;
+const STAGED_RESERVED_RANGES = new Set(["false", "infinity", "nan", "null", "true", "undefined"]);
+
+const stagedValueIsNative = (name, value) => {
+    if (value === undefined) {
+        return false;
+    }
+
+    return name === "--concurrent" ? STAGED_CONCURRENT.test(value) : STAGED_RANGE.test(value) && !STAGED_RESERVED_RANGES.has(value.toLowerCase());
+};
+
+// `--name=value` of an option that takes one, as a name and its value; any other word is its own name.
+const splitStagedWord = (word) => {
+    const equals = word.indexOf("=");
+
+    return equals !== -1 && STAGED_VALUES.has(word.slice(0, equals)) ? [word.slice(0, equals), word.slice(equals + 1)] : [word, undefined];
+};
+
+// The options the binary reads, by name, or `undefined` for an option it does not read, a repeated one (the parser reads it as a list) or a bad value.
+const stagedOptions = (words) => {
+    const options = new Map();
+
+    for (let index = 0; index < words.length; index += 1) {
+        const [name, inline] = splitStagedWord(words[index]);
+        let value = inline;
+
+        if (STAGED_VALUES.has(name) && value === undefined) {
+            index += 1;
+            value = words[index];
+        }
+
+        if (options.has(name) || !(STAGED_FLAGS.has(name) || (STAGED_VALUES.has(name) && stagedValueIsNative(name, value)))) {
+            return undefined;
+        }
+
+        options.set(name, value);
+    }
+
+    return options;
+};
+
+const stagedShapeIsNative = (args) => {
+    const options = stagedOptions(args.slice(1));
+
+    return options !== undefined && (options.has("--diff") || (options.has("--quiet") && !options.has("--verbose")));
+};
+
+const stagedMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && colourIsDecidable(environment, args) && environment.VIS_STAGED_CONCURRENT === undefined && stagedShapeIsNative(args);
+};
+
 // Whether `vis shim status` can pass the binary's native gate (`answer` in `shim_status.rs`): exactly `shim status`, at the root of a pnpm
 // workspace in a CI context off a terminal. The binary re-checks everything, so this only skips the extra process when it would delegate anyway.
 // `shim install` and `shim uninstall` write files and stay in Node. Windows stays in Node.
@@ -1684,6 +1751,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ],
     // Every flag, for a pnpm workspace in CI; the binary hands every file or setting it cannot reproduce to Node.
     ["sort-package-json", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => sortPackageJsonMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // The plain-command `staged` block over a git range (`--diff <range>`) or under `--quiet`; every other run is Node's.
+    ["staged", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => stagedMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The generator and its `--check`; the other `sync` kinds are Node's and follow the help rule below.
     // The overview and its `--json`; a Node pin the binary cannot check (no `node` on PATH) or run summaries of an unexpected shape stay in Node.
     ["status", ({ args, environment, interactive, platform }) => helpOrNative(args, () => statusMayRunNatively(platform, environment, args, interactive))],

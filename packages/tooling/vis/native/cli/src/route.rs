@@ -82,6 +82,8 @@ static ROUTES: &[Route] = &[
     answers(&["sbom"], crate::sbom::run),
     answers(&["secrets"], crate::secrets::run),
     answers(&["status"], crate::status::run),
+    #[cfg(unix)]
+    answers(&["staged"], crate::staged::run),
     answers(&["sort-package-json"], crate::sort_package_json::run),
     answers(&["optimize"], crate::optimize::run),
     answers(&["sync", "ci-workflow"], crate::ci_workflow::run),
@@ -187,6 +189,7 @@ mod tests {
         &["sbom"],
         &["secrets"],
         &["status"],
+        &["staged"],
         &["sort-package-json"],
         &["optimize"],
         &["sync", "ci-workflow"],
