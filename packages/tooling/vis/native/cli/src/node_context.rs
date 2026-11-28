@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use crate::root_search::{lockfile_managers, read_json, Manager};
+use crate::root_search::{is_workspace_root, lockfile_managers, nearest_manager, read_json, Manager, Nearest};
 use crate::vis_config::has_vis_config;
 
 /// Markers that Node's root search (`findMonorepoRootSync` in `@visulima/package`) reads in a
@@ -156,6 +156,30 @@ pub(crate) fn monorepo_root(cwd: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+/// The workspace root Node picks for `cwd` and the manager whose marker names it, for a pnpm, npm or yarn workspace:
+/// `findMonorepoRootSync` in `@visulima/package`, which takes the directory nearest to `cwd` that holds a lockfile (or a
+/// `package.json` with a `packageManager` field) and calls it the root when it is a workspace root of that manager (the
+/// `workspaces` key of an npm or yarn manifest, the `pnpm-workspace.yaml` of pnpm). Unlike [`monorepo_root`] it does not
+/// need a pnpm lockfile, so an npm or yarn workspace, and a pnpm workspace pinned by `packageManager` alone, have a root.
+///
+/// `None` delegates: a lerna or turbo marker above `cwd`, no root (which Node reports as an error), a bun root, which Node
+/// has no workspace marker for, a manifest that is not strict JSON, and a directory that holds the lockfiles of two managers,
+/// where which one Node reads first is a detail of its table this crate does not rely on.
+pub(crate) fn workspace_root(cwd: &Path) -> Option<(PathBuf, Manager)> {
+    if cwd.ancestors().any(|dir| dir.join("lerna.json").exists() || dir.join("turbo.json").exists()) {
+        return None;
+    }
+
+    let Nearest { directory, manager } = nearest_manager(cwd)?;
+    let manager = manager.filter(|manager| *manager != Manager::Bun)?;
+
+    if lockfile_managers(directory).len() > 1 {
+        return None;
+    }
+
+    is_workspace_root(directory, Some(manager))?.then(|| (directory.to_path_buf(), manager))
 }
 
 /// Whether Node would reach the same answer without a workspace search or any config notice.
@@ -331,6 +355,84 @@ mod tests {
         fs::write(app.join("pnpm-workspace.yaml"), "").unwrap();
 
         assert_eq!(monorepo_root(&app), Some(app.clone()));
+    }
+
+    /// `<temp>/vis-workspace-root-<name>` holding `files`, and the directory `below` it that the search starts from.
+    fn workspace_fixture(name: &str, files: &[(&str, &str)], below: &str) -> (PathBuf, PathBuf) {
+        let base = env::temp_dir().join(format!("vis-workspace-root-{name}-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join(below)).unwrap();
+
+        for (file, content) in files {
+            fs::write(base.join(file), content).unwrap();
+        }
+
+        (base.clone(), base.join(below))
+    }
+
+    #[test]
+    fn the_workspace_root_is_the_nearest_marker_that_is_a_workspace_of_its_manager() {
+        let workspaces = r#"{"name":"r","workspaces":["packages/*"]}"#;
+
+        for (name, files, manager) in [
+            ("npm", vec![("package.json", workspaces), ("package-lock.json", "{}")], Manager::Npm),
+            ("shrinkwrap", vec![("package.json", workspaces), ("npm-shrinkwrap.json", "{}")], Manager::Npm),
+            ("yarn", vec![("package.json", r#"{"workspaces":{"packages":["a"]}}"#), ("yarn.lock", "")], Manager::Yarn),
+            ("pnpm", vec![("package.json", "{}"), ("pnpm-lock.yaml", ""), ("pnpm-workspace.yaml", "")], Manager::Pnpm),
+            ("pin", vec![("package.json", r#"{"packageManager":"npm@10.0.0","workspaces":[]}"#)], Manager::Npm),
+            ("pnpm-pin", vec![("package.json", r#"{"packageManager":"pnpm@9.0.0"}"#), ("pnpm-workspace.yaml", "")], Manager::Pnpm),
+        ] {
+            let (base, deep) = workspace_fixture(name, &files, "packages/a/src");
+
+            assert_eq!(workspace_root(&deep), Some((base.clone(), manager)), "{name}");
+            assert_eq!(workspace_root(&base), Some((base.clone(), manager)), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_marker_that_is_no_workspace_root_ends_the_search_without_a_root() {
+        for (name, files) in [
+            // An npm project without `workspaces`: Node stops at its lockfile and fails.
+            ("npm-project", vec![("package.json", "{}"), ("package-lock.json", "{}")]),
+            ("workspaces-null", vec![("package.json", r#"{"workspaces":null}"#), ("package-lock.json", "{}")]),
+            ("yarn-project", vec![("package.json", "{}"), ("yarn.lock", "")]),
+            ("pnpm-without-yaml", vec![("package.json", "{}"), ("pnpm-lock.yaml", "")]),
+            // A bun root has no workspace marker Node reads.
+            ("bun", vec![("package.json", r#"{"workspaces":["a"]}"#), ("bun.lock", "{}")]),
+            ("unknown-pin", vec![("package.json", r#"{"packageManager":"deno@1","workspaces":["a"]}"#)]),
+            ("not-json", vec![("package.json", "{ not json"), ("package-lock.json", "{}")]),
+        ] {
+            let (_, deep) = workspace_fixture(name, &files, "packages/a");
+
+            assert_eq!(workspace_root(&deep), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn two_lockfiles_or_a_lerna_or_turbo_marker_leave_the_root_to_node() {
+        let workspaces = r#"{"workspaces":["packages/*"]}"#;
+
+        for (name, extra) in [("mixed", ("yarn.lock", "")), ("lerna", ("lerna.json", "{}")), ("turbo", ("turbo.json", "{}"))] {
+            let (_, deep) = workspace_fixture(name, &[("package.json", workspaces), ("package-lock.json", "{}"), extra], "packages/a");
+
+            assert_eq!(workspace_root(&deep), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_project_with_its_own_lockfile_is_the_nearest_marker() {
+        let (_, deep) = workspace_fixture(
+            "nested",
+            &[("package.json", r#"{"workspaces":["packages/*"]}"#), ("package-lock.json", "{}"), ("packages/a/package.json", "{}")],
+            "packages/a",
+        );
+
+        assert!(workspace_root(&deep).is_some());
+
+        fs::write(deep.join("yarn.lock"), "").unwrap();
+
+        assert_eq!(workspace_root(&deep), None);
     }
 
     #[test]

@@ -1202,8 +1202,8 @@ const optimizeShapeIsNative = (flags) => {
 };
 
 // Whether `vis optimize` can pass the binary's native gate (`parse` and `context` in `optimize/mod.rs`): the report without a
-// terminal, for a pnpm workspace, in a CI context, and none of the variables that change what pail prints. The report names
-// no path, so the working directory may be the root or a directory below it; the binary finds the root. It re-checks
+// terminal, for a pnpm, npm or yarn workspace, in a CI context, and none of the variables that change what pail prints. The
+// report names no path, so the working directory may be the root or a directory below it; the binary finds the root. It re-checks
 // everything, including the root, the `vis.config` (absent, or a literal Node loads without a word), the workspace patterns,
 // the manifests and the package manager; this only skips the extra process when it would delegate anyway. It stays in Node on
 // Windows.

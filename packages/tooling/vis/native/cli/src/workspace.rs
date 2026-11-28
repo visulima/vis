@@ -392,13 +392,55 @@ fn valid_path(path: &str) -> bool {
         })
 }
 
-/// The workspace directories `resolveWorkspacePatterns` gives the commands that scan every project's
-/// `package.json` (`vis optimize`): the directories the YAML's `packages` patterns name that hold a
-/// `package.json`, deduplicated, minus those the built-in excludes and the root `.gitignore` drop. Unlike
-/// [`project_directories`], no project name, overlay or other ecosystem matters. `None` delegates: no pattern
-/// list in the workspace YAML, a pattern or `.gitignore` line outside the shapes above, or a non-ASCII name.
-pub(crate) fn directories_with_package_json(root: &Path) -> Option<Vec<String>> {
-    directories_for_patterns(root, &workspace_yaml(root).ok()??.patterns)
+/// The workspace directories `vis optimize` scans, as `discoverWorkspacePackages` gives them for any manager: the
+/// directories that hold a `package.json` and that the workspace YAML's `packages` patterns name, deduplicated, minus those
+/// the built-in excludes and the root `.gitignore` drop; with no such list, the ones the root `package.json` names in
+/// `workspaces` (an array, or the `packages` of an object, as npm and yarn write them), and none when it names none. Unlike
+/// [`project_directories`], no project name, overlay or other ecosystem matters. `None` delegates: a pattern or `.gitignore`
+/// line outside the shapes of [`classify`], a non-ASCII name, a workspace YAML that is unreadable or not ASCII, a
+/// `package.json` that is not strict JSON (Node reads it with a parser that may accept more) and a `workspaces` entry that is
+/// not a string (Node throws on it).
+pub(crate) fn directories_of_workspace(root: &Path) -> Option<Vec<String>> {
+    let patterns = match workspace_yaml(root) {
+        Ok(Some(yaml)) => yaml.patterns,
+        Ok(None) => manifest_patterns(root)?,
+        Err(Delegate) => return None,
+    };
+
+    // Node returns before it reads the `.gitignore` when there is nothing to resolve.
+    if patterns.is_empty() {
+        return Some(Vec::new());
+    }
+
+    directories_for_patterns(root, &patterns)
+}
+
+/// The patterns `discoverWorkspacePackages` reads from the root `package.json`: `workspaces` as an array, or its
+/// `packages` when it is an object, and none for anything else (a missing file included). `None` delegates.
+fn manifest_patterns(root: &Path) -> Option<Vec<String>> {
+    let Ok(bytes) = fs::read(root.join("package.json")) else {
+        return Some(Vec::new());
+    };
+
+    let manifest: serde_json::Value = serde_json::from_str(std::str::from_utf8(&bytes).ok()?).ok()?;
+    let listed = match manifest.get("workspaces") {
+        Some(serde_json::Value::Array(entries)) => Some(entries),
+        Some(serde_json::Value::Object(map)) => match map.get("packages") {
+            Some(serde_json::Value::Array(entries)) => Some(entries),
+            // A missing, null, `false`, `0` or empty `packages` is falsy, so Node resolves nothing; any other
+            // value it iterates in a way this module does not reproduce.
+            None | Some(serde_json::Value::Null | serde_json::Value::Bool(false)) => None,
+            Some(serde_json::Value::Number(number)) if number.as_f64() == Some(0.0) => None,
+            Some(serde_json::Value::String(text)) if text.is_empty() => None,
+            Some(_) => return None,
+        },
+        _ => None,
+    };
+
+    listed.map_or_else(
+        || Some(Vec::new()),
+        |entries| entries.iter().map(|entry| entry.as_str().map(str::to_owned)).collect(),
+    )
 }
 
 /// The workspace is one this module does not read: the caller hands the command to Node.
@@ -441,7 +483,7 @@ pub(crate) fn workspace_yaml(root: &Path) -> Result<Option<WorkspaceYaml>, Deleg
 
 /// What `resolveWorkspacePatterns(root, patterns)` returns: the directories the patterns name that hold a
 /// `package.json`, deduplicated, minus those the built-in excludes and the root `.gitignore` drop. `None` delegates,
-/// as for [`directories_with_package_json`].
+/// as for [`directories_of_workspace`].
 pub(crate) fn directories_for_patterns(root: &Path, patterns: &[String]) -> Option<Vec<String>> {
     let directories = unique(expand_patterns(root, patterns, &|directory| directory.join("package.json").exists())?);
     let rules = gitignore_rules(root, &[])?;
@@ -960,5 +1002,71 @@ mod gitignore_fixture_tests {
 
             let _ = fs::remove_dir_all(&root);
         }
+    }
+
+    /// The directories `directories_of_workspace` gives for a root holding `files`, with a project at `packages/a`.
+    fn of_workspace(name: &str, files: &[(&str, &str)]) -> Option<Vec<String>> {
+        let root = std::env::temp_dir().join(format!("vis-workspace-of-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        for project in ["packages/a", "apps/web"] {
+            fs::create_dir_all(root.join(project)).expect("project");
+            fs::write(root.join(project).join("package.json"), "{}").expect("manifest");
+        }
+
+        for (file, content) in files {
+            fs::write(root.join(file), content).expect("file");
+        }
+
+        let directories = directories_of_workspace(&root);
+
+        let _ = fs::remove_dir_all(&root);
+
+        directories
+    }
+
+    #[test]
+    fn the_directories_of_a_workspace_come_from_the_yaml_first_and_the_manifest_second() {
+        let listed = |directories: &[&str]| Some(directories.iter().map(|directory| (*directory).to_owned()).collect::<Vec<_>>());
+        let yaml = ("pnpm-workspace.yaml", "packages:\n  - \"apps/*\"\n");
+
+        assert_eq!(of_workspace("array", &[("package.json", r#"{"workspaces":["packages/*","apps/*"]}"#)]), listed(&["packages/a", "apps/web"]));
+        assert_eq!(of_workspace("object", &[("package.json", r#"{"workspaces":{"packages":["packages/a"],"nohoist":["x"]}}"#)]), listed(&["packages/a"]));
+        assert_eq!(of_workspace("yaml-wins", &[("package.json", r#"{"workspaces":["packages/*"]}"#), yaml]), listed(&["apps/web"]));
+        assert_eq!(of_workspace("yaml-without-list", &[("package.json", r#"{"workspaces":["packages/*"]}"#), ("pnpm-workspace.yaml", "onlyBuiltDependencies:\n  - x\n")]), listed(&["packages/a"]));
+
+        // Nothing named, or a value Node reads as nothing.
+        for (name, manifest) in [
+            ("empty", r#"{"workspaces":[]}"#),
+            ("no-packages", r#"{"workspaces":{"nohoist":[]}}"#),
+            ("null-packages", r#"{"workspaces":{"packages":null}}"#),
+            ("false-packages", r#"{"workspaces":{"packages":false}}"#),
+            ("string", r#"{"workspaces":"packages/*"}"#),
+            ("absent", r#"{"name":"r"}"#),
+            ("not-an-object", "[1,2]"),
+        ] {
+            assert_eq!(of_workspace(name, &[("package.json", manifest)]), listed(&[]), "{name}");
+        }
+
+        assert_eq!(of_workspace("no-manifest", &[]), listed(&[]));
+    }
+
+    #[test]
+    fn a_manifest_workspaces_value_node_reads_in_another_way_is_left_to_node() {
+        for (name, manifest) in [
+            ("not-json", "{ not json"),
+            ("comment", "{ // c\n \"workspaces\": [\"packages/*\"] }"),
+            ("number-entry", r#"{"workspaces":["packages/*", 1]}"#),
+            ("null-entry", r#"{"workspaces":[null]}"#),
+            ("string-packages", r#"{"workspaces":{"packages":"packages/*"}}"#),
+            ("object-packages", r#"{"workspaces":{"packages":{"0":"packages/*"}}}"#),
+            ("negation", r#"{"workspaces":["packages/*","!packages/a"]}"#),
+            ("dot-path", r#"{"workspaces":["./packages/*"]}"#),
+            ("brace", r#"{"workspaces":["packages/{a,b}"]}"#),
+        ] {
+            assert_eq!(of_workspace(name, &[("package.json", manifest)]), None, "{name}");
+        }
+
+        assert_eq!(of_workspace("bom", &[("package.json", "\u{feff}{\"workspaces\":[\"packages/*\"]}")]), None);
     }
 }

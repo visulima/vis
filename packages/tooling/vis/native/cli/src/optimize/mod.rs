@@ -32,13 +32,14 @@ use serde::Deserialize;
 use serde_json::Value;
 use vis_core::detect::detect_package_manager;
 
-use crate::js::is_js_whitespace;
+use crate::js::{is_js_whitespace, PROTOTYPE_NAMES};
 use crate::json::Json;
-use crate::node_context::{ci_context, monorepo_root, quiet_environment};
+use crate::node_context::{ci_context, quiet_environment, workspace_root};
 use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
+use crate::root_search::Manager;
 use crate::vis_config::{self, ConfigState};
-use crate::workspace::directories_with_package_json;
+use crate::workspace::directories_of_workspace;
 
 const TABLES_JSON: &str = include_str!("../optimize-tables.json");
 
@@ -78,13 +79,13 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
     let Some(options) = parse(args) else {
         crate::process::delegate(raw_args);
     };
-    let Some((layout, root)) = context(args) else {
+    let Some((layout, root, manager)) = context(args) else {
         crate::process::delegate(raw_args);
     };
     let Some(tables) = serde_json::from_str::<Tables>(TABLES_JSON).ok() else {
         crate::process::delegate(raw_args);
     };
-    let Some(output) = report(&options, layout, &root, &tables) else {
+    let Some(output) = report(&options, layout, &root, manager, &tables) else {
         crate::process::delegate(raw_args);
     };
 
@@ -159,19 +160,19 @@ fn parse(args: &[String]) -> Option<Options> {
 }
 
 /// Whether Node would reach the same answer, and the layout pail prints in. `None` is a delegation.
-fn context(args: &[String]) -> Option<(Layout, PathBuf)> {
+fn context(args: &[String]) -> Option<(Layout, PathBuf, Manager)> {
     let layout = Layout::detect(args)?;
     let cwd = env::current_dir().ok()?;
 
     // Node works from the workspace root, which it finds from the working directory (the report names no path, so
-    // a project directory prints the same as the root does); this crate finds that root for a pnpm workspace.
-    let root = monorepo_root(&cwd)?;
+    // a project directory prints the same as the root does); this crate finds that root for a pnpm, npm or yarn workspace.
+    let (root, manager) = workspace_root(&cwd)?;
 
     if !ci_context(&root) || !quiet_environment(&cwd, &root) || !config_leaves_the_report_alone(&root) {
         return None;
     }
 
-    Some((layout, root))
+    Some((layout, root, manager))
 }
 
 /// The keys of a task that `mergeTargetWithInherit` calls `includes` on while the config loads.
@@ -226,6 +227,7 @@ fn holds_proto_key(value: &Value) -> bool {
 fn tasks_load(config: &Value) -> bool {
     match config.get("tasks") {
         None | Some(Value::Null) => true,
+        Some(Value::Object(tasks)) if PROTOTYPE_NAMES.iter().any(|name| tasks.contains_key(*name)) => false,
         Some(Value::Object(tasks)) => tasks.values().all(|task| match task {
             Value::Object(task) => TASK_LIST_FIELDS
                 .iter()
@@ -238,16 +240,20 @@ fn tasks_load(config: &Value) -> bool {
 }
 
 /// The text of the whole run, or `None` when something on the way is outside what this module reproduces.
-fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Option<String> {
+fn report(options: &Options, layout: Layout, root: &Path, manager: Manager, tables: &Tables) -> Option<String> {
     let detected = detect_package_manager(root.to_str()?, None);
 
-    if detected.name != "pnpm" {
+    // Everything below follows the manager the handler detects (`detectPm`): its name, the lockfile it reads and how it
+    // searches it. A root whose lockfile names one manager and a pin or config file another is Node's.
+    if detected.name != manager.name() {
         return None;
     }
 
+    let manager = manager.name();
+
     // `detected.version || "latest"`.
     let version = detected.version.filter(|version| !version.is_empty()).unwrap_or_else(|| "latest".to_owned());
-    let directories = directories_with_package_json(root)?;
+    let directories = directories_of_workspace(root)?;
 
     let mut dependencies = read_dependencies(&root.join("package.json"), options.prod)?;
 
@@ -262,7 +268,7 @@ fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Op
         Some(())
     };
 
-    say(Level::Info, &format!("Detected pnpm v{version}."))?;
+    say(Level::Info, &format!("Detected {manager} v{version}."))?;
 
     if !directories.is_empty() {
         let count = directories.len();
@@ -272,7 +278,7 @@ fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Op
 
     say(Level::Info, "Scanning dependencies...\n")?;
 
-    let lockfile = String::from_utf8_lossy(&fs::read(root.join("pnpm-lock.yaml")).unwrap_or_default()).into_owned();
+    let lockfile = lockfile_text(root, manager);
     let e18e: Vec<E18e> = tables
         .e18e
         .iter()
@@ -283,7 +289,7 @@ fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Op
     let socket: Vec<Socket> = tables
         .socket
         .iter()
-        .filter(|(package, ..)| dependencies.contains(package) || lockfile_contains(&lockfile, package))
+        .filter(|(package, ..)| dependencies.contains(package) || lockfile_contains(manager, &lockfile, package))
         .filter(|(package, ..)| !e18e.iter().any(|entry| entry.package == package))
         .map(|(package, replacement, spec, pinned)| Socket {
             package,
@@ -300,7 +306,7 @@ fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Op
     }
 
     if options.json {
-        out.push_str(&json_report(&e18e, &socket, total, directories.len()));
+        out.push_str(&json_report(manager, &e18e, &socket, total, directories.len()));
 
         return Some(out);
     }
@@ -349,7 +355,7 @@ fn report(options: &Options, layout: Layout, root: &Path, tables: &Tables) -> Op
 }
 
 /// `JSON.stringify(report, undefined, 2)` and a newline. The keys are in the order the handler builds them.
-fn json_report(e18e: &[E18e], socket: &[Socket], total: usize, workspaces: usize) -> String {
+fn json_report(manager: &str, e18e: &[E18e], socket: &[Socket], total: usize, workspaces: usize) -> String {
     let text = |value: &str| Json::Str(value.to_owned());
     let number = |value: usize| Json::Int(i64::try_from(value).unwrap_or(i64::MAX));
     let report = Json::Object(vec![
@@ -368,7 +374,7 @@ fn json_report(e18e: &[E18e], socket: &[Socket], total: usize, workspaces: usize
                     .collect(),
             ),
         ),
-        ("packageManager".to_owned(), text("pnpm")),
+        ("packageManager".to_owned(), text(manager)),
         (
             "socket".to_owned(),
             Json::Array(
@@ -432,21 +438,63 @@ fn is_falsy(value: &Value) -> bool {
     }
 }
 
-/// `lockfileContainsPackage` for pnpm: `/(^|\s|['"/])<name>(@|['"]?:)/m` over the lockfile text.
-fn lockfile_contains(text: &str, package: &str) -> bool {
+/// `readLockfileText`: the first lockfile of the manager that can be read, an empty one included (an empty
+/// `npm-shrinkwrap.json` hides a `package-lock.json`), decoded the way Node decodes a file (invalid bytes become U+FFFD).
+fn lockfile_text(root: &Path, manager: &str) -> String {
+    let names: &[&str] = match manager {
+        "npm" => &["npm-shrinkwrap.json", "package-lock.json"],
+        "yarn" => &["yarn.lock"],
+        _ => &["pnpm-lock.yaml"],
+    };
+
+    names
+        .iter()
+        .find_map(|name| fs::read(root.join(name)).ok())
+        .map_or_else(String::new, |bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `lockfileContainsPackage`: whether the lockfile text names `package`, searched the way the handler does for each manager
+/// (`overrides.ts`):
+///
+/// - npm: `"<name>":` or `"node_modules/<name>":` anywhere;
+/// - yarn: `/(^|\s|[",])<name>@/m`;
+/// - pnpm: `/(^|\s|['"/])<name>(@|['"]?:)/m`.
+///
+/// `package` is matched as plain text, which is what the handler's escaping of the name makes of it.
+fn lockfile_contains(manager: &str, text: &str, package: &str) -> bool {
     if text.is_empty() {
         return false;
     }
 
-    text.match_indices(package).any(|(start, _)| {
-        let before = text[..start].chars().next_back();
-        let boundary =
-            before.is_none_or(|character| is_js_whitespace(character) || matches!(character, '\'' | '"' | '/'));
-        let rest = &text[start + package.len()..];
-        let after = rest.starts_with('@') || rest.strip_prefix(['\'', '"']).unwrap_or(rest).starts_with(':');
+    match manager {
+        "npm" => text.contains(&format!("\"{package}\":")) || text.contains(&format!("\"node_modules/{package}\":")),
+        "yarn" => follows_boundary(text, package, |character| matches!(character, '"' | ','), |rest| rest.starts_with('@')),
+        _ => follows_boundary(
+            text,
+            package,
+            |character| matches!(character, '\'' | '"' | '/'),
+            |rest| rest.starts_with('@') || rest.strip_prefix(['\'', '"']).unwrap_or(rest).starts_with(':'),
+        ),
+    }
+}
 
-        boundary && after
-    })
+/// Whether `text` holds `package` after the start of a line, a whitespace character (`^` and `\s` of the patterns) or a
+/// character `boundary` accepts, and before a rest that `follows` accepts. Occurrences may overlap.
+fn follows_boundary(text: &str, package: &str, boundary: impl Fn(char) -> bool, follows: impl Fn(&str) -> bool) -> bool {
+    let mut from = 0;
+
+    while let Some(offset) = text[from..].find(package) {
+        let start = from + offset;
+        let before = text[..start].chars().next_back();
+
+        if before.is_none_or(|character| is_js_whitespace(character) || boundary(character)) && follows(&text[start + package.len()..]) {
+            return true;
+        }
+
+        from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -480,14 +528,63 @@ mod tests {
     fn the_lockfile_match_follows_the_pnpm_pattern() {
         let text = "packages:\n  /abab@1.0.0:\n    resolution: x\n  'left-pad':\n  other: left-pad@1\nx.abab:\n";
 
-        assert!(lockfile_contains(text, "abab"));
-        assert!(lockfile_contains(text, "left-pad"));
-        assert!(!lockfile_contains(text, "ab"));
-        assert!(!lockfile_contains(text, "pad"));
-        assert!(!lockfile_contains("", "abab"));
-        assert!(lockfile_contains("abab: 1", "abab"));
-        assert!(lockfile_contains("\u{a0}abab@1", "abab"));
-        assert!(!lockfile_contains("xabab@1", "abab"));
+        assert!(lockfile_contains("pnpm", text, "abab"));
+        assert!(lockfile_contains("pnpm", text, "left-pad"));
+        assert!(!lockfile_contains("pnpm", text, "ab"));
+        assert!(!lockfile_contains("pnpm", text, "pad"));
+        assert!(!lockfile_contains("pnpm", "", "abab"));
+        assert!(lockfile_contains("pnpm", "abab: 1", "abab"));
+        assert!(lockfile_contains("pnpm", "\u{a0}abab@1", "abab"));
+        assert!(!lockfile_contains("pnpm", "xabab@1", "abab"));
+        // An occurrence that overlaps the one before it is still found.
+        assert!(lockfile_contains("pnpm", "a/a/a@1", "a/a"));
+    }
+
+    #[test]
+    fn the_lockfile_match_follows_the_yarn_and_npm_patterns() {
+        let yarn = "# yarn lockfile v1\n\nabab@^1.0.0, \"left-pad@^1\":\n  version \"1.0.0\"\nx.other@1:\n";
+
+        assert!(lockfile_contains("yarn", yarn, "abab"));
+        assert!(lockfile_contains("yarn", yarn, "left-pad"));
+        assert!(lockfile_contains("yarn", "\"abab@npm:^1\":", "abab"));
+        assert!(lockfile_contains("yarn", "a,abab@1", "abab"));
+        assert!(!lockfile_contains("yarn", yarn, "other"));
+        // `/` and `'` bound a pnpm key only.
+        assert!(!lockfile_contains("yarn", "/abab@1", "abab"));
+        assert!(!lockfile_contains("yarn", "abab: 1", "abab"));
+        assert!(!lockfile_contains("yarn", "", "abab"));
+
+        let npm = "{\n \"packages\": {\n  \"node_modules/abab\": {},\n  \"left-pad\": \"1\"\n }\n}\n";
+
+        assert!(lockfile_contains("npm", npm, "abab"));
+        assert!(lockfile_contains("npm", npm, "left-pad"));
+        assert!(!lockfile_contains("npm", npm, "pad"));
+        assert!(!lockfile_contains("npm", "abab@1\n", "abab"));
+        assert!(!lockfile_contains("npm", "{\"abab\" : 1}", "abab"));
+    }
+
+    #[test]
+    fn the_first_readable_lockfile_of_the_manager_is_read_even_when_it_is_empty() {
+        let dir = workspace("lockfiles", &[]);
+
+        fs::write(dir.join("package-lock.json"), "{\"abab\": 1}").unwrap();
+        fs::write(dir.join("yarn.lock"), "abab@1:\n").unwrap();
+
+        assert_eq!(lockfile_text(&dir, "npm"), "{\"abab\": 1}");
+        assert_eq!(lockfile_text(&dir, "yarn"), "abab@1:\n");
+        assert_eq!(lockfile_text(&dir, "pnpm"), "lockfileVersion: 9\n");
+
+        fs::write(dir.join("npm-shrinkwrap.json"), "").unwrap();
+
+        assert_eq!(lockfile_text(&dir, "npm"), "");
+
+        // A directory of that name cannot be read, so the next name is tried.
+        fs::remove_file(dir.join("npm-shrinkwrap.json")).unwrap();
+        fs::create_dir(dir.join("npm-shrinkwrap.json")).unwrap();
+
+        assert_eq!(lockfile_text(&dir, "npm"), "{\"abab\": 1}");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -646,7 +743,7 @@ mod tests {
     fn e18e_entries_print_by_category_and_win_over_an_override() {
         let dir = workspace("text", &["left-pad", "chalk", "is-number", "abab"]);
         let layout = Layout { width: 100, colour: false };
-        let text = report(&Options::default(), layout, &dir, &synthetic()).unwrap();
+        let text = report(&Options::default(), layout, &dir, Manager::Pnpm, &synthetic()).unwrap();
         let _ = fs::remove_dir_all(&dir);
         let body: Vec<&str> = text.lines().filter(|line| !line.is_empty() && !line.contains(" INFO ...")).collect();
 
@@ -673,7 +770,7 @@ mod tests {
         let dir = workspace("json", &["left-pad", "chalk"]);
         let layout = Layout { width: 100, colour: false };
         let options = Options { json: true, ..Options::default() };
-        let text = report(&options, layout, &dir, &synthetic()).unwrap();
+        let text = report(&options, layout, &dir, Manager::Pnpm, &synthetic()).unwrap();
         let _ = fs::remove_dir_all(&dir);
         let report: Value = serde_json::from_str(&text[text.find('{').unwrap()..]).unwrap();
 

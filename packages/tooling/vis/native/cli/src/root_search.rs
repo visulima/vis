@@ -38,7 +38,7 @@ impl Manager {
         [Self::Npm, Self::Yarn, Self::Pnpm, Self::Bun].into_iter().find(|manager| field.starts_with(manager.name()))
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Npm => "npm",
             Self::Yarn => "yarn",
