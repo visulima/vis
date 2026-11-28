@@ -3,6 +3,7 @@ import { join } from "@visulima/path";
 
 import { resolveIndentForFile } from "../../util/editorconfig";
 import { backupFile } from "./backup";
+import { rewriteHookFile } from "./hook-file";
 import { readJsonFile } from "./json";
 import type { MigrateLogger, MigrationReport } from "./types";
 import { addManualStep, addMigrationWarning, bumpPerMigration } from "./types";
@@ -294,7 +295,7 @@ const rewriteHooks = (root: string, dryRun: boolean, logger: MigrateLogger, repo
         }
 
         backupFile(abs, report);
-        writeFileSync(abs, rewritten);
+        rewriteHookFile(abs, rewritten);
         report.gitHooksConfigured = true;
         logger.info(`Rewrote kingfisher invocation in ${rel}`);
     }

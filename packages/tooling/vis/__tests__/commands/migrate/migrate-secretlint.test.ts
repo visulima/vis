@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -136,6 +136,23 @@ describe("migrate-secretlint", () => {
             const content = readFileSync(join(tmpDir, ".husky", "pre-commit"), "utf8");
 
             expect(content).toContain("vis secrets --staged");
+        });
+
+        it.skipIf(process.platform === "win32")("keeps the mode of an executable hook it rewrites", () => {
+            expect.assertions(2);
+
+            const hookPath = join(tmpDir, ".husky", "pre-commit");
+
+            writeFileSync(join(tmpDir, ".secretlintrc.json"), "{}");
+            mkdirSync(join(tmpDir, ".husky"), { recursive: true });
+            writeFileSync(hookPath, "#!/bin/sh\nsecretlint '**/*'\n");
+            chmodSync(hookPath, 0o755);
+
+            migrateSecretlint(tmpDir, { dryRun: false }, createMockLogger(), createMigrationReport());
+
+            expect(readFileSync(hookPath, "utf8")).toContain("vis secrets --staged");
+            // eslint-disable-next-line no-bitwise
+            expect(statSync(hookPath).mode & 0o777).toBe(0o755);
         });
 
         it("removes the config file after migration", () => {

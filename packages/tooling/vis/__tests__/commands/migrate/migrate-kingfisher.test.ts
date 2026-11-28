@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -245,6 +245,23 @@ describe("migrate-kingfisher", () => {
 
             expect(hook).toContain("vis secrets --staged");
             expect(report.gitHooksConfigured).toBe(true);
+        });
+
+        it.skipIf(process.platform === "win32")("keeps the mode of an executable hook it rewrites", () => {
+            expect.assertions(2);
+
+            const hookPath = join(tmpDir, ".husky", "pre-commit");
+
+            writeFileSync(join(tmpDir, "package.json"), JSON.stringify({ name: "t", scripts: {} }));
+            mkdirSync(join(tmpDir, ".husky"), { recursive: true });
+            writeFileSync(hookPath, "#!/usr/bin/env sh\nkingfisher scan --staged\n");
+            chmodSync(hookPath, 0o755);
+
+            migrateKingfisher(tmpDir, { dryRun: false }, createMockLogger(), createMigrationReport());
+
+            expect(readFileSync(hookPath, "utf8")).toContain("vis secrets --staged");
+            // eslint-disable-next-line no-bitwise
+            expect(statSync(hookPath).mode & 0o777).toBe(0o755);
         });
 
         it("wires `--config` through to scripts and hooks when a custom rules file is present", () => {
