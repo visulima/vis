@@ -57,32 +57,6 @@ pub(super) fn lists_nothing(text: &str) -> bool {
     })
 }
 
-// The audit asks `scan` below; this is for a caller that has no use for a finding.
-#[allow(dead_code)]
-/// Asks OSV about `packages` and returns how long it took when the answer lists nothing, or the reason to hand the
-/// run to Node.
-pub(super) fn scan_is_clean(url: &str, packages: &[Package<'_>]) -> Result<Duration, String> {
-    let client = HttpClient::new(node_fetch::fetch_config(HttpConfig::from_env(TIMEOUT, TIMEOUT), TIMEOUT));
-    let started = Instant::now();
-    let answer = client.post_json(url, &[], &query_body(packages));
-    let took = started.elapsed();
-
-    match answer {
-        // `!response.ok` is an empty result in Node.
-        Err(HttpError::Status { .. }) => Ok(took),
-        Err(error) => Err(format!("the request to OSV did not end in an answer Node reads the same way: {error}")),
-        Ok(response) => {
-            let text = response.text().map_err(|error| format!("the answer is not UTF-8 text: {error}"))?;
-
-            if lists_nothing(text) {
-                Ok(took)
-            } else {
-                Err("the answer lists findings, or is not the JSON object Node reads the same way".to_owned())
-            }
-        }
-    }
-}
-
 /// The keys of an OSV record that `mapOsvVuln` reads to give a finding a severity, a fix or a summary. The batch
 /// endpoint documents `id` and `modified` only (https://google.github.io/osv.dev/post-v1-querybatch/), so an answer in
 /// that shape has none of these; one that carries any of them is for Node to map.

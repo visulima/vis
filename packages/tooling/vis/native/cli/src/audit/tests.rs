@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::osv::{lists_nothing, query_body, scan_is_clean};
+use super::osv::{lists_nothing, query_body, scan};
 use super::parse;
 use super::report::{clean_report, duplicates, elapsed, progress_row, Package};
 use super::scan_workspace;
@@ -269,7 +269,7 @@ fn json_reply(status: &str, body: &str) -> String {
 fn a_clean_answer_ends_the_scan_and_the_request_is_what_node_sends() {
     let (url, seen) = serve(Box::leak(json_reply("200 OK", r#"{"results":[{},{}]}"#).into_boxed_str()));
 
-    assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0"), ("b", "2.0.0")])).is_ok());
+    assert!(scan(&url, &packages(&[("a", "1.0.0"), ("b", "2.0.0")])).is_ok());
 
     let request = seen.join().unwrap().to_ascii_lowercase();
 
@@ -286,14 +286,14 @@ fn a_status_outside_2xx_is_an_empty_result_as_in_node() {
     for status in ["400 Bad Request", "404 Not Found", "500 Internal Server Error", "429 Too Many Requests"] {
         let (url, _seen) = serve(Box::leak(json_reply(status, "{}").into_boxed_str()));
 
-        assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_ok(), "{status}");
+        assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_ok(), "{status}");
     }
 }
 
 #[test]
 fn every_other_outcome_is_node_s() {
     for (name, reply) in [
-        ("a finding", json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x"}]}]}"#)),
+        ("a finding with a severity", json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","severity":[]}]}]}"#)),
         ("a body that is not JSON", json_reply("200 OK", "{")),
         ("an empty 204", "HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n".to_owned()),
         (
@@ -303,7 +303,7 @@ fn every_other_outcome_is_node_s() {
     ] {
         let (url, _seen) = serve(Box::leak(reply.into_boxed_str()));
 
-        assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_err(), "{name}");
+        assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_err(), "{name}");
     }
 }
 
@@ -314,7 +314,7 @@ fn a_connection_that_fails_is_node_s() {
 
     drop(listener);
 
-    assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_err());
+    assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_err());
 }
 
 /// The lockfile Node was run on, and what it printed (`generatedAt`, the workspace root and the time masked).
