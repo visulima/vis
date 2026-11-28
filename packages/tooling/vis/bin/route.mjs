@@ -1671,6 +1671,19 @@ const shimStatusMayRunNatively = (platform, environment, args, cwd, interactive,
     return outputSettingsAreDefault(environment) && args.length === 2;
 };
 
+// Whether `vis migrate verify` can pass the binary's native gate (`answer` in `migrate/verify.rs`): exactly `migrate verify`, at the root of a pnpm workspace in a CI
+// context off a terminal. The handler prints through the plain `console` of the cerebro toolbox, not through pail, so the colour, the `TERM` and the width of the
+// environment change nothing in its output; only the Node runtime's own colour warning does. The binary re-checks everything, including the config and the
+// files it reads, and hands the shapes it cannot reproduce to Node before it prints anything; this only skips the extra process when it would delegate anyway.
+// Every other `migrate` subcommand, and bare `migrate` (the terminal UI), stays in Node. Windows stays in Node.
+const migrateVerifyMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || nodeWarnsAboutColour(environment)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && args.length === 2 && args[0] === "migrate" && args[1] === "verify";
+};
+
 // The lint selectors of `vis deps`, `--quiet` and `--format`: the flags `deps::parse` (`native/cli/src/deps/mod.rs`) answers, each at most once.
 const DEPS_SELECTORS = new Set([
     "--banned-deps",
@@ -1838,6 +1851,17 @@ const NATIVE_SHAPE_GATES = new Map([
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],
     ["list", ({ args, environment, interactive, platform }) => helpOrNative(args, () => listMayRunNatively(platform, environment, args, interactive))],
+    // `migrate verify`; every other `migrate` subcommand edits files, loads user JavaScript or opens the terminal UI, and stays in Node.
+    [
+        "migrate",
+        ({ args, cwd, environment, holdsMarker, interactive, platform, subcommand }) => {
+            if (subcommand !== "verify") {
+                return undefined;
+            }
+
+            return helpOrNative(args, () => migrateVerifyMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker));
+        },
+    ],
     // The report without a terminal (`--dry-run`, `--format`, `--pin`, `--prod`); a terminal is the interactive picker, which stays in Node.
     ["optimize", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => optimizeMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // A recorded run, a task of it, or the list of runs.

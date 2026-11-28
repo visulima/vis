@@ -68,6 +68,8 @@ mod keys_refresh;
 mod list;
 mod manifest;
 mod marshall_check;
+#[cfg(unix)]
+mod migrate;
 mod node_context;
 mod node_contract;
 mod optimize;
