@@ -99,15 +99,28 @@ impl Layout {
     /// width (both symbols are two columns wide there), a newline. `None` for any other non-ASCII character
     /// and for a control character other than the line break: Node answers those.
     pub(crate) fn block_fitting(self, level: Level, message: &str) -> Option<String> {
+        self.fitting(level, message, false)
+    }
+
+    /// [`Self::block_fitting`] for a message that may also hold the em dash (`—`), which pail measures as two columns
+    /// like the arrow. Only `vis init`'s `--schema` notice prints one.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn block_fitting_with_dash(self, level: Level, message: &str) -> Option<String> {
+        self.fitting(level, message, true)
+    }
+
+    fn fitting(self, level: Level, message: &str, dash: bool) -> Option<String> {
         let limit = self.width - 3;
         let mut lines = Vec::new();
 
         for line in message.split('\n') {
-            if !line.chars().all(|character| matches!(character, ' '..='~' | '\u{2192}' | '\u{2699}')) {
+            if !line.chars().all(|character| {
+                matches!(character, ' '..='~' | '\u{2192}' | '\u{2699}') || (dash && character == '\u{2014}')
+            }) {
                 return None;
             }
 
-            lines.extend(wrap_with(line, limit, display_width));
+            lines.extend(wrap_with(line, limit, if dash { display_width_with_dash } else { display_width }));
 
             // `Vr` returns no line for an empty one, and the join of the lines puts the line break back.
             if line.is_empty() {
@@ -238,6 +251,11 @@ pub(crate) fn wrap(message: &str, limit: usize) -> Vec<String> {
 /// columns wide in pail's measure (`→` is East Asian ambiguous, `⚙` an emoji).
 fn display_width(token: &str) -> usize {
     token.chars().map(|character| if matches!(character, '\u{2192}' | '\u{2699}') { 2 } else { 1 }).sum()
+}
+
+/// [`display_width`] where the em dash is two columns wide as well.
+fn display_width_with_dash(token: &str) -> usize {
+    token.chars().map(|character| if matches!(character, '\u{2192}' | '\u{2699}' | '\u{2014}') { 2 } else { 1 }).sum()
 }
 
 /// [`wrap`] with the width of a token given by `width`.

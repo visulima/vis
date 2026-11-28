@@ -12,13 +12,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A file to write.
-pub(super) struct File {
-    pub(super) path: PathBuf,
-    pub(super) contents: String,
+pub(crate) struct File {
+    pub(crate) path: PathBuf,
+    pub(crate) contents: String,
 }
 
 /// How a write failed.
-pub(super) enum Failure {
+pub(crate) enum Failure {
     /// Nothing was renamed: the targets are as they were.
     Staging(io::Error),
     /// A rename failed after `renamed` others went through (none: the targets are still as they were).
@@ -50,7 +50,7 @@ fn stage(file: &File) -> io::Result<PathBuf> {
 }
 
 /// Writes `files` in order.
-pub(super) fn write_all(files: &[File]) -> Result<(), Failure> {
+pub(crate) fn write_all(files: &[File]) -> Result<(), Failure> {
     let mut staged: Vec<PathBuf> = Vec::new();
 
     for file in files {

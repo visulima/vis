@@ -1162,6 +1162,46 @@ const securitySyncMayRunNatively = (platform, environment, args, cwd, interactiv
     return outputSettingsAreDefault(environment) && securitySyncArgsAreNative(args);
 };
 
+// Whether `vis init` can pass the binary's native gate (`parse` and `answer` in `init.rs`): the flags that ask nothing, each spelled
+// exactly and given once, in a CI context off a terminal at the root of a pnpm workspace. The binary also hands the run to Node when
+// stdin is a terminal (Node then asks its questions), which the launcher does not see, and re-checks everything else (the package
+// manager, an existing config, the files it would merge into); this only skips the extra process when it would delegate anyway.
+// `--yes` is not an `init` option, `--interactive` and any other editor than `vscode` stay in Node. Windows stays in Node.
+const INIT_FLAGS = new Set(["--agent", "--force", "--no-interactive", "--schema", "--sync-native"]);
+
+const initArgsAreNative = (args) => {
+    const flags = args.slice(1);
+    const seen = new Set();
+
+    for (let index = 0; index < flags.length; index += 1) {
+        let flag = flags[index];
+
+        if (flag === "--editor" && flags[index + 1] === "vscode") {
+            index += 1;
+        } else if (flag !== "--editor=vscode" && !INIT_FLAGS.has(flag)) {
+            return false;
+        }
+
+        flag = flag.startsWith("--editor") ? "--editor" : flag;
+
+        if (seen.has(flag)) {
+            return false;
+        }
+
+        seen.add(flag);
+    }
+
+    return true;
+};
+
+const initMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) => {
+    if (platform === "win32" || interactive || !inCi(environment) || !cwdIsRoot(environment, cwd, holdsMarker) || !pailOutputIsDecidable(environment, args)) {
+        return false;
+    }
+
+    return outputSettingsAreDefault(environment) && initArgsAreNative(args);
+};
+
 // Whether `vis security verify-lockfile` can pass the binary's native gate (`parse` and `answer` in `security_verify_lockfile.rs`):
 // `--offline`, alone or with `--json` in either order, for a pnpm workspace whose root is the working directory, in a CI context off a
 // terminal. The text form also needs a pail layout the environment decides; the JSON form prints no pail line, but the Node runtime's
@@ -1632,6 +1672,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["implode", ({ args, environment, interactive, platform }) => helpOrNative(args, () => implodeMayRunNatively(platform, environment, args, interactive))],
     // The registry view, typed `info` or `view`.
     ["info", ({ args, environment, interactive, platform }) => helpOrNative(args, () => infoMayRunNatively(platform, environment, args, interactive))],
+    // `init`'s flags that ask nothing (`--force`, `--agent`, `--editor vscode`, `--sync-native`, `--schema`, `--no-interactive`): the binary writes the config and hands every other shape to Node.
+    ["init", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => initMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // The JSON report of the marshalls `--only` names, or the default set less the ones `MARSHALL_DISABLE_*` turns off.
     ["inspect", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => inspectMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     ["install", ({ args, environment, interactive, platform }) => helpOrNative(args, () => installMayRunNatively(platform, environment, args, interactive))],

@@ -16,8 +16,8 @@
 //! - a failure to stage the files, or to replace the first one: no target is renamed before all temporary files exist,
 //!   so the files are still untouched.
 
-mod pnpm;
-mod stage;
+pub(crate) mod pnpm;
+pub(crate) mod stage;
 mod text;
 
 use std::env;

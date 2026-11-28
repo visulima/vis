@@ -57,6 +57,8 @@ mod ignore;
 #[cfg(unix)]
 mod implode;
 mod info;
+#[cfg(unix)]
+mod init;
 mod inspect;
 mod install;
 mod js;
