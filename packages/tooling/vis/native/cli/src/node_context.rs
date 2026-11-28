@@ -100,14 +100,20 @@ fn printed_windows_path(text: &str) -> Option<String> {
 /// pnpm workspace and no inherited root for another directory. What a command still has to check for itself is its
 /// config and Deno files, which differ between commands.
 pub(crate) fn ci_root_context(cwd: &Path) -> bool {
+    ci_context(cwd) && monorepo_root(cwd).as_deref() == Some(cwd)
+}
+
+/// [`ci_root_context`] for a workspace root the caller has found (with [`monorepo_root`]), which may be above the working
+/// directory: a unix CI run with no terminal on either stream, none of the settings that change what Node prints, and no
+/// inherited root for a directory other than `root`.
+pub(crate) fn ci_context(root: &Path) -> bool {
     cfg!(unix)
         && in_ci()
         && !io::stdout().is_terminal()
         && !io::stderr().is_terminal()
         && !crate::term::node_warns_about_colour()
         && output_settings_are_default()
-        && monorepo_root(cwd).as_deref() == Some(cwd)
-        && inherited_root_allows(cwd, env::var_os("VIS_MONOREPO_ROOT").as_deref())
+        && inherited_root_allows(root, env::var_os("VIS_MONOREPO_ROOT").as_deref())
 }
 
 /// Whether Node's root search would return `cwd` itself. Node walks up from `cwd` and stops at the

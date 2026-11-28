@@ -248,6 +248,44 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectParity(rich(), ["--format", "json", "--dry-run"], environment);
         });
 
+        describe("from a directory below the root", () => {
+            const below: Files = { ...rich(), "packages/a/src/deep/readme.md": "x", "packages/a/vis.config.ts": "export default { nope: 1 };\n" };
+
+            it.each([["packages/a"], ["packages/a/src"], ["packages/a/src/deep"], ["packages/b"], ["packages/no-manifest"]])("`optimize` from %s prints what Node does", (directory: string) => {
+                expect.hasAssertions();
+
+                const files = { ...below, "packages/no-manifest/readme.md": "x" };
+
+                expect(harness.expectParity(files, [], {}, directory).stdout).toContain("Scanned 3 workspace packages.");
+                harness.expectParity(files, ["--format", "json", "--prod"], {}, directory);
+                harness.expectParity(files, ["--pin", "--dry-run"], {}, directory);
+            });
+
+            it("reads the root's config, not the one of the project directory", () => {
+                expect.hasAssertions();
+
+                harness.expectParity({ ...below, "vis.config.ts": "export default { security: { allowBuilds: { esbuild: true } } };\n" }, [], {}, "packages/a/src");
+            });
+
+            it("reads the root a yaml names, with a pin and a lockfile of its own", () => {
+                expect.hasAssertions();
+
+                harness.expectParity({ ...below, "package.json": json({ name: "root", packageManager: "pnpm@9.1.0", dependencies: deps(0, 3) }) }, [], {}, "packages/a/src/deep");
+            });
+
+            it("accepts an inherited root that names the root", () => {
+                expect.hasAssertions();
+
+                const [nodeRoot, nativeRoot] = harness.pair(below);
+                const directory = "packages/a/src";
+                const node = harness.runNode([], join(nodeRoot, directory), { VIS_MONOREPO_ROOT: nodeRoot });
+                const native = harness.runNative([], join(nativeRoot, directory), { VIS_MONOREPO_ROOT: nativeRoot });
+
+                expect(native.status, `native stderr: ${native.stderr}`).not.toBe(70);
+                expect(Harness.outcome(native, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
+            });
+        });
+
         describe("with a literal vis.config", () => {
             it.each(ACCEPTED_CONFIGS)("$label is read like Node does", ({ files }) => {
                 expect.hasAssertions();
@@ -382,14 +420,34 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectDelegation({ ...rich(), ".gitignore": "**/dist\n" }, []);
         });
 
-        it("a workspace that is not rooted at the working directory is declined", () => {
+        it("a project directory that is itself a workspace root is declined", () => {
             expect.hasAssertions();
 
-            const [nodeRoot, nativeRoot] = harness.pair(rich());
-            const directory = "packages/a";
+            // Node's search stops at the nearest lockfile or `packageManager` pin, which here is not a workspace root.
+            for (const marker of [{ "packages/a/yarn.lock": "# yarn lockfile v1\n" }, { "packages/a/pnpm-lock.yaml": "lockfileVersion: 9\n" }, { "packages/a/package.json": json({ name: "a", packageManager: "pnpm@9.1.0" }) }]) {
+                harness.expectDelegation({ ...rich(), ...marker }, [], {}, true, "packages/a");
+            }
+        });
 
-            expect(harness.runNative([], join(nativeRoot, directory)).status).toBe(70);
-            expect(harness.runNode([], join(nodeRoot, directory)).status).toBe(0);
+        it("a directory below a lerna or turbo root is declined", () => {
+            expect.hasAssertions();
+
+            harness.expectDelegation({ ...rich(), "turbo.json": "{}\n" }, [], {}, true, "packages/a");
+            harness.expectDelegation({ ...rich(), "lerna.json": json({ packages: ["packages/*"] }) }, [], {}, true, "packages/a");
+        });
+
+        it("a run from a project directory is declined when the root config is", () => {
+            expect.hasAssertions();
+
+            harness.expectDelegation({ ...rich(), "vis.config.ts": 'export default { extends: "./nope.ts" };\n' }, [], {}, true, "packages/a");
+        });
+
+        it("an inherited root for another directory is declined", () => {
+            expect.hasAssertions();
+
+            // Node computes the root again and ignores it, so the delegated run prints what the root run does.
+            harness.expectDelegation(rich(), [], { VIS_MONOREPO_ROOT: "/elsewhere" }, true, "packages/a");
+            harness.expectDelegation(rich(), [], { VIS_MONOREPO_ROOT: "/elsewhere" });
         });
     });
 });

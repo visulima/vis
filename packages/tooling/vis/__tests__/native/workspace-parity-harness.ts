@@ -158,11 +158,14 @@ export class Harness {
         return spawnSync(this.nativeBinary, [...this.command, ...args], { cwd, encoding: "utf8", env: Harness.environment(extra, ci), timeout });
     }
 
-    /** Runs both sides on identical workspaces and expects identical outcomes; the native side must have answered. */
-    public expectParity(files: Files, args: string[], extra: Record<string, string> = {}): Result {
+    /**
+     * Runs both sides on identical workspaces and expects identical outcomes; the native side must have answered.
+     * `directory` is where each side runs, below the workspace root (the root itself by default).
+     */
+    public expectParity(files: Files, args: string[], extra: Record<string, string> = {}, directory = ""): Result {
         const [nodeRoot, nativeRoot] = this.pair(files);
-        const node = this.runNode(args, nodeRoot, extra);
-        const native = this.runNative(args, nativeRoot, extra);
+        const node = this.runNode(args, join(nodeRoot, directory), extra);
+        const native = this.runNative(args, join(nativeRoot, directory), extra);
 
         expect(native.status, `native stderr: ${native.stderr}`).not.toBe(70);
         expect(Harness.outcome(native, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
@@ -170,19 +173,22 @@ export class Harness {
         return native;
     }
 
-    /** The native side declines (exit 70 without the Node entry, files untouched) and the delegated run matches Node; returns the delegated run. */
-    public expectDelegation(files: Files, args: string[], extra: Record<string, string> = {}, ci = true): Result {
+    /**
+     * The native side declines (exit 70 without the Node entry, files untouched) and the delegated run matches Node; returns the
+     * delegated run. `directory` is where each side runs, below the workspace root (the root itself by default).
+     */
+    public expectDelegation(files: Files, args: string[], extra: Record<string, string> = {}, ci = true, directory = ""): Result {
         const [nodeRoot, nativeRoot] = this.pair(files);
-        const node = this.runNode(args, nodeRoot, extra, ci);
+        const node = this.runNode(args, join(nodeRoot, directory), extra, ci);
         const probe = this.materialize("native", files);
         const before = Harness.snapshot(probe);
-        const declined = this.runNative(args, probe, extra, ci);
+        const declined = this.runNative(args, join(probe, directory), extra, ci);
 
         expect(declined.status, `stdout: ${declined.stdout}`).toBe(70);
         expect(declined.stdout, "a declined run prints nothing").toBe("");
         expect(Harness.snapshot(probe), "a declined run must not touch the files").toStrictEqual(before);
 
-        const native = this.runNative(args, nativeRoot, { ...extra, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }, ci);
+        const native = this.runNative(args, join(nativeRoot, directory), { ...extra, VIS_FALLBACK_ENTRY: nodeEntry, VIS_NODE: process.execPath }, ci);
 
         expect(Harness.outcome(native, nativeRoot)).toStrictEqual(Harness.outcome(node, nodeRoot));
 
