@@ -1,0 +1,32 @@
+<CLOCK> INFO ...............................................................
+
+Scan completed in <TIME>
+{
+  "scan": {
+    "analyzer": {
+      "id": "vis-audit",
+      "name": "vis-audit",
+      "url": "https://github.com/visulima/visulima",
+      "vendor": {
+        "name": "Visulima"
+      },
+      "version": "alpha"
+    },
+    "end_time": "{seconds}",
+    "scanner": {
+      "id": "vis-audit",
+      "name": "vis-audit",
+      "url": "https://github.com/visulima/visulima",
+      "vendor": {
+        "name": "Visulima"
+      },
+      "version": "alpha"
+    },
+    "start_time": "{seconds}",
+    "status": "success",
+    "type": "dependency_scanning"
+  },
+  "schema": "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/v15.2.1/dist/dependency-scanning-report-format.json",
+  "version": "15.2.1",
+  "vulnerabilities": []
+}

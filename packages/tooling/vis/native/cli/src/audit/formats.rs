@@ -7,7 +7,7 @@
 //! format below, so each is the document Node writes for an empty result:
 //!
 //! - `json`: [`super::report::clean_report`];
-//! - `sarif`, `junit`: the documents below. The handler prints `Scan completed in …` as a pail block
+//! - `sarif`, `junit`, `gitlab`: the documents below. The handler prints `Scan completed in …` as a pail block
 //!   on stdout ahead of them (its `isJson` test, where the quiet formats need `quietHeader`), which makes the document
 //!   follow a line that is not part of it; that line is reproduced, because the run is byte for byte Node's or not
 //!   Node's at all.
@@ -25,6 +25,7 @@ use crate::term::Style;
 /// The `--format` values answered here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Format {
+    Gitlab,
     Json,
     Junit,
     Sarif,
@@ -33,6 +34,7 @@ pub(super) enum Format {
 impl Format {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
+            "gitlab" => Some(Self::Gitlab),
             "json" => Some(Self::Json),
             "junit" => Some(Self::Junit),
             "sarif" => Some(Self::Sarif),
@@ -82,6 +84,16 @@ fn junit(now: &str) -> String {
     )
 }
 
+/// The GitLab dependency-scanning report with `vulnerabilities: []`; the scanner and the analyzer are the same object.
+fn gitlab(now: &str) -> String {
+    let stamp = to_seconds(now);
+    let tool = "{\n      \"id\": \"vis-audit\",\n      \"name\": \"vis-audit\",\n      \"url\": \"https://github.com/visulima/visulima\",\n      \"vendor\": {\n        \"name\": \"Visulima\"\n      },\n      \"version\": \"alpha\"\n    }";
+
+    format!(
+        "{{\n  \"scan\": {{\n    \"analyzer\": {tool},\n    \"end_time\": \"{stamp}\",\n    \"scanner\": {tool},\n    \"start_time\": \"{stamp}\",\n    \"status\": \"success\",\n    \"type\": \"dependency_scanning\"\n  }},\n  \"schema\": \"https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/v15.2.1/dist/dependency-scanning-report-format.json\",\n  \"version\": \"15.2.1\",\n  \"vulnerabilities\": []\n}}\n"
+    )
+}
+
 /// The document of a format other than `json` (whose report is [`super::report::clean_report`]), with `now` as its
 /// clock, or `None` for `json`.
 pub(super) fn document(format: Format, now: &str) -> Option<String> {
@@ -89,5 +101,6 @@ pub(super) fn document(format: Format, now: &str) -> Option<String> {
         Format::Json => None,
         Format::Sarif => Some(SARIF.to_owned()),
         Format::Junit => Some(junit(now)),
+        Format::Gitlab => Some(gitlab(now)),
     }
 }

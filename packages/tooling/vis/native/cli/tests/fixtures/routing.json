@@ -1144,6 +1144,7 @@
         { "args": ["audit", "--format", "table", "--policies", "none"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
         { "args": ["audit", "--format", "sarif", "--policies", "none"], "launcher": "native", "binary": "node", "env": { "CI": "1" }, "note": "the fixture project's lockfile lists no package, so the binary hands the run to Node before it asks OSV" },
         { "args": ["audit", "--format=junit", "--policies=none", "--exit-code"], "launcher": "native", "binary": "node", "env": { "CI": "1" } },
+        { "args": ["audit", "--format", "gitlab", "--policies", "none", "--severity", "high"], "launcher": "native", "binary": "node", "env": { "CI": "1" } },
         { "args": ["audit", "--format", "cyclonedx-vex", "--policies", "none"], "launcher": "node", "binary": "node", "env": { "CI": "1" }, "note": "the bill of materials carries a random serial number" },
         { "args": ["audit", "--format", "cyclonedx", "--policies", "none"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },
         { "args": ["audit", "--format", "html", "--policies", "none"], "launcher": "node", "binary": "node", "env": { "CI": "1" } },

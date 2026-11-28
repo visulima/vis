@@ -1339,13 +1339,13 @@ const inspectMayRunNatively = (platform, environment, args, cwd, interactive, ho
     return outputSettingsAreDefault(environment) && networkEnvironmentIsPlain(environment) && inspectArgsAreNative(args);
 };
 
-// The flags `vis audit` takes natively (`parse_format` in `native/cli/src/audit/mod.rs`): `--format json`, `sarif` or `junit` and `--policies none` (the default config runs the `publisherChange` policy, which asks the registry)
+// The flags `vis audit` takes natively (`parse_format` in `native/cli/src/audit/mod.rs`): `--format json`, `sarif`, `junit` or `gitlab` and `--policies none` (the default config runs the `publisherChange` policy, which asks the registry)
 // and, at most once each, `--severity` and `--fail-on` with one of the four levels, and `--exit-code`; the binary answers a
 // scan that lists nothing, or only findings the handler drops (OSV's batch answer holds an id, which the handler maps to an
 // `UNKNOWN` severity that no `--severity` level lets through), so they change nothing. `table` (a live progress view) and
 // `cyclonedx-vex` (a random serial number and the whole bill of materials) stay Node's.
 const AUDIT_LEVELS = new Set(["critical", "high", "low", "medium"]);
-const AUDIT_FORMATS = new Set(["json", "junit", "sarif"]);
+const AUDIT_FORMATS = new Set(["gitlab", "json", "junit", "sarif"]);
 
 const AUDIT_VALUES = new Map([
     ["--fail-on", (value) => AUDIT_LEVELS.has(value)],
@@ -1388,7 +1388,7 @@ const auditArgsAreNative = (flags) => {
     return seen.has("--format") && seen.has("--policies");
 };
 
-// Whether `vis audit` can pass the binary's native gate (`parse_format` and `answer` in `audit/mod.rs`): `--format json|sarif|junit
+// Whether `vis audit` can pass the binary's native gate (`parse_format` and `answer` in `audit/mod.rs`): `--format json|sarif|junit|gitlab
 // --policies none` for a pnpm workspace whose root is the working directory, in a CI context off a terminal, with no proxy, CA or Node
 // option in the environment. The binary answers only a scan whose report is empty (nothing found, or findings the handler drops) and hands
 // everything else to Node before it prints (the OSV answer, the lockfile, the config, pail's layout and `pnpm-workspace.yaml` are its to
