@@ -37,6 +37,7 @@ mod cache_hash;
 #[cfg(unix)]
 mod cache_prune;
 mod cache_why;
+mod check;
 mod ci_workflow;
 mod clean;
 mod collation;

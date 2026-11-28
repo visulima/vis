@@ -15,7 +15,7 @@ use super::report::Package;
 use crate::http::{node_fetch, HttpClient, HttpConfig, HttpError};
 use crate::js::json_string;
 
-pub(super) const URL: &str = "https://api.osv.dev/v1/querybatch";
+pub(crate) const URL: &str = "https://api.osv.dev/v1/querybatch";
 
 /// `timeoutMs` of `fetchVulnerabilities`, which aborts the whole request, body included.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -59,7 +59,7 @@ pub(super) fn lists_nothing(text: &str) -> bool {
 
 /// Asks OSV about `packages` and returns how long it took when the answer lists nothing, or the reason to hand the
 /// run to Node.
-pub(super) fn scan_is_clean(url: &str, packages: &[Package<'_>]) -> Result<Duration, String> {
+pub(crate) fn scan_is_clean(url: &str, packages: &[Package<'_>]) -> Result<Duration, String> {
     let client = HttpClient::new(node_fetch::fetch_config(HttpConfig::from_env(TIMEOUT, TIMEOUT), TIMEOUT));
     let started = Instant::now();
     let answer = client.post_json(url, &[], &query_body(packages));

@@ -1,3 +1,30 @@
+## @visulima/vis [8.0.0-next.5](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.4...@visulima/vis@8.0.0-next.5) (2026-11-28)
+
+### Features
+
+* **vis:** answer `graph` natively for a workspace with a literal vis.config ([ee6e477](https://github.com/visulima/vis/commit/ee6e477c830d0b0786049ed2a530411606aa191f))
+* **vis:** answer `status` natively for a workspace with a literal vis.config ([144e11b](https://github.com/visulima/vis/commit/144e11b8c23548f24b66b1ee5ca24d68bfd2b310))
+* **vis:** answer a cached `vis run` whose directories are not in byte order ([44a935f](https://github.com/visulima/vis/commit/44a935fc1a8566434d9c9e90c215957dc92d70cc))
+* **vis:** answer a fully cached `vis run` natively on Windows ([c15ba88](https://github.com/visulima/vis/commit/c15ba88309630547ab87fd032700ba1f3098a50f))
+
+### Bug Fixes
+
+* **vis:** list projects in the order Node finds them on Windows ([a746f89](https://github.com/visulima/vis/commit/a746f899f3c775dd8f8b3812514ef91af2153d64))
+* **vis:** read the Windows user locale where Node's collation comes from ([cd25db5](https://github.com/visulima/vis/commit/cd25db5de2e84fa3e101b994de64f8f47876a100))
+
+### Documentation
+
+* **vis:** say how a projectIgnore entry reaches the gitignore matcher ([a419944](https://github.com/visulima/vis/commit/a419944e04f63ed5852a7b6b8d69b8af4c8c8e4b))
+
+### Styles
+
+* **vis:** break the windows-sys feature list over lines ([39da400](https://github.com/visulima/vis/commit/39da400e3b3887d2954c01b7565ddfb9fe617a65))
+
+### Tests
+
+* **vis:** make the locale check prove the hook hand-over and the all-hit Node run ([339158d](https://github.com/visulima/vis/commit/339158d038f0a55140f2175cfb87d541365e0c05))
+* **vis:** show the locale check's cache check in its output ([a5cb31a](https://github.com/visulima/vis/commit/a5cb31ad8876e2f9e37b923fa6b469e049b4764b))
+
 ## @visulima/vis [8.0.0-next.4](https://github.com/visulima/vis/compare/@visulima/vis@8.0.0-next.3...@visulima/vis@8.0.0-next.4) (2026-11-27)
 
 ### Features

@@ -1626,7 +1626,7 @@ importers:
         specifier: 5.0.0
         version: 5.0.0
       '@visulima/vis':
-        specifier: 8.0.0-next.4
+        specifier: 8.0.0-next.5
         version: link:../vis
       zod:
         specifier: catalog:utils
