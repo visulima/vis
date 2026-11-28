@@ -825,6 +825,11 @@
 ["audit","--"] => audit
 ["audit","--","--help"] => audit
 ["audit","--fail-on=critical","--policies","none","--format","json","--exit-code"] => audit
+["audit","--format","csaf","--policies","none","--fail-on","low"] => audit
+["audit","--format","cyclonedx","--policies","none"] => audit
+["audit","--format","cyclonedx-vex","--policies","none"] => audit
+["audit","--format","gitlab","--policies","none","--severity","high"] => audit
+["audit","--format","html","--policies","none"] => audit
 ["audit","--format","json"] => audit
 ["audit","--format","json","--format","json","--policies","none"] => audit
 ["audit","--format","json","--policies"] => audit
@@ -844,10 +849,14 @@
 ["audit","--format","json","--policies","none","--severity","bogus"] => audit
 ["audit","--format","json","--policies","none","--severity","high"] => audit
 ["audit","--format","json","--policies","none","extra"] => audit
+["audit","--format","sarif"] => audit
+["audit","--format","sarif","--format","junit","--policies","none"] => audit
 ["audit","--format","sarif","--policies","none"] => audit
+["audit","--format","sarif","--policies","none","--report","r.html"] => audit
 ["audit","--format","table","--policies","none"] => audit
 ["audit","--format=json"] => audit
 ["audit","--format=json","--policies=none"] => audit
+["audit","--format=junit","--policies=none","--exit-code"] => audit
 ["audit","--help"] => surface
 ["audit","--no-color","-h"] => surface
 ["audit","--policies","none"] => audit

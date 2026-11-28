@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use super::osv::{lists_nothing, query_body, scan_is_clean};
+use super::osv::{lists_nothing, query_body, scan};
 use super::parse;
 use super::report::{clean_report, duplicates, elapsed, progress_row, Package};
 use super::scan_workspace;
@@ -269,7 +269,7 @@ fn json_reply(status: &str, body: &str) -> String {
 fn a_clean_answer_ends_the_scan_and_the_request_is_what_node_sends() {
     let (url, seen) = serve(Box::leak(json_reply("200 OK", r#"{"results":[{},{}]}"#).into_boxed_str()));
 
-    assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0"), ("b", "2.0.0")])).is_ok());
+    assert!(scan(&url, &packages(&[("a", "1.0.0"), ("b", "2.0.0")])).is_ok());
 
     let request = seen.join().unwrap().to_ascii_lowercase();
 
@@ -286,14 +286,17 @@ fn a_status_outside_2xx_is_an_empty_result_as_in_node() {
     for status in ["400 Bad Request", "404 Not Found", "500 Internal Server Error", "429 Too Many Requests"] {
         let (url, _seen) = serve(Box::leak(json_reply(status, "{}").into_boxed_str()));
 
-        assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_ok(), "{status}");
+        assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_ok(), "{status}");
     }
 }
 
 #[test]
 fn every_other_outcome_is_node_s() {
     for (name, reply) in [
-        ("a finding", json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x"}]}]}"#)),
+        (
+            "a finding with a severity",
+            json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","severity":[]}]}]}"#),
+        ),
         ("a body that is not JSON", json_reply("200 OK", "{")),
         ("an empty 204", "HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n".to_owned()),
         (
@@ -303,7 +306,7 @@ fn every_other_outcome_is_node_s() {
     ] {
         let (url, _seen) = serve(Box::leak(reply.into_boxed_str()));
 
-        assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_err(), "{name}");
+        assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_err(), "{name}");
     }
 }
 
@@ -314,7 +317,7 @@ fn a_connection_that_fails_is_node_s() {
 
     drop(listener);
 
-    assert!(scan_is_clean(&url, &packages(&[("a", "1.0.0")])).is_err());
+    assert!(scan(&url, &packages(&[("a", "1.0.0")])).is_err());
 }
 
 /// The lockfile Node was run on, and what it printed (`generatedAt`, the workspace root and the time masked).
@@ -352,7 +355,7 @@ fn a_whole_run_prints_what_node_printed_in_every_colour_and_terminal() {
 }
 
 #[test]
-fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_as_node_s() {
+fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_with_fields_node_maps_as_node_s() {
     let root = workspace("status");
     let style = Style { colour: false };
     let (url, _seen) = serve(Box::leak(json_reply("400 Bad Request", "{}").into_boxed_str()));
@@ -360,7 +363,8 @@ fn a_whole_run_reads_a_refused_status_as_clean_and_a_finding_as_node_s() {
     assert!(scan_workspace(&root, &url, style, false, "T").is_ok());
 
     let (url, _seen) = serve(Box::leak(
-        json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x"}]},{},{},{},{},{}]}"#).into_boxed_str(),
+        json_reply("200 OK", r#"{"results":[{"vulns":[{"id":"GHSA-x","summary":"x"}]},{},{},{},{},{}]}"#)
+            .into_boxed_str(),
     ));
 
     assert!(scan_workspace(&root, &url, style, false, "T").is_err());
@@ -512,4 +516,276 @@ fn a_manifest_with_an_unrelated_escape_does_not_hand_over_but_one_that_is_not_js
     let broken = installed("broken-json", &[("node_modules/plain/package.json", "{ not json")]);
 
     assert!(super::bundled::decline(&broken).is_some());
+}
+
+// ---- findings that Node drops, and the formats other than `json` -------------------------------------------------
+
+use super::formats::{banner, document, found_row, Format};
+use super::osv::documented_findings;
+use super::scan_format;
+use crate::pail::Layout;
+
+const NOW: &str = "2026-01-02T03:04:05.678Z";
+const PLAIN_LAYOUT: Layout = Layout { width: 80, colour: false };
+
+/// What the stub answers for the recorded lockfile of six packages in the run Node was recorded on: two findings for
+/// the first package, none for the second, one for the third. The batch endpoint documents `id` and `modified` only.
+const FOUND: &str = r#"{"results":[{"vulns":[{"id":"GHSA-aaaa-bbbb-cccc","modified":"2024-01-01T00:00:00Z"},{"id":"MAL-2024-1","modified":"2024-01-01T00:00:00Z"}]},{},{"vulns":[{"id":"CVE-2020-1","modified":"2024-01-01T00:00:00Z"}]},{},{},{}]}"#;
+
+fn timing() -> regex::Regex {
+    regex::Regex::new(r"· \d+(?:\.\d)?m?s").unwrap()
+}
+
+/// A recorded document with the values Node's runs differ by (the clock, the elapsed time, the root) put back to the
+/// ones the run under test used, and the output of this run with its clock and elapsed time masked the way the fixture is.
+fn unmasked(fixture: &str, root: &std::path::Path) -> String {
+    fixture
+        .replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\"))
+        .replace("{now}", NOW)
+        .replace("{seconds}", &NOW[..19])
+        .replace("{date}", &NOW[..10])
+}
+
+fn masked(output: &str) -> String {
+    let clock = regex::Regex::new(r"(?m)^\d\d:\d\d:\d\d INFO").unwrap();
+    let elapsed = regex::Regex::new(r"Scan completed in \d+(?:\.\d)?m?s").unwrap();
+
+    elapsed.replace_all(&clock.replace_all(output, "<CLOCK> INFO"), "Scan completed in <TIME>").into_owned()
+}
+
+fn run_format(
+    name: &str,
+    format: Format,
+    body: &'static str,
+    layout: Option<Layout>,
+) -> (std::path::PathBuf, Result<(String, String), String>) {
+    let root = workspace(name);
+    let (url, _seen) = serve(Box::leak(json_reply("200 OK", body).into_boxed_str()));
+    let outcome = scan_format(&root, &url, format, Style { colour: false }, false, &|| NOW.to_owned(), layout);
+
+    (root, outcome)
+}
+
+#[test]
+fn takes_the_formats_that_print_an_empty_result_and_hands_over_the_rest() {
+    for format in ["json", "sarif", "junit", "gitlab", "csaf"] {
+        assert!(parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format}");
+        assert!(parse(&argv(&["audit", &format!("--format={format}"), "--policies=none", "--exit-code"])), "{format}");
+    }
+
+    for format in ["table", "cyclonedx-vex", "cyclonedx", "html", "SARIF", "Json", ""] {
+        assert!(!parse(&argv(&["audit", "--format", format, "--policies", "none"])), "{format:?}");
+    }
+
+    // A format named twice, even with the same value, and a format with the default policies stay Node's.
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--format", "sarif", "--policies", "none"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--policies", "none", "--report", "r.html"])));
+    assert!(!parse(&argv(&["audit", "--format", "sarif", "--policies", "none", "--output", "r.sarif"])));
+}
+
+#[test]
+fn counts_the_findings_of_the_documented_answer_for_the_packages_asked_about() {
+    for (body, scanned, count) in [
+        (FOUND, 6, 3),
+        // The answer is read for the packages Node asked about; a longer list is ignored, a shorter one is not an error.
+        (FOUND, 1, 2),
+        (FOUND, 0, 0),
+        (r#"{"results":[{"vulns":[{"id":"a","modified":"x"}]}]}"#, 3, 1),
+        // A repeated id counts each time, and a record may carry any key Node does not read.
+        (r#"{"results":[{"vulns":[{"id":"a"},{"id":"a","modified":null,"details":"x"}]}]}"#, 1, 2),
+        // The keys Node maps may be absent or null.
+        (
+            r#"{"results":[{"vulns":[{"id":"a","severity":null,"database_specific":null,"affected":null,"aliases":null,"summary":null}]}]}"#,
+            1,
+            1,
+        ),
+        (r#"{"results":[{"vulns":null},{"vulns":[]},{}]}"#, 3, 0),
+    ] {
+        assert_eq!(documented_findings(body, scanned), Some(count), "{body}");
+    }
+}
+
+#[test]
+fn a_record_node_maps_or_reads_differently_is_node_s() {
+    for body in [
+        // Every field `mapOsvVuln` reads, present: the finding may get a severity and reach the report, or its
+        // type may make the handler's `catch` print an error row.
+        r#"{"results":[{"vulns":[{"id":"a","severity":[{"type":"CVSS_V3","score":"9.8"}]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","database_specific":{"severity":"HIGH"}}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","affected":[]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","aliases":["CVE-1"]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","summary":"x"}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","summary":""}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","aliases":[]}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":"a","severity":false}]}]}"#,
+        // A record that is not an object, or has no string id, and a list that is not an array.
+        r#"{"results":[{"vulns":[null]}]}"#,
+        r#"{"results":[{"vulns":["GHSA-x"]}]}"#,
+        r#"{"results":[{"vulns":[{}]}]}"#,
+        r#"{"results":[{"vulns":[{"id":7}]}]}"#,
+        r#"{"results":[{"vulns":{"id":"a"}}]}"#,
+        r#"{"results":[{"vulns":"abc"}]}"#,
+        // A result that is not an object, past the packages asked about as well.
+        r#"{"results":[null]}"#,
+        r#"{"results":[{},"x"]}"#,
+        r#"{"results":{}}"#,
+        r#"[]"#,
+        "{",
+        "\u{feff}{\"results\":[]}",
+    ] {
+        assert_eq!(documented_findings(body, 1), None, "{body}");
+    }
+}
+
+#[test]
+fn the_row_of_a_scan_with_findings_has_a_yellow_warning_and_the_count() {
+    let took = Duration::from_millis(12);
+
+    assert_eq!(
+        found_row(Style { colour: false }, 4, took, false),
+        "  \u{26a0} Known vulnerabilities (OSV) \u{2014} 4 found \u{b7} 12ms\n"
+    );
+    assert_eq!(
+        found_row(Style { colour: false }, 1, took, true),
+        "  ! Known vulnerabilities (OSV) \u{2014} 1 found \u{b7} 12ms\n"
+    );
+    assert_eq!(
+        found_row(Style { colour: true }, 4, took, false),
+        "  \u{1b}[33m\u{26a0}\u{1b}[39m Known vulnerabilities (OSV) \u{1b}[2m\u{2014} 4 found \u{b7} 12ms\u{1b}[22m\n"
+    );
+}
+
+#[test]
+fn the_row_matches_what_node_printed_in_every_colour_and_terminal() {
+    let root = workspace("found-rows");
+
+    for (style, linux, stderr) in [
+        (Style { colour: false }, false, include_str!("../../tests/fixtures/audit/found.plain.stderr")),
+        (Style { colour: true }, false, include_str!("../../tests/fixtures/audit/found.colour.stderr")),
+        (Style { colour: false }, true, include_str!("../../tests/fixtures/audit/found.linux.stderr")),
+    ] {
+        let (url, _seen) = serve(Box::leak(json_reply("200 OK", FOUND).into_boxed_str()));
+        let (_printed, row) = scan_workspace(&root, &url, style, linux, NOW).unwrap();
+
+        assert_eq!(timing().replace(&row, "· <TIME>"), stderr);
+    }
+}
+
+#[test]
+fn findings_node_drops_print_the_report_of_a_clean_scan() {
+    let (root, outcome) = run_format("found-json", Format::Json, FOUND, None);
+    let (printed, _row) = outcome.unwrap();
+
+    assert_eq!(printed, unmasked(include_str!("../../tests/fixtures/audit/found.json.stdout"), &root));
+    // ... which is the clean report, byte for byte, as Node printed it for the same lockfile.
+    assert_eq!(printed, STDOUT.replace("{root}", &root.to_str().unwrap().replace('\\', "\\\\")));
+
+    // The exit gates see no finding: Node exits 0 with `--exit-code --fail-on low --severity critical` too, and the run
+    // here ends in `exit(0)` whatever the answer lists.
+    assert_eq!(include_str!("../../tests/fixtures/audit/found.gates.exit"), "0\n");
+}
+
+macro_rules! format_matches_node {
+    ($name:ident, $format:expr, $found:literal, $clean:literal, $clean_row:literal) => {
+        #[test]
+        fn $name() {
+            for (label, body, stdout, row) in [
+                (
+                    "with findings",
+                    FOUND,
+                    include_str!($found),
+                    include_str!("../../tests/fixtures/audit/found.plain.stderr"),
+                ),
+                ("clean", CLEAN, include_str!($clean), include_str!($clean_row)),
+            ] {
+                let (root, outcome) =
+                    run_format(&format!("{}-{label}", stringify!($name)), $format, body, Some(PLAIN_LAYOUT));
+                let (printed, printed_row) = outcome.unwrap();
+
+                assert_eq!(masked(&printed), unmasked(stdout, &root), "{label}");
+                assert_eq!(timing().replace(&printed_row, "· <TIME>"), row, "{label}");
+            }
+        }
+    };
+}
+
+format_matches_node!(
+    sarif_matches_node,
+    Format::Sarif,
+    "../../tests/fixtures/audit/found.sarif.stdout",
+    "../../tests/fixtures/audit/clean.sarif.stdout",
+    "../../tests/fixtures/audit/clean.sarif.stderr"
+);
+format_matches_node!(
+    junit_matches_node,
+    Format::Junit,
+    "../../tests/fixtures/audit/found.junit.stdout",
+    "../../tests/fixtures/audit/clean.junit.stdout",
+    "../../tests/fixtures/audit/clean.junit.stderr"
+);
+format_matches_node!(
+    gitlab_matches_node,
+    Format::Gitlab,
+    "../../tests/fixtures/audit/found.gitlab.stdout",
+    "../../tests/fixtures/audit/clean.gitlab.stdout",
+    "../../tests/fixtures/audit/clean.gitlab.stderr"
+);
+format_matches_node!(
+    csaf_matches_node,
+    Format::Csaf,
+    "../../tests/fixtures/audit/found.csaf.stdout",
+    "../../tests/fixtures/audit/clean.csaf.stdout",
+    "../../tests/fixtures/audit/clean.csaf.stderr"
+);
+
+#[test]
+fn the_clocks_of_the_documents_are_the_ones_node_reads() {
+    // `toISOString()` without the milliseconds and the zone for JUnit and GitLab, whole for CSAF with the UTC date as id.
+    assert!(document(Format::Junit, NOW).unwrap().contains("timestamp=\"2026-01-02T03:04:05\""));
+    assert!(document(Format::Gitlab, NOW).unwrap().contains("\"start_time\": \"2026-01-02T03:04:05\""));
+    assert!(document(Format::Gitlab, NOW).unwrap().contains("\"end_time\": \"2026-01-02T03:04:05\""));
+
+    let csaf = document(Format::Csaf, NOW).unwrap();
+
+    assert!(csaf.contains("\"id\": \"vis-audit-2026-01-02\""));
+    assert!(csaf.contains("\"current_release_date\": \"2026-01-02T03:04:05.678Z\""));
+    assert!(document(Format::Json, NOW).is_none());
+}
+
+#[test]
+fn the_block_of_scan_completed_is_pail_s_and_only_where_it_can_be_laid_out() {
+    let text = banner(PLAIN_LAYOUT, Duration::from_millis(12)).unwrap();
+
+    assert!(
+        regex::Regex::new(r"^\d\d:\d\d:\d\d INFO \.+\n\nScan completed in 12ms\n$").unwrap().is_match(&text),
+        "{text:?}"
+    );
+    assert_eq!(text.lines().next().unwrap().len(), 77);
+    // A coloured header (pail wraps the clock and the label, and dims the message) and a line too narrow for the
+    // message are Node's.
+    assert!(banner(Layout { width: 80, colour: true }, Duration::from_millis(12)).is_none());
+    assert!(banner(Layout { width: 24, colour: false }, Duration::from_millis(12)).is_none());
+}
+
+#[test]
+fn a_format_that_prints_the_block_needs_pail_s_layout() {
+    let (_root, outcome) = run_format("no-layout", Format::Sarif, FOUND, None);
+
+    assert!(outcome.is_err());
+
+    let (_root, outcome) = run_format("colour-layout", Format::Sarif, FOUND, Some(Layout { width: 80, colour: true }));
+
+    assert!(outcome.unwrap_err().contains("pail"));
+}
+
+#[test]
+fn a_run_node_would_print_differently_is_node_s_in_every_format() {
+    let detailed: &'static str = r#"{"results":[{"vulns":[{"id":"GHSA-x","database_specific":{"severity":"HIGH"},"summary":"s"}]},{},{},{},{},{}]}"#;
+
+    for format in [Format::Json, Format::Sarif, Format::Junit, Format::Gitlab, Format::Csaf] {
+        let (_root, outcome) = run_format("detailed", format, detailed, Some(PLAIN_LAYOUT));
+
+        assert!(outcome.unwrap_err().contains("fields Node maps"), "{format:?}");
+    }
 }
