@@ -98,7 +98,7 @@ const ACCEPTED_CONFIGS: ConfigCase[] = [
     config("a typed config", "export default { cache: {} };\n", "vis.config.mts"),
     config("keys that mean nothing", 'export default { nope: 1, update: 5, plugins: [{ name: "x" }], sponsor: { enabled: false } };\n'),
     config("an install backend the binary knows", 'export default { install: { backend: "npm" } };\n'),
-    config("a security block, which only the package-manager commands read", 'export default { security: { allowBuilds: { esbuild: true }, policies: { installScripts: { strict: false } } } };\n'),
+    config("a security block, which only the package-manager commands read", "export default { security: { allowBuilds: { esbuild: true }, policies: { installScripts: { strict: false } } } };\n"),
     config("a security value of another type", "export default { security: 5 };\n"),
     config("tasks with lists", 'export default { tasks: { build: { dependsOn: ["^build"], inputs: ["@inherit", "src/**"], outputs: "dist" }, test: null } };\n'),
     config("a `.ts` config in a CommonJS package", "export default { cache: {} };\n", "vis.config.ts", { type: "commonjs" }),
@@ -306,7 +306,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             it("reads the `workspaces` of the root manifest when the yaml lists no patterns", () => {
                 expect.hasAssertions();
 
-                const withYaml = (yaml: string, manifest: Record<string, unknown>): Files => ({ ...rich(), "package.json": json({ name: "root", private: true, dependencies: deps(20, 3), ...manifest }), "pnpm-workspace.yaml": yaml });
+                const withYaml = (yaml: string, manifest: Record<string, unknown>): Files => { return { ...rich(), "package.json": json({ name: "root", private: true, dependencies: deps(20, 3), ...manifest }), "pnpm-workspace.yaml": yaml }; };
 
                 for (const manifest of [{}, { workspaces: ["packages/*"] }, { workspaces: { packages: ["packages/a", "packages/b"] } }, { workspaces: [] }, { workspaces: { nohoist: [] } }, { workspaces: "packages/*" }]) {
                     harness.expectParity(withYaml("onlyBuiltDependencies:\n  - x\n", manifest), []);
@@ -328,22 +328,26 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
 
         describe.each([
-            { label: "npm", lockfile: (names: string[]): Files => ({ "package-lock.json": npmLockfile(names) }), version: "latest" },
-            { label: "npm (shrinkwrap)", lockfile: (names: string[]): Files => ({ "npm-shrinkwrap.json": npmLockfile(names) }), version: "latest" },
-            { label: "yarn classic", lockfile: (names: string[]): Files => ({ "yarn.lock": `${YARN_CLASSIC}${names.map((name) => `${name}@^1.0.0:\n  version "1.0.0"\n\n`).join("")}` }), version: "1.x" },
-            { label: "yarn berry", lockfile: (names: string[]): Files => ({ "yarn.lock": `${YARN_BERRY}${names.map((name) => `"${name}@npm:^1.0.0":\n  version: 1.0.0\n\n`).join("")}` }), version: "latest" },
+            { label: "npm", lockfile: (names: string[]): Files => { return { "package-lock.json": npmLockfile(names) }; }, version: "latest" },
+            { label: "npm (shrinkwrap)", lockfile: (names: string[]): Files => { return { "npm-shrinkwrap.json": npmLockfile(names) }; }, version: "latest" },
+            { label: "yarn classic", lockfile: (names: string[]): Files => { return { "yarn.lock": `${YARN_CLASSIC}${names.map((name) => `${name}@^1.0.0:\n  version "1.0.0"\n\n`).join("")}` }; }, version: "1.x" },
+            { label: "yarn berry", lockfile: (names: string[]): Files => { return { "yarn.lock": `${YARN_BERRY}${names.map((name) => `"${name}@npm:^1.0.0":\n  version: 1.0.0\n\n`).join("")}` }; }, version: "latest" },
         ])("a $label workspace", ({ label, lockfile, version }) => {
             const name = label.split(" ")[0] as string;
 
             it.each([[[]], [["--format", "json"]], [["--pin", "--dry-run"]], [["--prod", "--format=json"]]])("`optimize %s` prints what Node does", (flags: string[]) => {
                 expect.hasAssertions();
 
-                const result = harness.expectParity(manifestWorkspace(lockfile(packages.slice(30, 36))), flags);
+                harness.expectParity(manifestWorkspace(lockfile(packages.slice(30, 36))), flags);
+            });
 
-                if (flags.length === 0) {
-                    expect(result.stdout).toContain(`Detected ${name} v${version}.`);
-                    expect(result.stdout).toContain("Scanned 3 workspace packages.");
-                }
+            it("names the detected manager and the scanned packages", () => {
+                expect.hasAssertions();
+
+                const result = harness.expectParity(manifestWorkspace(lockfile(packages.slice(30, 36))), []);
+
+                expect(result.stdout).toContain(`Detected ${name} v${version}.`);
+                expect(result.stdout).toContain("Scanned 3 workspace packages.");
             });
 
             it("finds packages that only the lockfile names", () => {
@@ -412,6 +416,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             const files = manifestWorkspace({}, { packageManager: pin });
 
             expect(harness.expectParity(files, []).stdout).toContain(`Detected ${shown}.`);
+
             harness.expectParity(files, ["--format", "json"]);
         });
 
@@ -424,6 +429,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                 const files = { ...below, "packages/no-manifest/readme.md": "x" };
 
                 expect(harness.expectParity(files, [], {}, directory).stdout).toContain("Scanned 3 workspace packages.");
+
                 harness.expectParity(files, ["--format", "json", "--prod"], {}, directory);
                 harness.expectParity(files, ["--pin", "--dry-run"], {}, directory);
             });
@@ -546,7 +552,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
         });
 
         describe("a root the binary does not read", () => {
-            const npmRoot = (manifest: Record<string, unknown> = {}, lockfiles: Files = { "package-lock.json": npmLockfile([]) }, files: Files = projects()): Files => manifestWorkspace(lockfiles, manifest, files);
+            const npmRoot = (manifest: Record<string, unknown> = {}, lockfiles?: Files, files: Files = projects()): Files => manifestWorkspace(lockfiles ?? { "package-lock.json": npmLockfile([]) }, manifest, files);
 
             it.each([
                 ["a bun workspace", manifestWorkspace({ "bun.lock": "{}\n" })],
