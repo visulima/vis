@@ -1,0 +1,50 @@
+ VIS  •  Running target build for 8 projects
+  With additional flags:
+    --visOptions={}
+
+> a1:build
+> b1:build
+> b2:build
+√  a1:build [cache] (8 ms)
+::group::√ a1:build
+a1
+::endgroup::
+> c-beta:build
+√  b1:build [cache] (7 ms)
+::group::√ b1:build
+b1
+::endgroup::
+> mid:build
+√  b2:build [cache] (9 ms)
+::group::√ b2:build
+b2
+::endgroup::
+> ten:build
+√  mid:build [cache] (3 ms)
+::group::√ mid:build
+mid
+::endgroup::
+> zed:build
+√  ten:build [cache] (3 ms)
+::group::√ ten:build
+ten
+::endgroup::
+> zz-core:build
+√  c-beta:build [cache] (11 ms)
+::group::√ c-beta:build
+c-beta
+::endgroup::
+√  zed:build [cache] (5 ms)
+::group::√ zed:build
+zed
+::endgroup::
+√  zz-core:build [cache] (3 ms)
+::group::√ zz-core:build
+zz-core
+::endgroup::
+
+ VIS  •  Successfully ran target build for 8 projects
+
+   √  8 tasks completed (8 read from cache)  ·  Took 38 ms
+
+  8 cached · 0.1s

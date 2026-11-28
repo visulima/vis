@@ -1,0 +1,7 @@
+{
+  "name": "c-beta",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo c-beta"
+  }
+}

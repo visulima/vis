@@ -16,7 +16,7 @@
 //
 // The committed captures came from this checkout built on the Windows guest (base `3b5c0c66`, the `vis` package at
 // `8.0.0-next.3`), Node v26.13.1, Windows 10.0.26200 (Windows 11), stdout a pipe. Capture again with the Node CLI of the
-// release being compared against.
+// release being compared against. The case `fsorder` was captured the same way from base `cd25db5d`.
 //
 // The run fails if the Node CLI wrote to stderr, if a hit run changed the cache directory, or if a file holds the
 // workspace's path with backslashes. The one edit made to the bytes is the workspace's own path, which Node prints

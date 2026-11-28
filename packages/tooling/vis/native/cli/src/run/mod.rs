@@ -95,23 +95,13 @@ struct Answer {
     node_version: String,
 }
 
-/// Whether the order Node prints this run in is the order this module prints it in, on a file system whose
-/// enumeration order this module cannot read. Node starts tasks that do not depend on each other by `id.localeCompare`
-/// and lists them in the order it finds the project directories, which `readdir` gives sorted on unix (libuv sorts) and
-/// on Windows in the file system's own order (NTFS: by upper-cased name). This module lists them by project directory
-/// in byte order. The two agree when the task ids are already in root-collation order and the directories are in the
-/// same order under byte order and under upper-cased order; anything else stays Node's. `tasks` is `(id, root)` in
-/// project order.
-fn print_order_matches_node(tasks: &[(&str, &str)]) -> bool {
-    let upper = |root: &str| root.split('/').map(str::to_ascii_uppercase).collect::<Vec<_>>();
-    let bytes = |root: &str| root.split('/').map(str::to_owned).collect::<Vec<_>>();
-
-    root_collation()
-        && tasks.windows(2).all(|pair| {
-            collate(pair[0].0, pair[1].0).is_lt()
-                && bytes(pair[0].1) < bytes(pair[1].1)
-                && upper(pair[0].1) < upper(pair[1].1)
-        })
+/// Whether the order Node prints this run in is the order this module prints it in. Node starts tasks that do not
+/// depend on each other by `id.localeCompare` and lists them in the order it finds the project directories, which is
+/// the project order this module holds (the discovery reads each directory in the order Node's `readdir` gives it). The
+/// two agree when the task ids are already in root-collation order along that project order; anything else stays
+/// Node's. `ids` is the task ids in project order.
+fn print_order_matches_node(ids: &[&str]) -> bool {
+    root_collation() && ids.windows(2).all(|pair| collate(pair[0], pair[1]).is_lt())
 }
 
 /// Whether no project of the workspace depends on another (a peer dependency counts, as it does in Node's graph).
@@ -290,14 +280,10 @@ fn attempt(args: &[String]) -> Option<Answer> {
         return None;
     }
 
-    // Unix hands Node the project directories sorted by byte, the order printed here; Windows does not. Node also starts
-    // the tasks of a project that depends on others first, which this module does not read, so on Windows a workspace
-    // whose projects depend on each other is Node's as well.
-    if cfg!(windows)
-        && (!print_order_matches_node(
-            &keyer.tasks().iter().map(|task| (task.id.as_str(), task.root.as_str())).collect::<Vec<_>>(),
-        ) || !projects_are_independent(&gates.root))
-    {
+    // On Windows Node starts the tasks of a project that depends on others first, which this module does not read, so
+    // a workspace whose projects depend on each other is Node's; it starts the others by id, so their ids must also
+    // be in collation order along the project order (see `print_order_matches_node`).
+    if cfg!(windows) && (!print_order_matches_node(&ids) || !projects_are_independent(&gates.root)) {
         return None;
     }
 
@@ -413,23 +399,14 @@ mod tests {
     }
 
     #[test]
-    fn the_print_order_is_trusted_only_where_every_order_node_may_use_agrees() {
-        let sorted = [("alpha:build", "packages/alpha"), ("b10:build", "packages/b10"), ("b2:build", "packages/b2")];
+    fn the_print_order_is_trusted_only_where_the_ids_rise_along_the_project_order() {
+        let sorted = ["alpha:build", "b10:build", "b2:build"];
 
         assert!(print_order_matches_node(&sorted));
         assert!(print_order_matches_node(&sorted[..1]));
         assert!(print_order_matches_node(&[]));
         // Ids out of collation order: Node starts them by `id.localeCompare`.
-        assert!(!print_order_matches_node(&[("b:build", "packages/a"), ("a:build", "packages/b")]));
-        // Mixed case and `_` sort differently as bytes and as upper-cased names (NTFS): `Zed` is before `a-app` as bytes
-        // and after it as upper-cased names, `_core` is before `a-app` as bytes and after it as upper-cased names.
-        assert!(!print_order_matches_node(&[("a:build", "packages/Zed"), ("b:build", "packages/a-app")]));
-        assert!(!print_order_matches_node(&[("a:build", "packages/_core"), ("b:build", "packages/a")]));
-        // Both orders agree here, so the order is certain.
-        assert!(print_order_matches_node(&[("a:build", "packages/Zed"), ("b:build", "packages/_core")]));
-        // A name that is a prefix of another is compared by component, not through the separator.
-        assert!(print_order_matches_node(&[("a:build", "packages/b"), ("b:build", "packages/b-x")]));
-        assert!(!print_order_matches_node(&[("a:build", "packages/b-x"), ("b:build", "packages/b/c")]));
+        assert!(!print_order_matches_node(&["b:build", "a:build"]));
     }
 
     fn scratch(name: &str) -> PathBuf {

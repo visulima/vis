@@ -405,8 +405,8 @@ fn a_run_in_which_every_task_hits_prints_and_writes_what_node_did_on_windows() {
         }
     }
 
-    // Three workspaces, in the nine shared environments and the six of the run.
-    assert_eq!(checked, 45);
+    // Four workspaces, in the nine shared environments and the six of the run.
+    assert_eq!(checked, 60);
 }
 
 /// The task cache lives at the main checkout's root, so a run from a linked worktree reads the cache of the checkout it
