@@ -32,6 +32,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
         channel: options.channel,
         cwd,
         firstRelease: options.firstRelease === true,
+        readOnly: true,
         skipRegistryLookup: true,
     });
 

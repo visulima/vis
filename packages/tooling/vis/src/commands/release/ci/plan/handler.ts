@@ -17,7 +17,7 @@ import type { ReleaseCiPlanOptions } from "./index";
 
 const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, ReleaseCiPlanOptions>): Promise<void> => {
     const cwd = workspaceRoot ?? process.cwd();
-    const ctx = await buildContext({ cwd, skipRegistryLookup: true });
+    const ctx = await buildContext({ cwd, readOnly: true, skipRegistryLookup: true });
 
     const { printConfigIfRequested } = await import("../../../../release/core/print-config");
 
