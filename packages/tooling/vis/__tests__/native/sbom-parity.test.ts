@@ -447,6 +447,59 @@ const plain = (root: string, extra: (root: string) => void = () => undefined): v
 const configured = (root: string): void => { plain(root, (directory) => { write(directory, "vis.config.json", "{}\n"); }); };
 const withCargoLock = (root: string): void => { plain(root, (directory) => { write(directory, "Cargo.lock", "version = 3\n"); }); };
 const withGoSum = (root: string): void => { plain(root, (directory) => { write(directory, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n"); }); };
+/**
+ * A root file of a gated ecosystem (Maven and Zig aside, whose files are project markers): Node does not read it unless the
+ * ecosystem is opted in, and says on stderr that it found it. Only the existence of the file matters, so the content is a stub.
+ */
+const gatedFile = (file: string, content = "stub\n") => (root: string): void => { plain(root, (directory) => { write(directory, file, content); }); };
+const withMixLock = gatedFile("mix.lock", "%{}\n");
+const withPubspecLock = gatedFile("pubspec.lock", "packages: {}\n");
+const withPackageResolved = gatedFile("Package.resolved", '{"pins":[],"version":2}\n');
+const withPackagesLockJson = gatedFile("packages.lock.json", '{"version":1,"dependencies":{}}\n');
+const withGradleLockfile = gatedFile("gradle.lockfile", "# lock\nempty=\n");
+const withAllGated = (root: string): void => {
+    plain(root, (directory) => {
+        for (const file of ["packages.lock.json", "Package.resolved", "pubspec.lock", "go.sum", "mix.lock", "gradle.lockfile"]) {
+            write(directory, file, "stub\n");
+        }
+    });
+};
+const withGoSumDirectory = (root: string): void => { plain(root, (directory) => { mkdirSync(join(directory, "go.sum")); }); };
+const withGoSumDangling = (root: string): void => { plain(root, (directory) => { symlinkSync(join(directory, "missing"), join(directory, "go.sum")); }); };
+/** A config whose `discover` flags are off beside the lock files of those ecosystems: the flag opts nothing in, so the files are only reported. */
+const configuredDiscoverOff = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", "export default { go: { discover: false }, hex: { discover: false } };\n");
+    write(root, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n");
+    write(root, "mix.lock", "%{}\n");
+};
+const configuredWithGoSum = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n");
+    write(root, "mix.lock", "%{}\n");
+};
+// The manifests of two gated ecosystems are project markers, which the workspace read hands to Node; a lock file of an ecosystem Node reads stays Node's.
+const withPomXml = (root: string): void => { plain(root, (directory) => { write(directory, "pom.xml", "<project/>\n"); }); };
+const withZigZon = (root: string): void => { plain(root, (directory) => { write(directory, "build.zig.zon", ".{}\n"); }); };
+const withGatedAndCargoLock = (root: string): void => { plain(root, (directory) => { write(directory, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n"); write(directory, "Cargo.lock", "version = 3\n"); }); };
+
+// Which lockfile Node reads: pnpm first, then npm-shrinkwrap.json, package-lock.json, yarn.lock and bun.lock. The binary reads pnpm-lock.yaml only.
+const npmLock = (): Json => { return { lockfileVersion: 3, name: "npm-root", packages: { "": { name: "npm-root", version: "1.0.0" }, "node_modules/left-pad": { integrity: sri("sha512", "left-pad@1.3.0"), resolved: "https://registry.example.test/left-pad/-/left-pad-1.3.0.tgz", version: "1.3.0" } }, requires: true, version: "1.0.0" }; };
+const bunLock = (): string => `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "bun-root" } },\n  "packages": { "left-pad": ["left-pad@1.3.0", "", {}, "${sri("sha512", "left-pad@1.3.0")}"] }\n}\n`;
+const otherManager = (root: string, lockfile: string, content: string | Json): void => {
+    write(root, "package.json", { name: "other-root", private: true, version: "1.0.0", workspaces: ["packages/*"] });
+    write(root, lockfile, content);
+    write(root, "packages/a/package.json", { dependencies: { "left-pad": "^1.0.0" }, name: "other-a", version: "1.0.0" });
+};
+const npmOnly = (root: string): void => { otherManager(root, "package-lock.json", npmLock()); };
+const shrinkwrapOnly = (root: string): void => { otherManager(root, "npm-shrinkwrap.json", npmLock()); };
+const bunOnly = (root: string): void => { otherManager(root, "bun.lock", bunLock()); };
+// A pnpm workspace that also holds another manager's lockfile: Node reads the pnpm one first, and so does the binary.
+const pnpmWithNpmLock = (root: string): void => { plain(root, (directory) => { write(directory, "package-lock.json", npmLock()); }); };
+const pnpmWithShrinkwrap = (root: string): void => { plain(root, (directory) => { write(directory, "npm-shrinkwrap.json", npmLock()); }); };
+const pnpmWithYarnLock = (root: string): void => { plain(root, (directory) => { write(directory, "yarn.lock", '# yarn lockfile v1\n\n\nleft-pad@^1.0.0:\n  version "1.3.0"\n'); }); };
+const pnpmWithBunLock = (root: string): void => { plain(root, (directory) => { write(directory, "bun.lock", bunLock()); }); };
+
 const withProjectJson = (root: string): void => { plain(root, (directory) => { write(directory, "packages/a/project.json", { name: "renamed-a", projectType: "tool" }); }); };
 const withUvLock = (root: string): void => { plain(root, (directory) => { write(directory, "uv.lock", "version = 1\n"); }); };
 const crlf = (root: string): void => {
@@ -581,7 +634,10 @@ const FIXTURES: Record<string, (root: string) => void> = {
     configuredRegistry,
     bomManifest,
     brokenInstalled,
+    bunOnly,
     configured,
+    configuredDiscoverOff,
+    configuredWithGoSum,
     conflictingInstalled,
     crlf,
     emptyLock,
@@ -592,19 +648,36 @@ const FIXTURES: Record<string, (root: string) => void> = {
     monorepoInstalled,
     monorepoLock,
     nonAsciiLicense,
+    npmOnly,
     nonAsciiName,
     noProjects,
     numberDescription,
+    pnpmWithBunLock,
+    pnpmWithNpmLock,
+    pnpmWithShrinkwrap,
+    pnpmWithYarnLock,
     protoDependency,
     ranges,
     resolutions,
+    shrinkwrapOnly,
     symlinkDirectory,
     unicodeSpace,
     unsupportedRange,
+    withAllGated,
     withCargoLock,
+    withGatedAndCargoLock,
     withGoSum,
+    withGoSumDangling,
+    withGoSumDirectory,
+    withGradleLockfile,
+    withMixLock,
+    withPackageResolved,
+    withPackagesLockJson,
+    withPomXml,
     withProjectJson,
+    withPubspecLock,
     withUvLock,
+    withZigZon,
     xmlCdata,
     xmlCdataInjection,
     xmlCdataLater,
@@ -857,6 +930,29 @@ const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] 
     ["emptyLock", ["--output", "-"]],
     ["emptyLock", []],
     ["noProjects", ["--output", "-"]],
+    // A gated ecosystem found by file is left out and reported on stderr; the notice names each file in the order of the ecosystems.
+    ["withGoSum", ["--output", "-"]],
+    ["withGoSum", []],
+    ["withMixLock", ["--output", "-"]],
+    ["withPubspecLock", ["--output", "-"]],
+    ["withPackageResolved", ["--output", "-"]],
+    ["withPackagesLockJson", ["--output", "-"]],
+    ["withGradleLockfile", ["--output", "-"]],
+    ["withAllGated", ["--output", "-"]],
+    ["withAllGated", []],
+    ["withAllGated", ["--output", "-", "--include-dev"]],
+    ["withAllGated", ["--focus", "@fixture/a", "--output", "-"]],
+    ["withGoSumDirectory", ["--output", "-"]],
+    ["withGoSumDangling", ["--output", "-"]],
+    ["configuredDiscoverOff", ["--output", "-"]],
+    ["configuredDiscoverOff", []],
+    ["configuredWithGoSum", ["--output", "-"]],
+    ["configuredWithGoSum", []],
+    // The pnpm lockfile is read first, whatever else is at the root.
+    ["pnpmWithNpmLock", ["--output", "-"]],
+    ["pnpmWithShrinkwrap", ["--output", "-"]],
+    ["pnpmWithYarnLock", ["--output", "-"]],
+    ["pnpmWithBunLock", ["--output", "-"]],
     ["monorepoLock", ["--output", "-"]],
     ["monorepoLock", ["--output", "-", "--include-dev"]],
     ["monorepoLock", ["--output", "{root}/out/monorepo.json"]],
@@ -899,7 +995,6 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     // Text that the XML library leaves as it is in a way the binary does not write: it is Node's.
     ...XML_UNESCAPED_DELEGATED.map((fixture): [string, string[]] => [fixture, ["--format", "xml", "--output", "-"]]),
     ["xmlCdataInjection", ["--format", "xml"]],
-    ["withGoSum", ["--format", "xml", "--output", "-"]],
     ["yarnOnly", ["--format", "xml", "--output", "-"]],
     ["symlinkDirectory", ["--format", "xml", "--output", "link/x.xml"]],
     ["basic", ["--unknown"]],
@@ -936,9 +1031,16 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     ["optInUnknown", ["--output", "-"]],
     ["withCargoLock", ["--output", "-"]],
     ["withUvLock", ["--output", "-"]],
-    ["withGoSum", ["--output", "-"]],
     ["withProjectJson", ["--output", "-"]],
     ["yarnOnly", ["--output", "-"]],
+    // The other managers' lockfiles are read by Node, and not by the binary.
+    ["npmOnly", ["--output", "-"]],
+    ["shrinkwrapOnly", ["--output", "-"]],
+    ["bunOnly", ["--output", "-"]],
+    // The manifests of Maven and Zig are project markers; the lock files of the ecosystems Node reads stay with it.
+    ["withPomXml", ["--output", "-"]],
+    ["withZigZon", ["--output", "-"]],
+    ["withGatedAndCargoLock", ["--output", "-"]],
     ["crlf", ["--output", "-"]],
     ["unicodeSpace", ["--output", "-"]],
     ["protoDependency", ["--output", "-"]],
@@ -1148,6 +1250,29 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
         expect(mask(native.stdout, nativeRoot)).toBe(mask(node.stdout, nodeRoot));
         expect(native.stderr).toBe(node.stderr);
         expect(Buffer.byteLength(native.stdout)).toBeLessThan(64 * 1024);
+    }, 120_000);
+
+    // The notice goes through the console of the CLI, not through pail: it is one line, whatever the width or the colour.
+    it.each([...COLOUR_ENVIRONMENTS, { COLUMNS: "30" }, { COLUMNS: "200" }, { COLUMNS: "10", GITHUB_ACTIONS: "true" }].map((env) => [JSON.stringify(env), env] as const))("prints the notice of a found gated ecosystem like Node in the environment %s", (_name, env) => {
+        for (const args of [["--output", "-"], ["--format", "xml", "--output", "-"]]) {
+            const node = runNode("withAllGated", args, true, env);
+            const native = runNative("withAllGated", args, true, env);
+
+            expect(native.run.status).toBe(node.run.status);
+            expect(native.run.stdout).toBe(node.run.stdout);
+            expect(native.run.stderr).toBe(node.run.stderr);
+            expect(native.run.stderr).toContain("vis sbom: ecosystems found by file");
+        }
+    }, 120_000);
+
+    it.each(COLOUR_ENVIRONMENTS.map((env) => [JSON.stringify(env), env] as const))("prints the notice and the status lines like Node in the environment %s", (_name, env) => {
+        const node = runNode("withGoSum", [], true, env);
+        const native = runNative("withGoSum", [], true, env);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
     }, 120_000);
 
     it("declines outside CI, where Node adds notices of its own", () => {

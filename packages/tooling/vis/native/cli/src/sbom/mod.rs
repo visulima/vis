@@ -14,7 +14,9 @@
 //! the ecosystems in the BOM, with its `projectIgnore` applied (`config_workspace.rs`).
 //! An XML document with a value that the XML library does not escape in full is Node's (see `xml.rs`).
 //! Node: every other `--format` and flag, any other lockfile manager, any other config, a project with a
-//! `project.json`, another ecosystem's lock file at the root, a terminal, and everything the readers refuse.
+//! `project.json`, a lock file at the root of an ecosystem that Node reads into the BOM (`NODE_ONLY_FILES`), a terminal,
+//! and everything the readers refuse. A lock file of an ecosystem that is not opted in (`GATED_FILES`) is no obstacle:
+//! Node leaves it out and says so on stderr, which this module prints as well.
 
 mod bom;
 mod json;
@@ -34,28 +36,44 @@ use crate::config_workspace::{read_vetted, Consumer};
 use crate::graph::{project_graph, project_graph_vetted_with_manifests, GraphResult};
 use crate::js;
 use crate::node_context::{ci_root_context, config_context_is_native, quiet_context};
-use crate::output::write_stdout;
+use crate::output::{write_stderr, write_stdout};
 use crate::pail::{Layout, Level};
 use crate::root_search::read_json;
 use crate::text::is_ascii_graphic_path;
 use crate::vis_config::{config_file_in, has_vis_config};
 
-/// Lock and manifest files of the other ecosystems `vis sbom` reads from the root, which Node adds to the BOM
-/// or reports on stderr as found-but-not-included.
-const OTHER_ECOSYSTEM_FILES: [&str; 12] = [
-    "Cargo.lock",
-    "Gemfile.lock",
-    "Package.resolved",
-    "build.zig.zon",
-    "composer.lock",
-    "go.sum",
-    "gradle.lockfile",
-    "mix.lock",
-    "packages.lock.json",
-    "pom.xml",
-    "pubspec.lock",
-    "uv.lock",
+/// Lock and manifest files at the root that Node reads into the BOM whatever the config says (`Cargo.lock`,
+/// `Gemfile.lock`, `composer.lock`, `uv.lock`), and the two manifests of a gated ecosystem that are also project
+/// markers (`pom.xml`, `build.zig.zon`), whose workspaces the binary hands to Node.
+const NODE_ONLY_FILES: [&str; 6] =
+    ["Cargo.lock", "Gemfile.lock", "build.zig.zon", "composer.lock", "pom.xml", "uv.lock"];
+
+/// The gated ecosystems that Node finds by one root file, as `(id, file)` in the order of `GATED_ECOSYSTEMS`
+/// (`src/sbom/ecosystem-gate.ts`), which is the order of the clauses of its notice. Without an opt-in in the
+/// config, which no config the binary reads holds, none of them is in the BOM: Node only says on stderr that it
+/// found the file.
+const GATED_FILES: [(&str, &str); 6] = [
+    ("gradle", "gradle.lockfile"),
+    ("hex", "mix.lock"),
+    ("go", "go.sum"),
+    ("dart", "pubspec.lock"),
+    ("swift", "Package.resolved"),
+    ("nuget", "packages.lock.json"),
 ];
+
+/// The line Node prints on stderr for the gated ecosystems found by file at the root (`skippedEcosystemsNotice`), or
+/// `None` when there is none.
+fn skipped_notice(root: &Path) -> Option<String> {
+    let clauses: Vec<String> = GATED_FILES
+        .iter()
+        .filter(|(_, file)| root.join(file).exists())
+        .map(|(id, file)| format!("{file} found; not included. Set {id}.discover or add '{id}' to sbom.ecosystems."))
+        .collect();
+
+    (!clauses.is_empty()).then(|| {
+        format!("vis sbom: ecosystems found by file, which does not show they are used. {}", clauses.join(" "))
+    })
+}
 
 /// `--format`, which Node lowercases before it compares it with `json` and `xml`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -192,7 +210,7 @@ fn module_type_is_guessed(root: &Path) -> bool {
 /// absent, or a literal one whose keys cannot change the BOM beyond `projectIgnore` (see `config_workspace`). `None`
 /// for every other config and context.
 fn context(cwd: &Path) -> Option<Ignore> {
-    if !ci_root_context(cwd) || !root_collation() || OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists()) {
+    if !ci_root_context(cwd) || !root_collation() || NODE_ONLY_FILES.iter().any(|name| cwd.join(name).exists()) {
         return None;
     }
 
@@ -266,12 +284,17 @@ fn answer(args: &[String]) -> Option<i32> {
         Format::Xml => bom.to_xml(&timestamp, &serial_number).ok()?,
     };
 
+    // Node prints the notice before it builds anything; it is printed here once nothing can send the run to Node any more,
+    // so a delegation never repeats it.
+    let notice = skipped_notice(&cwd).map(|line| line + "\n");
+
     let Some(layout) = layout else {
         // A document that Node would cut short on a pipe is Node's to cut short.
         if crate::output::node_may_cut_short(text.len()) {
             return None;
         }
 
+        write_notice(notice.as_deref());
         write_stdout("sbom", "the SBOM", &text);
 
         return Some(0);
@@ -293,14 +316,22 @@ fn answer(args: &[String]) -> Option<i32> {
             &format!("{} components, {} dependency edges", bom.component_count(), bom.dependency_count()),
         );
 
+    write_notice(notice.as_deref());
     write_stdout("sbom", "the confirmation", &message);
 
     Some(0)
 }
 
+/// The found-but-not-included line, on stderr as `console.error` writes it.
+fn write_notice(notice: Option<&str>) {
+    if let Some(notice) = notice {
+        write_stderr("sbom", "the notice", notice);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{module_type_is_guessed, parse, plain_output, Format};
+    use super::{module_type_is_guessed, parse, plain_output, skipped_notice, Format};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -331,6 +362,30 @@ mod tests {
             (plan.include_dev, plan.focus, plan.output),
             (true, vec!["a".to_owned(), "b".to_owned()], "-".to_owned())
         );
+    }
+
+    #[test]
+    fn the_notice_names_each_found_gated_file_in_the_order_of_the_ecosystems() {
+        let root = std::env::temp_dir().join(format!("vis-sbom-notice-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(skipped_notice(&root), None);
+
+        // Written in the reverse of the order they are named in.
+        for file in ["packages.lock.json", "go.sum", "gradle.lockfile"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+
+        assert_eq!(
+            skipped_notice(&root).as_deref(),
+            Some(
+                "vis sbom: ecosystems found by file, which does not show they are used. gradle.lockfile found; not included. Set gradle.discover or add 'gradle' to sbom.ecosystems. go.sum found; not included. Set go.discover or add 'go' to sbom.ecosystems. packages.lock.json found; not included. Set nuget.discover or add 'nuget' to sbom.ecosystems."
+            )
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
