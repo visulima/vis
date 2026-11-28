@@ -447,6 +447,7 @@ const plain = (root: string, extra: (root: string) => void = () => undefined): v
 const configured = (root: string): void => { plain(root, (directory) => { write(directory, "vis.config.json", "{}\n"); }); };
 const withCargoLock = (root: string): void => { plain(root, (directory) => { write(directory, "Cargo.lock", "version = 3\n"); }); };
 const withGoSum = (root: string): void => { plain(root, (directory) => { write(directory, "go.sum", "example.test/m v1.0.0 h1:AAAA=\n"); }); };
+
 /**
  * A root file of a gated ecosystem (Maven and Zig aside, whose files are project markers): Node does not read it unless the
  * ecosystem is opted in, and says on stderr that it found it. Only the existence of the file matters, so the content is a stub.
@@ -564,32 +565,32 @@ const configuredIgnoreRules = (root: string): void => {
 
 /**
  * What the XML writer has to get right, which the JSON writer does not meet: text with every one of the four escaped
- * characters (none of them followed by a word run and a `;`), an apostrophe, line breaks and tabs, a name with `<&>` in it,
+ * characters (none of them followed by a word run and a `;`), an apostrophe, line breaks and tabs, a name with `&lt;&amp;>` in it,
  * an empty version (which the XML leaves out and the JSON keeps), and every kind of licence and reference.
  */
 const xmlQuirks = (root: string): void => {
-    const quote = String.fromCodePoint(34);
+    const doubleQuote = String.fromCodePoint(34);
 
     workspace(root, {
         lock: lockV9([{ name: "left-pad", version: "1.3.0" }]),
         projects: {
-            a: { description: `say ${quote}hi${quote} & <b>bold</b> > it's`, name: "quirk-a", version: "1.0.0" },
+            a: { description: `say ${doubleQuote}hi${doubleQuote} & <b>bold</b> > it's`, name: "quirk-a", version: "1.0.0" },
             b: { description: "a > b < c & d \" e ' f", name: "quirk-b", version: "1.0.0" },
             c: { author: "A & B <ab@example.test>", description: "line one\nline two\ttabbed\r\nand a carriage return", name: "quirk-c", version: "" },
             d: { dependencies: { "left-pad": "1.3.0" }, license: "MIT OR Apache-2.0", name: "n<&x y>", version: "1.0.0" },
-            e: { homepage: `https://example.test/?a=1&b=2&c=${quote}x${quote}`, license: "MIT", name: "quirk-e", repository: "git+https://example.test/e.git?x=<y>", version: "1.0.0" },
+            e: { homepage: `https://example.test/?a=1&b=2&c=${doubleQuote}x${doubleQuote}`, license: "MIT", name: "quirk-e", repository: "git+https://example.test/e.git?x=<y>", version: "1.0.0" },
             f: { license: "Custom <License> & Co", name: "quirk-f", version: "1.0.0" },
             g: { bugs: { url: "https://example.test/issues?a=<b" }, name: "quirk-g", version: "2.0.0" },
         },
-        root: { description: `${quote}root${quote} x <![CDATA[ y`, name: "root<&>", version: "" },
+        root: { description: `${doubleQuote}root${doubleQuote} x <![CDATA[ y`, name: "root<&>", version: "" },
     });
 };
 
 /**
  * Text that the XML library leaves as it is, one kind in each fixture. The binary writes the XML of the two that stay well-formed
  * and hold no markup that the text did not escape (a predefined entity, and a `"` in a text), and hands the XML of the others to Node,
- * which writes the library's output: a description that starts with `<![CDATA[` (written as it is, which lets a package
- * add markup to the document), an entity that XML does not define (`&copy;`, `&#38;`), and a `<` or `>` followed by a word run and a `;`.
+ * which writes the library's output: a description that starts with `&lt;![CDATA[` (written as it is, which lets a package
+ * add markup to the document), an entity that XML does not define (`&amp;copy;`, `&amp;#38;`), and a `&lt;` or `>` followed by a word run and a `;`.
  * The JSON document of every one of them is the binary's.
  */
 const xmlWith = (description: string) => (root: string): void => {
@@ -627,16 +628,13 @@ const optInUnknown = (root: string): void => {
 
 const FIXTURES: Record<string, (root: string) => void> = {
     basic,
-    configuredIgnoreRules,
-    optInByDiscover,
-    optInByList,
-    optInUnknown,
-    configuredRegistry,
     bomManifest,
     brokenInstalled,
     bunOnly,
     configured,
     configuredDiscoverOff,
+    configuredIgnoreRules,
+    configuredRegistry,
     configuredWithGoSum,
     conflictingInstalled,
     crlf,
@@ -648,10 +646,13 @@ const FIXTURES: Record<string, (root: string) => void> = {
     monorepoInstalled,
     monorepoLock,
     nonAsciiLicense,
-    npmOnly,
     nonAsciiName,
     noProjects,
+    npmOnly,
     numberDescription,
+    optInByDiscover,
+    optInByList,
+    optInUnknown,
     pnpmWithBunLock,
     pnpmWithNpmLock,
     pnpmWithShrinkwrap,
@@ -1119,7 +1120,7 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
     const SBOM_DECLINES = new Set(["vis.config.js without a package type"]);
     const configCases = [...CONFIG_CASES, ...GRAPH_ONLY_CASES].map((entry) => [entry.name, `${CONFIG_FIXTURE_PREFIX}${entry.name}`, entry.graph && !SBOM_DECLINES.has(entry.name)] as const);
 
-    it.each(configCases.filter(([, , native]) => native).flatMap(([name, fixture]) => [[name, fixture, ["--output", "-"]], [name, fixture, []], [name, fixture, ["--output", "-", "--include-dev"]]] as const))("with a config, %s %j is answered natively and matches Node", (_name, fixture, args) => {
+    it.each(configCases.filter((entry) => entry[2]).flatMap(([name, fixture]) => [[name, fixture, ["--output", "-"]], [name, fixture, []], [name, fixture, ["--output", "-", "--include-dev"]]] as const))("with a config, %s %j is answered natively and matches Node", (_name, fixture, args) => {
         const node = runNode(fixture, [...args], true);
         const native = runNative(fixture, [...args], true);
 
@@ -1130,7 +1131,7 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
         expect(node.run.status).toBe(0);
     }, 120_000);
 
-    it.each(configCases.filter(([, , native]) => !native).map(([name, fixture]) => [name, fixture] as const))("with a config, %s is declined by the binary and answered by Node", (_name, fixture) => {
+    it.each(configCases.filter((entry) => !entry[2]).map(([name, fixture]) => [name, fixture] as const))("with a config, %s is declined by the binary and answered by Node", (_name, fixture) => {
         const args = ["--output", "-"];
         const node = runNode(fixture, args, true);
         const bare = runNative(fixture, args, true);
