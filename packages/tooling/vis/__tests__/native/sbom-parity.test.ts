@@ -509,6 +509,55 @@ const configuredIgnoreRules = (root: string): void => {
     write(root, "vis.config.ts", 'export default { projectIgnore: ["dropped/"], strictEnv: true };\n');
 };
 
+/**
+ * What the XML writer has to get right, which the JSON writer does not meet: text with every one of the four escaped
+ * characters (none of them followed by a word run and a `;`), an apostrophe, line breaks and tabs, a name with `<&>` in it,
+ * an empty version (which the XML leaves out and the JSON keeps), and every kind of licence and reference.
+ */
+const xmlQuirks = (root: string): void => {
+    const quote = String.fromCodePoint(34);
+
+    workspace(root, {
+        lock: lockV9([{ name: "left-pad", version: "1.3.0" }]),
+        projects: {
+            a: { description: `say ${quote}hi${quote} & <b>bold</b> > it's`, name: "quirk-a", version: "1.0.0" },
+            b: { description: "a > b < c & d \" e ' f", name: "quirk-b", version: "1.0.0" },
+            c: { author: "A & B <ab@example.test>", description: "line one\nline two\ttabbed\r\nand a carriage return", name: "quirk-c", version: "" },
+            d: { dependencies: { "left-pad": "1.3.0" }, license: "MIT OR Apache-2.0", name: "n<&x y>", version: "1.0.0" },
+            e: { homepage: `https://example.test/?a=1&b=2&c=${quote}x${quote}`, license: "MIT", name: "quirk-e", repository: "git+https://example.test/e.git?x=<y>", version: "1.0.0" },
+            f: { license: "Custom <License> & Co", name: "quirk-f", version: "1.0.0" },
+            g: { bugs: { url: "https://example.test/issues?a=<b" }, name: "quirk-g", version: "2.0.0" },
+        },
+        root: { description: `${quote}root${quote} x <![CDATA[ y`, name: "root<&>", version: "" },
+    });
+};
+
+/**
+ * Text that the XML library leaves as it is, one kind in each fixture. The binary writes the XML of the two that stay well-formed
+ * and hold no markup that the text did not escape (a predefined entity, and a `"` in a text), and hands the XML of the others to Node,
+ * which writes the library's output: a description that starts with `<![CDATA[` (written as it is, which lets a package
+ * add markup to the document), an entity that XML does not define (`&copy;`, `&#38;`), and a `<` or `>` followed by a word run and a `;`.
+ * The JSON document of every one of them is the binary's.
+ */
+const xmlWith = (description: string) => (root: string): void => {
+    workspace(root, { lock: lockV9([]), projects: { a: { description, name: "unescaped-a", version: "1.0.0" } } });
+};
+const xmlCdata = xmlWith("<![CDATA[raw <b> & text]]>");
+const xmlCdataInjection = xmlWith('<![CDATA[x]]><injected by="description"/>');
+const xmlCdataLater = xmlWith("x<![CDATA[y <b>");
+const xmlKeptEntity = xmlWith("fish &amp; chips &lt;b&gt; &quot;x&quot; &apos;");
+const xmlKeptQuote = xmlWith('say "hi";');
+const xmlKeptTag = xmlWith("a<b;c");
+const xmlKeptGreater = xmlWith("a>b; and ]]>x;");
+const xmlKeptAuthors = (root: string): void => {
+    workspace(root, { lock: lockV9([]), projects: { a: { author: "Pine Wu <octref@gmail.com>; Anthony Fu <anthonyfu117@hotmail.com>", name: "authors-a", version: "1.0.0" } } });
+};
+const xmlNumericEntity = xmlWith("&#38; &#x26;");
+const xmlUnknownEntity = xmlWith("copy &copy; right");
+
+const XML_UNESCAPED_DELEGATED = ["xmlCdata", "xmlCdataInjection", "xmlKeptGreater", "xmlKeptTag", "xmlNumericEntity", "xmlUnknownEntity"];
+const XML_UNESCAPED_NATIVE = ["xmlCdataLater", "xmlKeptAuthors", "xmlKeptEntity", "xmlKeptQuote"];
+
 /** A config that opts a gated ecosystem in (the lock file it reads is not there, so only the config differs), in each of the two ways. */
 const optInByList = (root: string): void => {
     configuredRegistry(root);
@@ -556,6 +605,17 @@ const FIXTURES: Record<string, (root: string) => void> = {
     withGoSum,
     withProjectJson,
     withUvLock,
+    xmlCdata,
+    xmlCdataInjection,
+    xmlCdataLater,
+    xmlKeptAuthors,
+    xmlKeptEntity,
+    xmlKeptGreater,
+    xmlKeptQuote,
+    xmlKeptTag,
+    xmlNumericEntity,
+    xmlQuirks,
+    xmlUnknownEntity,
     yarnOnly,
 };
 
@@ -805,12 +865,43 @@ const NATIVE: [fixture: string, args: string[], env?: Record<string, string>][] 
     ["monorepoInstalled", []],
 ];
 
+/**
+ * The XML BOM, over every fixture above that the native path answers (to stdout and to the default file, `sbom.cdx.xml`), and over
+ * the fixture that holds what only the XML writer has to get right. `--format` is lowercased by Node, so the spelling is free.
+ */
+const NATIVE_XML: [fixture: string, args: string[], env?: Record<string, string>][] = [
+    ...NATIVE.filter(([, args]) => !args.some((argument) => argument.startsWith("--format"))).map(([fixture, args, env]): [string, string[], Record<string, string>?] => [fixture, ["--format", "xml", ...args], env]),
+    ["xmlQuirks", ["--format", "xml", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml"]],
+    ["xmlQuirks", ["--format=XML", "--output", "-", "--include-dev"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "quirk-a", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "quirk-c,quirk-e", "--output", "-"]],
+    ["xmlQuirks", ["--format", "xml", "--focus", "n<&x y>", "--output", "-"]],
+    ["xmlQuirks", ["--format", "json", "--output", "-"]],
+    // The JSON of the text that the XML library does not escape in full is the binary's, and so is the XML where the text is no obstacle.
+    ...[...XML_UNESCAPED_DELEGATED, ...XML_UNESCAPED_NATIVE].map((fixture): [string, string[]] => [fixture, ["--output", "-"]]),
+    ...XML_UNESCAPED_NATIVE.flatMap((fixture): [string, string[]][] => [[fixture, ["--format", "xml", "--output", "-"]], [fixture, ["--format", "xml"]]]),
+    ["basic", ["--format", "Xml", "--output", "-"]],
+    ["basic", ["--format=xML", "--output", "{root}/abs/out.xml"]],
+    ["basic", ["--format", "JSON", "--output", "-"]],
+    ["basic", ["--format", "XML", "--output", "nested/dir/out.xml"]],
+    ["basic", ["--output", "out.xml", "--format", "xml"]],
+];
+
 /** Shapes the native path hands to Node; the fallback entry then makes Node answer, and its output must be Node's. */
 const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>][] = [
-    ["basic", ["--format", "xml", "--output", "-"]],
-    ["basic", ["--format", "xml"]],
     ["basic", ["--format", "yaml"]],
-    ["basic", ["--format", "JSON", "--output", "-"]],
+    ["basic", ["--format=xmls", "--output", "-"]],
+    ["basic", ["--format", "xml", "--format", "json", "--output", "-"]],
+    ["basic", ["--format", "xml", "--include-dev=false", "--output", "-"]],
+    ["basic", ["--format", "xml", "--output", "../outside.xml"]],
+    ["configuredRegistry", ["--format", "xml", "--focus", "@fixture/dropped", "--output", "-"]],
+    // Text that the XML library leaves as it is in a way the binary does not write: it is Node's.
+    ...XML_UNESCAPED_DELEGATED.map((fixture): [string, string[]] => [fixture, ["--format", "xml", "--output", "-"]]),
+    ["xmlCdataInjection", ["--format", "xml"]],
+    ["withGoSum", ["--format", "xml", "--output", "-"]],
+    ["yarnOnly", ["--format", "xml", "--output", "-"]],
+    ["symlinkDirectory", ["--format", "xml", "--output", "link/x.xml"]],
     ["basic", ["--unknown"]],
     ["basic", ["--output", "-", "extra"]],
     ["basic", ["--include-dev=false", "--output", "-"]],
@@ -893,7 +984,7 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
     const label = (fixture: string, args: string[], env?: Record<string, string>): string => `${fixture}: sbom ${args.join(" ")} ${env ? JSON.stringify(env) : ""}`;
 
-    it.each(NATIVE.map(([fixture, args, env]) => [label(fixture, args, env), fixture, args, env] as const))("%s is answered natively and matches Node", (_name, fixture, args, env) => {
+    it.each([...NATIVE, ...NATIVE_XML].map(([fixture, args, env]) => [label(fixture, args, env), fixture, args, env] as const))("%s is answered natively and matches Node", (_name, fixture, args, env) => {
         const node = runNode(fixture, args, true, env);
         const native = runNative(fixture, args, true, env);
 
@@ -1033,6 +1124,30 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
         expect(bare.status).toBe(70);
         expect(bare.stdout).toBe("");
+    }, 120_000);
+
+    it("leaves an XML document that does not fit a pipe to Node", () => {
+        expect.hasAssertions();
+
+        const root = fresh("monorepoLock");
+        const bare = spawnSync(nativeBinary, ["sbom", "--format", "xml", "--output", "-"], { cwd: root, encoding: "utf8", env: environment(true) });
+
+        expect(bare.status).toBe(70);
+        expect(bare.stdout).toBe("");
+    }, 120_000);
+
+    it("writes a small XML document to a pipe like Node", () => {
+        expect.hasAssertions();
+
+        const nodeRoot = fresh("xmlQuirks");
+        const nativeRoot = fresh("xmlQuirks");
+        const node = spawnSync(process.execPath, [nodeEntry, "sbom", "--format", "xml", "--output", "-"], { cwd: nodeRoot, encoding: "utf8", env: environment(true) });
+        const native = spawnSync(nativeBinary, ["sbom", "--format", "xml", "--output", "-"], { cwd: nativeRoot, encoding: "utf8", env: environment(true) });
+
+        expect(native.status).toBe(node.status);
+        expect(mask(native.stdout, nativeRoot)).toBe(mask(node.stdout, nodeRoot));
+        expect(native.stderr).toBe(node.stderr);
+        expect(Buffer.byteLength(native.stdout)).toBeLessThan(64 * 1024);
     }, 120_000);
 
     it("declines outside CI, where Node adds notices of its own", () => {

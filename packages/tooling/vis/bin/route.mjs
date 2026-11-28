@@ -1013,8 +1013,10 @@ const sortPackageJsonMayRunNatively = (platform, environment, args, cwd, interac
 };
 
 // The flags `vis sbom` takes natively (`parse` in `native/cli/src/sbom/mod.rs`): each at most once, `--format` only as
-// `json`, `--include-dev` without a value, `--focus` and `--output` with one. `--output` is `-` (stdout) or a plain path.
+// `json` or `xml` in either case (Node lowercases it), `--include-dev` without a value, `--focus` and `--output` with one.
+// `--output` is `-` (stdout) or a plain path.
 const SBOM_FLAGS = new Set(["--focus", "--format", "--include-dev", "--output"]);
+const SBOM_FORMAT = /^(?:json|xml)$/i;
 
 // The value of `--name value` or `--name=value` at `flags[index]` as `[value, next index]`, or `false` when it is missing,
 // empty or looks like a flag; `-` is a value here, unlike in `optionValue`.
@@ -1036,7 +1038,7 @@ const sbomOutputIsPlain = (output) =>
 
 const sbomValueIsNative = (name, value) => {
     if (name === "--format") {
-        return value === "json";
+        return SBOM_FORMAT.test(value);
     }
 
     if (name === "--output") {
@@ -1046,7 +1048,8 @@ const sbomValueIsNative = (name, value) => {
     return [...value].every((character) => character.codePointAt(0) < 128);
 };
 
-// The output path of the arguments after `sbom` when they are a native shape, else `undefined`.
+// The output path of the arguments after `sbom` when they are a native shape, else `undefined`. Without `--output` it is
+// a file name (the `.json` one, whichever format): only `-` makes a difference to the caller.
 const sbomOutput = (flags) => {
     const seen = new Set();
     let output = "sbom.cdx.json";
@@ -1084,7 +1087,7 @@ const sbomOutput = (flags) => {
     return output;
 };
 
-// Whether `vis sbom` can pass the binary's native gate (`answer` and `context` in `sbom/mod.rs`): the JSON BOM at the
+// Whether `vis sbom` can pass the binary's native gate (`answer` and `context` in `sbom/mod.rs`): the JSON or XML BOM at the
 // workspace root, in a CI context off a terminal, written to a file (where pail's layout has to be decidable) or to stdout.
 // Like `secrets`, it stays in Node on Windows, when the working directory is not the workspace root, and where `NODE_ENV`,
 // `DEBUG`, `PAIL_LOG_LEVEL` or `CEREBRO_*` output settings could change the log lines. The binary re-checks everything,

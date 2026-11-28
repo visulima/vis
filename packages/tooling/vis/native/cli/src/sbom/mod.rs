@@ -1,4 +1,4 @@
-//! `vis sbom` — the native fast path for the CycloneDX JSON BOM of a pnpm workspace.
+//! `vis sbom` — the native fast path for the CycloneDX JSON or XML BOM of a pnpm workspace.
 //!
 //! The Node handler (`src/commands/sbom/handler.ts`) builds the BOM from the workspace graph and the
 //! lockfile and writes it to a file, or to stdout for `--output -`. This module writes the same bytes,
@@ -7,18 +7,20 @@
 //! else, unchanged, to Node. Every check runs before a file is created or a byte is printed, so a
 //! delegation never follows an effect.
 //!
-//! Native: `vis sbom` with `--format json`, `--output <path>|-`, `--focus <a,b>` and `--include-dev`, each at
-//! most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
+//! Native: `vis sbom` with `--format json|xml` (either case), `--output <path>|-`, `--focus <a,b>` and
+//! `--include-dev`, each at most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
 //! `pnpm-lock.yaml` and `package.json` files are read exactly (see `pnpm_lock.rs`, `meta.rs`, `semver.rs`).
 //! A `vis.config.*` at the root is read when it is a literal whose keys cannot change the projects, their edges or
 //! the ecosystems in the BOM, with its `projectIgnore` applied (`config_workspace.rs`).
-//! Node: `--format xml`, every other flag, any other lockfile manager, any other config, a project with a
+//! An XML document with a value that the XML library does not escape in full is Node's (see `xml.rs`).
+//! Node: every other `--format` and flag, any other lockfile manager, any other config, a project with a
 //! `project.json`, another ecosystem's lock file at the root, a terminal, and everything the readers refuse.
 
 mod bom;
 mod json;
 mod meta;
 mod semver;
+mod xml;
 
 use std::env;
 use std::ffi::OsString;
@@ -55,7 +57,36 @@ const OTHER_ECOSYSTEM_FILES: [&str; 12] = [
     "uv.lock",
 ];
 
+/// `--format`, which Node lowercases before it compares it with `json` and `xml`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Format {
+    Json,
+    Xml,
+}
+
+impl Format {
+    /// The format `value` names in ASCII letters of either case; any other text is Node's to read or refuse.
+    fn from_flag(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("json") {
+            Some(Self::Json)
+        } else if value.eq_ignore_ascii_case("xml") {
+            Some(Self::Xml)
+        } else {
+            None
+        }
+    }
+
+    /// Where the document goes when `--output` is absent.
+    fn default_output(self) -> &'static str {
+        match self {
+            Self::Json => "sbom.cdx.json",
+            Self::Xml => "sbom.cdx.xml",
+        }
+    }
+}
+
 struct Plan {
+    format: Format,
     include_dev: bool,
     focus: Vec<String>,
     /// `-` for stdout.
@@ -92,7 +123,7 @@ fn plain_output(output: &str) -> bool {
 
 /// The arguments after `sbom`, or `None` for any shape this module does not answer.
 fn parse(args: &[String]) -> Option<Plan> {
-    let (mut include_dev, mut format, mut focus, mut output) = (false, false, None, None);
+    let (mut include_dev, mut format, mut focus, mut output) = (false, None, None, None);
     let mut rest = args.iter().skip(1);
 
     while let Some(argument) = rest.next() {
@@ -107,11 +138,11 @@ fn parse(args: &[String]) -> Option<Plan> {
         }
 
         if let Some(value) = value_of(argument, "--format", &mut rest)? {
-            if format || value != "json" {
+            if format.is_some() {
                 return None;
             }
 
-            format = true;
+            format = Some(Format::from_flag(value)?);
 
             continue;
         }
@@ -139,7 +170,9 @@ fn parse(args: &[String]) -> Option<Plan> {
         None => Vec::new(),
     };
 
-    Some(Plan { include_dev, focus, output: output.unwrap_or_else(|| "sbom.cdx.json".to_owned()) })
+    let format = format.unwrap_or(Format::Json);
+
+    Some(Plan { format, include_dev, focus, output: output.unwrap_or_else(|| format.default_output().to_owned()) })
 }
 
 /// What a `vis.config` leaves of the workspace for the BOM: the `projectIgnore` entries, which are empty without a
@@ -227,7 +260,11 @@ fn answer(args: &[String]) -> Option<i32> {
 
     let options = bom::Options { focus: &plan.focus, include_dev: plan.include_dev };
     let bom = bom::build(&cwd, &graph, &options).ok()?;
-    let text = bom.to_json(&js::iso_now(), &format!("urn:uuid:{}", js::random_uuid()?));
+    let (timestamp, serial_number) = (js::iso_now(), format!("urn:uuid:{}", js::random_uuid()?));
+    let text = match plan.format {
+        Format::Json => bom.to_json(&timestamp, &serial_number),
+        Format::Xml => bom.to_xml(&timestamp, &serial_number).ok()?,
+    };
 
     let Some(layout) = layout else {
         // A document that Node would cut short on a pipe is Node's to cut short.
@@ -263,7 +300,7 @@ fn answer(args: &[String]) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{module_type_is_guessed, parse, plain_output};
+    use super::{module_type_is_guessed, parse, plain_output, Format};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -274,6 +311,18 @@ mod tests {
         let plan = parse(&argv(&["sbom"])).unwrap();
 
         assert_eq!((plan.include_dev, plan.focus.len(), plan.output.as_str()), (false, 0, "sbom.cdx.json"));
+        assert_eq!(plan.format, Format::Json);
+
+        // `--format` is lowercased by Node, so any case of `json` and `xml` is the same format, and the file follows it.
+        for (flag, format, file) in [("XML", Format::Xml, "sbom.cdx.xml"), ("Json", Format::Json, "sbom.cdx.json")] {
+            let plan = parse(&argv(&["sbom", &format!("--format={flag}")])).unwrap();
+
+            assert_eq!((plan.format, plan.output.as_str()), (format, file));
+        }
+
+        let plan = parse(&argv(&["sbom", "--format", "xml", "--output", "out/x.xml"])).unwrap();
+
+        assert_eq!((plan.format, plan.output.as_str()), (Format::Xml, "out/x.xml"));
 
         let plan =
             parse(&argv(&["sbom", "--format=json", "--include-dev", "--focus", "a, b,,", "--output", "-"])).unwrap();
@@ -313,7 +362,11 @@ mod tests {
     #[test]
     fn delegates_every_other_shape() {
         for shape in [
-            &["sbom", "--format", "xml"][..],
+            &["sbom", "--format", "yaml"][..],
+            &["sbom", "--format", "xmls"],
+            &["sbom", "--format=\u{212A}ml"],
+            &["sbom", "--format", "xml", "--format", "json"],
+            &["sbom", "--format=json", "--format=json"],
             &["sbom", "--format"],
             &["sbom", "--output"],
             &["sbom", "--output", "--include-dev"],
