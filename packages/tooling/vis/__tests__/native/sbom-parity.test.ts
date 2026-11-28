@@ -9,15 +9,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveNativeBinary } from "../../bin/resolve-binary.mjs";
 import { COLOUR_ENVIRONMENTS, COLOUR_VARIABLES, DELEGATED_COLOUR_ENVIRONMENTS } from "./colour-environments";
+import { CONFIG_CASES, GRAPH_ONLY_CASES } from "./config-workspace-cases";
 
 /**
  * `vis sbom` exists twice: the Node handler (`src/commands/sbom/handler.ts`, over the lockfile parser of
  * `@visulima/package` and the CycloneDX builder in `src/sbom/`) and the native path (`native/cli/src/sbom/`).
  * Every fixture below is built twice, once for each engine, and run with the same arguments and CI context.
  * stdout, stderr, the exit status and every file the run wrote must match, byte for byte, with two
- * exceptions that are random by design and are checked for their shape instead of their value: the
- * `serialNumber` (a version 4 UUID) and the `timestamp` (an ISO date close to now) of the BOM, and pail's clock
- * (`HH:MM:SS`) in the status lines. The native run uses a copy of the binary outside the package and no
+ * exceptions that are random by design and are checked for their shape instead of their value (decision 2 of
+ * plan 012: random fields are compared masked): the `serialNumber` (a version 4 UUID) and the `timestamp` (an ISO
+ * date close to now) of the BOM, in the JSON and in the XML form, and pail's clock (`HH:MM:SS`) in the status
+ * lines. The native run uses a copy of the binary outside the package and no
  * fallback entry, so a call the binary declines exits 70 and cannot pass for an answer.
  */
 
@@ -483,8 +485,51 @@ const yarnOnly = (root: string): void => {
 const emptyLock = (root: string): void => { workspace(root, { lock: "lockfileVersion: '9.0'\n", projects: { a: { name: "empty-a", version: "1.0.0" } } }); };
 const noProjects = (root: string): void => { workspace(root, { lock: lockV9([{ name: "lodash", version: "4.17.21" }]), projects: {} }); };
 
+/**
+ * A registry package for every kind of edge, beside a `vis.config` that drops one project and leaves the rest: the
+ * dependencies of the dropped project are not in the BOM, and a project that depends on it resolves it as a registry
+ * package (the lockfile lists it) instead of as a workspace edge.
+ */
+const configuredRegistry = (root: string): void => {
+    workspace(root, {
+        lock: lockV9([...LEFT_PAD, { deps: { "left-pad": "1.3.0" }, name: "@scope/pkg", version: "2.1.0" }, { name: "only-dropped", version: "1.0.0" }, { name: "@fixture/dropped", version: "3.0.0" }]),
+        projects: {
+            a: { dependencies: { "@fixture/dropped": "^3.0.0", "@fixture/kept": "workspace:*", "@scope/pkg": "^2.0.0" }, devDependencies: { "left-pad": "1.0.0" }, name: "@fixture/a", version: "1.0.0" },
+            dropped: { dependencies: { "only-dropped": "1.0.0" }, name: "@fixture/dropped", version: "3.0.0" },
+            kept: { dependencies: { "left-pad": "~1.3.0" }, name: "@fixture/kept", version: "2.0.0" },
+        },
+    });
+    write(root, "vis.config.ts", 'export default { projectIgnore: ["dropped"], sponsor: { enabled: false } };\n');
+};
+
+/** `configuredRegistry` with the ignore rule and the config of every spelling the binary reads. */
+const configuredIgnoreRules = (root: string): void => {
+    configuredRegistry(root);
+    write(root, ".gitignore", "kept\n");
+    write(root, "vis.config.ts", 'export default { projectIgnore: ["dropped/"], strictEnv: true };\n');
+};
+
+/** A config that opts a gated ecosystem in (the lock file it reads is not there, so only the config differs), in each of the two ways. */
+const optInByList = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", 'export default { sbom: { ecosystems: ["go"] } };\n');
+};
+const optInByDiscover = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", "export default { go: { discover: true } };\n");
+};
+const optInUnknown = (root: string): void => {
+    configuredRegistry(root);
+    write(root, "vis.config.ts", 'export default { sbom: { ecosystems: ["rust"] } };\n');
+};
+
 const FIXTURES: Record<string, (root: string) => void> = {
     basic,
+    configuredIgnoreRules,
+    optInByDiscover,
+    optInByList,
+    optInUnknown,
+    configuredRegistry,
     bomManifest,
     brokenInstalled,
     configured,
@@ -513,6 +558,24 @@ const FIXTURES: Record<string, (root: string) => void> = {
     withUvLock,
     yarnOnly,
 };
+
+/** The workspaces of `config-workspace-cases.ts` (the ones `vis graph` and `vis status` run on), over a lockfile of this suite. */
+const CONFIG_FIXTURE_PREFIX = "config: ";
+
+for (const entry of [...CONFIG_CASES, ...GRAPH_ONLY_CASES]) {
+    FIXTURES[`${CONFIG_FIXTURE_PREFIX}${entry.name}`] = (root: string): void => {
+        for (const [path, content] of Object.entries(entry.files)) {
+            if (typeof content === "object" && "link" in content) {
+                throw new TypeError(`${path}: a link is not a fixture of this suite`);
+            }
+
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), content);
+        }
+
+        write(root, "pnpm-lock.yaml", lockV9([...LEFT_PAD]));
+    };
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Running both engines
@@ -630,7 +693,9 @@ let counter = 0;
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
 
 const fresh = (fixture: string): string => {
-    const root = join(scratch, `${fixture}-${String(counter++)}`);
+    // A path the status line prints must be plain ASCII for the binary to answer, so the case names that hold spaces are not used as they are.
+    // A `.git` anywhere in the path would make Node's workspace walk skip every project (its skip regex runs on the absolute path), so no dots either.
+    const root = join(scratch, `${fixture.replaceAll(/[^\w-]+/g, "_")}-${String(counter++)}`);
 
     mkdirSync(root, { recursive: true });
     (FIXTURES[fixture] as (root: string) => void)(root);
@@ -774,6 +839,10 @@ const DELEGATED: [fixture: string, args: string[], env?: Record<string, string>]
     ["basic", ["--output", "-"], { FORCE_COLOR: "1", NO_COLOR: "1" }],
     ["basic", ["--output", "-", "--no-color"]],
     ["configured", ["--output", "-"]],
+    ["optInByList", ["--output", "-"]],
+    ["optInByDiscover", ["--output", "-"]],
+    // Node refuses an unknown ecosystem id and fails the run.
+    ["optInUnknown", ["--output", "-"]],
     ["withCargoLock", ["--output", "-"]],
     ["withUvLock", ["--output", "-"]],
     ["withGoSum", ["--output", "-"]],
@@ -843,6 +912,96 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
 
         expect(bare.run.status).toBe(70);
         expect(bare.run.files).toStrictEqual({});
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+    }, 120_000);
+
+    // A literal `vis.config` at the workspace root: the BOM depends on it through `projectIgnore`, the `discover` flags of
+    // the gated ecosystems and `sbom.ecosystems`, and on nothing else (see `config_workspace.rs`). Every case that `vis graph`
+    // is answered natively for runs through both engines, to stdout and to a file; every other is handed to Node.
+    // One case that `vis graph` answers is Node's here: a `vis.config.js` in a package without a `type` makes Node print its
+    // MODULE_TYPELESS_PACKAGE_JSON warning on stderr, which the BOM command (that prints stderr lines of its own) does not reproduce.
+    const SBOM_DECLINES = new Set(["vis.config.js without a package type"]);
+    const configCases = [...CONFIG_CASES, ...GRAPH_ONLY_CASES].map((entry) => [entry.name, `${CONFIG_FIXTURE_PREFIX}${entry.name}`, entry.graph && !SBOM_DECLINES.has(entry.name)] as const);
+
+    it.each(configCases.filter(([, , native]) => native).flatMap(([name, fixture]) => [[name, fixture, ["--output", "-"]], [name, fixture, []], [name, fixture, ["--output", "-", "--include-dev"]]] as const))("with a config, %s %j is answered natively and matches Node", (_name, fixture, args) => {
+        const node = runNode(fixture, [...args], true);
+        const native = runNative(fixture, [...args], true);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+        expect(node.run.status).toBe(0);
+    }, 120_000);
+
+    it.each(configCases.filter(([, , native]) => !native).map(([name, fixture]) => [name, fixture] as const))("with a config, %s is declined by the binary and answered by Node", (_name, fixture) => {
+        const args = ["--output", "-"];
+        const node = runNode(fixture, args, true);
+        const bare = runNative(fixture, args, true);
+        const native = runNative(fixture, args, true, undefined, nodeEntry);
+
+        expect(bare.run.status).toBe(70);
+        expect(bare.run.files).toStrictEqual({});
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+    }, 120_000);
+
+    it.each([
+        ["configuredRegistry", ["--output", "-"]],
+        ["configuredRegistry", ["--output", "-", "--include-dev"]],
+        ["configuredRegistry", []],
+        ["configuredRegistry", ["--focus", "@fixture/a", "--output", "-"]],
+        ["configuredRegistry", ["--focus", "@fixture/kept", "--output", "-", "--include-dev"]],
+        ["configuredIgnoreRules", ["--output", "-"]],
+        ["configuredIgnoreRules", ["--output", "-", "--include-dev"]],
+    ] as const)("%s with a projectIgnore: sbom %j matches Node", (fixture, args) => {
+        const node = runNode(fixture, [...args], true);
+        const native = runNative(fixture, [...args], true);
+
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+        expect(native.run.files).toStrictEqual(node.run.files);
+        expect(node.run.status).toBe(0);
+    }, 120_000);
+
+    // The project that the config drops is no project: a focus on it is Node's to refuse.
+    it("hands a focus on a project that the config drops to Node", () => {
+        const args = ["--focus", "@fixture/dropped", "--output", "-"];
+        const node = runNode("configuredRegistry", args, true);
+        const bare = runNative("configuredRegistry", args, true);
+        const native = runNative("configuredRegistry", args, true, undefined, nodeEntry);
+
+        expect(bare.run.status).toBe(70);
+        expect(native.run.status).toBe(node.run.status);
+        expect(native.run.stdout).toBe(node.run.stdout);
+        expect(native.run.stderr).toBe(node.run.stderr);
+    }, 120_000);
+
+    // Node loads the config of the workspace root and the binary reads that one only: from a project directory it hands over.
+    it("hands a configured run from a project directory to Node", () => {
+        const root = fresh("configuredRegistry");
+        const bare = spawnSync(nativeBinary, ["sbom", "--output", "-"], { cwd: join(root, "packages", "a"), encoding: "utf8", env: environment(true) });
+
+        expect(bare.status).toBe(70);
+    });
+
+    it("hands a configured run outside CI to Node", () => {
+        const bare = runNative("configuredRegistry", ["--output", "-"], false);
+
+        expect(bare.run.status).toBe(70);
+        expect(bare.run.files).toStrictEqual({});
+    });
+
+    it.each(["40", "120", UNSET])("prints the same status lines as Node for a configured workspace at COLUMNS=%s", (columns) => {
+        const node = runNode("configuredRegistry", [], true, { COLUMNS: columns, GITHUB_ACTIONS: "true" });
+        const native = runNative("configuredRegistry", [], true, { COLUMNS: columns, GITHUB_ACTIONS: "true" });
+
         expect(native.run.status).toBe(node.run.status);
         expect(native.run.stdout).toBe(node.run.stdout);
         expect(native.run.stderr).toBe(node.run.stderr);

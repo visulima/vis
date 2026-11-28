@@ -10,7 +10,9 @@
 //! Native: `vis sbom` with `--format json`, `--output <path>|-`, `--focus <a,b>` and `--include-dev`, each at
 //! most once, in a CI context off a terminal, at the root of a JavaScript-only pnpm workspace whose
 //! `pnpm-lock.yaml` and `package.json` files are read exactly (see `pnpm_lock.rs`, `meta.rs`, `semver.rs`).
-//! Node: `--format xml`, every other flag, any other lockfile manager, a `vis.config.*`, a project with a
+//! A `vis.config.*` at the root is read when it is a literal whose keys cannot change the projects, their edges or
+//! the ecosystems in the BOM, with its `projectIgnore` applied (`config_workspace.rs`).
+//! Node: `--format xml`, every other flag, any other lockfile manager, any other config, a project with a
 //! `project.json`, another ecosystem's lock file at the root, a terminal, and everything the readers refuse.
 
 mod bom;
@@ -26,13 +28,15 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::collation::root_collation;
-use crate::graph::{project_graph, GraphResult};
+use crate::config_workspace::{read_vetted, Consumer};
+use crate::graph::{project_graph, project_graph_vetted_with_manifests, GraphResult};
 use crate::js;
-use crate::node_context::{ci_root_context, quiet_context};
+use crate::node_context::{ci_root_context, config_context_is_native, quiet_context};
 use crate::output::write_stdout;
 use crate::pail::{Layout, Level};
+use crate::root_search::read_json;
 use crate::text::is_ascii_graphic_path;
-use crate::vis_config::{self, ConfigState};
+use crate::vis_config::{config_file_in, has_vis_config};
 
 /// Lock and manifest files of the other ecosystems `vis sbom` reads from the root, which Node adds to the BOM
 /// or reports on stderr as found-but-not-included.
@@ -138,14 +142,38 @@ fn parse(args: &[String]) -> Option<Plan> {
     Some(Plan { include_dev, focus, output: output.unwrap_or_else(|| "sbom.cdx.json".to_owned()) })
 }
 
-/// Whether Node would reach the same answer: a CI context off a terminal, no output settings that change
-/// the status lines, and `cwd` the workspace root of a pnpm workspace with no config.
-fn context(cwd: &Path) -> bool {
-    ci_root_context(cwd)
-        && quiet_context(cwd, cwd)
-        && vis_config::read(cwd) == ConfigState::Absent
-        && root_collation()
-        && !OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists())
+/// What a `vis.config` leaves of the workspace for the BOM: the `projectIgnore` entries, which are empty without a
+/// config.
+type Ignore = Vec<String>;
+
+/// Whether the config at the root is a `vis.config.js` in a package that does not say whether it is a module. Node
+/// then finds out by parsing the file and prints a `MODULE_TYPELESS_PACKAGE_JSON` warning on stderr, whose text
+/// depends on the Node version and which this command does not reproduce.
+fn module_type_is_guessed(root: &Path) -> bool {
+    config_file_in(root).is_some_and(|path| path.extension().is_some_and(|extension| extension == "js"))
+        && read_json(&root.join("package.json")).is_none_or(|manifest| manifest.get("type").is_none())
+}
+
+/// The `projectIgnore` of the config when Node would reach the same answer: a CI context off a terminal, no output
+/// settings that change the status lines, and `cwd` the workspace root of a pnpm workspace whose `vis.config` is
+/// absent, or a literal one whose keys cannot change the BOM beyond `projectIgnore` (see `config_workspace`). `None`
+/// for every other config and context.
+fn context(cwd: &Path) -> Option<Ignore> {
+    if !ci_root_context(cwd) || !root_collation() || OTHER_ECOSYSTEM_FILES.iter().any(|name| cwd.join(name).exists()) {
+        return None;
+    }
+
+    // Node loads the config of the workspace root only; with one at or above the working directory, the root's own
+    // literal config is read, and nothing else is Node's to answer.
+    if has_vis_config(cwd) {
+        if !config_context_is_native() || module_type_is_guessed(cwd) {
+            return None;
+        }
+
+        return read_vetted(cwd, Consumer::Sbom).map(|vetted| vetted.ignore);
+    }
+
+    quiet_context(cwd, cwd).then(Vec::new)
 }
 
 /// Whether the file can be written where Node writes it. `ensureDirSync` looks at the directory with `lstat`: one
@@ -182,15 +210,19 @@ fn answer(args: &[String]) -> Option<i32> {
     let plan = parse(args)?;
     let cwd = env::current_dir().ok()?;
 
-    if !context(&cwd) {
-        return None;
-    }
-
+    let ignore = context(&cwd)?;
     let to_stdout = plan.output == "-";
     let layout = if to_stdout { None } else { Some(Layout::detect(args)?) };
 
-    let GraphResult::Native(graph) = project_graph(&cwd) else {
-        return None;
+    // A config's `projectIgnore` drops directories from the project set, with the rules of the root `.gitignore`.
+    let graph = if has_vis_config(&cwd) {
+        project_graph_vetted_with_manifests(&cwd, &ignore)?.0
+    } else {
+        let GraphResult::Native(graph) = project_graph(&cwd) else {
+            return None;
+        };
+
+        graph
     };
 
     let options = bom::Options { focus: &plan.focus, include_dev: plan.include_dev };
@@ -231,7 +263,7 @@ fn answer(args: &[String]) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, plain_output};
+    use super::{module_type_is_guessed, parse, plain_output};
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -250,6 +282,32 @@ mod tests {
             (plan.include_dev, plan.focus, plan.output),
             (true, vec!["a".to_owned(), "b".to_owned()], "-".to_owned())
         );
+    }
+
+    #[test]
+    fn a_js_config_in_a_package_without_a_type_is_nodes() {
+        let root = std::env::temp_dir().join(format!("vis-sbom-module-type-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("vis.config.js"), "export default {};\n").unwrap();
+
+        // No package.json, and one without a `type`: Node guesses the module type and warns.
+        assert!(module_type_is_guessed(&root));
+
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        assert!(module_type_is_guessed(&root));
+
+        std::fs::write(root.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        assert!(!module_type_is_guessed(&root));
+
+        // The other extensions are never guessed.
+        std::fs::remove_file(root.join("vis.config.js")).unwrap();
+        std::fs::write(root.join("vis.config.ts"), "export default {};\n").unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        assert!(!module_type_is_guessed(&root));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
