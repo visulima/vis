@@ -29,8 +29,8 @@
 //! reach the code behind the gates ([`scan_workspace`]) with the address of a stub instead.
 
 mod bundled;
-mod osv;
-mod report;
+pub(crate) mod osv;
+pub(crate) mod report;
 
 #[cfg(test)]
 mod tests;

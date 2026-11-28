@@ -729,6 +729,91 @@ const addColourIsPlain = (environment) => {
     return !ADD_COLOUR_ENVIRONMENT.some((key) => environment[key] !== undefined) && (term === undefined || term.includes("dumb") || term.includes("mono"));
 };
 
+// The flags of `vis check` the binary answers (`parse` in `native/cli/src/check/args.rs`): each flag at most once, `--include` and
+// `--exclude` repeated, a package pattern, and nothing else. A word right after the value of `--include` or `--exclude` is left to
+// Node, which reads it as another value of that option. `--ai`, `--ai-type`, `--security-config`, `--sync`, `--include-internal` and
+// every flag written with `=` are Node's.
+const CHECK_BOOLEANS = [["-D", "--dev"], ["-P", "--prod"], ["--peer"], ["--prerelease"], ["--exit-code"], ["--no-security"]];
+const CHECK_VALUES = new Map([
+    ["--format", ["table", "json", "minimal"]],
+    ["--target", ["latest", "minor", "patch"]],
+    ["-t", ["latest", "minor", "patch"]],
+]);
+const CHECK_PATTERN = /^[\u0021-\u007E]+$/;
+
+// One token of `check`'s arguments: where to go on from and whether it was a value of `--include` or `--exclude`, or `undefined` when the
+// token is not one the binary answers. `seen` holds the flags read so far.
+const checkTokenStep = (rest, index, seen) => {
+    const token = rest[index];
+
+    if (token === "--include" || token === "--exclude") {
+        const value = rest[index + 1];
+
+        return value !== undefined && CHECK_PATTERN.test(value) && !value.startsWith("-") ? { multiValue: true, next: index + 2 } : undefined;
+    }
+
+    if (CHECK_VALUES.has(token)) {
+        const group = token === "-t" ? "--target" : token;
+
+        if (seen.has(group) || !CHECK_VALUES.get(token).includes(rest[index + 1])) {
+            return undefined;
+        }
+
+        seen.add(group);
+
+        return { multiValue: false, next: index + 2 };
+    }
+
+    if (token.startsWith("-")) {
+        const names = CHECK_BOOLEANS.find((flag) => flag.includes(token));
+
+        if (names === undefined || seen.has(names[0])) {
+            return undefined;
+        }
+
+        seen.add(names[0]);
+
+        return { multiValue: false, next: index + 1 };
+    }
+
+    return CHECK_PATTERN.test(token) ? { multiValue: false, next: index + 1 } : undefined;
+};
+
+const checkShapeIsNative = (rest) => {
+    const seen = new Set();
+    let afterMultiValue = false;
+    let index = 0;
+
+    while (index < rest.length) {
+        // A word right after the value of `--include` or `--exclude` is another value of that option in Node.
+        if (afterMultiValue && !rest[index].startsWith("-")) {
+            return false;
+        }
+
+        const step = checkTokenStep(rest, index, seen);
+
+        if (step === undefined) {
+            return false;
+        }
+
+        ({ multiValue: afterMultiValue, next: index } = step);
+    }
+
+    // cerebro rejects the pair with an error of its own.
+    return !(seen.has("-D") && seen.has("-P"));
+};
+
+// Whether `vis check` (and its alias `c`) can pass the binary's native gate (`answer` in `native/cli/src/check/mod.rs`): the install
+// context (a CI run off a terminal with no setting that changes Node's output), at the workspace root, with no colour the
+// binary cannot decide and no proxy, CA file or Node option, since the run asks the registry. The binary re-checks everything,
+// including the workspace, the config and the `.npmrc`; this only skips the extra process when it would delegate anyway.
+const checkMayRunNatively = (platform, environment, args, cwd, interactive, holdsMarker) =>
+    installContextIsNative(platform, environment, args, interactive)
+    && cwdIsRoot(environment, cwd, holdsMarker)
+    && addColourIsPlain(environment)
+    && networkEnvironmentIsPlain(environment)
+    && checkShapeIsNative(args.slice(1));
+
 // The marshall check asks the registry and other services, which needs the environment to lead `fetch` and the binary's
 // client to the same servers the same way; `--no-marshall-check` makes no request.
 const addMayRunNatively = (platform, environment, args, interactive) =>
@@ -1595,6 +1680,8 @@ const NATIVE_SHAPE_GATES = new Map([
     ["attest", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => attestMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `audit --format json`, answered only when the scan finds nothing.
     ["audit", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => auditMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
+    // `check` and its alias: see `check` below.
+    ["c", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => checkMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // `cache list`, `cache size` (`cache.rs`), `cache clean` (`cache_clean.rs`), `cache prune` (`cache_prune.rs`), `cache hash` (`cache_hash.rs`) and `cache why` (`cache_why.rs`); the binary hands every other shape to Node itself.
     [
         "cache",
@@ -1606,6 +1693,8 @@ const NATIVE_SHAPE_GATES = new Map([
             return helpOrNative(args, () => cacheMayRunNatively(subcommand, platform, environment, args, interactive));
         },
     ],
+    // The outdated check, typed `check` or `c`: the table, JSON and minimal formats of a workspace of plain version ranges; `--ai`, `--security-config` and the rest stay in Node.
+    ["check", ({ args, cwd, environment, holdsMarker, interactive, platform }) => helpOrNative(args, () => checkMayRunNatively(platform, environment, args, cwd, interactive, holdsMarker))],
     // No flags, `--dry-run` and `--lockfile`; a terminal stdout stays in Node, where pail colours its output and the binary does not.
     ["clean", ({ args, environment, interactive, platform }) => helpOrNative(args, () => cleanMayRunNatively(platform, environment, args, interactive))],
     // The dependency-policy lints: the selectors, `--quiet` and `--format`.
