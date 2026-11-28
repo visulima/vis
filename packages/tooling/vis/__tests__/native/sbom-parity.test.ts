@@ -1150,6 +1150,11 @@ describe.skipIf(!probe())("vis sbom: native vs Node", () => {
         ["configuredRegistry", []],
         ["configuredRegistry", ["--focus", "@fixture/a", "--output", "-"]],
         ["configuredRegistry", ["--focus", "@fixture/kept", "--output", "-", "--include-dev"]],
+        ["configuredRegistry", ["--format", "xml", "--output", "-"]],
+        ["configuredRegistry", ["--format", "xml", "--output", "-", "--include-dev"]],
+        ["configuredRegistry", ["--format", "xml"]],
+        ["configuredRegistry", ["--format", "xml", "--focus", "@fixture/a", "--output", "-"]],
+        ["configuredIgnoreRules", ["--format", "xml", "--output", "-"]],
         ["configuredIgnoreRules", ["--output", "-"]],
         ["configuredIgnoreRules", ["--output", "-", "--include-dev"]],
     ] as const)("%s with a projectIgnore: sbom %j matches Node", (fixture, args) => {
