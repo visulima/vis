@@ -37,6 +37,7 @@ mod cache_hash;
 #[cfg(unix)]
 mod cache_prune;
 mod cache_why;
+mod check;
 mod ci_workflow;
 mod clean;
 mod collation;
@@ -96,6 +97,8 @@ mod security_verify_lockfile;
 mod self_update;
 mod shim_status;
 mod sort_package_json;
+#[cfg(unix)]
+mod staged;
 mod status;
 mod summary;
 mod surface;

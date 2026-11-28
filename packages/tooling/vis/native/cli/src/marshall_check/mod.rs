@@ -13,7 +13,7 @@
 //! `MARSHALL_*` variable also switch off the typosquat scan and the security notice, which the caller leaves to Node.
 
 mod dns;
-mod resolve;
+pub(crate) mod resolve;
 mod services;
 
 use std::collections::HashMap;
