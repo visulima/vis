@@ -15,6 +15,7 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
         ctx = await buildContext({
             channel: options.channel,
             cwd,
+            readOnly: true,
             skipRegistryLookup: true,
         });
     } catch (error) {

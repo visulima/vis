@@ -15,14 +15,20 @@ export interface DiscoveredReleasePackages {
  * projects of every enabled release ecosystem, and validate their
  * versionFiles before any plan is built.
  */
-export const discoverReleasePackages = async (pm: PackageManagerAdapter, config: VisReleaseConfig, cwd: string): Promise<DiscoveredReleasePackages> => {
+export const discoverReleasePackages = async (
+    pm: PackageManagerAdapter,
+    config: VisReleaseConfig,
+    cwd: string,
+    options: { readOnly?: boolean } = {},
+): Promise<DiscoveredReleasePackages> => {
     // Discover packages via the active PM adapter. Manifest reads run in
     // parallel (Promise.all + filter) — for a 49-package monorepo this cuts
     // ~150ms of sequential fs latency to ~10ms wall time.
     const fs = await import("node:fs/promises");
     const reader = {
         listPackages: async () => {
-            const entries = await pm.listWorkspacePackages(cwd);
+            // A read-only run takes the file-based list when it is exact and asks the manager otherwise.
+            const entries = (options.readOnly === true ? await pm.listWorkspacePackagesFromFiles(cwd) : undefined) ?? (await pm.listWorkspacePackages(cwd));
 
             const settled = await Promise.all(
                 entries.map(async (entry) => {

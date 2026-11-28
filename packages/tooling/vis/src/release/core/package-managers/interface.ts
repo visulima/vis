@@ -145,6 +145,16 @@ export abstract class PackageManagerAdapter {
     public abstract listWorkspacePackages(cwd: string): Promise<WorkspaceListEntry[]>;
 
     /**
+     * The same list as `listWorkspacePackages`, read from the workspace's
+     * files without spawning the manager. Returns `undefined` when the files
+     * cannot give exactly the answer the manager would, and the caller then asks
+     * the manager. Used by read-only commands; the default never answers.
+     */
+    public async listWorkspacePackagesFromFiles(_cwd: string): Promise<WorkspaceListEntry[] | undefined> {
+        return undefined;
+    }
+
+    /**
      * Publish a tarball. Default impl in the `npm` adapter — yarn/bun/pnpm
      * may simply re-call `npm publish &lt;tarball>` per RFC §11.3 when the
      * configured `publishStrategy` is `"npm-publish-tarball"` (default).

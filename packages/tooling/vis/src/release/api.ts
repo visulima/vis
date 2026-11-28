@@ -145,7 +145,7 @@ export const releaseVersion = async (options: VersionOptions = {}): Promise<Vers
  * function is for read-only access to the same rendered output.
  */
 export const releaseChangelog = async (options: ChangelogOptions = {}): Promise<ChangelogResult> => {
-    const ctx = await buildContext(options);
+    const ctx = await buildContext({ ...options, readOnly: true });
     const { resolveFormatter } = await import("./core/changelog/resolve");
     const formatter = await resolveFormatter(ctx.config.changelog, ctx.cwd);
     const date = new Date().toISOString().slice(0, 10);

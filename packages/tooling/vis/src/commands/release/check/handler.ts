@@ -22,7 +22,8 @@ const execute = async ({ logger, options, workspaceRoot }: Toolbox<Console, Rele
     const noFail = !options.fail;
     const strict = options.strict === true;
 
-    const ctx = await buildContext({ cwd });
+    // `--strict` goes on to diff against the base branch, so only the plain check is held to "reads files only".
+    const ctx = await buildContext({ cwd, readOnly: !strict });
 
     const { printConfigIfRequested } = await import("../../../release/core/print-config");
 

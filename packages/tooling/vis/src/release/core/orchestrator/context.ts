@@ -70,6 +70,15 @@ export interface BuildContextOptions {
     projects?: string[];
 
     /**
+     * The caller only prints the plan and never publishes or writes. Skips the
+     * `--version` minimum-version gate of the package manager, which only publishing
+     * needs, and lists the workspace from its files when they give the package
+     * manager's own answer (it asks the manager when they cannot). Without it the
+     * gate and the manager's list command run as before.
+     */
+    readOnly?: boolean;
+
+    /**
      * Skip the configured `currentVersionResolver` and force every
      * package to the manifest (disk) version. Set this from read-only
      * command handlers (`vis release plan` / `status` / `doctor`) so
@@ -100,7 +109,8 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     // Hard-fail if the active PM is below the minimum version (RFC §19.6).
     // Skipped if version detection itself fails (the PM may not be installed
     // — vis can still discover packages from the lockfile / manifest).
-    const detectedVersion = await pm.detectVersion(cwd);
+    // A read-only run never publishes, so it does not need a release-capable manager.
+    const detectedVersion = options.readOnly === true ? undefined : await pm.detectVersion(cwd);
 
     if (detectedVersion && !supportsMinVersion(detectedVersion, pm.minVersion)) {
         throw new VisReleaseError({
@@ -123,7 +133,7 @@ export const buildContext = async (options: BuildContextOptions = {}): Promise<O
     const branch = options.channel ?? (await detectCurrentBranch(cwd, runner));
     const resolved = branch ? resolveChannel(branch, config.channels) : undefined;
 
-    const { packages, perPackageConfig, projectsByEcosystem } = await discoverReleasePackages(pm, config, cwd);
+    const { packages, perPackageConfig, projectsByEcosystem } = await discoverReleasePackages(pm, config, cwd, { readOnly: options.readOnly });
     const depGraph = new DependencyGraph(packages);
 
     // Read change files
