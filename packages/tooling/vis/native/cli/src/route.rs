@@ -102,6 +102,8 @@ static ROUTES: &[Route] = &[
     answers(&["i"], crate::install::run),
     answers(&["dlx"], crate::dlx::run),
     answers(&["info"], crate::info::run),
+    #[cfg(unix)]
+    answers(&["init"], crate::init::run),
     answers(&["inspect"], crate::inspect::run),
     answers(&["view"], crate::info::run),
     // The package-manager and runner commands. `--help` before a `--` is the manifest's, as in the Node CLI,
@@ -210,6 +212,7 @@ mod tests {
         &["i"],
         &["dlx"],
         &["info"],
+        &["init"],
         &["inspect"],
         &["view"],
         &["exec"],

@@ -35,10 +35,10 @@ pub(super) struct Skips {
 }
 
 /// The outcome of the run, before anything is written.
-pub(super) struct Plan {
-    pub(super) actions: Vec<String>,
+pub(crate) struct Plan {
+    pub(crate) actions: Vec<String>,
     /// The files to write, in the order to write them.
-    pub(super) files: Vec<File>,
+    pub(crate) files: Vec<File>,
 }
 
 /// A name the edits write into text: printable ASCII, and neither `$` nor `__proto__`.
@@ -290,6 +290,27 @@ pub(super) fn plan(root: &Path, settings: &Settings, skips: Skips) -> Option<Pla
     if yaml_written {
         files.push(File { path: root.join("pnpm-workspace.yaml"), contents: yaml_text? });
     }
+
+    Some(Plan { actions, files })
+}
+
+/// The plan of `vis init --sync-native` for the pnpm workspace at `root`: `syncAllowBuildsToNativeConfig(pnpm, root, {})`
+/// then `syncMinimumReleaseAgeToNativeConfig(pnpm, root, minutes)`, or `None` when Node has to answer.
+///
+/// An empty allow list changes nothing in either file, and its only action says whether the workspace file exists, so this
+/// is not [`plan`]: that one prints no action for an empty list and reads `package.json`, which an empty list never does.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn init_plan(root: &Path, minutes: i64) -> Option<Plan> {
+    let mut yaml_text = read_text(&root.join("pnpm-workspace.yaml"))?;
+    let mut actions = vec![if yaml_text.is_some() {
+        "All 0 allowBuilds entries already present in pnpm-workspace.yaml.".to_owned()
+    } else {
+        "pnpm-workspace.yaml not found. Cannot sync allowBuilds.".to_owned()
+    }];
+    let settings = Settings { allow: Vec::new(), minutes: Some(minutes), exclude: Vec::new() };
+    let written = min_release_age(&settings, &mut yaml_text, &mut actions)?;
+    let files =
+        if written { vec![File { path: root.join("pnpm-workspace.yaml"), contents: yaml_text? }] } else { Vec::new() };
 
     Some(Plan { actions, files })
 }
