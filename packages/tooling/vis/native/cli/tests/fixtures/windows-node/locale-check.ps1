@@ -23,7 +23,8 @@ function Step([string]$culture) {
     $line = node (Join-Path $here "locale-check.mjs") $Cli $Binary (Join-Path $Scratch $culture)
     $step = $line | ConvertFrom-Json
     # The orders below are only meaningful when the Node run they come from was the all-hit run.
-    Check "${culture}: the second Node run read all four tasks from the cache" ([bool]$step.node.cached) ("cached = " + $step.node.cached)
+    # `Out-Host`: this function's output is its return value, which a check line written to the pipeline would join.
+    Check "${culture}: the second Node run read all four tasks from the cache" ([bool]$step.node.cached) ("cached = " + $step.node.cached) | Out-Host
     return $step
 }
 
