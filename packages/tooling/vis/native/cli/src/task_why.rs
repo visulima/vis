@@ -40,23 +40,15 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxc_ast::ast::Expression;
-use serde_json::Value;
-use task_runner_core::{
-    build_configured_graph, Assumptions, ConfigProject, ConfiguredTaskGraph, DependencyKind, InferenceState,
-    ProjectDependency, Seeds, TaskConfig,
-};
+use task_runner_core::{build_configured_graph, ConfiguredTaskGraph, Seeds};
 
-use crate::graph::{project_graph_vetted_with_manifests, EdgeKind};
+use crate::config_workspace::{assumptions, configured_projects, is_plain, read_vetted, Consumer};
 use crate::js::PROTOTYPE_NAMES;
-use crate::list::Manifest;
 use crate::node_context::{config_context_is_native, portable_context_is_native};
 use crate::output::write_stdout;
-use crate::root_search::read_json;
-use crate::targets::{directory_names, inference_applies, script_targets, Targets};
+use crate::targets::{script_targets, Targets};
 use crate::text::is_ascii_graphic;
-use crate::vis_config::{config_file_in, convert_default_export, has_vis_config, object_properties, read, ConfigState};
-use crate::workspace::names_hold_non_js_marker;
+use crate::vis_config::has_vis_config;
 
 /// What the handler prints for a task nothing depends on and that depends on nothing: a blank line, the title, a blank
 /// line, the root notice, a blank line.
@@ -160,125 +152,20 @@ fn render(graph: &ConfiguredTaskGraph, id: &str) -> Option<String> {
     Some(lines.iter().map(|line| format!("{line}\n")).collect())
 }
 
-/// A name the output prints as part of an id: letters, digits and `-_.@/`, and a colon where `allow_colon` (a target
-/// may hold one, a project may not, or `a:b` + `c` and `a` + `b:c` would be one id). Anything else, a space, a `%` or
-/// a non-ASCII letter, is left to Node, which formats it with the logger.
-fn is_plain(name: &str, allow_colon: bool) -> bool {
-    !name.is_empty()
-        && name.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(byte, b'-' | b'_' | b'.' | b'@' | b'/')
-                || (allow_colon && byte == b':')
-        })
-}
-
-/// The keys of the `tasks` object of the config at `path`, in the order the file lists them. `None` for a file that
-/// is not a literal object with plain `key: value` properties. A `tasks` that is not an object gives no keys here, and
-/// the parse of the value refuses it.
-fn task_order(path: &Path) -> Option<Vec<String>> {
-    convert_default_export(path, |config| {
-        let Expression::ObjectExpression(config) = config else { return None };
-        let Some((_, tasks)) = object_properties(config)?.into_iter().find(|(key, _)| key == "tasks") else {
-            return Some(Vec::new());
-        };
-        let Expression::ObjectExpression(tasks) = tasks else { return Some(Vec::new()) };
-
-        Some(object_properties(tasks)?.into_iter().map(|(key, _)| key).collect())
-    })
-}
-
-/// The projects of the workspace as the builder takes them: in discovery order, the scripts in file order and the edges
-/// of the project graph. `None` when Node must answer: the membership or the graph is not one this reads, the root is a
-/// project, a name is not plain, or (unless `inference_disabled`) a detector could apply to a project.
-fn configured_projects(root: &Path, inference_disabled: bool) -> Option<Vec<ConfigProject>> {
-    let (graph, manifests) = project_graph_vetted_with_manifests(root)?;
-
-    graph
-        .order
-        .iter()
-        .map(|name| {
-            let project = graph.projects.get(name)?;
-            let manifest = Manifest::read(manifests.get(name)?)?;
-
-            if project.directory == "."
-                || !project.directory.is_ascii()
-                || !is_plain(name, false)
-                || manifest.scripts.0.iter().any(|(script, _)| !is_plain(script, true))
-            {
-                return None;
-            }
-
-            let absolute = root.join(&project.directory);
-            let names = directory_names(&absolute)?;
-
-            // A manifest of another ecosystem decides which directories are projects and who owns them, not only what
-            // inference adds, so `inferTargets: false` does not excuse it.
-            if names_hold_non_js_marker(&names) {
-                return None;
-            }
-
-            if !inference_disabled && inference_applies(&absolute, &names, &|dependency| manifest.declares(dependency))?
-            {
-                return None;
-            }
-
-            Some(ConfigProject {
-                dependencies: project
-                    .edges
-                    .iter()
-                    .map(|edge| ProjectDependency {
-                        kind: match edge.kind {
-                            EdgeKind::Static => DependencyKind::Static,
-                            EdgeKind::DevDependency => DependencyKind::Dev,
-                            EdgeKind::PeerDependency => DependencyKind::Peer,
-                        },
-                        project: edge.target.clone(),
-                    })
-                    .collect(),
-                name: name.clone(),
-                root: project.directory.clone(),
-                scripts: manifest.scripts.0,
-            })
-        })
-        .collect()
-}
-
 /// The text Node prints for a workspace with a literal `vis.config`, or `None` when Node has to answer.
 fn configured_answer(root: &Path, id: &str) -> Option<String> {
-    // Node loads `vis.config` from the workspace root only and never a `.json` one, so a config elsewhere on the way
-    // up, or a `.json` file next to the real one, is a situation this cannot tell Node's treatment of.
-    if !config_context_is_native() || root.join("vis.config.json").exists() {
+    if !config_context_is_native() {
         return None;
     }
 
-    let path = config_file_in(root)?;
-
-    // Node loads a `.cts` or `.cjs` file as CommonJS, where `export default` is a syntax error: it prints a failure and
-    // goes on with the defaults, which a literal read of the file would not reproduce. A `.js` file is read as a module
-    // by the syntax it holds (every Node the CLI supports detects that), unless the root `package.json` says `commonjs`.
-    match path.extension().and_then(|extension| extension.to_str()) {
-        Some("ts" | "mts" | "mjs") => {}
-        Some("js") => match read_json(&root.join("package.json"))?.get("type") {
-            None => {}
-            Some(Value::String(kind)) if kind == "module" => {}
-            Some(_) => return None,
-        },
-        _ => return None,
-    }
-
-    let ConfigState::Static(value) = read(root) else { return None };
-    let config = TaskConfig::parse(&value, &task_order(&path)?).ok()?;
+    let config = read_vetted(root, Consumer::TaskWhy)?.tasks;
 
     if config.defaults.iter().any(|(name, _)| !is_plain(name, true)) {
         return None;
     }
 
-    let projects = configured_projects(root, config.inference_disabled)?;
-    let assumptions = Assumptions {
-        inference: if config.inference_disabled { InferenceState::Disabled } else { InferenceState::NothingToInfer },
-        no_project_files: true,
-    };
-    let graph = build_configured_graph(&projects, &config, Seeds::AllTargets, assumptions).ok()?;
+    let projects = configured_projects(root, config.inference_disabled, &[])?;
+    let graph = build_configured_graph(&projects, &config, Seeds::AllTargets, assumptions(&config)).ok()?;
 
     // The handler passes no `onUnmatchedProjectSelector`, so a selector that matched nothing is no edge and no output;
     // `graph.warnings` has nothing to add. An unknown task is Node's error, which `render` leaves to it.
@@ -321,9 +208,6 @@ pub fn run(args: &[String], raw_args: &[OsString]) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
     use task_runner_core::ConfiguredTask;
 
     use super::*;
@@ -438,49 +322,5 @@ mod tests {
     #[test]
     fn a_task_the_graph_does_not_hold_is_nodes_error() {
         assert_eq!(render(&graph(&[("a:build", &[])]), "a:test"), None);
-    }
-
-    #[test]
-    fn names_are_plain_or_left_to_node() {
-        for name in ["build", "@acme/app", "a-b_c.d", "build:ci"] {
-            assert!(is_plain(name, true), "{name}");
-        }
-
-        for name in ["", "a b", "100%", "a$b", "\u{e4}", "a'b"] {
-            assert!(!is_plain(name, true), "{name:?}");
-        }
-
-        assert!(!is_plain("a:b", false));
-    }
-
-    fn scratch(name: &str) -> PathBuf {
-        let directory = std::env::temp_dir().join(format!("vis-task-why-{name}-{}", std::process::id()));
-
-        let _ = fs::remove_dir_all(&directory);
-        fs::create_dir_all(&directory).expect("scratch directory");
-
-        directory
-    }
-
-    #[test]
-    fn the_task_order_is_the_order_of_the_file() {
-        let directory = scratch("order");
-        let path = directory.join("vis.config.ts");
-
-        fs::write(&path, "export default { tasks: { zeta: { command: 'z' }, alpha: {}, mid: { cache: false } } };\n")
-            .expect("config");
-
-        assert_eq!(task_order(&path), Some(vec!["zeta".to_owned(), "alpha".to_owned(), "mid".to_owned()]));
-
-        fs::write(&path, "export default { inferTargets: false };\n").expect("config");
-
-        assert_eq!(task_order(&path), Some(Vec::new()));
-
-        // A spread or a computed key is not a plain property, so the order is not the file's to give.
-        fs::write(&path, "const base = {};\nexport default { tasks: { ...base, a: {} } };\n").expect("config");
-
-        assert_eq!(task_order(&path), None);
-
-        let _ = fs::remove_dir_all(&directory);
     }
 }

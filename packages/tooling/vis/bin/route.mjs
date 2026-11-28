@@ -440,7 +440,9 @@ const affectedMayRunNatively = (platform, environment, args, interactive) =>
 
 // Whether `vis status` can pass the binary's native gate (`parse` and `answer` in `status.rs`): the plain overview or
 // `--json`, in a CI context off a terminal. The binary re-checks everything, including whether it can learn the Node
-// version a pin needs, so this only skips the extra process when it would delegate anyway.
+// version a pin needs, so this only skips the extra process when it would delegate anyway. A workspace with a `vis.config` takes the
+// same gate: the launcher does not look at the config, because the binary reads a literal one itself (`config_workspace.rs`), answers
+// only the keys it has shown cannot change the overview, and hands every other config, and a run from a project directory, to Node.
 const statusMayRunNatively = (platform, environment, args, interactive) =>
     !interactive && inCi(environment) && !nodeWarnsAboutColour(environment) && outputSettingsAreDefault(environment) && (args.length === 1 || (args.length === 2 && args[1] === "--json"));
 
@@ -1025,7 +1027,9 @@ const sbomMayRunNatively = (platform, environment, args, cwd, interactive, holds
 // graph, with `--format`/`-f` and `--depth`/`-d` at most once each, in a CI context off a terminal with no output setting
 // (`NODE_ENV`, `DEBUG`, `PAIL_LOG_LEVEL`, `CEREBRO_*`) that changes what the logger prints. `html`, `--output`
 // and every other flag stay in Node. The binary re-checks everything, so this only skips the extra process when it
-// would delegate anyway.
+// would delegate anyway. A workspace with a `vis.config` takes the same gate: the launcher does not look at the config, because the
+// binary reads a literal one itself (`config_workspace.rs`), answers the keys it has shown cannot change the projects or their edges
+// (`projectIgnore` is applied), and hands every other config, and a run from a project directory, to Node.
 const GRAPH_FORMATS = new Set(["ascii", "dot", "json", "tui"]);
 const GRAPH_DEPTH = /^\d+$/;
 const GRAPH_FLAGS = new Map([

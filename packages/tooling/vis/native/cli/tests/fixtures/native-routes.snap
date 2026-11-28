@@ -1464,6 +1464,7 @@
 ["graph","--depth=-1"] => graph
 ["graph","--format","dot","--depth","2"] => graph
 ["graph","--format","json"] => graph
+["graph","--format=dot"] => graph
 ["graph","--format=html"] => graph
 ["graph","--format=json"] => graph
 ["graph","--format=json","--format=dot"] => graph

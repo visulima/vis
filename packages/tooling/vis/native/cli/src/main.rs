@@ -42,6 +42,7 @@ mod clean;
 mod collation;
 mod complete;
 mod config_cache;
+mod config_workspace;
 mod deps;
 mod dlx;
 mod error;

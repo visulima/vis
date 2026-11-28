@@ -183,9 +183,9 @@ pub(crate) fn project_graph_with_manifests(root: &Path) -> Option<(ProjectGraph,
 }
 
 /// [`project_graph_with_manifests`] for a root whose `vis.config.*` the caller has read and found free of keys that
-/// change the project set (see `workspace::project_directories_vetted`).
-pub(crate) fn project_graph_vetted_with_manifests(root: &Path) -> Option<(ProjectGraph, Manifests)> {
-    graph_of(project_packages_vetted(root)?)
+/// change the project set, `projectIgnore` aside, whose entries are `ignore` (see `workspace::project_packages_vetted`).
+pub(crate) fn project_graph_vetted_with_manifests(root: &Path, ignore: &[String]) -> Option<(ProjectGraph, Manifests)> {
+    graph_of(project_packages_vetted(root, ignore)?)
 }
 
 fn graph_of(packages: Vec<(String, PackageJson)>) -> Option<(ProjectGraph, Manifests)> {

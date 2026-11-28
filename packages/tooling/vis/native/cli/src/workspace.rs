@@ -66,19 +66,20 @@ pub(crate) const AUBE_WORKSPACE_YAML: &str = "aube-workspace.yaml";
 /// `Native` only when every gate passes: no config or overlay that applies, no non-JS
 /// marker, and only the pattern shapes this module reproduces.
 pub fn project_directories(root: &Path) -> Membership {
-    membership(resolve(root, false, None))
+    membership(resolve(root, false, None, &[]))
 }
 
 /// [`project_directories`] with the manifest each directory was admitted on, so a caller that needs the manifest
 /// does not read it again. `None` where [`project_directories`] is `Delegate`.
 pub(crate) fn project_packages(root: &Path) -> Option<Vec<(String, PackageJson)>> {
-    resolve(root, false, None)
+    resolve(root, false, None, &[])
 }
 
 /// [`project_packages`] for a root whose `vis.config.*` the caller has read and found free of keys that change the
-/// project set (see [`project_directories_vetted`]).
-pub(crate) fn project_packages_vetted(root: &Path) -> Option<Vec<(String, PackageJson)>> {
-    resolve(root, true, None)
+/// project set (see [`project_directories_vetted`]), except `projectIgnore`: `ignore` holds its entries, each a
+/// `.gitignore` line the caller has checked [`Rules::extend`] reads, and Node layers them on the root `.gitignore`.
+pub(crate) fn project_packages_vetted(root: &Path, ignore: &[String]) -> Option<Vec<(String, PackageJson)>> {
+    resolve(root, true, None, ignore)
 }
 
 fn membership(found: Option<Vec<(String, PackageJson)>>) -> Membership {
@@ -91,13 +92,13 @@ fn membership(found: Option<Vec<(String, PackageJson)>>) -> Membership {
 /// the `.gitignore` and the manifest checks) is Node's, and none of its manifests is read: a caller that could not
 /// answer such a workspace anyway does not pay for reading it.
 pub fn project_directories_below(root: &Path, limit: usize) -> Membership {
-    membership(resolve(root, false, Some(limit)))
+    membership(resolve(root, false, Some(limit), &[]))
 }
 
 /// Like [`project_directories`], but a `vis.config.*` at the root does not delegate. The caller
 /// has read that config and knows none of its keys can change which directories are projects.
 pub fn project_directories_vetted(root: &Path) -> Membership {
-    membership(resolve(root, true, None))
+    membership(resolve(root, true, None, &[]))
 }
 
 /// Whether `root` is a path this module reads: absolute and UTF-8.
@@ -117,7 +118,12 @@ fn component_is_readable(component: Component<'_>) -> bool {
 
 /// `None` means delegate. Every step below returns `None` where the Node path would
 /// either error or depend on something this module does not reproduce.
-fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Vec<(String, PackageJson)>> {
+fn resolve(
+    root: &Path,
+    config_vetted: bool,
+    limit: Option<usize>,
+    ignore: &[String],
+) -> Option<Vec<(String, PackageJson)>> {
     if !root_is_readable(root) || !root.components().all(component_is_readable) {
         return None;
     }
@@ -143,7 +149,7 @@ fn resolve(root: &Path, config_vetted: bool, limit: Option<usize>) -> Option<Vec
         return None;
     }
 
-    let rules = gitignore_rules(root)?;
+    let rules = gitignore_rules(root, ignore)?;
     // Every directory is looked at on every core; one that sends the workspace to Node (`None`) does that whichever
     // directory it is, and the ones that stay keep the order they were discovered in.
     let kept: Vec<Option<(String, PackageJson)>> = unique
@@ -438,7 +444,7 @@ pub(crate) fn workspace_yaml(root: &Path) -> Result<Option<WorkspaceYaml>, Deleg
 /// as for [`directories_with_package_json`].
 pub(crate) fn directories_for_patterns(root: &Path, patterns: &[String]) -> Option<Vec<String>> {
     let directories = unique(expand_patterns(root, patterns, &|directory| directory.join("package.json").exists())?);
-    let rules = gitignore_rules(root)?;
+    let rules = gitignore_rules(root, &[])?;
     let mut kept = Vec::new();
 
     for directory in directories {
@@ -525,17 +531,21 @@ fn walk(dir: &Path, prefix: &str, depth: usize, found: &mut Vec<String>) -> Opti
     Some(())
 }
 
-/// The rules `buildGitignoreMatcher` applies: the built-in excludes, then the root `.gitignore`, as far as
-/// [`Rules`] reproduces them (`None` delegates).
-fn gitignore_rules(root: &Path) -> Option<Rules> {
+/// The rules `buildGitignoreMatcher` applies: the built-in excludes, then the root `.gitignore`, then the extra
+/// patterns (`projectIgnore`), as far as [`Rules`] reproduces them (`None` delegates).
+fn gitignore_rules(root: &Path, extra: &[String]) -> Option<Rules> {
     let path = root.join(".gitignore");
 
     // Matches `safeRead`: an unreadable or non-file `.gitignore` is treated as absent.
-    if !path.is_file() {
-        return Rules::from_lines([]);
-    }
+    let mut rules = if path.is_file() {
+        Rules::from_lines(fs::read_to_string(&path).ok()?.split('\n'))?
+    } else {
+        Rules::from_lines([])?
+    };
 
-    Rules::from_lines(fs::read_to_string(&path).ok()?.split('\n'))
+    rules.extend(extra.iter().map(String::as_str))?;
+
+    Some(rules)
 }
 
 #[cfg(test)]
@@ -853,6 +863,55 @@ mod gitignore_fixture_tests {
         got.sort();
 
         assert_eq!(got, ["nested/a/keep", "nested/gen", "packages/a", "packages/build-two", "packages/tmp12"]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_ignore_lines_join_the_gitignore_rules() {
+        let root = std::env::temp_dir().join(format!("vis-workspace-project-ignore-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        for (path, text) in [
+            ("package.json", "{\"name\":\"root\",\"private\":true}"),
+            ("pnpm-workspace.yaml", "packages:\n  - \"packages/**\"\n"),
+            ("packages/a/package.json", "{\"name\":\"a\"}"),
+            ("packages/legacy/package.json", "{\"name\":\"legacy\"}"),
+            ("packages/x/legacy/package.json", "{\"name\":\"nested-legacy\"}"),
+            ("packages/old/inner/package.json", "{\"name\":\"inner\"}"),
+            ("packages/old/package.json", "{\"name\":\"old\"}"),
+        ] {
+            let target = root.join(path);
+            fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+            fs::write(target, text).expect("write");
+        }
+
+        let kept = |ignore: &[&str]| -> Vec<String> {
+            let ignore: Vec<String> = ignore.iter().map(|line| (*line).to_owned()).collect();
+            let mut directories: Vec<String> = project_packages_vetted(&root, &ignore)
+                .expect("native")
+                .into_iter()
+                .map(|(directory, _)| directory)
+                .collect();
+
+            directories.sort();
+            directories
+        };
+
+        assert_eq!(
+            kept(&[]),
+            ["packages/a", "packages/legacy", "packages/old", "packages/old/inner", "packages/x/legacy"]
+        );
+        // An unanchored name drops the directory at any depth, and what is under an ignored directory with it.
+        assert_eq!(kept(&["legacy", "packages/old"]), ["packages/a"]);
+        // An anchored path drops that directory only.
+        assert_eq!(
+            kept(&["packages/legacy"]),
+            ["packages/a", "packages/old", "packages/old/inner", "packages/x/legacy"]
+        );
+        // A line outside the subset sends the workspace to Node.
+        assert!(project_packages_vetted(&root, &["!a".to_owned()]).is_none());
+        assert!(project_packages_vetted(&root, &["**/old".to_owned()]).is_none());
 
         let _ = fs::remove_dir_all(&root);
     }
