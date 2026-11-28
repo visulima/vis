@@ -90,6 +90,8 @@ export class Harness {
             .replaceAll(root, "<ROOT>")
             .replaceAll(/\d{2}:\d{2}:\d{2}/g, "HH:MM:SS")
             .replaceAll(/\(node:\d+\)/g, "(node:PID)")
+            // Node 22.14 (no `module.registerHooks`) loads a config through a temporary file named after the process id.
+            .replaceAll(/\.vis-ts-\d+-\d+\.mjs/g, ".vis-ts-N-PID.mjs")
             .replaceAll(/\n[^\n]{0,6}tip: [^\n]*\n/g, "");
     }
 

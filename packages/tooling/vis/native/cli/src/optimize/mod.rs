@@ -168,7 +168,7 @@ fn context(args: &[String]) -> Option<(Layout, PathBuf, Manager)> {
     // a project directory prints the same as the root does); this crate finds that root for a pnpm, npm or yarn workspace.
     let (root, manager) = workspace_root(&cwd)?;
 
-    if !ci_context(&root) || !quiet_environment(&cwd, &root) || !config_leaves_the_report_alone(&root) {
+    if !ci_context(&root) || !quiet_environment(&cwd, &root) || !config_leaves_the_report_alone(&root, node_has_register_hooks) {
         return None;
     }
 
@@ -187,8 +187,9 @@ const TASK_LIST_FIELDS: [&str; 4] = ["aliases", "dependsOn", "inputs", "outputs"
 /// Node handles (`extends`, `runtime`, `versionConstraint`, the removed keys, an `install` it must run), a `__proto__` key
 /// (a literal sets the prototype with it, a map holds a key), or a task whose list fields `includes` cannot be called on.
 /// A config in a parent directory, or in the root in a form Node does not evaluate, is never loaded. The file also has to be
-/// one Node loads as the module it is written as ([`module_format_loads`]).
-fn config_leaves_the_report_alone(root: &Path) -> bool {
+/// one Node loads as the module it is written as ([`module_format_loads`]), and Node has to load it without the notice it
+/// prints on a version without `module.registerHooks` (`node_has_hooks`, asked only when there is a script config).
+fn config_leaves_the_report_alone(root: &Path, node_has_hooks: impl FnOnce() -> bool) -> bool {
     let config = match vis_config::read(root) {
         ConfigState::Absent => return true,
         ConfigState::Dynamic => return false,
@@ -207,7 +208,7 @@ fn config_leaves_the_report_alone(root: &Path) -> bool {
         return true;
     }
 
-    if !module_format_loads(root, extension) {
+    if !module_format_loads(root, extension) || !node_has_hooks() {
         return false;
     }
 
@@ -218,6 +219,23 @@ fn config_leaves_the_report_alone(root: &Path) -> bool {
     }
 
     !vis_config::requires_node(&ConfigState::Static(rest)) && !holds_proto_key(&config) && tasks_load(&config)
+}
+
+/// Whether the Node that would run the command has `module.registerHooks`, which its config loader needs to transpile a script
+/// config in one go: 22.15 and later, and 23.5 and later. Older ones load the entry through a temporary file and write a
+/// notice to stderr that this module does not print, so a script config goes to them (and to a Node that cannot be asked).
+fn node_has_register_hooks() -> bool {
+    crate::status::node_version().is_some_and(|version| registers_hooks(&version))
+}
+
+/// [`node_has_register_hooks`] for the `X.Y.Z` of a Node version.
+fn registers_hooks(version: &str) -> bool {
+    let mut parts = version.split('.').map(|part| part.parse::<u32>().ok());
+
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor)) => major >= 24 || (major == 22 && minor >= 15) || (major == 23 && minor >= 5),
+        _ => false,
+    }
 }
 
 /// Whether Node loads a config with this extension in the package scope of the root `package.json` without a word. A
@@ -663,11 +681,51 @@ mod tests {
             fs::write(dir.join(file), content).unwrap();
         }
 
-        let accepted = config_leaves_the_report_alone(&dir);
+        let accepted = config_leaves_the_report_alone(&dir, || true);
 
         let _ = fs::remove_dir_all(&dir);
 
         accepted
+    }
+
+    #[test]
+    fn a_script_config_needs_a_node_that_registers_hooks() {
+        for (version, hooks) in [
+            ("22.14.0", false),
+            ("22.14.9", false),
+            ("22.15.0", true),
+            ("22.23.4", true),
+            ("23.4.0", false),
+            ("23.5.0", true),
+            ("24.0.0", true),
+            ("26.12.0", true),
+            ("20.19.5", false),
+            ("", false),
+            ("x.y.z", false),
+        ] {
+            assert_eq!(registers_hooks(version), hooks, "{version}");
+        }
+
+        let dir = std::env::temp_dir().join(format!("vis-optimize-config-{}-hooks", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // A JSON config, which Node never loads, and no config at all do not ask.
+        fs::write(dir.join("vis.config.json"), "{}").unwrap();
+
+        assert!(config_leaves_the_report_alone(&dir, || false));
+
+        fs::remove_file(dir.join("vis.config.json")).unwrap();
+
+        assert!(config_leaves_the_report_alone(&dir, || false));
+
+        fs::write(dir.join("vis.config.ts"), "export default {};\n").unwrap();
+
+        assert!(!config_leaves_the_report_alone(&dir, || false));
+        assert!(config_leaves_the_report_alone(&dir, || true));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -754,7 +812,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(dir.join("vis.config.ts"), "export default {};\n").unwrap();
 
-        let accepted = config_leaves_the_report_alone(&root);
+        let accepted = config_leaves_the_report_alone(&root, || true);
 
         let _ = fs::remove_dir_all(&dir);
 

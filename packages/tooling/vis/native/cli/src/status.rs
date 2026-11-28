@@ -73,7 +73,7 @@ fn clean_node_version(text: &str) -> Option<String> {
 }
 
 /// The version of the Node the run would be handed to: the launcher's, or what `node --version` prints.
-fn node_version() -> Option<String> {
+pub(crate) fn node_version() -> Option<String> {
     if let Some(version) = env::var_os("VIS_NODE_VERSION") {
         return clean_node_version(version.to_str()?);
     }

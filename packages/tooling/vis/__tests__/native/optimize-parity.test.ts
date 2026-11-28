@@ -57,6 +57,28 @@ const VIS_CONFIG_MODULE: Files = {
     "node_modules/@visulima/vis/package.json": json({ exports: { "./config": { default: "./dist/config.js" } }, name: "@visulima/vis", type: "module", version: "1.0.0" }),
 };
 
+/**
+ * Whether the Node that runs the suite has `module.registerHooks` (22.15 and later, 23.5 and later). Without it Node loads a
+ * script config through a temporary file and writes a notice to stderr, so the binary hands such a config to Node.
+ */
+const hasRegisterHooks = ((): boolean => {
+    const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+
+    return major >= 24 || (major === 22 && minor >= 15) || (major === 23 && minor >= 5);
+})();
+
+/** Whether `files` hold a script config (a `.json` one is never loaded by Node, so the Node version does not matter for it). */
+const holdsScriptConfig = (files: Files): boolean => Object.keys(files).some((name) => /^vis\.config\.[cm]?[jt]s$/u.test(name));
+
+/** The binary answers a config run like Node does, or, on a Node without `registerHooks`, hands a script config to it. */
+const expectConfigRun = (files: Files, args: string[], directory = ""): void => {
+    if (holdsScriptConfig(files) && !hasRegisterHooks) {
+        harness.expectDelegation(files, args, {}, true, directory);
+    } else {
+        harness.expectParity(files, args, {}, directory);
+    }
+};
+
 interface ConfigCase {
     files: Files;
     label: string;
@@ -360,8 +382,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
 
                 const files = manifestWorkspace(lockfile(packages.slice(30, 36)), {}, { ...projects(), "packages/a/src/deep/readme.md": "x", "vis.config.ts": "export default { security: { allowBuilds: {} } };\n" });
 
-                harness.expectParity(files, [], {}, "packages/a");
-                harness.expectParity(files, ["--format", "json"], {}, "packages/a/src/deep");
+                expectConfigRun(files, [], "packages/a");
+                expectConfigRun(files, ["--format", "json"], "packages/a/src/deep");
             });
 
             it("reads the lockfile the way Node does", () => {
@@ -409,7 +431,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             it("reads the root's config, not the one of the project directory", () => {
                 expect.hasAssertions();
 
-                harness.expectParity({ ...below, "vis.config.ts": "export default { security: { allowBuilds: { esbuild: true } } };\n" }, [], {}, "packages/a/src");
+                expectConfigRun({ ...below, "vis.config.ts": "export default { security: { allowBuilds: { esbuild: true } } };\n" }, [], "packages/a/src");
             });
 
             it("reads the root a yaml names, with a pin and a lockfile of its own", () => {
@@ -435,8 +457,8 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             it.each(ACCEPTED_CONFIGS)("$label is read like Node does", ({ files, manifest }) => {
                 expect.hasAssertions();
 
-                harness.expectParity({ ...rich(manifest), ...files }, []);
-                harness.expectParity({ ...rich(manifest), ...files }, ["--format", "json", "--dry-run"]);
+                expectConfigRun({ ...rich(manifest), ...files }, []);
+                expectConfigRun({ ...rich(manifest), ...files }, ["--format", "json", "--dry-run"]);
             });
 
             it("reads the config `vis init` writes: a `defineConfig` call from the vis config module", () => {
@@ -447,7 +469,7 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
                     "vis.config.ts": 'import { defineConfig } from "@visulima/vis/config";\n\nexport default defineConfig({ security: { allowBuilds: { esbuild: true } } });\n',
                 };
 
-                expect(harness.expectParity({ ...rich(), ...files }, []).stdout).toContain("Scanned 3 workspace packages.");
+                expectConfigRun({ ...rich(), ...files }, []);
             });
         });
 
