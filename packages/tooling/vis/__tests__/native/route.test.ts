@@ -589,6 +589,7 @@ describe("launcher routing (bin/route.mjs)", () => {
             ["secrets", ["secrets", "--format", "json"], { CI: "1" }],
             ["sync ci-workflow", ["sync", "ci-workflow", "--provider=github"], { CI: "1" }],
             ["task-why", ["task-why", "app:build"], { CI: "1" }],
+            ["staged", ["staged", "--quiet"], { CI: "1" }],
         ];
 
         // The commands whose output holds a pail line, whose width pail looks up (`tput`) under `TERM`.
