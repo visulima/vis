@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { join } from "@visulima/path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -190,6 +190,41 @@ describe("migrate-gitleaks", () => {
             const content = readFileSync(join(tmpDir, ".husky", "pre-commit"), "utf8");
 
             expect(content).toContain("vis secrets --staged");
+        });
+
+        it.skipIf(process.platform === "win32")("keeps the mode of an executable hook it rewrites", () => {
+            expect.assertions(2);
+
+            const hookPath = join(tmpDir, ".husky", "pre-commit");
+
+            writeFileSync(join(tmpDir, ".gitleaksignore"), "a.env:aws:1\n");
+            mkdirSync(join(tmpDir, ".husky"), { recursive: true });
+            writeFileSync(hookPath, "#!/bin/sh\ngitleaks protect --staged\n");
+            chmodSync(hookPath, 0o755);
+
+            migrateGitleaks(tmpDir, { dryRun: false }, createMockLogger(), createMigrationReport());
+
+            expect(readFileSync(hookPath, "utf8")).toContain("vis secrets --staged");
+            // eslint-disable-next-line no-bitwise
+            expect(statSync(hookPath).mode & 0o777).toBe(0o755);
+        });
+
+        it.skipIf(process.platform === "win32")("does not write through a symlinked hook", () => {
+            expect.assertions(3);
+
+            const hookPath = join(tmpDir, ".husky", "pre-commit");
+            const targetPath = join(tmpDir, "outside-hook.sh");
+
+            writeFileSync(join(tmpDir, ".gitleaksignore"), "a.env:aws:1\n");
+            mkdirSync(join(tmpDir, ".husky"), { recursive: true });
+            writeFileSync(targetPath, "#!/bin/sh\ngitleaks protect --staged\n");
+            symlinkSync(targetPath, hookPath);
+
+            migrateGitleaks(tmpDir, { dryRun: false }, createMockLogger(), createMigrationReport());
+
+            expect(lstatSync(hookPath).isSymbolicLink()).toBe(false);
+            expect(readFileSync(hookPath, "utf8")).toContain("vis secrets --staged");
+            expect(readFileSync(targetPath, "utf8")).toContain("gitleaks protect --staged");
         });
 
         it("preserves custom gitleaks.toml by appending --config to rewritten commands", () => {
