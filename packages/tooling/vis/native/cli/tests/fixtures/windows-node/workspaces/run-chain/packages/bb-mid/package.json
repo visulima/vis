@@ -1,0 +1,10 @@
+{
+  "name": "bb-mid",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo bb-mid"
+  },
+  "dependencies": {
+    "aa-base": "workspace:*"
+  }
+}

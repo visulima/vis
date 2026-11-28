@@ -773,6 +773,64 @@ describe("launcher routing (bin/route.mjs)", () => {
         });
     });
 
+    describe("`vis run <target>` (answered when every task hits, on Windows too)", () => {
+        const ci = { CI: "1" };
+        const root = String.raw`C:\work\app`;
+        const holdsMarker = (directory: string) => directory === root;
+        const cache = () => true;
+        const args = ["run", "build"];
+
+        it("routes a plain run from a workspace root that has a task cache, on Windows and elsewhere", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(args, "win32", ci, root, false, holdsMarker, cache)).toBe(true);
+            expect(routesToNative(args, "linux", ci, "/work/app", false, (directory: string) => directory === "/work/app", cache)).toBe(true);
+        });
+
+        it("keeps a run without a task cache in Node: nothing can hit", () => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "win32", ci, root, false, holdsMarker, () => false)).toBe(false);
+        });
+
+        it("keeps a run from below the workspace root, and one whose root another process named, in Node on Windows", () => {
+            expect.assertions(3);
+
+            expect(routesToNative(args, "win32", ci, String.raw`C:\work\app\packages\a`, false, holdsMarker, cache)).toBe(false);
+            expect(routesToNative(args, "win32", { ...ci, VIS_MONOREPO_ROOT: "C:/elsewhere" }, root, false, holdsMarker, cache)).toBe(false);
+            expect(routesToNative(args, "win32", { ...ci, VIS_MONOREPO_ROOT: "C:/work/app" }, root, false, holdsMarker, cache)).toBe(false);
+        });
+
+        it.each([[["run"]], [["run", "build", "--parallel=2"]], [["run", "build", "test"]], [["run", "--filter", "a"]], [["run", "-x"]]])("keeps `vis %j` in Node on Windows: it is not the one shape", (flags: string[]) => {
+            expect.assertions(1);
+
+            expect(routesToNative(flags, "win32", ci, root, false, holdsMarker, cache)).toBe(false);
+        });
+
+        it.each([
+            ["outside CI", {}],
+            ["with CI=0", { CI: "0" }],
+            ["with only CONTINUOUS_INTEGRATION", { CONTINUOUS_INTEGRATION: "1" }],
+            ["with a colour variable Node warns about", { ...ci, FORCE_COLOR: "1", NO_COLOR: "1" }],
+            ["with DEBUG", { ...ci, DEBUG: "vis" }],
+            ["with NODE_ENV=test", { ...ci, NODE_ENV: "test" }],
+            ["with a remote cache", { ...ci, TURBO_API: "https://cache.example" }],
+            ["with VIS_CACHE_DIRECTORY", { ...ci, VIS_CACHE_DIRECTORY: String.raw`C:\cache` }],
+            ["with a lower-case cerebro variable, which Windows reads like the upper-case one", { ...ci, cerebro_output_level: "1" }],
+        ])("keeps `vis run build` in Node on Windows %s", (_label: string, environment: Record<string, string>) => {
+            expect.assertions(1);
+
+            expect(routesToNative(args, "win32", environment, root, false, holdsMarker, cache)).toBe(false);
+        });
+
+        it("keeps `vis run build` in Node on a terminal, and reads a lower-case cerebro variable as another variable off Windows", () => {
+            expect.assertions(2);
+
+            expect(routesToNative(args, "win32", ci, root, true, holdsMarker, cache)).toBe(false);
+            expect(routesToNative(args, "linux", { ...ci, cerebro_output_level: "1" }, "/work/app", false, (directory: string) => directory === "/work/app", cache)).toBe(true);
+        });
+    });
+
     it.each([[["clean"]], [["clean", "--dry-run"]], [["clean", "--lockfile"]]])("keeps `vis %j` in Node when stdout is a terminal", (args: string[]) => {
         expect.assertions(1);
 

@@ -1,0 +1,22 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 3 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m zz-top:build
+[2m>[22m bb-mid:build
+[2m>[22m aa-base:build
+[32m√[39m  bb-mid:build[36m [cache][2m[39m (5 ms)[22m
+--- [32m√[39m bb-mid:build
+bb-mid
+[32m√[39m  aa-base:build[36m [cache][2m[39m (6 ms)[22m
+--- [32m√[39m aa-base:build
+aa-base
+[32m√[39m  zz-top:build[36m [cache][2m[39m (14 ms)[22m
+--- [32m√[39m zz-top:build
+zz-top
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 3 projects
+
+   [32m√[39m  3 tasks completed[2m (3 read from cache)  ·  Took 31 ms[22m
+
+  3 cached · 0.1s

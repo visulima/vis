@@ -1,0 +1,45 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 7 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m b10:build
+[2m>[22m b2:build
+[2m>[22m Beta:build
+[32m√[39m  b10:build[36m [cache][2m[39m (9 ms)[22m
+::group::[32m√[39m b10:build
+b10
+::endgroup::
+[2m>[22m core:build
+[32m√[39m  b2:build[36m [cache][2m[39m (9 ms)[22m
+::group::[32m√[39m b2:build
+b2
+::endgroup::
+[2m>[22m mid:build
+[32m√[39m  Beta:build[36m [cache][2m[39m (11 ms)[22m
+::group::[32m√[39m Beta:build
+beta
+::endgroup::
+[2m>[22m ten:build
+[32m√[39m  mid:build[36m [cache][2m[39m (4 ms)[22m
+::group::[32m√[39m mid:build
+mid
+::endgroup::
+[2m>[22m zed:build
+[32m√[39m  ten:build[36m [cache][2m[39m (4 ms)[22m
+::group::[32m√[39m ten:build
+ten
+::endgroup::
+[32m√[39m  core:build[36m [cache][2m[39m (11 ms)[22m
+::group::[32m√[39m core:build
+core
+::endgroup::
+[32m√[39m  zed:build[36m [cache][2m[39m (3 ms)[22m
+::group::[32m√[39m zed:build
+zed
+::endgroup::
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 7 projects
+
+   [32m√[39m  7 tasks completed[2m (7 read from cache)  ·  Took 41 ms[22m
+
+  7 cached · 0.1s

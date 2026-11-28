@@ -1,0 +1,29 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 4 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m alpha:build
+[2m>[22m beta:build
+[2m>[22m delta:build
+[32m√[39m  beta:build[36m [cache][2m[39m (9 ms)[22m
+[2m>[22m gamma:build
+[32m√[39m  alpha:build[36m [cache][2m[39m (25 ms)[22m
+::group::[32m√[39m alpha:build
+hello from alpha
+::endgroup::
+[32m√[39m  delta:build[36m [cache][2m[39m (20 ms)[22m
+::group::[32m√[39m delta:build
+hello from delta
+::endgroup::
+[32m√[39m  gamma:build[36m [cache][2m[39m (12 ms)[22m
+::group::[32m√[39m gamma:build
+line one
+warn gamma
+line two
+::endgroup::
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 4 projects
+
+   [32m√[39m  4 tasks completed[2m (4 read from cache)  ·  Took 60 ms[22m
+
+  4 cached · 0.1s

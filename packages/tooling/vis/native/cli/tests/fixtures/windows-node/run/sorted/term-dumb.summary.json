@@ -1,0 +1,171 @@
+{
+  "duration": 78,
+  "endTime": "2026-11-28T00:20:17.332Z",
+  "environment": {
+    "arch": "x64",
+    "nodeVersion": "v26.13.1",
+    "platform": "win32"
+  },
+  "id": "2026-11-28T00-20-17-254Z_1fa9be7f-2e33-48f2-bef8-47ce741e1a14",
+  "startTime": "2026-11-28T00:20:17.254Z",
+  "stats": {
+    "cached": 5,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 5
+  },
+  "taskGraph": {
+    "dependencies": {
+      "alpha:build": [],
+      "b10:build": [],
+      "b2:build": [],
+      "Gamma:build": [],
+      "gamma2:build": []
+    },
+    "roots": [
+      "alpha:build",
+      "b10:build",
+      "b2:build",
+      "Gamma:build",
+      "gamma2:build"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 18,
+      "endTime": "2026-11-28T00:20:17.324Z",
+      "exitCode": 0,
+      "hash": "ae02672c6a4253dabdc0575617c965cd",
+      "hashDetails": {
+        "command": "1887c04cee5afcf233cb768730504877",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/a-lib/package.json": "4eea7072eb3fd5d70a7983bf51de50fc",
+          "packages/a-lib/src/index.ts": "783c3da4872a32e7613d3b238e441847"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:17.306Z",
+      "target": {
+        "project": "alpha",
+        "target": "build"
+      },
+      "taskId": "alpha:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 4,
+      "endTime": "2026-11-28T00:20:17.315Z",
+      "exitCode": 0,
+      "hash": "13b12742fe5ed45eaeedb3e71564e417",
+      "hashDetails": {
+        "command": "dfd603e6609b252b0c21443db32fa7ed",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/b10/package.json": "2db72bc1a2197d1aec91c8304833452c",
+          "packages/b10/src/index.ts": "347225e6c32fd30d5df15f2c340c9431"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:17.311Z",
+      "target": {
+        "project": "b10",
+        "target": "build"
+      },
+      "taskId": "b10:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 8,
+      "endTime": "2026-11-28T00:20:17.320Z",
+      "exitCode": 0,
+      "hash": "637ed20a84ea59bd9ceb6d6a03d7cefc",
+      "hashDetails": {
+        "command": "03ef6d32cf1f22a1d15a04264c41788a",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/b2/package.json": "130f3988a7f03de907e80f1dfaa478fd",
+          "packages/b2/src/index.ts": "45ca683530a044013d8705c5f3572bfb"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:17.312Z",
+      "target": {
+        "project": "b2",
+        "target": "build"
+      },
+      "taskId": "b2:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 8,
+      "endTime": "2026-11-28T00:20:17.327Z",
+      "exitCode": 0,
+      "hash": "930b9606a518582f6aec9eccca6e6722",
+      "hashDetails": {
+        "command": "ff5bce5800177dcbbd89d6fc0cb040eb",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/c/package.json": "2c1482a3465bf7ef73855399e851d4bf",
+          "packages/c/src/index.ts": "7c788ee1d6404176f373b9c2b87f13f3"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:17.319Z",
+      "target": {
+        "project": "Gamma",
+        "target": "build"
+      },
+      "taskId": "Gamma:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 6,
+      "endTime": "2026-11-28T00:20:17.329Z",
+      "exitCode": 0,
+      "hash": "c3b2641e62269dfba1090371db090851",
+      "hashDetails": {
+        "command": "bd1a1630122ce0b4e10080dab915cbd5",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/d-app/package.json": "af6c9a9deb5ec36af7af234aa5dbb50d",
+          "packages/d-app/src/index.ts": "2dab12756fcf07f5c56b86176441bc94"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:17.323Z",
+      "target": {
+        "project": "gamma2",
+        "target": "build"
+      },
+      "taskId": "gamma2:build"
+    }
+  ]
+}

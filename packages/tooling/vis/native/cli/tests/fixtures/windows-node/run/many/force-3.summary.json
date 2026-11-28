@@ -1,0 +1,144 @@
+{
+  "duration": 91,
+  "endTime": "2026-11-28T00:20:03.212Z",
+  "environment": {
+    "arch": "x64",
+    "nodeVersion": "v26.13.1",
+    "platform": "win32"
+  },
+  "id": "2026-11-28T00-20-03-121Z_938c6781-1001-4d81-a259-ddb93cc1b5ac",
+  "startTime": "2026-11-28T00:20:03.121Z",
+  "stats": {
+    "cached": 4,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 4
+  },
+  "taskGraph": {
+    "dependencies": {
+      "alpha:build": [],
+      "beta:build": [],
+      "delta:build": [],
+      "gamma:build": []
+    },
+    "roots": [
+      "alpha:build",
+      "beta:build",
+      "delta:build",
+      "gamma:build"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 21,
+      "endTime": "2026-11-28T00:20:03.204Z",
+      "exitCode": 0,
+      "hash": "a29eab89988b9ed8d1bf27c57a68c28b",
+      "hashDetails": {
+        "command": "d7c4312540b82e9ed0fff284356aeea8",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/alpha/package.json": "94d0dbba0d0323d54bef83145d92e64d",
+          "packages/alpha/src/index.ts": "783c3da4872a32e7613d3b238e441847"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:03.183Z",
+      "target": {
+        "project": "alpha",
+        "target": "build"
+      },
+      "taskId": "alpha:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 5,
+      "endTime": "2026-11-28T00:20:03.194Z",
+      "exitCode": 0,
+      "hash": "962613e39dbff521119b0b236e72d35f",
+      "hashDetails": {
+        "command": "76e461e44d46593f69d037614904c558",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/beta/package.json": "5456817ae583d3db87c7db3f8713aa39",
+          "packages/beta/quiet.js": "63aebb019b1bb949c2d561deea65cc53",
+          "packages/beta/src/index.ts": "06dc6ade41573c39c132f4a9c186c975"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:03.189Z",
+      "target": {
+        "project": "beta",
+        "target": "build"
+      },
+      "taskId": "beta:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-11-28T00:20:03.200Z",
+      "exitCode": 0,
+      "hash": "18947e43bbf3c7247e2d500d4e82ee55",
+      "hashDetails": {
+        "command": "785a43b192829bc4129d620644339528",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/delta/package.json": "bd7f4f9e44e87c42bba8ff2c20f6a934",
+          "packages/delta/src/index.ts": "e6db07e15d91113fb14e8d3f188481ce"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:03.190Z",
+      "target": {
+        "project": "delta",
+        "target": "build"
+      },
+      "taskId": "delta:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 10,
+      "endTime": "2026-11-28T00:20:03.207Z",
+      "exitCode": 0,
+      "hash": "5b206f1bba1aa451580d5490c6734d51",
+      "hashDetails": {
+        "command": "deb00896dcb4e9e84767651ad3e1f3b4",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/gamma/noisy.js": "7bbdefeb5aa0f7b93b6fe04af444c088",
+          "packages/gamma/package.json": "898057a6711e2dfb3cfe0b27fb6d15d2",
+          "packages/gamma/src/index.ts": "e1dbab32f2cf0dc953645cedda92a03e"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:03.197Z",
+      "target": {
+        "project": "gamma",
+        "target": "build"
+      },
+      "taskId": "gamma:build"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for project solo
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m solo:build
+[32m√[39m  solo:build[36m [cache][2m[39m (7 ms)[22m
+[2m--------------------------------------------------------------------------------[22m
+[32m√[39m [36m[cache][39m [1msolo:build[22m
+built solo
+[2m--------------------------------------------------------------------------------[22m
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for project solo
+
+   [32m√[39m  1 tasks completed[2m (1 read from cache)  ·  Took 25 ms[22m
+
+  1 cached · 0.1s

@@ -1,0 +1,29 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 4 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m alpha:build
+[2m>[22m beta:build
+[2m>[22m delta:build
+[32m√[39m  beta:build[36m [cache][2m[39m (6 ms)[22m
+[2m>[22m gamma:build
+[32m√[39m  delta:build[36m [cache][2m[39m (8 ms)[22m
+[0Ksection_start:1795825208:delta_build_3cdfd2[collapsed=true][0K[32m√[39m delta:build
+hello from delta
+[0Ksection_end:1795825208:delta_build_3cdfd2[0K
+[32m√[39m  alpha:build[36m [cache][2m[39m (18 ms)[22m
+[0Ksection_start:1795825208:alpha_build_527e1f[collapsed=true][0K[32m√[39m alpha:build
+hello from alpha
+[0Ksection_end:1795825208:alpha_build_527e1f[0K
+[32m√[39m  gamma:build[36m [cache][2m[39m (5 ms)[22m
+[0Ksection_start:1795825208:gamma_build_5a12ae[collapsed=true][0K[32m√[39m gamma:build
+line one
+warn gamma
+line two
+[0Ksection_end:1795825208:gamma_build_5a12ae[0K
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 4 projects
+
+   [32m√[39m  4 tasks completed[2m (4 read from cache)  ·  Took 38 ms[22m
+
+  4 cached · 0.1s

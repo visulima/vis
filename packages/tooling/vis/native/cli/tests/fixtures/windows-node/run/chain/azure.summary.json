@@ -1,0 +1,113 @@
+{
+  "duration": 75,
+  "endTime": "2026-11-28T00:20:46.438Z",
+  "environment": {
+    "arch": "x64",
+    "nodeVersion": "v26.13.1",
+    "platform": "win32"
+  },
+  "id": "2026-11-28T00-20-46-363Z_e83c71f7-7928-486e-87e9-e53e66763e54",
+  "startTime": "2026-11-28T00:20:46.363Z",
+  "stats": {
+    "cached": 3,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 3
+  },
+  "taskGraph": {
+    "dependencies": {
+      "aa-base:build": [],
+      "bb-mid:build": [],
+      "zz-top:build": []
+    },
+    "roots": [
+      "aa-base:build",
+      "bb-mid:build",
+      "zz-top:build"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 16,
+      "endTime": "2026-11-28T00:20:46.435Z",
+      "exitCode": 0,
+      "hash": "961228972fd82e38e21f262c59451b25",
+      "hashDetails": {
+        "command": "d57eddef522a8effc1ec9e8a2ee53403",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/zz-top/package.json": "b09f9476f0817752fac40b63b6cebebe",
+          "packages/zz-top/src/index.ts": "b151999a50b1b031a1bc0f76b216654c"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:46.419Z",
+      "target": {
+        "project": "zz-top",
+        "target": "build"
+      },
+      "taskId": "zz-top:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 5,
+      "endTime": "2026-11-28T00:20:46.429Z",
+      "exitCode": 0,
+      "hash": "c270164d2f643703449cd6b28ee4a2b9",
+      "hashDetails": {
+        "command": "6d304b36c0f9602bfda7cd2d24f960cc",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/bb-mid/package.json": "5328d6730d8b8491c0870d368890147c",
+          "packages/bb-mid/src/index.ts": "6ae8687e8f0f6570ea38b909661a3804"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:46.424Z",
+      "target": {
+        "project": "bb-mid",
+        "target": "build"
+      },
+      "taskId": "bb-mid:build"
+    },
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 7,
+      "endTime": "2026-11-28T00:20:46.433Z",
+      "exitCode": 0,
+      "hash": "08a7e3c14c4ef071b7bd128bdaa7a908",
+      "hashDetails": {
+        "command": "4c9b2431bdd409669a6dc07ce3ee9757",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/aa-base/package.json": "ec5466dec00f0b7642a0de48d4cec446",
+          "packages/aa-base/src/index.ts": "a489cbd97dcc38529ac08c06893f745a"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:20:46.426Z",
+      "target": {
+        "project": "aa-base",
+        "target": "build"
+      },
+      "taskId": "aa-base:build"
+    }
+  ]
+}

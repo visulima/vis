@@ -1,0 +1,16 @@
+ VIS  •  Running target build for project solo
+  With additional flags:
+    --visOptions={}
+
+> solo:build
+√  solo:build [cache] (7 ms)
+--------------------------------------------------------------------------------
+√ [cache] solo:build
+built solo
+--------------------------------------------------------------------------------
+
+ VIS  •  Successfully ran target build for project solo
+
+   √  1 tasks completed (1 read from cache)  ·  Took 28 ms
+
+  1 cached · 0.1s

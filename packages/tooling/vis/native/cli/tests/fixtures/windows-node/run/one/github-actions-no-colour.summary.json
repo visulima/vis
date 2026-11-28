@@ -1,0 +1,55 @@
+{
+  "duration": 66,
+  "endTime": "2026-11-28T00:19:58.514Z",
+  "environment": {
+    "arch": "x64",
+    "nodeVersion": "v26.13.1",
+    "platform": "win32"
+  },
+  "id": "2026-11-28T00-19-58-448Z_781e5d2e-522a-48a8-8311-d4acbd1d96a9",
+  "startTime": "2026-11-28T00:19:58.448Z",
+  "stats": {
+    "cached": 1,
+    "failed": 0,
+    "skipped": 0,
+    "succeeded": 0,
+    "total": 1
+  },
+  "taskGraph": {
+    "dependencies": {
+      "solo:build": []
+    },
+    "roots": [
+      "solo:build"
+    ]
+  },
+  "tasks": [
+    {
+      "cacheable": true,
+      "cacheStatus": "HIT",
+      "dependencies": [],
+      "duration": 8,
+      "endTime": "2026-11-28T00:19:58.508Z",
+      "exitCode": 0,
+      "hash": "b46b8c4d5a5546c40515299f5ddf94ed",
+      "hashDetails": {
+        "command": "4a2e0a31b326dba67b5786ca9c858367",
+        "implicitDeps": {
+          "__global__": "0f130facd9b368414b233cc0bad52ed1"
+        },
+        "layout": 2,
+        "nodes": {
+          "packages/solo/package.json": "9bc99059354b34f076ef9f3a80f8826a",
+          "packages/solo/src/index.ts": "467d2807e0e746a56887c5682ccc8065"
+        }
+      },
+      "outputs": [],
+      "startTime": "2026-11-28T00:19:58.500Z",
+      "target": {
+        "project": "solo",
+        "target": "build"
+      },
+      "taskId": "solo:build"
+    }
+  ]
+}

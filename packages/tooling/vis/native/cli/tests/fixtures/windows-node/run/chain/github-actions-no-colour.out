@@ -1,0 +1,25 @@
+ VIS  •  Running target build for 3 projects
+  With additional flags:
+    --visOptions={}
+
+> zz-top:build
+> bb-mid:build
+> aa-base:build
+√  zz-top:build [cache] (9 ms)
+::group::√ zz-top:build
+zz-top
+::endgroup::
+√  bb-mid:build [cache] (7 ms)
+::group::√ bb-mid:build
+bb-mid
+::endgroup::
+√  aa-base:build [cache] (7 ms)
+::group::√ aa-base:build
+aa-base
+::endgroup::
+
+ VIS  •  Successfully ran target build for 3 projects
+
+   √  3 tasks completed (3 read from cache)  ·  Took 31 ms
+
+  3 cached · 0.1s

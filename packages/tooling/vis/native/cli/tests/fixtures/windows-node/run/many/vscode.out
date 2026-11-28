@@ -1,0 +1,32 @@
+[1m[7m VIS [22m[27m [1m[37m•[22m[39m  Running target build for 4 projects
+  With additional flags:
+    --visOptions={}
+
+[2m>[22m alpha:build
+[2m>[22m beta:build
+[2m>[22m delta:build
+[32m✓[39m  beta:build[36m [cache][2m[39m (8 ms)[22m
+[2m>[22m gamma:build
+[32m✓[39m  alpha:build[36m [cache][2m[39m (24 ms)[22m
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+[32m✓[39m [36m[cache][39m [1malpha:build[22m
+hello from alpha
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+[32m✓[39m  delta:build[36m [cache][2m[39m (22 ms)[22m
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+[32m✓[39m [36m[cache][39m [1mdelta:build[22m
+hello from delta
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+[32m✓[39m  gamma:build[36m [cache][2m[39m (16 ms)[22m
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+[32m✓[39m [36m[cache][39m [1mgamma:build[22m
+line one
+warn gamma
+line two
+[2m————————————————————————————————————————————————————————————————————————————————[22m
+
+[1m[7m VIS [22m[27m [1m[32m•[22m[39m  Successfully ran target build for 4 projects
+
+   [32m✓[39m  4 tasks completed[2m (4 read from cache)  ·  Took 64 ms[22m
+
+  4 cached · 0.1s

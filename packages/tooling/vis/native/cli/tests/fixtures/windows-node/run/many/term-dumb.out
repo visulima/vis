@@ -1,0 +1,32 @@
+ VIS  •  Running target build for 4 projects
+  With additional flags:
+    --visOptions={}
+
+> alpha:build
+> beta:build
+> delta:build
+√  beta:build [cache] (8 ms)
+> gamma:build
+√  delta:build [cache] (12 ms)
+--------------------------------------------------------------------------------
+√ [cache] delta:build
+hello from delta
+--------------------------------------------------------------------------------
+√  alpha:build [cache] (28 ms)
+--------------------------------------------------------------------------------
+√ [cache] alpha:build
+hello from alpha
+--------------------------------------------------------------------------------
+√  gamma:build [cache] (10 ms)
+--------------------------------------------------------------------------------
+√ [cache] gamma:build
+line one
+warn gamma
+line two
+--------------------------------------------------------------------------------
+
+ VIS  •  Successfully ran target build for 4 projects
+
+   √  4 tasks completed (4 read from cache)  ·  Took 55 ms
+
+  4 cached · 0.1s
