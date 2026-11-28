@@ -31,6 +31,53 @@ const project = (name: string, manifest: Record<string, unknown>): Files => {
     return { [`packages/${name}/package.json`]: json({ name, ...manifest }) };
 };
 
+/** An installed `@visulima/vis` that exports a `defineConfig`, so a config that imports it from the config module loads. */
+const VIS_CONFIG_MODULE: Files = {
+    "node_modules/@visulima/vis/dist/config.js": "export const defineConfig = (config) => config;\n",
+    "node_modules/@visulima/vis/package.json": json({ exports: { "./config": { default: "./dist/config.js" } }, name: "@visulima/vis", type: "module", version: "1.0.0" }),
+};
+
+interface ConfigCase {
+    files: Files;
+    label: string;
+}
+
+const config = (label: string, source: string, name = "vis.config.ts"): ConfigCase => {
+    return { files: { [name]: source }, label };
+};
+
+/** Configs Node loads without a word, whatever they hold: the report does not read them. */
+const ACCEPTED_CONFIGS: ConfigCase[] = [
+    config("an empty config", "export default {};\n"),
+    config("a module config", "export default { cache: { enabled: true } };\n", "vis.config.mjs"),
+    config("a plain script config", "export default { cache: { enabled: true } };\n", "vis.config.js"),
+    config("a typed config", "export default { cache: {} };\n", "vis.config.mts"),
+    config("keys that mean nothing", 'export default { nope: 1, update: 5, plugins: [{ name: "x" }], sponsor: { enabled: false } };\n'),
+    config("an install backend the binary knows", 'export default { install: { backend: "npm" } };\n'),
+    config("a security block, which only the package-manager commands read", 'export default { security: { allowBuilds: { esbuild: true }, policies: { installScripts: { strict: false } } } };\n'),
+    config("a security value of another type", "export default { security: 5 };\n"),
+    config("tasks with lists", 'export default { tasks: { build: { dependsOn: ["^build"], inputs: ["@inherit", "src/**"], outputs: "dist" }, test: null } };\n'),
+    config("a JSON config, which Node does not load", '{ "runtime": "bun", "targetDefaults": {} }\n', "vis.config.json"),
+    { files: { "vis.config.json": "{ not json", "vis.config.ts": "export default {};\n" }, label: "a JSON config beside a script config" },
+    // Node loads the first script config in its own order (`.ts` before `.mjs`) and never reads the other.
+    { files: { "vis.config.mjs": "export default makeConfig();\n", "vis.config.ts": "export default {};\n" }, label: "two script configs" },
+];
+
+/** Configs Node has to evaluate, fails on or prints about while it loads them: the binary leaves them to it. */
+const DECLINED_CONFIGS: ConfigCase[] = [
+    config("a call", "export default makeConfig();\n"),
+    config("a `defineConfig` import that does not resolve", 'import { defineConfig } from "@visulima/vis/config";\nexport default defineConfig({});\n'),
+    config("an import", 'import { x } from "./other";\nexport default { x };\n'),
+    config("an unresolvable extends", 'export default { extends: "./nope.ts" };\n'),
+    config("a version constraint it does not satisfy", 'export default { versionConstraint: "999.0.0" };\n'),
+    config("a removed key", "export default { targetDefaults: {} };\n"),
+    config("a task list that is a number", "export default { tasks: { build: { inputs: 5 } } };\n"),
+    config("a task list that is null", "export default { tasks: { build: { dependsOn: null } } };\n"),
+    config("an install block Node runs", "export default { install: { corepack: true } };\n"),
+    config("ESM syntax in a CommonJS file", "export default {};\n", "vis.config.cjs"),
+    config("an invalid JSON config", "{ not json", "vis.config.json"),
+];
+
 describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry))("vis optimize: native vs Node", () => {
     beforeAll(() => {
         harness.setup("vis-optimize-parity-");
@@ -201,6 +248,26 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectParity(rich(), ["--format", "json", "--dry-run"], environment);
         });
 
+        describe("with a literal vis.config", () => {
+            it.each(ACCEPTED_CONFIGS)("$label is read like Node does", ({ files }) => {
+                expect.hasAssertions();
+
+                harness.expectParity({ ...rich(), ...files }, []);
+                harness.expectParity({ ...rich(), ...files }, ["--format", "json", "--dry-run"]);
+            });
+
+            it("reads the config `vis init` writes: a `defineConfig` call from the vis config module", () => {
+                expect.hasAssertions();
+
+                const files: Files = {
+                    ...VIS_CONFIG_MODULE,
+                    "vis.config.ts": 'import { defineConfig } from "@visulima/vis/config";\n\nexport default defineConfig({ security: { allowBuilds: { esbuild: true } } });\n',
+                };
+
+                expect(harness.expectParity({ ...rich(), ...files }, []).stdout).toContain("Scanned 3 workspace packages.");
+            });
+        });
+
         it("wraps long lines at the width pail uses", () => {
             expect.hasAssertions();
 
@@ -273,10 +340,23 @@ describe.skipIf(!binary || process.platform === "win32" || !existsSync(nodeEntry
             harness.expectDelegation({ ...rich(), "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - x\n" }, []);
         });
 
-        it("a vis.config is declined", () => {
+        it.each(DECLINED_CONFIGS)("a vis.config with $label is declined", ({ files }) => {
             expect.hasAssertions();
 
-            harness.expectDelegation({ ...rich(), "vis.config.ts": "export default {};\n" }, []);
+            harness.expectDelegation({ ...rich(), ...files }, []);
+        });
+
+        it("a vis.config above the root is declined", () => {
+            expect.hasAssertions();
+
+            // Node loads the config of the workspace root only, so the config of the parent directory changes nothing for it.
+            const inner = Object.fromEntries(Object.entries(rich()).map(([name, content]) => [`inner/${name}`, content]));
+            const [nodeRoot, nativeRoot] = harness.pair({ ...inner, "vis.config.ts": "export default {};\n" });
+            const native = harness.runNative([], join(nativeRoot, "inner"));
+
+            expect(native.status).toBe(70);
+            expect(native.stdout).toBe("");
+            expect(harness.runNode([], join(nodeRoot, "inner")).status).toBe(0);
         });
 
         it("a manifest that is not strict JSON is declined", () => {
